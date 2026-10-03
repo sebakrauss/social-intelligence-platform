@@ -5,7 +5,7 @@
 | Document | Product Definition v1 |
 | Repository | `social-intelligence-platform` |
 | Phase | 0A — Product Definition |
-| Version | 1.2 (Phase 0B.2 alignment: Monitor-only Workspace confirmed) |
+| Version | 1.3 (Phase 0E.1 alignment: three product decisions confirmed during Technical Architecture) |
 | Date | 2026-10-03 |
 | Status | **Approved** by the product owner on 2026-10-03. This is the source of truth for product intent. |
 | Scope | Product only. This document does not select frameworks, databases, infrastructure or vendors, and it does not define a data schema. |
@@ -19,6 +19,8 @@
 | 2026-10-03 | Phase 0A.1 (initial lock): C-01, C-02, C-05 and C-09 confirmed. |
 | 2026-10-03 | Phase 0A.1 (complete decision lock): **all of C-01 to C-12 resolved** (Appendix B; D-34 to D-45), plus three additional MVP decisions: **Saved Replies** (D-46), lightweight **Brand Context** (D-47) and **workspace-owned social connections** (D-48). These decisions are propagated through the whole document. Items still tagged [PROPOSED] are recommendations awaiting confirmation. Items tagged [VALIDATE] are not validated. |
 | 2026-10-03 | Phase 0B.1 / 0B.2 (cross-document alignment): the product owner confirmed that **Monitor-only Workspace ships in the MVP** (**D-49**). The decision came out of the Information Architecture review (IA-11 in `docs/information-architecture-v1.md`). Product Definition v1.2 records it as product intent. No other decision changed, and no [VALIDATE] item changed status. |
+| 2026-10-03 | Phase 0E.1 (cross-document alignment): during the Technical Architecture review the product owner confirmed three product behaviors, recorded as **D-50** (content-bearing Social Asset uniqueness within an Organization), **D-51** (forward-only automatic moderation) and **D-52** (uncertain interactions excluded from human bulk Hide). They are recorded in Appendix A only; detailed behavior lives in `docs/intelligence-data-model-v1.md` v1.1, `docs/core-ux-flows-v1.md` v1.1 and `docs/technical-architecture-v1.md` v1.0. No other decision changed, and no [VALIDATE] item changed status. |
+| 2026-10-03 | Phase 0E.1a (clarification): the product owner clarified **D-51** so that initial Enable, Resume after Pause and explicit re-enable after Monitor-only each establish a **new forward-only cutover point**, with no catch-up automation for interactions that arrived while a policy was Off, Paused or Suspended. This clarifies D-51; it adds no capability. IA-16, D-50, D-52 and all other decisions are unchanged. Version 1.3 kept. |
 
 ---
 
@@ -30,7 +32,7 @@ Every substantive statement is tagged so future phases can tell commitments apar
 
 | Tag | Meaning | Who can change it |
 |---|---|---|
-| **[CONFIRMED]** | The product owner decided this in the Phase 0A brief, the Phase 0A.1 decision lock, or a later decision recorded in the approval record (Phase 0B.1 / 0B.2). | Only the product owner, through an explicit decision. |
+| **[CONFIRMED]** | The product owner decided this in the Phase 0A brief, the Phase 0A.1 decision lock, or a later decision recorded in the approval record (Phase 0B.1 / 0B.2, Phase 0E.1). | Only the product owner, through an explicit decision. |
 | **[PROPOSED]** | A recommendation that follows from confirmed decisions but was not stated in the brief. The product owner must confirm it. | Product owner review. |
 | **[HYPOTHESIS]** | A future direction or belief we expect to be true but have not tested. It is not a commitment. | Validation and research. |
 | **[VALIDATE]** | Depends on platform, API, legal or commercial capabilities that need technical or legal validation before we promise them to customers. | Technical and legal validation phases. |
@@ -956,7 +958,7 @@ Targets marked **[PROPOSED]** are starting points to calibrate during later phas
 
 ## Appendix A — Decision register
 
-Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 product-owner decision lock (2026-10-03); **0B.1 / 0B.2** = product-owner decision confirmed during Information Architecture review and aligned into this document (2026-10-03).
+Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 product-owner decision lock (2026-10-03); **0B.1 / 0B.2** = product-owner decision confirmed during Information Architecture review and aligned into this document (2026-10-03); **0E.1** = product-owner decision confirmed during Technical Architecture review (2026-10-03).
 
 | ID | Decision | Source | Where captured |
 |---|---|---|---|
@@ -1009,6 +1011,9 @@ Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 pr
 | D-47 | **Brand Context** is an MVP capability: lightweight verified context per workspace/brand that AI reply suggestions may use. Suggestions rely only on verified information and never fabricate missing facts. | 0A.1 | UC-17, §8.1, §9.2-E, §13.3, §13.4 |
 | D-48 | **Social connections are workspace-owned.** A person authorizes; the connection is a workspace resource governed by workspace permissions. Token, authorization and security implementation goes to technical architecture. | 0A.1 | UC-13, §8.1, §9.2-A, §9.2-K, §11.6 |
 | D-49 | **Monitor-only Workspace** ships in the MVP as a workspace operating mode. Platform-mutating actions and platform-changing automation are disabled. Visibility, intelligence and internal workflow remain available. Same product and same workspace architecture: no separate Agency product, Inbox or navigation. | 0B.1 / 0B.2 | UC-18, §9.1, §9.2-F, §9.2-K, §11.4 |
+| D-50 | **Content-bearing Social Asset uniqueness (M-01).** Within one Organization, a content-bearing social asset (Facebook Page, Instagram professional/business account, TikTok account, or equivalent) can be actively connected to **at most one workspace**. Across Organizations it may be connected independently: each Organization owns its own connection, credentials are never shared, data, workflow and intelligence are isolated, and no Organization learns that another connected the same asset. Moving an asset between workspaces of one Organization is an explicit, audited Move by an Owner/Admin: history stays in the source workspace, its coverage ends at the move, the target starts its own import, and history isn't copied. Inactive connections don't block later use. Ad accounts may serve as a paid-context source for several workspaces of one Organization only if platforms allow it safely **[VALIDATE]**; they never define the workspace boundary. | 0E.1 | Appendix A (detail: data model v1.1 §5; technical architecture §8) |
+| D-51 | **Forward-only automatic moderation.** Forward-only applies at **every activation boundary**: (1) initial Enable, (2) Resume after Paused, (3) explicit re-enable after Monitor-only (Suspended). Each of these establishes a **new forward-only cutover point**: only interactions arriving after that activation, resumption or re-enablement are eligible for automatic moderation. Interactions that arrived while the policy was Off, Paused or Suspended are **never** processed as catch-up when it becomes active again; there is no retrospective auto-hide burst. They stay available for human review, and historical obvious spam can be handled with a human-initiated bulk Hide, with all bulk safety exclusions. History is used only for preview, safety validation and impact estimates. Reprocessing, model upgrades and classification corrections never trigger retrospective automatic platform actions. Example: policy On → Pause → 50 interactions arrive → Resume → those 50 are not auto-hidden; only interactions arriving after Resume are eligible. The same applies to Monitor-only → Standard → explicit re-enable. IA-16 is unchanged: rules still return Paused after Monitor-only and need explicit re-enable. *(Clarified in Phase 0E.1a.)* | 0E.1, 0E.1a | Appendix A (detail: core UX flows v1.1 §14; technical architecture §25.7) |
+| D-52 | **Uncertain interactions are excluded from human bulk Hide.** Bulk Hide is only for clearly homogeneous sets: interactions whose protection or classification state is uncertain are excluded, counted and flagged for individual review, like protected categories. A permitted person can still review and moderate them individually. | 0E.1 | Appendix A (detail: core UX flows v1.1 §8.6; technical architecture §26.5) |
 
 ---
 

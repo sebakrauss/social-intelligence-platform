@@ -4,10 +4,10 @@
 |---|---|
 | Document | Intelligence & Conceptual Data Model v1 |
 | Phase | 0D — Intelligence & Conceptual Data Model |
-| Version | 1.0 |
+| Version | 1.1 (Phase 0E.1 alignment) |
 | Date | 2026-10-03 |
-| Status | **Approved** by the product owner on 2026-10-03 (Phase 0D.1) |
-| Sources of truth | `docs/product-definition-v1.md` v1.2 · `docs/information-architecture-v1.md` v1.1 · `docs/core-ux-flows-v1.md` v1.0 (all approved) |
+| Status | **Approved** by the product owner on 2026-10-03 (Phase 0D.1); v1.1 aligned in Phase 0E.1 |
+| Sources of truth | `docs/product-definition-v1.md` v1.3 · `docs/information-architecture-v1.md` v1.1 · `docs/core-ux-flows-v1.md` v1.1 (all approved) |
 | Scope | The conceptual objects of the product, what they mean, how they relate, where each comes from, and what history, provenance and confidence they must keep. **Not** a database schema, data types, keys, storage, APIs, infrastructure or technology choices. |
 
 ### Approval record
@@ -16,6 +16,7 @@
 |---|---|---|
 | 2026-10-03 | 0D | Intelligence & Conceptual Data Model v1.0 drafted. |
 | 2026-10-03 | 0D.1 | Product owner approved the model (v1.0 kept) and confirmed **M-05** (interpretive precedence, interpretations only; source facts are never overridden; deterministic rules stay narrow), **M-07** (uncertain protection vetoes automation) and **M-12** (at most one active Tracked Action per Recommendation in the MVP). Public vs private Outbound Reply semantics were clarified (§36). M-01, M-02, M-03, M-04, M-06, M-08, M-09, M-10 and M-11 remain open. All PD, IA and UX open dependencies remain open. The source documents are unchanged. |
+| 2026-10-03 | 0E.1 | During the Technical Architecture decision lock the product owner **confirmed M-01** (content-bearing Social Asset active in at most one workspace per organization; PD D-50; §5, §54). Two related product behaviors are reflected where the model describes them: forward-only automatic moderation (PD D-51; §20, S21) and exclusion of uncertain interactions from human bulk hide (PD D-52; §17.3, §19, S3). Version bumped to **1.1**. M-02, M-03, M-04, M-06, M-08, M-09, M-10 and M-11 remain open; M-05, M-07 and M-12 unchanged. No database or schema detail added. |
 
 ---
 
@@ -27,7 +28,7 @@
 - Nothing here changes a confirmed decision. Citations look like "PD D-35", "IA §7.4", "UX §8.3", "IA-04", "UX-06".
 - Status tags are inherited: **(PD: CONFIRMED / PROPOSED / VALIDATE)**, **(IA: CONFIRMED)**, **(UX: CONFIRMED)**. Values the PD marks as proposed (e.g. exact taxonomy values, role set) appear here as **examples, not frozen lists**.
 - **[MODEL-REC]** marks a conceptual modeling recommendation made in Phase 0D, part of the approved baseline.
-- **(MODEL: CONFIRMED — M-nn)** marks a model decision the product owner locked in Phase 0D.1.
+- **(MODEL: CONFIRMED — M-nn)** marks a model decision the product owner locked in Phase 0D.1 (M-05, M-07, M-12) or Phase 0E.1 (M-01).
 - **M-nn** marks a new open model question (§54).
 
 ### 0.2 Language used
@@ -217,7 +218,15 @@ Three things must stay separate:
 
 **Ownership:** connections and connected accounts belong to the **workspace** (PD D-48). The authorizing user is kept as provenance ("connected by Ana on Oct 3"), never as the owner. Whether an authorization stays valid after that person leaves is VALIDATE (PD OQ-26).
 
-**Same asset in several workspaces:** not settled by the sources. See **M-01**.
+**Same asset in several workspaces (MODEL: CONFIRMED — M-01; PD D-50):**
+
+| Situation | Rule |
+|---|---|
+| **Within one Organization** | A **content-bearing** Social Asset (Facebook Page, Instagram professional/business account, TikTok account/profile, or an equivalent content-bearing identity) can be **actively** connected to **at most one workspace**. This avoids duplicate ingestion, double AI processing, conflicting Inbox workflow, duplicate replies and conflicting automation, and keeps one operational owner inside the customer organization. |
+| **Across Organizations** | The same real-world asset may be connected independently. Each Organization owns its own Connection; credentials are never shared; data, workflow and intelligence are fully isolated. One Organization never learns that another connected the same asset. |
+| **Moving between workspaces of one Organization** | An explicit, audited **Move** with Owner/Admin authorization. The Connected Account becomes inactive in the source workspace; its history stays there and its coverage ends at the move time. The target workspace starts its own import. Historical conversations and intelligence are **not** copied. |
+| **Inactive history** | Inactive (disconnected or removed) Connected Accounts don't block later use of the asset elsewhere. |
+| **Ad accounts** | An ad account doesn't determine the workspace boundary. It may be usable as a paid-context source by several workspaces of one Organization **only if** the platforms allow it safely (VALIDATE). Paid content is scoped through the relevant content-bearing asset, and no ad-account link may expose another workspace's conversations, intelligence, unrelated client content or credentials. |
 
 ---
 
@@ -575,6 +584,7 @@ Classification assessments ─▶ Accepted interpretation (per dimension)
 - **Keywords are never meaning.** A configured pattern matching "scam", "fraud", "estafa" or "golpe" produces a **candidate match**, not a moderation decision. If the interaction is a fraud accusation against the brand, protection vetoes automation (PD D-42; UX-10).
 - **Abuse doesn't remove protection.** "You idiots stole my money" is abusive *and* a complaint. Protection wins (PD D-34).
 - **Fail-safe (MODEL: CONFIRMED — M-07):** if the product can't determine with adequate confidence whether an interaction carries protected meaning, the result is **Uncertain**. For automation, Uncertain is a **safety veto**: no auto-hide, and the interaction goes to Needs review where relevant. Silence, missing evidence or classification uncertainty never count as permission to automate. This applies only to automation safety. It doesn't prevent a permitted human from moderating the interaction individually.
+- **Uncertain and human bulk hide (PD D-52, Phase 0E.1):** separately from M-07, interactions whose protection or classification state is uncertain are **excluded from human bulk hide** (bulk hide is only for clearly homogeneous sets). They are counted and flagged for individual review. Individual, deliberate human moderation stays possible.
 - **Human moderation is not vetoed.** People can still hide or delete a protected comment deliberately and individually (PD D-35), with an informational caution (UX §13.2). Protection only governs **automation** and **human bulk hide** (UX-06).
 
 ---
@@ -650,7 +660,7 @@ The Automation Decision keeps: policy, interaction, each step's result, the veto
 
 **Never eligible:** protected meanings, abuse/insults (MVP), anything with medium or low confidence, any workspace in Monitor-only, sentiment-based or keyword-only matches.
 
-**Bulk hide is not automation:** human bulk hide produces human Moderation Events. It applies the protection exclusion (protected interactions are excluded and counted, UX-06) but produces no Automation Decisions.
+**Bulk hide is not automation:** human bulk hide produces human Moderation Events. It applies the protection exclusion (protected interactions are excluded and counted, UX-06; uncertain interactions are excluded too, PD D-52) but produces no Automation Decisions.
 
 ---
 
@@ -672,6 +682,8 @@ The Automation Decision keeps: policy, interaction, each step's result, the veto
 **Paused vs Suspended:** Paused reflects a person's choice. Suspended reflects a workspace condition and can't be lifted per policy.
 
 **IA-16 (confirmed):** when a workspace goes Monitor-only → Standard, every policy that was On before suspension returns **Paused**. Nothing resumes automatically. Each policy needs an explicit re-enable by a permitted person, and malicious-link and pattern policies require a **fresh preview** first.
+
+**Forward-only (PD D-51, Phase 0E.1):** a policy only considers interactions that arrive **after** it is activated (or re-enabled). Activation never produces Automation Decisions for interactions imported before it; the history is used only for the Policy Preview, safety validation and impact estimates. Reprocessing, model upgrades and classification corrections never retroactively produce automatic Moderation Events. Cleaning up historical harmful content is a human bulk hide, with its exclusions.
 
 ---
 
@@ -1371,7 +1383,7 @@ Later architecture **must** preserve these. Each maps to a structural mechanism 
 |---|---|---|
 | S1 | Negative ≠ harmful | Sentiment and Safety are separate dimensions. Sentiment never feeds automation eligibility (§14, §19). |
 | S2 | Complaint protection always wins over automation | Protection Evaluation vetoes at step 3. Uncertain counts as vetoed (§17, §19). |
-| S3 | Protected categories never auto-hide | Same veto; also excluded from human bulk hide (§17, §19). |
+| S3 | Protected categories never auto-hide | Same veto; also excluded from human bulk hide, as are uncertain interactions (PD D-52) (§17, §19). |
 | S4 | Abuse never auto-hides in the MVP | Abuse isn't an eligible policy type; step 4 excludes it (§19, §20). |
 | S5 | Automation is hide-only | Policies can only produce Hide events (§20). |
 | S6 | No bulk delete or block | No bulk delete/block Moderation Events exist. Bulk is hide-only and human (§18). |
@@ -1389,6 +1401,7 @@ Later architecture **must** preserve these. Each maps to a structural mechanism 
 | S18 | Client guests can't reach conversations | Evidence for guests is representative and guest-presentable only. Conversation sets don't resolve for guests (§24, §37). |
 | S19 | Keywords are never meaning | Pattern matches are only candidates. Hiding also requires confident understanding (not protected, not ambiguous) plus every veto (§17, §19). |
 | S20 | Platform limits are never presented as role limits | Capability states are separate from roles and mode (§6; IA §18). |
+| S21 | Automation never acts retroactively | Policies consider only interactions arriving after activation; reprocessing, model upgrades and corrections never produce automatic Moderation Events (PD D-51; §20). |
 
 ---
 
@@ -1404,7 +1417,7 @@ Later architecture **must** preserve these. Each maps to a structural mechanism 
 | Brand / Market | Grouping dimensions | A | User | Yes | Workspaces (accounts: IA-07) | All workspaces, filters | IA-07 open |
 | Workspace Operating Mode | Standard / Monitor-only | A | User (Owner/Admin) | Yes, audited | Policies, actions | Shell indicator, Settings | D-49 |
 | Social Platform | Facebook / Instagram / TikTok | B | Product | Rarely | Assets, capabilities | Labels, filters | — |
-| Social Asset | External presence on a platform | B | Platform | Observed | Connections, Connected Accounts | Connections | M-01 |
+| Social Asset | External presence on a platform | B | Platform | Observed | Connections, Connected Accounts | Connections | M-01 (confirmed: one active workspace per organization for content-bearing assets) |
 | Connection | Workspace's authorization to assets | B | User + platform | Health changes | Workspace, assets, authorizing user | Connections, Home notices | Tokens out of scope |
 | Connected Account | Asset brought into a workspace | B | User | Yes | Content, capability, coverage | Connections, labels | — |
 | Capability Profile | What can be done, per account and content type | B | Product rule + platform | Yes (verified over time) | Connected Account | Disabled-with-reason actions | Actual values VALIDATE |
@@ -1563,16 +1576,16 @@ CONNECTING ──▶ ACTIVE ◀──reconnect── DEGRADED
 
 | ID | Question | Why it matters | Recommendation / decision | Blocks TA? | Status / resolve when |
 |---|---|---|---|---|---|
-| **M-01** | Can the same Social Asset be connected to more than one workspace (within one organization, or across organizations)? | Duplicate replies, double automation, conflicting workflow, isolation. | MVP: one active workspace per Social Asset within an Organization. Across organizations, accept that it can't be prevented, but keep data fully isolated per workspace. **Recommendation only, not confirmed.** | NO, but it is the **first decision of Technical Architecture** | **OPEN.** Resolve at the **beginning of Technical Architecture**, before finalizing connection ownership and uniqueness behavior (with PD OQ-13) |
+| **M-01** | Can the same Social Asset be connected to more than one workspace (within one organization, or across organizations)? | Duplicate replies, double automation, conflicting workflow, isolation. | A **content-bearing** asset can be actively connected to at most one workspace within an Organization; independent, fully isolated connections across Organizations; audited Move between workspaces without copying history; inactive connections don't block; ad accounts never define the workspace boundary and multi-workspace paid-context use depends on platform validation (§5). | — | **CONFIRMED** (Phase 0E.1; PD D-50) |
 | **M-02** | Effective source of interactions that predate a boost (organic comments on content later boosted). | Organic vs paid mixes, unattended-paid metrics. | Use time-aware source where the platform provides boost timing; otherwise the content's current classification, marked "Mixed". | NO | **OPEN.** After API validation (PD OQ-19) |
-| **M-03** | Are generated reports frozen snapshots, or regenerated when underlying data (corrections, late imports) changes? | Shared reports must be stable; corrections must not be hidden. | Freeze each generated report with an as-of time. Allow an explicit "regenerate", which keeps the previous generation. | NO | **OPEN.** With PD OQ-15 |
-| **M-04** | When an insight's evidence changes materially, is it the same insight updated or a new one? | Recommendation continuity, follow-up anchoring, history. | Same insight identity with versions. A different claim becomes a new insight. Recommendations reference the version they were issued from. | NO | **OPEN.** Technical Architecture |
+| **M-03** | Are generated reports frozen snapshots, or regenerated when underlying data (corrections, late imports) changes? | Shared reports must be stable; corrections must not be hidden. | Freeze each generated report with an as-of time. Allow an explicit "regenerate", which keeps the previous generation. | NO | **OPEN.** With PD OQ-15; until Reports design (Phase 0E.1) |
+| **M-04** | When an insight's evidence changes materially, is it the same insight updated or a new one? | Recommendation continuity, follow-up anchoring, history. | Same insight identity with versions. A different claim becomes a new insight. Recommendations reference the version they were issued from. | NO | **OPEN.** Until Insights implementation design (Phase 0E.1) |
 | **M-05** | Accepted-interpretation precedence among human, rule, AI and platform signals. | Determines what automation and priority act on. | Human > deterministic rule (narrow facts only) > AI > platform interpretive hint. Interpretations only; source facts are never overridden (§15.2). | — | **CONFIRMED** (Phase 0D.1) |
-| **M-06** | Is authenticity ("likely bot") an author-level assessment within a workspace, or interaction-only? | Repeat bots, obvious-bot policy accuracy. | Both: interaction-level signal plus workspace-scoped author summary. Never cross-workspace. | NO | **OPEN.** Technical Architecture / AI design |
+| **M-06** | Is authenticity ("likely bot") an author-level assessment within a workspace, or interaction-only? | Repeat bots, obvious-bot policy accuracy. | Both: interaction-level signal plus workspace-scoped author summary. Never cross-workspace. | NO | **OPEN.** Dependent on AI evals (Phase 0E.1) |
 | **M-07** | Should Protection evaluation treat "uncertain" as protected for automation (fail-safe)? | Safety of auto-hide. | Uncertain is a safety veto for automation: no auto-hide, Needs review where relevant. Individual human moderation stays possible (§17). | — | **CONFIRMED** (Phase 0D.1) |
 | **M-08** | Should topic identity support merge and split with assignment history (ahead of PD OQ-10)? | Avoids rework when topic management is decided. | Yes, conceptually supported now. UX decided with OQ-10. | NO | **OPEN.** With PD OQ-10 |
 | **M-09** | How are platform-side comment edits handled? | Evidence integrity, re-classification. | Keep all source versions. A new version triggers re-assessment. Human corrections persist unless a person revisits them. | NO | **OPEN.** After API validation (whether edits are exposed) |
-| **M-10** | Shared system-topic catalog across workspaces vs fully workspace-local topics. | Multilingual consistency vs isolation. | A shared catalog of *definitions* only (no data). Per-workspace instances and data. | NO | **OPEN.** Technical Architecture |
+| **M-10** | Shared system-topic catalog across workspaces vs fully workspace-local topics. | Multilingual consistency vs isolation. | A shared catalog of *definitions* only (no data). Per-workspace instances and data. | NO | **OPEN.** Until Topics architecture/design (Phase 0E.1) |
 | **M-11** | How are authors shown in guest-presentable evidence (names, handles, or anonymized)? | Privacy / data minimization (PD R-09) vs evidence credibility. | Show text excerpts. Minimize author identity for client guests by default. Decide with the legal review. | NO | **OPEN.** With PD OQ-21 / legal review |
 | **M-12** | One Tracked Action per recommendation (MVP) vs several? | Follow-up anchoring. | At most one **active** Tracked Action per Recommendation in the MVP: the action the customer actually chose. No sub-actions, task lists, parallel actions or approvals (§28). | — | **CONFIRMED** (Phase 0D.1) |
 
@@ -1638,3 +1651,5 @@ The next phase must be able to support all of the following. It chooses *how*.
 26. Uncertain protection vetoes automation without blocking individual human moderation (M-07, §17).
 27. At most one active Tracked Action per Recommendation, with no task or project model (M-12, §28).
 28. Private replies never become Conversation Interactions. They leave an auditable history marker (§36).
+29. M-01 is confirmed: a content-bearing Social Asset is active in at most one workspace per organization, with isolated connections across organizations (§5, §54) (v1.1).
+30. Automation is forward-only, and uncertain interactions are excluded from human bulk hide (§17.3, §19, §20, S21) (v1.1).

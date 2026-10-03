@@ -4,10 +4,10 @@
 |---|---|
 | Document | Core UX Flows v1 |
 | Phase | 0C — Core UX Flows |
-| Version | 1.0 |
+| Version | 1.1 (Phase 0E.1 alignment) |
 | Date | 2026-10-03 |
-| Status | **Approved** by the product owner on 2026-10-03 (Phase 0C.1) |
-| Sources of truth | `docs/product-definition-v1.md` v1.2 (approved) · `docs/information-architecture-v1.md` v1.1 (approved) |
+| Status | **Approved** by the product owner on 2026-10-03 (Phase 0C.1); v1.1 aligned in Phase 0E.1 |
+| Sources of truth | `docs/product-definition-v1.md` v1.3 (approved) · `docs/information-architecture-v1.md` v1.1 (approved) |
 | Scope | How users move through the product: intent, decision points, system responses, branches, unavailable states and successful outcomes. **Not** visual design, wireframes, components, data schema, technical architecture or implementation. |
 
 ### Approval record
@@ -16,6 +16,7 @@
 |---|---|---|
 | 2026-10-03 | 0C | Core UX Flows v1.0 drafted. |
 | 2026-10-03 | 0C.1 | Product owner approved Core UX Flows v1.0 and locked IA-01, IA-02, IA-03, IA-04, IA-09, IA-10, IA-13, IA-15, IA-16 and UX-01, UX-02, UX-04, UX-05, UX-06, UX-10, UX-12, UX-15. UX-14 is not adopted. UX-03, UX-07, UX-08, UX-09, UX-13 and UX-16 are deferred, and UX-11 is out of the MVP (§28). The capability-availability rules were aligned with the IA: platform limits are visible but unavailable, never hidden (§25). The IA moved to v1.1 in the same phase. The Product Definition is unchanged. Version 1.0 kept. |
+| 2026-10-03 | 0E.1 | Product owner confirmed two flow behaviors during the Technical Architecture decision lock, recorded as **UX-17** (auto-hide activation is forward-only; PD D-51) and **UX-18** (uncertain interactions are excluded from human bulk Hide; PD D-52). Reflected in §6.1, §8.6, §14, §15.4, §28, §29 and Appendix B. Individual human moderation is unchanged. Version bumped to **1.1**. No other flow changed. |
 
 ---
 
@@ -26,7 +27,7 @@
 - The **Product Definition (PD)** defines what the product is. The **Information Architecture (IA)** defines where things live. This document defines **how users move** through them.
 - Nothing here changes a PD or IA decision. When a flow depends on a source decision, it cites it (e.g. "PD D-49", "IA §7.8", "IA-11").
 - Status tags are inherited, never upgraded: **(PD: CONFIRMED)**, **(PD: PROPOSED)**, **(PD: VALIDATE)**, **(IA: CONFIRMED)**.
-- **(UX: CONFIRMED — UX-nn)** and **(IA: CONFIRMED — IA-nn)** mark decisions the product owner locked in Phase 0C.1.
+- **(UX: CONFIRMED — UX-nn)** and **(IA: CONFIRMED — IA-nn)** mark decisions the product owner locked in Phase 0C.1 (UX-17 and UX-18 in Phase 0E.1).
 - **[UX-REC]** marks a flow-level design choice that is part of the approved v1.0 baseline. It can be refined during wireframing without a formal decision, as long as no confirmed decision changes.
 - **DEFERRED** items are open, with a named dependency (§28).
 - Flows never assume a platform capability is available. Where an action depends on Facebook, Instagram or TikTok, the flow includes its unavailable branch (PD: VALIDATE — OQ-18).
@@ -297,7 +298,7 @@ Home shows a one-time **"What we found"** summary for the imported period, in th
 4. **Emerging issues:** topics changing notably within the imported window, only where minimum volume is met → Insight.
 5. **Content creating friction:** the posts or ads with the highest friction share → Content & Ads profile.
 6. **A first recommendation**, only when evidence supports it → Insight detail.
-7. **Protection opportunity**, if obvious spam or bots were found: "142 obvious spam comments on your ads in 30 days. Preview an auto-hide rule." → Settings › Moderation preview (§14). Not shown in Monitor-only workspaces, where the item instead reads "Detected for review" with no rule offer (§15).
+7. **Protection opportunity**, if obvious spam or bots were found: "142 obvious spam comments on your ads in 30 days. Preview an auto-hide rule." → Settings › Moderation preview (§14). Enabling the rule applies to comments arriving from then on; the comments already found can be cleaned with a human bulk Hide (§8.6) (UX-17). Not shown in Monitor-only workspaces, where the item instead reads "Detected for review" with no rule offer (§15).
 
 After the first session, "What we found" collapses into the regular Home blocks (IA §6).
 
@@ -444,8 +445,9 @@ The chosen view is clear, or everything left in it is deliberately assigned or e
 - **Arrived with carried context** (from Home, an insight, VoC, content): the context name is shown and removable. Completing the scoped set shows the completion state (§7.1).
 - **Bulk actions** (PD: PROPOSED §9.2-B): for clearly homogeneous selections only, such as assign, mark done with a resolution, or hide confirmed spam. **Bulk hide is a human-initiated action, not automation** (UX: CONFIRMED — UX-06):
   - Protected categories (legitimate complaints, product/service problems, fraud/scam accusations against the brand, commercial objections) are **excluded from the selection being hidden**. The user sees how many were excluded and why ("3 comments excluded: complaints and objections can't be hidden in bulk").
+  - Comments whose protection or classification state is **uncertain** are also **excluded** (UX: CONFIRMED — UX-18; PD D-52), because bulk Hide is only for clearly homogeneous sets. The user sees how many and that they need individual review ("2 comments excluded: they need individual review").
   - The hidden comments are attributed to the person ("Hidden by Ana"). They never appear in Hidden automatically and are never called automatic hides.
-  - Deliberate, individual human moderation of a protected comment remains possible (§13).
+  - Deliberate, individual human moderation of a protected or uncertain comment remains possible (§13).
   - Bulk delete and bulk block are not in the MVP.
 - **Concurrent handling:** if a teammate is viewing or has just acted on the same conversation, show "[Name] replied 1 minute ago" before the user sends, to avoid double replies.
 - **New items arrive while triaging:** they're added without reordering the list under the user's cursor. A quiet "3 new" indicator offers a refresh.
@@ -774,7 +776,8 @@ Preview against history (required for links & patterns; offered for spam & bots)
 Review exclusions and samples → adjust or continue
   │
   ▼
-Enable  (confirmation summarizes: what it hides · scope · "hides only, never deletes or blocks")
+Enable  (confirmation summarizes: what it hides · scope · "hides only, never deletes or blocks"
+        · "applies to new comments from now on; past comments aren't hidden" — UX-17)
   │
   ▼
 Monitor:  Inbox › Hidden automatically (each hide + rule + reason + Undo) · Home health · Reports
@@ -791,9 +794,9 @@ Monitor:  Inbox › Hidden automatically (each hide + rule + reason + Undo) · H
 1. **Open Moderation.** The page leads with automation status and the **Always protected** explanation (IA §13.2).
 2. **Choose a rule.** Only the four eligible types exist (PD D-12, D-42). Abuse and insults are shown as "Always sent to review", with no auto-hide option (PD D-34).
 3. **Set the scope.**
-4. **Preview.** The preview shows the matches it would have hidden in the imported history, as a browsable sample, and **separately** the comments excluded by Always protected.
+4. **Preview.** The preview shows the matches it would have hidden in the imported history, as a browsable sample, and **separately** the comments excluded by Always protected. The preview is an estimate only: enabling the rule never hides these historical comments (UX-17).
 5. **Review.** The user scans samples. If something legitimate appears, they narrow the scope or the pattern.
-6. **Enable.** A short confirmation summarizes the rule. The rule becomes **On**.
+6. **Enable.** A short confirmation summarizes the rule, including that it applies to comments arriving from now on. The rule becomes **On**. **Activation is forward-only** (UX: CONFIRMED — UX-17; PD D-51): it never hides comments imported before it was enabled. To clean up existing obvious spam, the user runs a human bulk Hide (§8.6), with all bulk exclusions.
 7. **Monitor.** New automatic hides appear in Inbox › Hidden automatically with the rule and reason. Home shows "Auto-hide on · 37 hidden this week · Review".
 
 **Success state:** obvious harmful noise is hidden automatically, every hide is visible and undoable, and no protected comment is hidden.
@@ -816,7 +819,7 @@ Monitor:  Inbox › Hidden automatically (each hide + rule + reason + Undo) · H
 
 - **Pause one rule:** state → Paused. It stays configured.
 - **Pause all automation** (kill switch, PD: PROPOSED §13.4): one action from Settings › Moderation or the Hidden automatically header. All rules become Paused, and Home shows "Automation paused by [name]".
-- **Resume:** explicit, per rule or for all.
+- **Resume:** explicit, per rule or for all. Resuming is an activation: it applies to comments arriving after resumption, not to those that arrived while paused (UX-17).
 
 ### 14.6 Unavailable states
 
@@ -835,6 +838,8 @@ Monitor:  Inbox › Hidden automatically (each hide + rule + reason + Undo) · H
 4. Every automatic hide is visible, attributed and undoable from one place (IA §13).
 5. Nothing automatic happens in a Monitor-only workspace (PD D-49).
 6. Automation never resumes silently (§15.5).
+7. Automation is forward-only: activating, resuming or re-enabling a rule never hides comments imported before it; reprocessing, model upgrades and label corrections never trigger automatic hides (UX-17; PD D-51).
+8. Human bulk Hide excludes protected and uncertain comments; individual human moderation stays possible (UX-06, UX-18).
 
 ---
 
@@ -896,7 +901,7 @@ Home (all blocks; automation shows "Unavailable — Monitor-only")
 2. The confirmation states:
    - "Platform actions will be available again for roles that have them."
    - "**N auto-hide rules will return Paused.** Review and turn them on yourself. Nothing will start hiding automatically."
-3. After confirming, the user lands on **Settings › Moderation** with the paused rules listed and **Review & resume** per rule. Resuming a malicious-link or pattern rule requires a fresh preview (PD D-42; IA: CONFIRMED — IA-16).
+3. After confirming, the user lands on **Settings › Moderation** with the paused rules listed and **Review & resume** per rule. Resuming a malicious-link or pattern rule requires a fresh preview (PD D-42; IA: CONFIRMED — IA-16). A resumed rule applies only to comments arriving after it is resumed, never to those that arrived while the workspace was Monitor-only (UX-17).
 4. Members see a one-time notice: "This workspace is back to Standard. You can reply and moderate again."
 
 ### 15.5 IA-16 decision (IA: CONFIRMED — Phase 0C.1)
@@ -1489,6 +1494,8 @@ Status key: **CONFIRMED** (locked by the product owner) · **OPEN** (IA decision
 | **UX-14** | Responder "Suggest acceptance" | **NOT ADOPTED** | Superseded by IA-09: Responders view only |
 | **UX-15** | Client guest without a usable report → Insights, with a calm explanation. No fabricated date. No Home, Inbox or Content & Ads. | **CONFIRMED** (0C.1) | §22.5 |
 | **UX-16** | Delivering escalations to non-members | **DEFERRED** | With PD OQ-17. "Copy escalation summary" is a temporary UX fallback, not a committed integration. |
+| **UX-17** | Auto-hide activation is forward-only: rules apply to comments arriving after activation (or resumption). Previews may use history, but activation never hides historical comments. Historical cleanup is a human bulk Hide. Reprocessing, model upgrades and corrections never trigger automatic hides. | **CONFIRMED** (0E.1) | PD D-51; §6.1, §14.2, §14.5, §14.7, §15.4 |
+| **UX-18** | Uncertain comments are excluded from human bulk Hide (counted, flagged for individual review), in addition to protected categories (UX-06). Individual human moderation stays available. | **CONFIRMED** (0E.1) | PD D-52; §8.6, §14.7 |
 
 ### 28.3 Product questions referenced (unchanged, still open in the PD)
 
@@ -1519,6 +1526,7 @@ Before moving to wireframes and visual design, all of the following must be true
 17. **Source documents:** PD v1.2 unchanged. IA aligned to v1.1 in Phase 0C.1.
 18. **Entry and workflow locks hold:** multi-workspace users enter through All workspaces; there is no personal start-page preference, no Waiting/Snooze, and no responder recommendation workflow.
 19. **Availability rules consistent with the IA:** role limits hide; Monitor-only and platform limits are visible but unavailable with an explanation; connection problems offer recovery (§25).
+20. **Phase 0E.1 behaviors hold (v1.1):** auto-hide activation is forward-only and previews never imply retrospective hiding (UX-17); uncertain comments are excluded from human bulk Hide while individual moderation remains available (UX-18).
 
 ---
 
@@ -1579,3 +1587,5 @@ Before moving to wireframes and visual design, all of the following must be true
 | Descriptive, never causal | PD D-43 | §19.6, §21.2 |
 | Capability honesty, role/mode/platform/connection precedence | PD C-07; IA v1.1 §18 | §25 |
 | Bulk hide is human, excludes protected categories | UX-06 | §8.6, §14.7 |
+| Bulk hide also excludes uncertain comments | UX-18; PD D-52 | §8.6, §14.7 |
+| Automation is forward-only; never retroactive | UX-17; PD D-51 | §6.1, §14.2, §14.5, §14.7, §15.4 |

@@ -7,7 +7,7 @@
 | Version | 1.1 (Phase 0C.1 decision lock) |
 | Date | 2026-10-03 |
 | Status | **Approved.** v1.0 approved on 2026-10-03 (Phase 0B.1). v1.1 records the IA decisions locked in Phase 0C.1. |
-| Source of truth | `docs/product-definition-v1.md` v1.2 (Phase 0A, 0A.1 and 0B.2 alignment; approved) |
+| Source of truth | `docs/product-definition-v1.md` v1.3 (Phase 0A, 0A.1, 0B.2 and 0E.1 alignment; approved) |
 | Scope | How the product is organized from the user's perspective. **Not** visual design, wireframes, components, data schema, technical architecture or implementation. |
 
 ### Approval record
@@ -18,6 +18,7 @@
 | 2026-10-03 | 0B.1 | Product owner locked **IA-05** (client guest visibility) and **IA-11** (Monitor-only workspace ships in the MVP) and approved Information Architecture v1.0. Both decisions are propagated through the document. The other IA decisions in §23 remain open as recommendations; none blocks Phase 0C. |
 | 2026-10-03 | 0B.2 | Cross-document alignment: the source of truth is now Product Definition v1.2, which records Monitor-only as confirmed product decision **D-49**. IA-11 is the IA expression of D-49. No IA behavior changed. Version 1.0 kept. |
 | 2026-10-03 | 0C.1 | Product owner locked **IA-01, IA-02, IA-03, IA-04, IA-09, IA-10, IA-13, IA-15 and IA-16**, plus the related UX decisions on application entry, workspace creation mode, native-reply auto-Done, human bulk hide and the default escalation contact (recorded in `docs/core-ux-flows-v1.md` §28). Version bumped to **1.1**. Platform-capability limits are now consistently *visible but unavailable* (never hidden). IA-05 and IA-11 are unchanged. IA-06, IA-07, IA-08, IA-12 and IA-14 remain open. |
+| 2026-10-03 | 0E.1 | Cross-document alignment: the source of truth is now Product Definition v1.3 (D-50 to D-52, confirmed during Technical Architecture). Metadata only: no IA behavior changed, no IA decision reopened, version 1.1 kept. Flow-level detail for D-51 and D-52 lives in `docs/core-ux-flows-v1.md` v1.1. |
 
 ---
 
