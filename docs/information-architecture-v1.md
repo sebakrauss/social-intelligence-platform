@@ -4,9 +4,9 @@
 |---|---|
 | Document | Information Architecture v1 |
 | Phase | 0B — Information Architecture |
-| Version | 1.0 |
+| Version | 1.1 (Phase 0C.1 decision lock) |
 | Date | 2026-10-03 |
-| Status | **Approved** by the product owner on 2026-10-03 (Phase 0B.1). Version 1.0 is kept because this is the first approved version; the Phase 0B.1 decisions are part of that approval. |
+| Status | **Approved.** v1.0 approved on 2026-10-03 (Phase 0B.1). v1.1 records the IA decisions locked in Phase 0C.1. |
 | Source of truth | `docs/product-definition-v1.md` v1.2 (Phase 0A, 0A.1 and 0B.2 alignment; approved) |
 | Scope | How the product is organized from the user's perspective. **Not** visual design, wireframes, components, data schema, technical architecture or implementation. |
 
@@ -17,6 +17,7 @@
 | 2026-10-03 | 0B | Information Architecture v1.0 drafted. |
 | 2026-10-03 | 0B.1 | Product owner locked **IA-05** (client guest visibility) and **IA-11** (Monitor-only workspace ships in the MVP) and approved Information Architecture v1.0. Both decisions are propagated through the document. The other IA decisions in §23 remain open as recommendations; none blocks Phase 0C. |
 | 2026-10-03 | 0B.2 | Cross-document alignment: the source of truth is now Product Definition v1.2, which records Monitor-only as confirmed product decision **D-49**. IA-11 is the IA expression of D-49. No IA behavior changed. Version 1.0 kept. |
+| 2026-10-03 | 0C.1 | Product owner locked **IA-01, IA-02, IA-03, IA-04, IA-09, IA-10, IA-13, IA-15 and IA-16**, plus the related UX decisions on application entry, workspace creation mode, native-reply auto-Done, human bulk hide and the default escalation contact (recorded in `docs/core-ux-flows-v1.md` §28). Version bumped to **1.1**. Platform-capability limits are now consistently *visible but unavailable* (never hidden). IA-05 and IA-11 are unchanged. IA-06, IA-07, IA-08, IA-12 and IA-14 remain open. |
 
 ---
 
@@ -29,7 +30,8 @@ This document organizes the product. It does not change it.
 - Every product capability referenced here comes from the Product Definition (PD). Section references like "PD §9.2-E" or decision IDs like "D-46" point there.
 - When this document relies on a PD item, it keeps that item's status: **(PD: CONFIRMED)**, **(PD: PROPOSED)**, **(PD: VALIDATE)**. An IA choice never upgrades a PD [PROPOSED] item to confirmed, and never treats a [VALIDATE] capability as available.
 - The architectural choices made here are **IA recommendations** for product-owner approval. Choices that can't be settled from the PD are listed in §23.
-- Decisions the product owner locked in Phase 0B.1 are tagged **(IA: CONFIRMED — IA-05)** and **(IA: CONFIRMED — IA-11)**.
+- Decisions the product owner locked are tagged **(IA: CONFIRMED — IA-nn)**: IA-05 and IA-11 in Phase 0B.1; IA-01, IA-02, IA-03, IA-04, IA-09, IA-10, IA-13, IA-15 and IA-16 in Phase 0C.1.
+- Flow-level behavior (how users move through these surfaces) is defined in `docs/core-ux-flows-v1.md`.
 - **PD alignment:** IA-11 is the IA expression of confirmed Product Definition decision **D-49** (Monitor-only Workspace, PD §11.4, v1.2). The PD holds the product intent; this document defines how it appears to users. IA-05 is consistent with PD §11.3 (client guest: read-only access to a workspace's reports and insights).
 
 ### 0.2 What "information architecture" covers here
@@ -214,7 +216,7 @@ The shell is what surrounds every screen. It answers: **Where am I? What can I g
 | **Workspace switcher** | Organization | Shows the current workspace (name, brand/market labels). Lists the user's workspaces with **attention indicators** and links to **All workspaces**. | Always shows the current workspace. The switching list and attention indicators appear only for users with access to more than one workspace. Client guests see no attention indicators; a guest granted more than one workspace can switch between them (IA-05). Monitor-only workspaces carry a "Monitor-only" label. |
 | **Primary navigation** | Workspace | Home · Inbox · Content & Ads · Insights · Reports | Always. Items a role cannot use are hidden, never shown disabled (§18). Client guests see only Insights and Reports (IA-05). The workspace mode never changes navigation (IA-11). |
 | **Source scope** | Workspace, persistent | All · Organic · Paid (with Mixed and Unknown included under All and selectable as filters) | Shown on Inbox, Content & Ads, Insights and Home. It persists while the user moves between them. |
-| **Search and command menu** | Current workspace | Jump to a destination; find conversations, content, topics, authors, saved replies; run commands ("Assign to me", "Open Settings › Moderation"). Keyboard-first. | Always. Workspace-scoped in the MVP (§23 IA-10). For client guests, search covers only insights, topics and reports, never conversations (IA-05). |
+| **Search and command menu** | Current workspace | Jump to a destination; find conversations, content, topics, authors, saved replies; run commands ("Assign to me", "Open Settings › Moderation"). Keyboard-first. | Always. Workspace-scoped in the MVP (IA: CONFIRMED — IA-10); switching workspaces is a navigation command, not a search. For client guests, search covers only insights, topics and reports, never conversations (IA-05). |
 | **Alerts** | User, across their workspaces | High-severity alerts (severe risk, unusual spikes, harmful content building up on active ads), assignments and escalations to me, connection failures. Each alert names its workspace. | Always, except for client guests (IA-05). Channels beyond in-app are open (PD OQ-17). |
 | **Settings entry** | Workspace and organization | One entry point to Settings (§17), showing only the areas the role can manage. | Always, except for client guests, who only have the Personal area in the account menu (IA-05). |
 | **Account menu** | User | Profile, interface language and locale, personal notification preferences, help, sign out. | Always. |
@@ -246,12 +248,22 @@ Every workspace runs in one of two modes. The mode is a property of the workspac
 **Rules for Monitor-only:**
 
 - **Communicated, not hidden.** A persistent indicator names the mode. Platform actions stay visible where they'd normally appear, marked unavailable with "This workspace is Monitor-only". Owners and Admins also see where to change the mode.
-- **Who can change it:** Owner and Admin, in Settings › Workspace › General (§17). Every change records who made it and when.
+- **Who can change it:** Owner and Admin, in Settings › Workspace › General (§17). Every change records who made it and when. When a workspace is created, an optional, lightweight choice "How will you use this workspace?" offers **Standard** (default) or **Monitor-only** (Phase 0C.1, UX-02).
 - **Switching to Monitor-only:** active auto-hide rules are suspended immediately. Past automatic hides stay visible as history, but can't be undone from the product while the mode is on.
-- **Switching back to Standard:** auto-hide rules return **paused**, and someone re-enables them explicitly, so automation never resumes silently. This is an IA recommendation to confirm in Phase 0C (§23 IA-16).
+- **Switching back to Standard (IA: CONFIRMED — IA-16):** every auto-hide rule returns **Paused**. Nothing resumes automatically. A permitted person re-enables each rule explicitly, and malicious-link and configured-pattern rules require a fresh preview before re-enabling.
 - **No composer.** Suggested replies and saved replies aren't offered in conversations, because nothing can be sent. Brand Context and the saved replies library stay editable in Settings, ready for a return to Standard.
 - **Native replies still count.** Replies the brand makes directly on the platform are still imported, so reply-needed status, response time and backlog stay meaningful.
 - **No new structure.** Same navigation, same Inbox views, same Settings. No Monitor-only-specific surfaces beyond the indicator and the explanations.
+
+### 4.4 Application entry (Phase 0C.1, UX-01)
+
+| User | Lands on |
+|---|---|
+| Access to one workspace | **Home** of that workspace |
+| Access to several workspaces (not a client guest) | **All workspaces** |
+| Client guest | **Reports › Summary** in their workspace. If no usable report exists yet: **Insights**, with a calm explanation that reporting becomes available once there is enough period data (IA-05) |
+
+**Home is the entry point when entering a workspace.** All workspaces is the application entry point for ordinary users with several workspaces. There is no personal start-page preference in the MVP. After entry, users navigate normally. Client guests never see All workspaces or attention indicators.
 
 ---
 
@@ -285,10 +297,10 @@ Shell (always): Search & commands · Alerts · Settings · Account
 | Aspect | Definition |
 |---|---|
 | Primary question | "What needs my attention now, and what changed since I last looked?" |
-| Primary personas | P1 owner-operator (main surface), P3 agency, P5 executive; everyone on entry |
+| Primary personas | P1 owner-operator (main surface), P3 agency, P5 executive; everyone on entering a workspace (§4.4) |
 | Main content | Attention summary, risks, what changed, opportunities, suggested next steps, operational health, coverage notices (§6) |
 | Actions started here | Jump into prioritized Inbox views; open an insight; accept, dismiss or open a recommendation; fix a connection; review automatic hides |
-| Why top-level | It is the entry point of the loop and the main surface for users who don't work an inbox all day. Without it, P1 has to interpret the Inbox and Insights separately. |
+| Why top-level | It is the entry point of each workspace and of the loop, and the main surface for users who don't work an inbox all day. Without it, P1 has to interpret the Inbox and Insights separately. |
 
 #### Inbox
 
@@ -308,7 +320,7 @@ Shell (always): Search & commands · Alerts · Settings · Account
 | Primary personas | P3 agency paid-media team, P2 social lead, P5 brand manager, P1 |
 | Main content | Posts, reels, videos and ads with their conversation profiles; campaign grouping where available (§9) |
 | Actions started here | Open a content profile; jump to its conversations in the Inbox; open related insights; compare organic and paid content |
-| Why top-level | It holds its own object (content) and answers a question the PD treats as central: which campaign, ad or post is driving conversation (PD §14.6), with paid as a first-class concern. Nesting it under Insights would hide the main paid-media entry point agencies need. |
+| Why top-level | It holds its own object (content) and answers a question the PD treats as central: which campaign, ad or post is driving conversation (PD §14.6), with paid as a first-class concern. Nesting it under Insights would hide the main paid-media entry point agencies need. The label **Content & Ads** is canonical for v1 (IA: CONFIRMED — IA-03). |
 
 #### Insights
 
@@ -328,7 +340,7 @@ Shell (always): Search & commands · Alerts · Settings · Account
 | Primary personas | P5 executive and agency client (main surface), P3 account manager, P2/P4 leads accountable for performance |
 | Main content | Period-bound snapshots: **Summary** (what changed, why, risks, recommendations, follow-ups) and **Performance** (volume, response time, backlog, unattended organic vs paid, moderation and automation activity over the period) (§12) |
 | Actions started here | Choose a period; open the underlying insight or view; share or export (format open — PD OQ-15) |
-| Why top-level | It serves a distinct need: a stable, retrospective, shareable account of a period, mostly for people who don't operate the product. It is the natural landing place for client guests and executives. It doesn't recompute intelligence; it assembles it (§12.2). See §23 IA-02 for the alternative of nesting it under Insights. |
+| Why top-level | It serves a distinct need: a stable, retrospective, shareable account of a period, mostly for people who don't operate the product. It is the natural landing place for client guests and executives. It doesn't recompute intelligence; it assembles it (§12.2). Top-level status confirmed (IA: CONFIRMED — IA-02). Delivery format remains open (PD OQ-15). |
 
 ### 5.3 Candidates that are not top-level, and where they live
 
@@ -429,7 +441,7 @@ Home answers, calmly and in this priority order, what a user needs to know on en
 **Rules:**
 - Home is always scoped to one workspace and follows the source scope (All / Organic / Paid).
 - Home never duplicates full lists. It summarizes, then links.
-- Analyst/Viewer roles see every block, read-only. Client guests have no Home in the MVP; they land on Reports › Summary (IA: CONFIRMED — IA-05). See §18.
+- Analyst/Viewer roles see every block, read-only (IA: CONFIRMED — IA-15). Operational actions stay unavailable according to permissions. Client guests have no Home in the MVP; they land on Reports › Summary (IA: CONFIRMED — IA-05). See §18.
 - In Monitor-only workspaces Home keeps every block. Needs attention still shows what needs a response, framed for review and escalation, because replies happen outside the product. Operational health shows automation as "Unavailable — this workspace is Monitor-only" (IA-11).
 - Exact thresholds ("waiting more than X hours", "significant") depend on PD OQ-16 and OQ-25.
 
@@ -446,7 +458,7 @@ Home answers, calmly and in this priority order, what a user needs to know on en
 - A conversation's **priority** is driven by its most important unhandled comment, and its "why it's here" reason names that comment.
 - A busy post or ad generates many conversations (one per top-level comment). Users can **group by content** to see them per post or ad.
 
-This mirrors how users think ("this person's comment and the replies to it") while keeping per-comment moderation precise. See §23 IA-01 for confirmation.
+This mirrors how users think ("this person's comment and the replies to it") while keeping per-comment moderation precise. One top-level comment thread is one conversation (IA: CONFIRMED — IA-01).
 
 ### 7.2 Default ordering
 
@@ -479,6 +491,7 @@ Inbox (current workspace · source scope: All | Organic | Paid)
 ├── Saved views ............. user-created (personal, or shared in workspace)
 │
 ├── Filters
+│   ├── Quick filter: Needs reply (reply needed or recommended) — not a separate view
 │   ├── Primary (always visible): Platform · Organic/Paid · Status · Assignee
 │   └── More filters: Account · Content · Campaign (where available) · Type
 │        · Topic · Risk · Response need · Sentiment · Language · Moderation state
@@ -493,8 +506,9 @@ Inbox (current workspace · source scope: All | Organic | Paid)
 
 | Concept | Values (user-facing) | Notes |
 |---|---|---|
-| **Status** | Open · Done | "Done" records a resolution: replied publicly, replied privately, no reply needed, moderated. Minimal by design. The final set is for Core UX Flows (§23 IA-04). |
-| **Escalated** | Flag on an open conversation | Visible in the Escalated view. Delivery to escalation recipients (P6) depends on PD OQ-17. |
+| **Status** | Open · Done (IA: CONFIRMED — IA-04) | "Done" records a resolution where applicable: replied publicly, replied privately, replied on platform, no reply needed, moderated, reviewed (Monitor-only), escalation closed. **No Waiting or Snoozed status in the MVP.** |
+| **Automatic status changes** | Auto-Done · Auto-reopen | Auto-Done after a successful brand reply when nothing else needs handling. Auto-Done ("Replied on platform") when a native brand reply is detected after the latest audience message and nothing else needs handling. Auto-reopen when a new audience comment or reply needs attention. Every automatic change is visible in the activity history and reversible where appropriate. |
+| **Escalated** | Flag on an Open conversation | Not a third status. Visible in the Escalated view. Delivery to recipients who aren't members (P6) depends on PD OQ-17. |
 | **Assignee** | A workspace member or nobody | Hidden in single-responder workspaces. |
 | **Priority** | Shown as a reason, not a score | "Why it's here" (§7.6). |
 | **Moderation state** | Visible · Hidden (by a person / by a rule) · Deleted · Author blocked | Per comment. Deleted comments stay in the activity history as a record. |
@@ -561,7 +575,7 @@ The Inbox keeps the same structure, views, filters, ordering and "Why it's here"
 - A persistent Inbox-level notice: "This workspace is Monitor-only. You can review, assign, escalate and add notes. Replying and moderating happen outside the product."
 - Platform actions in conversations are visible but unavailable (§8.4). Bulk platform actions (e.g. bulk hide) are unavailable. Bulk internal actions (assign, escalate, mark done) remain.
 - **Hidden automatically** shows past automatic hides as history only. No new entries appear, and Undo is unavailable while the mode is on.
-- **Done** resolutions are internal outcomes (e.g. reviewed, no reply needed, escalated). The final set belongs to IA-04.
+- **Done** resolutions are internal outcomes (e.g. reviewed, no reply needed, escalation closed), per the confirmed status model (IA-04, §7.4).
 - Replies the brand makes natively on the platform still appear in threads and still update reply-needed status.
 
 ### 7.9 Client guests and the Inbox (IA: CONFIRMED — IA-05)
@@ -610,7 +624,7 @@ In Monitor-only workspaces every platform action in these tiers (public reply, p
 
 ### 8.3 Private reply (one-shot)
 
-- **Shown** only where the platform officially supports it (PD: VALIDATE). Otherwise it is disabled with a reason, or omitted if it is never available for that content type.
+- **Available** only where the platform officially supports it (PD: VALIDATE). Otherwise it stays **discoverable but unavailable**, with the reason in outcome language and "Open on [platform]" where useful. It is never hidden because of a platform limit. Hiding is reserved for role limits (§18).
 - **Before sending**, the user sees the limitation in plain language: "This sends one private message. If they answer, the conversation continues in [Platform]'s own inbox, not here."
 - **After sending**, the record appears in the thread and the activity history, and the conversation can be marked done with resolution "Replied privately".
 - **There is no private thread view, no DM list, no DM status.** The product never shows incoming private messages (PD: CONFIRMED — C-03).
@@ -628,7 +642,8 @@ In Monitor-only workspaces every platform action in these tiers (public reply, p
 
 1. The role can't perform it, so it is hidden (§18).
 2. The workspace is Monitor-only, so it shows "This workspace is Monitor-only".
-3. The platform doesn't support it, so it shows the platform reason (e.g. "TikTok doesn't allow…").
+3. The platform doesn't support it, so it stays discoverable but unavailable, with the platform reason (e.g. "TikTok doesn't allow…").
+4. The connection has a temporary problem, so it is blocked with a recovery action (§18).
 
 ---
 
@@ -879,7 +894,8 @@ Moderation   (current workspace)
 ### 13.4 Safety boundaries made obvious
 
 - **Abuse, complaints, product problems, fraud accusations and objections never appear as auto-hide options.** There is no toggle to misconfigure (PD: CONFIRMED — C-01, C-02).
-- Keyword rules show a warning when a pattern overlaps protected meaning (e.g. "scam", "fraud", "estafa", "golpe"): matches with complaint or accusation signals go to Needs review, not hidden (PD: CONFIRMED — C-09).
+- Keyword rules show a warning when a pattern overlaps protected meaning (e.g. "scam", "fraud", "estafa", "golpe"). Creation is allowed, and the preview is required before activation. At runtime complaint protection always wins: matches with complaint or accusation signals go to Needs review, never hidden (PD: CONFIRMED — C-09; Phase 0C.1, UX-10).
+- **Human bulk hide** (a person's action, not automation) is offered only for clearly homogeneous sets. Protected categories (legitimate complaints, product/service problems, fraud/scam accusations against the brand, commercial objections) are **excluded**, and the user sees how many were excluded and why. Individual, deliberate human moderation of a protected comment remains possible. Bulk delete and bulk block are not in the MVP (Phase 0C.1, UX-06). Bulk hides are attributed to the person and never appear as automatic hides.
 - **Pause all automation** is one action, reachable from Settings › Moderation and from the header of Inbox › Hidden automatically.
 - This is **not** a rules engine: no custom conditions, chains, schedules, or actions other than hide (PD §10, §13).
 
@@ -895,7 +911,7 @@ Moderation   (current workspace)
 - **Detection continues.** Spam, bots, malicious links, scam content, abuse and risks are still labeled, prioritized and alerted on. The workspace still protects through visibility and escalation.
 - Rules can still be read, and their preview against history viewed, so the team can see and cite what automation *would* do. They can't be switched on.
 - **Always protected** still applies and is still explained.
-- When the workspace returns to Standard, rules come back paused (§4.3; IA-16).
+- When the workspace returns to Standard, every rule comes back **Paused** and must be re-enabled explicitly, with a fresh preview for malicious-link and pattern rules (IA: CONFIRMED — IA-16; §4.3).
 
 ---
 
@@ -959,7 +975,7 @@ Each section shows **when it was last updated and by whom**, so users can judge 
 
 Two elements only:
 
-1. **Workspace switcher with attention indicators** (shell). Each workspace in the list shows whether it needs attention, so switching is informed.
+1. **Workspace switcher with attention indicators** (shell). Each workspace in the list shows whether it needs attention, so switching is informed. For users with several workspaces, All workspaces is also the application entry point (§4.4).
 2. **All workspaces** (organization level). A single list of the user's workspaces answering four questions:
    - Which workspace or client **needs attention**?
    - Which has **urgent interactions**?
@@ -990,7 +1006,7 @@ Organization
 
 - No aggregated topics, VoC, insights, trends or reports across workspaces.
 - No cross-workspace inbox: work happens inside a workspace.
-- No cross-workspace search in the MVP (§23 IA-10).
+- No cross-workspace search in the MVP (IA: CONFIRMED — IA-10).
 - Clicking any signal **enters the workspace**. Investigation always happens inside the workspace boundary.
 
 ### 16.4 Same mechanism for companies
@@ -1021,6 +1037,8 @@ Settings
 │   │                           · business hours · main language
 │   │                           · operating mode: Standard / Monitor-only
 │   │                             (Owner and Admin only — IA-11)
+│   │                           · default escalation contact (optional; Owner,
+│   │                             Admin, Manager — Phase 0C.1, UX-12)
 │   ├── Connections ........... connected accounts (Facebook, Instagram, TikTok,
 │   │                           ad accounts) · health · coverage · what's available
 │   │                           per account · reconnect · who connected it and when
@@ -1073,11 +1091,12 @@ Settings › Connections is the canonical place for honest coverage (PD: CONFIRM
 
 The architecture is identical for all roles. Roles change **what is visible and which actions appear** (PD §11.3, PROPOSED role set).
 
-Three rules decide whether an action appears. They apply in this order:
+Four rules decide whether an action appears. They apply in this order:
 
 1. **Role doesn't allow it → hidden.** Permissions are about who the person is. Showing actions they can never use only adds noise.
 2. **Workspace is Monitor-only → visible but unavailable, explained** ("This workspace is Monitor-only"). Owners and Admins also see how to change it. The mode is a workspace decision that users need to understand (IA: CONFIRMED — IA-11).
-3. **Platform doesn't support it → visible but unavailable, explained** in outcome terms (capability honesty; PD: CONFIRMED — C-07).
+3. **Platform doesn't support it (for this account or content type) → visible but unavailable, explained** in outcome terms, with "Open on [platform]" where useful (capability honesty; PD: CONFIRMED — C-07). A platform limit is never shown by hiding the action. The action may sit in a secondary place, but the capability and its reason stay discoverable.
+4. **Temporary connection problem → blocked with a recovery action** (reconnect for roles that manage Connections, "notify an admin" for others). Drafts and selections are preserved.
 
 The rules stay distinct: a permission never shows up as a platform limitation, a platform limitation never shows up as a permission problem, and the workspace mode is always named as the mode. Read-only roles see the same objects without action controls.
 
@@ -1092,7 +1111,7 @@ The rules stay distinct: a permission never shows up as a platform limitation, a
 | Content & Ads | ✓ | ✓ | ✓ | ✓ | ✓ (read) | — |
 | Insights: view (incl. VoC, topics) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (read; representative examples only) |
 | Recommendations: view | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (read) |
-| Recommendations: accept, dismiss, mark done | ✓ | ✓ | ✓ | Optional (§23 IA-09) | — | — |
+| Recommendations: accept, dismiss, mark done (IA-09) | ✓ | ✓ | ✓ | — (view only) | — | — |
 | Reports | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (read) |
 | Settings › Moderation | ✓ | ✓ | ✓ | — | — | — |
 | Settings › Brand Context, Saved replies (manage) | ✓ | ✓ | ✓ | Per PD OQ-23 | — | — |
@@ -1104,6 +1123,7 @@ The rules stay distinct: a permission never shows up as a platform limitation, a
 | Search | ✓ | ✓ | ✓ | ✓ | ✓ | Insights, topics and reports only |
 | Alerts | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Change workspace operating mode | ✓ | ✓ | — | — | — | — |
+| Default escalation contact | ✓ | ✓ | ✓ | — | — | — |
 
 **Monitor-only applies on top of roles** (IA: CONFIRMED — IA-11). In a Monitor-only workspace, the platform-action rows (platform actions; delete, block; undo automatic hides) become *visible but unavailable* for every role that would otherwise have them. All other rows are unchanged. Roles without those permissions still don't see them at all (rule 1).
 
@@ -1211,7 +1231,7 @@ Information requirements only. Each state must say **what is happening, why, wha
 | Internal / model term (PD) | User-facing label | Notes and risks |
 |---|---|---|
 | Organization | **Organization** | Rarely seen. Mostly in Settings and billing. |
-| Workspace | **Workspace** | Agencies name workspaces after clients. Don't relabel the concept per customer (§23 IA-13). |
+| Workspace | **Workspace** | Agencies name workspaces after clients. Customers can't rename the concept (to Client, Account, Brand…). They name individual workspaces as they like (IA: CONFIRMED — IA-13). |
 | Brand | **Brand** | A label, not a level. Avoid implying hierarchy ("under Brand"). |
 | Market | **Market** | Optional label. Only shown when used. |
 | Connected Account / Social Asset | **Connected account**; area: **Connections** | Never "asset", "integration", "token" or "app". |
@@ -1276,26 +1296,26 @@ The UI ships multilingual (PD §16). Each canonical term above needs one fixed t
 
 ## 23. Open IA decisions
 
-Only issues that the Product Definition doesn't settle. Locked product decisions are not reopened. **IA-05 and IA-11 were resolved by the product owner in Phase 0B.1.** The other decisions remain open as recommendations and don't block Phase 0C.
+Only issues that the Product Definition doesn't settle. Locked product decisions are not reopened. **IA-05 and IA-11 were resolved in Phase 0B.1. IA-01, IA-02, IA-03, IA-04, IA-09, IA-10, IA-13, IA-15 and IA-16 were resolved in Phase 0C.1.** IA-06, IA-07, IA-08, IA-12 and IA-14 remain open as recommendations and don't block wireframing.
 
 | ID | Question | Why it matters | Recommendation | Resolve in |
 |---|---|---|---|---|
-| IA-01 | Is the Inbox work item the **conversation** (thread) or the individual **comment**? | Determines status, assignment, counts and "done" semantics. | Conversation as work item, with per-comment labels and moderation state (§7.1). | Phase 0C (Core UX Flows) |
-| IA-02 | Is **Reports** a top-level destination, or a view inside Insights? | Navigation size vs a clear executive landing place. | Keep Reports top-level for executives and client guests, limited to Summary and Performance. Revisit if delivery (PD OQ-15) moves most consumption outside the app. | Phase 0C, after PD OQ-15 |
-| IA-03 | Navigation label: **"Content & Ads"** or **"Content"**? | Paid visibility vs label brevity. | "Content & Ads", to keep paid explicit for SMBs and agencies. Test in UX research. | Phase 0C / UX research |
-| IA-04 | Final **workflow status** set (e.g. Open/Done only, or also Waiting/Snoozed). | Simplicity vs team needs. | Open/Done plus resolution and an Escalated flag for the MVP. | Phase 0C |
+| IA-01 | Is the Inbox work item the **conversation** (thread) or the individual **comment**? | Determines status, assignment, counts and "done" semantics. | **RESOLVED (Phase 0C.1).** The conversation is the work item. Workflow state belongs to it; labels and moderation state may exist per comment or reply. One top-level comment thread is one conversation. | Resolved |
+| IA-02 | Is **Reports** a top-level destination, or a view inside Insights? | Navigation size vs a clear executive landing place. | **RESOLVED (Phase 0C.1).** Reports stays top-level in the MVP, narrowly scoped to retrospective, shareable reporting, with no duplication of Insights. Delivery format stays open (PD OQ-15). | Resolved |
+| IA-03 | Navigation label: **"Content & Ads"** or **"Content"**? | Paid visibility vs label brevity. | **RESOLVED (Phase 0C.1).** "Content & Ads" is the canonical v1 label. It may still be tested in future UX/content research. | Resolved |
+| IA-04 | Final **workflow status** set | Simplicity vs team needs. | **RESOLVED (Phase 0C.1).** Open / Done, with a resolution where applicable. Escalated is a flag on Open conversations. No Waiting or Snoozed. Auto-Done after a successful brand reply or a detected native brand reply, auto-reopen on new audience messages needing attention. Every automatic change is visible and reversible where appropriate (§7.4). | Resolved |
 | IA-05 | **Client guest** visibility | Agency client transparency vs privacy and noise. Affects evidence drill-down. | **RESOLVED (Phase 0B.1).** Guests access Insights (including Voice of Customer and read-only Recommendations) and Reports, with representative quoted examples only. No Home, Inbox, Content & Ads, conversation lists or histories, actions, Settings or organization-level views. Extra read-only grants are a future option. | Resolved |
 | IA-06 | Where does **topic management** (rename, merge, ignore) live? Depends on PD OQ-10. | Topic hygiene drives insight quality. | On topic pages in Insights (contextual), not in Settings. | After PD OQ-10 |
-| IA-07 | Are **Brand labels** applied only to workspaces, or also to connected accounts inside a multi-brand workspace? Related to PD OQ-24. | Multi-brand workspaces need brand-specific Brand Context and filtering. | Allow brand labels on connected accounts in multi-brand workspaces. Content inherits the brand for filtering and Brand Context selection. | Phase 0C / data architecture |
+| IA-07 | Are **Brand labels** applied only to workspaces, or also to connected accounts inside a multi-brand workspace? Related to PD OQ-24. | Multi-brand workspaces need brand-specific Brand Context and filtering. | Allow brand labels on connected accounts in multi-brand workspaces. Content inherits the brand for filtering and Brand Context selection. | Data-architecture phase (with PD OQ-24) |
 | IA-08 | Saved replies and Brand Context: workspace-only, or also organization-level shared libraries? | Multi-workspace companies may want shared answers. | Workspace-only in the MVP (consistent with C-11). Shared libraries are a future option. | Later phase |
-| IA-09 | Can **Responders** accept, dismiss or mark recommendations done? | Ownership of business actions vs operational roles. | Managers and above by default. Configurable later. | Phase 0C |
-| IA-10 | **Search scope**: current workspace only, or across workspaces? | Cross-workspace search edges toward portfolio features. | Current workspace only in the MVP. | Phase 0C |
+| IA-09 | Can **Responders** accept, dismiss or mark recommendations done? | Ownership of business actions vs operational roles. | **RESOLVED (Phase 0C.1).** Owner, Admin and Manager accept, dismiss and mark done. Responders view only. No responder-specific recommendation state, signal or workflow. Analyst/Viewer and client guests are read-only. | Resolved |
+| IA-10 | **Search scope**: current workspace only, or across workspaces? | Cross-workspace search edges toward portfolio features. | **RESOLVED (Phase 0C.1).** Current workspace only. Switching workspaces is a navigation command. | Resolved |
 | IA-11 | **Monitor-only workspace** in the MVP? | Agency protection use case without CM scope. | **RESOLVED (Phase 0B.1); aligned with PD D-49 (Phase 0B.2).** Ships in the MVP as a workspace operating mode (§4.3). All platform actions and platform-changing automation are unavailable and explained. Internal workflow and intelligence are unchanged. Owner and Admin change it. No new product, Inbox or navigation. | Resolved |
 | IA-12 | Do content profiles show any **media metrics** (spend, reach)? | Helps relate conversation to distribution; risks ad-management drift and depends on APIs. | No media metrics in the MVP. Conversation metrics only. Revisit after API validation. | After API validation (PD OQ-18) |
-| IA-13 | Can organizations rename "Workspace" (e.g. to "Client")? | Agency familiarity vs consistency and support burden. | No. Keep one term. | Phase 0C |
+| IA-13 | Can organizations rename "Workspace" (e.g. to "Client")? | Agency familiarity vs consistency and support burden. | **RESOLVED (Phase 0C.1).** No. "Workspace" is the canonical term. Individual workspaces can be named after clients or brands. | Resolved |
 | IA-14 | **Alerts** surface scope and channels. Depends on PD OQ-17. | Protection value depends on timely alerts. | In-app alerts center (shell) in the MVP. Channels decided with PD OQ-17. | With PD OQ-17 |
-| IA-15 | Which **Home** blocks does the Analyst/Viewer role see? (Client guests have no Home — IA-05.) | Avoid showing operational items they can't act on. | All blocks, read-only. | Phase 0C |
-| IA-16 | When a workspace leaves Monitor-only, do auto-hide rules come back **paused** or in their previous state? | Automation must never resume silently (IA-11). | Paused; someone re-enables them explicitly. | Phase 0C |
+| IA-15 | Which **Home** blocks does the Analyst/Viewer role see? | Avoid showing operational items they can't act on. | **RESOLVED (Phase 0C.1).** All Home blocks, read-only. Operational actions remain unavailable per permissions. (Client guests have no Home — IA-05.) | Resolved |
+| IA-16 | When a workspace leaves Monitor-only, do auto-hide rules come back **paused** or in their previous state? | Automation must never resume silently (IA-11). | **RESOLVED (Phase 0C.1).** Every rule returns **Paused**. Nothing resumes automatically. Each rule is re-enabled explicitly by a permitted person. Malicious-link and configured-pattern rules require a fresh preview first. | Resolved |
 
 Product-level open questions that affect the IA but aren't IA decisions (PD OQ-14, OQ-15, OQ-16, OQ-17, OQ-23, OQ-24, OQ-25) stay with the Product Definition. This document reserves places for their outcomes without resolving them.
 
@@ -1317,10 +1337,10 @@ Before moving to Core UX Flows (Phase 0C), all of the following must be true:
 10. **Evidence reachable:** every aggregate (insight, topic, VoC item, content metric) reaches representative examples in one step and, for roles with Inbox access, the full conversation list in two. Client guests stop at representative examples (IA-05).
 11. **Capability honesty:** every action or data type that depends on platform capability has a defined unavailable state in outcome language.
 12. **Progressive disclosure defined:** list, detail and on-demand layers are specified for the Inbox and conversation detail.
-13. **Role adaptation defined:** the visibility matrix covers all six PD roles, with the three visibility rules (role hides; workspace mode and platform limits explain).
+13. **Role adaptation defined:** the visibility matrix covers all six PD roles, with the four visibility rules (role hides; workspace mode and platform limits explain; connection problems offer recovery).
 14. **States defined:** information requirements exist for every empty, loading and partial state in §20.
 15. **Vocabulary fixed:** canonical user-facing terms are defined and internal terms ("interaction", "source", "policy", "classification", "tracked action") are kept out of default UI.
-16. **Open IA decisions** in §23 have recommendations and owners. IA-05 and IA-11 are resolved (Phase 0B.1). None of the remaining decisions blocks Phase 0C.
+16. **Open IA decisions** in §23 have recommendations and owners. IA-05 and IA-11 are resolved (Phase 0B.1). IA-01, IA-02, IA-03, IA-04, IA-09, IA-10, IA-13, IA-15 and IA-16 are resolved (Phase 0C.1). The remaining open decisions don't block wireframing.
 17. **No technical architecture:** the document contains no stack, schema, API design or implementation choices.
 18. **Client guest bounded:** guests reach only Insights and Reports, with representative examples, and no surface, search result, shared report or link exposes the Inbox, conversation histories or Content & Ads to them (IA-05).
 19. **Monitor-only complete:** in a Monitor-only workspace no product action or automation changes anything on a platform. Internal workflow and intelligence work unchanged, the mode is visibly communicated, and no new navigation or Inbox exists for it (IA-11).
@@ -1372,6 +1392,8 @@ Before moving to Core UX Flows (Phase 0C), all of the following must be true:
 | Search and commands | Shell | — | P2, all | Speed and keyboard-first |
 | Workspace operating mode (Standard / Monitor-only) | Settings › Workspace › General | Shell mode indicator; switcher and All workspaces labels; unavailable-action explanations; Moderation shows rules as suspended | Owner, Admin; P3 agency | Changes how the whole workspace behaves (IA-11) |
 | Client guest access | Role in Members & access; guest sees Insights + Reports | Shared reports (delivery open, PD OQ-15) | P5 agency client | Constrained read-only role (IA-05) |
+| Application entry | Home (one workspace) · All workspaces (several) · Reports › Summary or Insights (client guest) | — | All | Defined in §4.4 (UX-01) |
+| Default escalation contact | Settings › Workspace › General | Escalate action pre-selects it | Manager, Admin | Optional; never blocks escalation (UX-12) |
 
 ---
 
