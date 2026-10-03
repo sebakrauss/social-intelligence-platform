@@ -5,7 +5,7 @@
 | Document | Product Definition v1 |
 | Repository | `social-intelligence-platform` |
 | Phase | 0A — Product Definition |
-| Version | 1.1 (Phase 0A.1 decision lock) |
+| Version | 1.2 (Phase 0B.2 alignment: Monitor-only Workspace confirmed) |
 | Date | 2026-10-03 |
 | Status | **Approved** by the product owner on 2026-10-03. This is the source of truth for product intent. |
 | Scope | Product only. This document does not select frameworks, databases, infrastructure or vendors, and it does not define a data schema. |
@@ -18,6 +18,7 @@
 | 2026-10-03 | Phase 0A: product owner approved Product Definition v1.0. |
 | 2026-10-03 | Phase 0A.1 (initial lock): C-01, C-02, C-05 and C-09 confirmed. |
 | 2026-10-03 | Phase 0A.1 (complete decision lock): **all of C-01 to C-12 resolved** (Appendix B; D-34 to D-45), plus three additional MVP decisions: **Saved Replies** (D-46), lightweight **Brand Context** (D-47) and **workspace-owned social connections** (D-48). These decisions are propagated through the whole document. Items still tagged [PROPOSED] are recommendations awaiting confirmation. Items tagged [VALIDATE] are not validated. |
+| 2026-10-03 | Phase 0B.1 / 0B.2 (cross-document alignment): the product owner confirmed that **Monitor-only Workspace ships in the MVP** (**D-49**). The decision came out of the Information Architecture review (IA-11 in `docs/information-architecture-v1.md`). Product Definition v1.2 records it as product intent. No other decision changed, and no [VALIDATE] item changed status. |
 
 ---
 
@@ -29,7 +30,7 @@ Every substantive statement is tagged so future phases can tell commitments apar
 
 | Tag | Meaning | Who can change it |
 |---|---|---|
-| **[CONFIRMED]** | The product owner decided this in the Phase 0A brief or the Phase 0A.1 decision lock. | Only the product owner, through an explicit decision. |
+| **[CONFIRMED]** | The product owner decided this in the Phase 0A brief, the Phase 0A.1 decision lock, or a later decision recorded in the approval record (Phase 0B.1 / 0B.2). | Only the product owner, through an explicit decision. |
 | **[PROPOSED]** | A recommendation that follows from confirmed decisions but was not stated in the brief. The product owner must confirm it. | Product owner review. |
 | **[HYPOTHESIS]** | A future direction or belief we expect to be true but have not tested. It is not a commitment. | Validation and research. |
 | **[VALIDATE]** | Depends on platform, API, legal or commercial capabilities that need technical or legal validation before we promise them to customers. | Technical and legal validation phases. |
@@ -217,6 +218,7 @@ Format: *When [situation], I want to [motivation], so I can [outcome].*
 | UC-15 | **Cross-workspace attention overview.** See which workspace or client needs attention, has urgent interactions, has reputation risk, or has a growing backlog. | Tenancy / Agency | **[CONFIRMED — C-04]** minimal overview in the MVP; full aggregated cross-client intelligence and reporting is future |
 | UC-16 | **Use saved replies.** Insert a reusable, approved response to a repetitive question, edit it if needed, and send it. | Operations | **[CONFIRMED — D-46]** |
 | UC-17 | **Maintain brand context.** Keep the verified facts, FAQs, contact channels, policies and tone guidance that AI reply suggestions may use. | Operations / AI | **[CONFIRMED — D-47]** |
+| UC-18 | **Monitor without acting.** Run a workspace in Monitor-only mode to get visibility, protection, intelligence and internal workflow when community management or platform action is outside the team's scope. | Protection / Tenancy | **[CONFIRMED — D-49]** |
 
 ---
 
@@ -317,6 +319,8 @@ The brief describes `source_type = paid` as an attribute of the interaction. In 
 
 **Added by the Phase 0A.1 decision lock [CONFIRMED]:** Saved Replies (D-46) · lightweight Brand Context for AI reply suggestions (D-47) · workspace-owned social connections (D-48) · human-triggered, one-shot private reply where supported (C-03) · minimal cross-workspace attention overview (C-04) · lightweight action follow-up (C-10).
 
+**Added by the Phase 0B.1 / 0B.2 alignment [CONFIRMED]:** Monitor-only Workspace operating mode (D-49).
+
 ### 9.2 MVP capability areas
 
 #### A. Connection and onboarding
@@ -357,6 +361,7 @@ The brief describes `source_type = paid` as an attribute of the interaction. In 
 - **[CONFIRMED — C-01]** Insults and abusive language are **flagged for human review**. In the MVP they are never auto-hidden, whether or not they also carry a complaint. The brief's "configurable policy" for abuse is limited in the MVP to review handling (for example priority and alerting), not automatic hiding **[PROPOSED interpretation]**. Offering opt-in auto-hide for pure abuse is a future decision (§18.3).
 - **[CONFIRMED — C-01, C-02, C-09] Complaint-protection guard.** No automation can hide an interaction that carries a legitimate complaint, a product or service problem, a fraud or scam accusation against the brand, or a commercial objection. This is not configurable. Human moderation of such interactions remains possible.
 - **[CONFIRMED]** The complete MVP auto-hide scope is therefore: obvious spam, obvious bots, malicious links and explicit configured patterns. Each is opt-in and hide-only, and the guard applies to all of them.
+- **[CONFIRMED — D-49]** In a Monitor-only workspace no automation that changes the platform runs at all.
 - **[PROPOSED]** Every automated action is reversible, visible in an automation activity log, and attributed to the policy that triggered it.
 - **[PROPOSED]** Before enabling a policy, the customer sees a preview of what it would have done on their imported history ("this would have hidden 142 interactions in the last 30 days, see them").
 
@@ -380,6 +385,7 @@ The brief describes `source_type = paid` as an attribute of the interaction. In 
 - **[CONFIRMED]** Multi-workspace model (§11). The workspace is the primary operational and access boundary; Brand and Market are grouping and context dimensions **[CONFIRMED — C-11]**.
 - **[CONFIRMED — C-04]** Fast workspace switching and a **minimal cross-workspace attention overview** answering: which workspace or client needs attention, which has urgent interactions, which has reputation risk, which has a growing backlog. Full aggregated cross-client intelligence and reporting is **not** in the MVP.
 - **[CONFIRMED — D-48]** Social connections are workspace resources governed by workspace permissions.
+- **[CONFIRMED — D-49]** Each workspace runs either in its default mode or in **Monitor-only** mode (§11.4).
 - **[PROPOSED]** A small set of default roles, with permissions grouped by capability (view, respond, moderate, destructive actions, automation, administration).
 
 #### L. Multilingual readiness
@@ -476,9 +482,14 @@ A small default role set, configurable later:
 
 **Permission groups:** view · respond · moderate (reversible) · destructive (delete/block) · automation policies · Saved Replies and Brand Context · connections · members · billing.
 
-### 11.4 Agency-specific operating modes [PROPOSED unless marked CONFIRMED]
+### 11.4 Workspace operating modes and agency views [PROPOSED unless marked CONFIRMED]
 
-- **Monitor-only workspaces.** For agencies protecting paid media when community management is outside their scope: full visibility, intelligence and alerts, with platform actions disabled by default. This directly serves the confirmed agency protection need.
+- **Monitor-only workspaces [CONFIRMED — D-49].** A workspace operating mode for agencies or teams that need visibility, protection, intelligence and internal workflow while community management or direct platform action is outside their scope. It directly serves the confirmed agency protection need, and any workspace can use it, not only agencies.
+  - **Disabled while the mode is on:** every platform-mutating action (public reply, private reply, hide, unhide, delete, block) and all automation that changes state on Facebook, Instagram or TikTok, including automatic hiding.
+  - **Still available:** viewing conversations, classification and classification review, priority and risk detection, assignment, internal workflow status, notes, escalation, Content & Ads intelligence, Insights, Voice of Customer, Recommendations, Reports, Alerts and the minimal cross-workspace attention indicators.
+  - The workspace must clearly communicate that it is Monitor-only.
+  - It is the same product and the same workspace architecture: no separate Agency product, Inbox or navigation.
+  - Exact UI behavior is defined in the Information Architecture (IA-11). Monitor-only being confirmed doesn't make any platform action technically available; those remain [VALIDATE].
 - **Client-level views** are the default working context. In the MVP, the portfolio level is a **minimal cross-workspace attention overview** (which client needs attention, has urgent interactions, has reputation risk, has a growing backlog) plus fast switching **[CONFIRMED — C-04]**. Full aggregated cross-client intelligence and reporting is future scope.
 
 ### 11.5 Business-specific considerations [PROPOSED]
@@ -945,7 +956,7 @@ Targets marked **[PROPOSED]** are starting points to calibrate during later phas
 
 ## Appendix A — Decision register
 
-Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 product-owner decision lock (2026-10-03).
+Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 product-owner decision lock (2026-10-03); **0B.1 / 0B.2** = product-owner decision confirmed during Information Architecture review and aligned into this document (2026-10-03).
 
 | ID | Decision | Source | Where captured |
 |---|---|---|---|
@@ -981,7 +992,7 @@ Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 pr
 | D-30 | Premium, calm, very clear, fast UX following the listed principle references (not copies). | 0A §13 | §15 |
 | D-31 | CommentGuard is a functional benchmark, not a UX benchmark. Do not clone it. | 0A §14 | §3.2, §15.4 |
 | D-32 | Defensibility: conversation → context → understanding → action → measurable learning. | 0A §15 | §3 |
-| D-33 | MVP IN and OUT boundaries as listed in brief §17, extended by the Phase 0A.1 decisions. | 0A §17, 0A.1 | §9.1, §10.1 |
+| D-33 | MVP IN and OUT boundaries as listed in brief §17, extended by the Phase 0A.1 decisions and D-49. | 0A §17, 0A.1, 0B.1 / 0B.2 | §9.1, §10.1 |
 | D-34 | **C-01.** The complaint-protection guard always takes precedence over abuse handling. Abuse and insults, including pure abuse, are not auto-hidden in the MVP; default is flag for human review. Pure-abuse auto-hide is a future decision. | 0A.1 | §9.2-F, §10.1, §12.3, §13.3, §18.3 |
 | D-35 | **C-02.** Legitimate complaints, product/service problems, fraud accusations against the brand and commercial objections can never be auto-hidden in the MVP. Not configurable. Human moderation remains possible. | 0A.1 | §9.2-F, §10.1, §12.3, §12.4, §13.3, §19.2 |
 | D-36 | **C-03.** Private reply is in the MVP where officially supported: human-triggered, one-shot outbound, recorded in interaction history, never sent by AI. Follow-up continues in the native platform inbox, and the UI says so. | 0A.1 | UC-04, §9.2-D, §10.1, §13.3, §15.5 |
@@ -997,6 +1008,7 @@ Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 pr
 | D-46 | **Saved Replies** are an MVP capability: lightweight, reusable, approved responses that complement AI suggestions. Not a macro or workflow system. | 0A.1 | UC-16, §8.1, §9.2-E, §10.1, §14.5 |
 | D-47 | **Brand Context** is an MVP capability: lightweight verified context per workspace/brand that AI reply suggestions may use. Suggestions rely only on verified information and never fabricate missing facts. | 0A.1 | UC-17, §8.1, §9.2-E, §13.3, §13.4 |
 | D-48 | **Social connections are workspace-owned.** A person authorizes; the connection is a workspace resource governed by workspace permissions. Token, authorization and security implementation goes to technical architecture. | 0A.1 | UC-13, §8.1, §9.2-A, §9.2-K, §11.6 |
+| D-49 | **Monitor-only Workspace** ships in the MVP as a workspace operating mode. Platform-mutating actions and platform-changing automation are disabled. Visibility, intelligence and internal workflow remain available. Same product and same workspace architecture: no separate Agency product, Inbox or navigation. | 0B.1 / 0B.2 | UC-18, §9.1, §9.2-F, §9.2-K, §11.4 |
 
 ---
 
@@ -1100,6 +1112,7 @@ All twelve items raised in Phase 0A were **resolved by the product owner on 2026
 | Saved Reply | A reusable, approved response a human can insert, edit and send. Not a macro. |
 | Brand Context | Lightweight verified information (facts, FAQs, contact channels, tone, policies) that AI reply suggestions may use. |
 | Attention overview | The MVP cross-workspace view showing which workspace needs attention, has urgent interactions, has reputation risk or has a growing backlog. |
+| Monitor-only workspace | A workspace operating mode where nothing in the product changes anything on the social platforms (no replies, moderation or platform-changing automation), while visibility, intelligence and internal workflow remain available (D-49). |
 | Insight | An evidence-backed observation about a pattern, with scope, change and likely driver. |
 | Recommendation | A suggested business action derived from an insight. |
 | Tracked Action | A business action recorded as taken, used for follow-up measurement. |
