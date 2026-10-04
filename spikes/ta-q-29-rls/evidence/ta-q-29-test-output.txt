@@ -1,0 +1,79 @@
+TA-Q-29 spike run — 2026-10-03T23:36:15.430Z
+PostgreSQL 17.10 on x86_64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit
+node v22.23.2
+exit code: 0
+
+▶ R01 — server-verified identity maps to database execution context
+  ✔ valid token => auth.uid(), role and workspace context set inside the transaction (7.620625ms)
+  ✔ tokens failing verification never reach the database (foreign signing key, expired, wrong audience, non-allowlisted role) (1.686458ms)
+✔ R01 — server-verified identity maps to database execution context (15.711083ms)
+▶ R02/R03 — context is transaction-local and disappears after commit or rollback (same pooled connection)
+  ✔ commit: context gone on the very same backend (1.693292ms)
+  ✔ rollback (error inside scope): context gone on the same backend (1.101084ms)
+✔ R02/R03 — context is transaction-local and disappears after commit or rollback (same pooled connection) (2.872583ms)
+▶ R04 — pooled connection reuse cannot inherit another tenant context
+  ✔ user scope: A1 -> B1 -> no context on ONE backend (4.213459ms)
+  ✔ worker scope: A1 -> B1 -> no context on ONE backend (8.226917ms)
+  ✔ stress: 400 interleaved user/worker transactions across tenants on 4-connection pools never see foreign rows (104.944125ms)
+✔ R04 — pooled connection reuse cannot inherit another tenant context (117.587792ms)
+▶ R05 — missing workspace context returns zero tenant rows (fail-closed)
+  ✔ user role + valid claims but no bound workspace: zero rows on every tenant table; inserts rejected (3.020916ms)
+  ✔ worker role without bound workspace: zero rows; inserts rejected; binding NULL rejected (1.261875ms)
+✔ R05 — missing workspace context returns zero tenant rows (fail-closed) (4.362917ms)
+▶ R06 — Workspace A cannot read Workspace B (incl. fabricated and cross-organization context)
+  ✔ explicit filters and ids for another workspace return nothing (1.207625ms)
+  ✔ member of A1 and A2, bound to A1: sees only A1 (0.617375ms)
+  ✔ fabricated / foreign context: user binds a workspace they do not belong to (same org, other org, random id) (1.96275ms)
+  ✔ client guest sees guest projections only; never operational rows or attention signals (1.028416ms)
+  ✔ attention signals (organization-level page) return only workspaces with a non-guest membership (0.950708ms)
+✔ R06 — Workspace A cannot read Workspace B (incl. fabricated and cross-organization context) (5.860958ms)
+▶ R07 — Workspace A cannot modify Workspace B
+  ✔ update/delete of B rows affect 0 rows; inserting or moving rows into B is rejected; oracle confirms B unchanged (3.233083ms)
+✔ R07 — Workspace A cannot modify Workspace B (3.262333ms)
+▶ R08 — cross-workspace references fail and do not reveal existence
+  ✔ referencing a B1 conversation from A1 fails exactly like referencing a non-existent one (2.320666ms)
+✔ R08 — cross-workspace references fail and do not reveal existence (2.355041ms)
+▶ R09/R10 — restricted worker role obeys RLS and cannot escape its workspace
+  ✔ worker bound to A1 sees exactly A1 rows (oracle: table holds all workspaces) (0.651042ms)
+  ✔ worker scheduled for A1 querying B1 gets nothing (0.451416ms)
+  ✔ re-binding inside the transaction is refused (0.444917ms)
+  ✔ raw set_config to switch workspace invalidates the context (fails closed, zero rows) (0.532792ms)
+  ✔ replaying a seal captured from an earlier transaction (stale context) is rejected (0.64625ms)
+  ✔ session-level (non-local) context written by buggy code persists on the connection but is ignored (0.750125ms)
+  ✔ worker cannot assume the user role, the system role or service_role (0.732625ms)
+✔ R09/R10 — restricted worker role obeys RLS and cannot escape its workspace (4.3025ms)
+▶ R11 — system role reaches only explicit system tables
+  ✔ reads system metadata; tenant tables and tenant context functions are denied (4.306209ms)
+✔ R11 — system role reaches only explicit system tables (4.340958ms)
+▶ R12 — runtime needs no service-role or RLS-bypassing credential
+  ✔ runtime login roles are not superuser, cannot bypass RLS, do not inherit, and are not members of service_role or the owner (0.825167ms)
+  ✔ web runtime cannot escalate to service_role, the worker role, the system role or the owner (0.692417ms)
+✔ R12 — runtime needs no service-role or RLS-bypassing credential (1.557166ms)
+▶ R13 — direct Drizzle access cannot silently bypass RLS (fail-closed)
+  ✔ queries without any scope helper are rejected with permission denied for every runtime pool (8.718583ms)
+  ✔ even a session-level SET ROLE left behind by buggy code yields zero rows, not foreign data (2.882125ms)
+  ✔ read-only transactions can bind context too (no write needed) (1.078625ms)
+✔ R13 — direct Drizzle access cannot silently bypass RLS (fail-closed) (12.738709ms)
+OBSERVED REJECTIONS:
+  42501 new row violates row-level security policy for table "conversations"
+  42501 tenant context: workspace required
+  23503 insert or update on table "interactions" violates foreign key constraint "interactions_workspace_id_conversation_id_fkey"
+  42501 tenant context: already bound in this transaction
+  42501 permission denied to set role "authenticated"
+  42501 permission denied to set role "app_system"
+  42501 permission denied to set role "service_role"
+  42501 permission denied to set role "spike_owner"
+  42P01 relation "conversations" does not exist
+  42501 permission denied for schema public
+  42P01 relation "attention_signals" does not exist
+  42501 permission denied for schema app
+  42501 permission denied to set role "app_worker"
+  42P01 relation "interactions" does not exist
+ℹ tests 29
+ℹ suites 11
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 412.397417

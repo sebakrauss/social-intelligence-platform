@@ -3,11 +3,11 @@
 | Field | Value |
 |---|---|
 | Document | Technical Architecture v1 |
-| Phase | 0E — Technical Architecture |
-| Version | 1.0 |
-| Date | 2026-10-03 |
-| Status | **Approved** by the product owner on 2026-10-03 (Phase 0E.1). Approval covers the architectural baseline and boundaries. It does **not** mean that every provider capability or vendor is validated, that legal review is complete, or that implementation may start: implementation readiness stays gated by the validation items in §71 (notably TA-Q-29 and TA-Q-04). |
-| Sources of truth | `docs/product-definition-v1.md` v1.3 · `docs/information-architecture-v1.md` v1.1 · `docs/core-ux-flows-v1.md` v1.1 · `docs/intelligence-data-model-v1.md` v1.1 (all approved) |
+| Phase | 0E — Technical Architecture · 0E.3 — Validation alignment |
+| Version | 1.1 |
+| Date | 2026-10-03 (v1.0) · 2026-10-04 (v1.1) |
+| Status | **Approved** by the product owner on 2026-10-03 (Phase 0E.1). **v1.1** (Phase 0E.3, 2026-10-04) aligns the approved baseline with the accepted pre-implementation validation: TA-Q-29 and TA-Q-04 **passed**, Trigger.dev is **selected**, refinements R1–R8 are adopted. Approval covers the architectural baseline and boundaries. It does **not** mean that every provider capability or vendor is validated, that legal review is complete, or that implementation may start: the remaining gates are in §71 and §73. |
+| Sources of truth | `docs/product-definition-v1.md` v1.3 · `docs/information-architecture-v1.md` v1.1 · `docs/core-ux-flows-v1.md` v1.1 · `docs/intelligence-data-model-v1.md` v1.1 (all approved) · validation evidence: `docs/pre-implementation-validation-v1.md` (Phases 0E.2 and 0E.2b, accepted in Phase 0E.3) |
 | Scope | How the product is built: runtime boundaries, technologies, persistence patterns, async processing, security, AI, integrations, testing and operations. **Not** application code, SQL, final schemas, infrastructure configuration or provider setup. |
 
 ### Approval record
@@ -16,6 +16,7 @@
 |---|---|---|
 | 2026-10-03 | 0E | Technical Architecture v1.0 drafted for review. The four source documents are unchanged. M-01 is addressed first (§8) as a TA recommendation that needs product-owner review. All PD, IA, UX and model open questions stay open. |
 | 2026-10-03 | 0E.1 | Product owner **approved** the architecture baseline (version 1.0 kept). The baseline listed in §72.1 is **LOCKED**. Vendor, region, API and legal items stay **VALIDATE** (§72.2); Anthropic remains the initial AI recommendation behind the AI Gateway, not an architectural dependency. Product-owner decisions recorded: **M-01 confirmed** (content-bearing Social Asset active in at most one workspace per organization; PD D-50; §8), **forward-only automatic moderation** (PD D-51; §25.7) and **uncertain interactions excluded from human bulk Hide** (PD D-52; §26.5). TA-Q-02 (ad accounts) stays VALIDATE with its intended behavior recorded. New security-critical spike **TA-Q-29** (RLS context with Supabase Auth + Drizzle + pooled connections) added; it blocks the tenancy/database foundation (§11.6). M-02, M-03, M-04, M-06, M-08, M-09, M-10 and M-11 remain open. Sources aligned: PD v1.3, UX v1.1, Model v1.1 (IA v1.1 metadata only). |
+| 2026-10-04 | 0E.3 | Version **1.1**: aligned with the accepted Phase 0E.2/0E.2b validation (`docs/pre-implementation-validation-v1.md`). **TA-Q-29 PASS** (local 29/29; managed run of record 22/22 on Supabase with real Auth tokens, Supavisor transaction mode, Drizzle and custom runtime roles): the direct Postgres RLS context pattern with pooled connections is validated (§11.6) and no longer blocks the tenancy/database foundation. **TA-Q-04 PASS**: **Trigger.dev SELECTED** as the job runtime (managed 14/14); Graphile Worker is the documented fallback. Refinements **R1–R8 adopted** and integrated (§9.3, §10.4, §11, §18.3, §19.3, §26.3, §46, §55, §64, §65, §70; ADR-56–ADR-63). The Supabase development-project pooler incident (F-S6) is recorded as an operational issue, not a TA-Q-29 failure (§11.7). TA-Q-05 stays VALIDATE (Trigger.dev stores run data in AWS us-east-1). New tracking items: TA-Q-30 (R8 rotation procedure with Supabase), TA-Q-31 (deployed workers in staging) and TA-Q-32 (Trigger.dev production plan sizing and cost). Provider/API, AI, legal and vendor validations and TA-Q-07 stay open. No product, IA, UX or model semantics changed; M-02, M-03, M-04, M-06, M-08, M-09, M-10 and M-11 remain open. |
 
 ---
 
@@ -115,9 +116,9 @@ Synchronous: authentication, authorization, reads, internal workflow commands (a
 
 ## 2. Architecture decision summary
 
-Status key after Phase 0E.1: **LOCKED** · **VALIDATE** · **DEFER** (§0.2). Where a row mixes an architectural pattern with a vendor choice, the pattern and the vendor carry separate statuses. The authoritative register is §72.
+Status key after Phase 0E.3 (v1.1): **LOCKED** · **VALIDATE** · **DEFER** (§0.2). Where a row mixes an architectural pattern with a vendor choice, the pattern and the vendor carry separate statuses. The authoritative register is §72.
 
-| ID | Decision | Chosen option | Why | Main rejected alternative(s) | Consequences | Status (Phase 0E.1) |
+| ID | Decision | Chosen option | Why | Main rejected alternative(s) | Consequences | Status (v1.1) |
 |---|---|---|---|---|---|---|
 | **TA-01** | Application architecture | **Modular monolith + durable asynchronous work** | Strong boundaries without distributed-system cost. Matches team size and the priorities (correctness, safety, clarity). | Microservices per domain; serverless function sprawl. | Module boundaries must be enforced by tooling (§6.4). One database, one migration history. | **LOCKED** |
 | **TA-02** | Primary language | **TypeScript (strict) end to end** | One language for UI, server, jobs, domain and tests. Shared types for contracts and schemas. Large hiring pool. | TS frontend + Python/Go/Ruby backend (two languages, duplicated contracts). | AI and data work also in TS. Heavy statistics, if ever needed, can move to SQL or a later component. | **LOCKED** |
@@ -125,11 +126,11 @@ Status key after Phase 0E.1: **LOCKED** · **VALIDATE** · **DEFER** (§0.2). Wh
 | **TA-04** | Backend / API pattern | **Server-side application services** (commands and queries) invoked from Server Actions, Server Components and Route Handlers. No public API in the MVP (PD §10.2). | One authoritative path for authorization and validation. No extra network hop. | Separate REST/GraphQL backend; tRPC layer (adds a protocol without adding safety). | All consequential commands go through the action pipeline (§10.6). Route Handlers are reserved for webhooks, OAuth callbacks, realtime authorization and job callbacks. | **LOCKED** (follows from the locked Next.js, application-owned authorization and tenant-scoped transactions) |
 | **TA-05** | Relational database | **PostgreSQL** (managed) | Relational integrity, transactions, RLS, full-text search, JSON for raw payloads, partitioning later. Fits current-state + history patterns. | Document stores (weak relational integrity, no RLS); multiple databases per tenant (operational cost). | One shared, RLS-enforced multi-tenant database (§9). | **LOCKED** |
 | **TA-06** | Database / backend platform | **Supabase** for managed Postgres, Auth, Storage and Realtime | One vendor for four needs; Postgres-native RLS model; branching for previews; PITR available. | AWS RDS + Cognito/Auth0 + S3 + custom realtime (more vendors and glue); Neon + Clerk (viable; auth outside Postgres makes RLS identity harder). | Region, DPA and compliance posture must be validated (TA-Q-05). Supabase-specific features are wrapped behind platform modules (§6). | **LOCKED** (initial platform for Postgres, Auth, Storage) · Realtime transport **VALIDATE** (TA-Q-21) · region **VALIDATE** (TA-Q-05) |
-| **TA-07** | Data access | **Drizzle ORM** (typed, SQL-near) with **version-controlled SQL migrations**, used through **tenant-scoped transactions** that apply RLS context | Type safety without hiding SQL; works with RLS session context; light runtime suits serverless and workers. | Prisma (heavier runtime, awkward per-transaction RLS context); raw SQL only (less type safety); Supabase client/PostgREST as the server data layer (weak transactions for domain logic). | Every query runs inside a tenant scope helper (§9.3). Unscoped access is a separate, narrow, audited path. | **LOCKED** · pooled-connection RLS context **VALIDATE** (TA-Q-29) |
+| **TA-07** | Data access | **Drizzle ORM** (typed, SQL-near) with **version-controlled SQL migrations**, used through **tenant-scoped transactions** that apply RLS context | Type safety without hiding SQL; works with RLS session context; light runtime suits serverless and workers. | Prisma (heavier runtime, awkward per-transaction RLS context); raw SQL only (less type safety); Supabase client/PostgREST as the server data layer (weak transactions for domain logic). | Every query runs inside a tenant scope helper (§9.3). Unscoped access is a separate, narrow, audited path. | **LOCKED** · pooled-connection RLS context **VALIDATED** (TA-Q-29 PASS; pattern in §11.6) |
 | **TA-08** | Authentication | **Supabase Auth** (email + password/magic link; Google sign-in optional) with server-validated sessions | Identity lives next to the data for RLS; managed MFA; SSR session support. | Clerk/Auth0 (extra vendor; identity bridging into RLS); self-built auth. | Authorization is **not** delegated to auth claims: roles and permissions live in app-owned tables (§10). | **LOCKED** |
-| **TA-09** | Tenancy enforcement | **Three layers**: RLS at the database, tenant-scoped action pipeline in the application, tenant-scoped job context in workers. Every tenant row carries its workspace. | Defense in depth: one layer can fail without a leak. | App-only filtering (one missed `where` = leak); database-per-tenant (cost, migrations, cross-workspace attention harder). | Schema introspection tests fail the build if a tenant table lacks RLS (§54). | **LOCKED** · mechanism proof **VALIDATE** (TA-Q-29) |
-| **TA-10** | Background jobs | **Trigger.dev** (managed durable task runtime) fed by a **Postgres transactional outbox** | Long-running tasks (imports) without request time limits; retries, idempotency keys, per-key concurrency queues, schedules and run observability out of the box; outbox keeps DB state and job dispatch consistent. | Inngest (strong flow control, but steps execute inside web functions with host time limits); Postgres queue (Graphile Worker / pg-boss) on a self-run worker host (transactional enqueue, but we operate and observe it ourselves); cron + serverless (not durable). | Job payloads carry identifiers, never comment text or credentials (§19.4). Vendor choice confirmed by a spike (TA-Q-04); jobs sit behind a thin port so a switch is contained. | Vendor **VALIDATE** (TA-Q-04; Trigger.dev preferred, Graphile Worker fallback) · outbox pattern **LOCKED** (TA-28) |
-| **TA-11** | Deployment | **Three deployment units**: web (Vercel), job runtime (Trigger.dev), data platform (Supabase) | Managed, minimal operations; each unit maps to a real runtime need. | Kubernetes/containers on a cloud provider (operations burden); single host (no durable long-running work). | Region co-location required (TA-Q-05). | Three-unit shape approved · hosting vendors **VALIDATE** (Vercel recommended; job vendor TA-Q-04; region TA-Q-05) |
+| **TA-09** | Tenancy enforcement | **Three layers**: RLS at the database, tenant-scoped action pipeline in the application, tenant-scoped job context in workers. Every tenant row carries its workspace. | Defense in depth: one layer can fail without a leak. | App-only filtering (one missed `where` = leak); database-per-tenant (cost, migrations, cross-workspace attention harder). | Schema introspection tests fail the build if a tenant table lacks RLS (§54). | **LOCKED** · mechanism **VALIDATED** (TA-Q-29 PASS; R1–R5, §11.6) |
+| **TA-10** | Background jobs | **Trigger.dev** (managed durable task runtime) fed by a **Postgres transactional outbox** | Long-running tasks (imports) without request time limits; retries, idempotency keys, per-key concurrency queues, schedules and run observability out of the box; outbox keeps DB state and job dispatch consistent. | Inngest (strong flow control, but steps execute inside web functions with host time limits); Postgres queue (Graphile Worker / pg-boss) on a self-run worker host (transactional enqueue, but we operate and observe it ourselves); cron + serverless (not durable). | Job payloads carry identifiers, never comment text or credentials (§19.4). Vendor confirmed by the TA-Q-04 spike (PASS); jobs sit behind a thin port so a switch is contained. Trigger.dev doesn't retry crashed runs, so the outbox tracks run outcomes (R7, §19.3). | Vendor **SELECTED: Trigger.dev** (TA-Q-04 PASS); Graphile Worker = fallback · outbox pattern **LOCKED** (TA-28) · deployed workers validated in staging (TA-Q-31) · data location under TA-Q-05 |
+| **TA-11** | Deployment | **Three deployment units**: web (Vercel), job runtime (Trigger.dev), data platform (Supabase) | Managed, minimal operations; each unit maps to a real runtime need. | Kubernetes/containers on a cloud provider (operations burden); single host (no durable long-running work). | Region co-location required (TA-Q-05). Trigger.dev documents run-data storage in AWS us-east-1. | Three-unit shape approved · job runtime **Trigger.dev SELECTED** (TA-Q-04 PASS) · web host **VALIDATE** (Vercel recommended) · region **VALIDATE** (TA-Q-05) |
 | **TA-12** | Provider integration pattern | **Adapter contract per platform**, normalized domain types, **webhooks + polling + reconciliation**, capability-driven behavior | Platforms differ and change; core logic must not. | Provider SDK calls inside domain logic; webhook-only sync. | Every provider behavior is validated per platform before it is enabled (PD OQ-18). | **LOCKED** (pattern) · provider specifics **VALIDATE** (PD OQ-18, TA-Q-22) |
 | **TA-13** | Platform mutation boundary | **One Platform Mutation Executor** with a guard chain, persisted mutation intents and re-checks at execution time | Makes Monitor-only, protection, permissions and idempotency structural (S2–S8). | Mutations called from wherever needed. | Only the executor can obtain a provider mutation port (§26.2). | **LOCKED** |
 | **TA-14** | AI provider abstraction | **In-process AI Gateway** with a task registry, provider adapters, schema validation, provenance ledger and cost accounting | Task-specific routing, vendor substitution and auditability without a separate service. | Vendor SDK called from domain code; a hosted LLM proxy as a separate service (extra hop and vendor). | Domain code depends on task contracts only (§22). | **LOCKED** |
@@ -155,7 +156,7 @@ Status key after Phase 0E.1: **LOCKED** · **VALIDATE** · **DEFER** (§0.2). Wh
 | **TA-34** | Transactional email | A transactional email provider (e.g., Resend or Postmark) for authentication and invitation emails; alert channels stay open (PD OQ-17) | Invitations and sign-in need reliable email regardless of OQ-17. | Supabase default SMTP in production (rate-limited). | Vendor in TA-Q-24. | **VALIDATE** (TA-Q-24) |
 | **TA-35** | Hosting region / data residency | Co-locate database, web functions and workers in one region chosen with legal review | Latency, cost and data-protection obligations (PD R-09). | Multi-region in the MVP. | TA-Q-05; depends on PD OQ-21. | **VALIDATE** (TA-Q-05) |
 
-**Not in this table:** M-01 (Social Asset uniqueness), the first architecture decision required by the Model, was **confirmed by the product owner in Phase 0E.1** (PD D-50; §8; ADR-48 LOCKED). The new security-critical spike TA-Q-29 is in §11.6 and §71.
+**Not in this table:** M-01 (Social Asset uniqueness), the first architecture decision required by the Model, was **confirmed by the product owner in Phase 0E.1** (PD D-50; §8; ADR-48 LOCKED). The security-critical spike TA-Q-29 **passed** (Phase 0E.2b); the validated pattern is in §11.6, and refinements R1–R8 are registered as ADR-56–ADR-63 (§72).
 
 ---
 
@@ -171,11 +172,11 @@ Status key after Phase 0E.1: **LOCKED** · **VALIDATE** · **DEFER** (§0.2). Wh
 | Internationalization | ICU message catalogs with stable keys (no hard-coded strings, PD §16.7) | LOCKED (principle: stable keys, no hard-coded strings); library choice at implementation |
 | Validation | Zod (or equivalent) schemas shared by server commands, job payloads and AI output validation | Approved direction; library choice at implementation |
 | Database | PostgreSQL on Supabase | LOCKED (Postgres; Supabase as initial platform) |
-| Data access | Drizzle ORM + SQL migrations | LOCKED · RLS context mechanism VALIDATE (TA-Q-29) |
+| Data access | Drizzle ORM + SQL migrations | LOCKED · RLS context mechanism VALIDATED (TA-Q-29 PASS, §11.6) |
 | Auth | Supabase Auth; app-owned authorization | LOCKED |
 | Realtime | Supabase Realtime (private broadcast channels, invalidation signals only) | VALIDATE (TA-Q-21) |
 | Storage | Supabase Storage (private buckets) | LOCKED |
-| Background jobs | Trigger.dev + Postgres outbox | Outbox LOCKED · vendor VALIDATE (TA-Q-04) |
+| Background jobs | Trigger.dev + Postgres outbox | Outbox LOCKED · Trigger.dev SELECTED (TA-Q-04 PASS) · Graphile Worker fallback |
 | Web hosting | Vercel | VALIDATE (recommended) |
 | AI | In-process AI Gateway; Anthropic Claude models routed per task; second provider optional | LOCKED (gateway) · provider/models VALIDATE (TA-Q-06) |
 | Errors and traces | Sentry | VALIDATE (recommended) |
@@ -201,7 +202,7 @@ Status key after Phase 0E.1: **LOCKED** · **VALIDATE** · **DEFER** (§0.2). Wh
 
 | Supabase capability | Use in this architecture | Notes |
 |---|---|---|
-| **Postgres** | Single authoritative database. | Connection pooling for serverless and workers is required. |
+| **Postgres** | Single authoritative database. | Connection pooling for serverless and workers is required. Supavisor transaction mode with dedicated runtime login roles is validated (TA-Q-29, §11.6); runtime roles are long-lived (R8, §11.7). |
 | **Auth** | Authentication only (identity, sessions, MFA). | Authorization stays in app-owned tables (§10). |
 | **Row Level Security** | Tenant isolation backstop for user requests and workers (§11). | Policies written in SQL migrations later; none in this phase. |
 | **Realtime** | Private, workspace-scoped broadcast channels carrying invalidation signals (§34). | Spike required (TA-Q-21). |
@@ -234,17 +235,19 @@ Status key after Phase 0E.1: **LOCKED** · **VALIDATE** · **DEFER** (§0.2). Wh
 | Operations burden | Low | Low | Medium (host, scaling, monitoring) | Low but unsafe |
 | Self-hosting option | ✓ (open source) | Partial | ✓ | — |
 
-**Preferred candidate: Trigger.dev + Postgres outbox. The outbox pattern is LOCKED; the vendor stays VALIDATE until the TA-Q-04 spike (Phase 0E.1).** Imports and backfills are long-running and must respect rate limits per account, which favors a runtime that runs tasks on its own compute with keyed concurrency. The outbox closes the consistency gap between "the database changed" and "the follow-up job exists". **Fallback:** Graphile Worker on a small managed container host if the spike fails on data-residency, pricing or semantics. Supabase-native queues with edge functions were considered and rejected for core workflows because of execution-time limits.
+**Selected: Trigger.dev + Postgres outbox** (TA-Q-04 PASS, Phase 0E.2b: 14/14 managed checks on a Trigger.dev Development project; outbox 13/13 locally). **The outbox pattern is LOCKED.** Imports and backfills are long-running and must respect rate limits per account, which favors a runtime that runs tasks on its own compute with keyed concurrency. The outbox closes the consistency gap between "the database changed" and "the follow-up job exists". **Fallback (not selected):** Graphile Worker on a small managed container host, validated locally, if Trigger.dev later fails on data residency (TA-Q-05), pricing or deployed-worker behavior (TA-Q-31); the job port keeps a switch contained. Supabase-native queues with edge functions were considered and rejected for core workflows because of execution-time limits.
+
+**Validated facts that shape the design (TA-Q-04):** idempotency keys deduplicate dispatch but are released when a run fails or crashes; `concurrency: { perKey: 1 }` with a concurrency key serializes work per provider account; a worker **process crash** ends the run CRASHED and **Trigger.dev does not retry it**, so the outbox run-outcome sweeper is mandatory (R7, §19.3); vendor idempotency never replaces domain idempotency (R6, §18.3); payloads as stored by the vendor contained identifiers only. Trigger.dev stores run data in AWS us-east-1 (DPA); whether that is acceptable is a legal question (TA-Q-05).
 
 ### 3.6 Hosting
 
 | Unit | Choice | Why |
 |---|---|---|
 | Web application, webhooks, OAuth callbacks | **Vercel** | First-class Next.js hosting, preview deployments per pull request, instant rollback, firewall/rate-limit rules at the edge. |
-| Job runtime | **Trigger.dev cloud** | Durable long-running tasks; separate scaling from web traffic. |
+| Job runtime | **Trigger.dev cloud** (selected, TA-Q-04 PASS) | Durable long-running tasks; separate scaling from web traffic. |
 | Database, auth, storage, realtime | **Supabase** | §3.3. |
 
-All three must run in the same geographic region (TA-Q-05).
+All three must run in the same geographic region (TA-Q-05). Trigger.dev documents run-data storage in AWS us-east-1; the region choice and its legal acceptability stay VALIDATE under TA-Q-05.
 
 ### 3.7 Observability
 
@@ -652,11 +655,11 @@ All application data access goes through one of three helpers in `platform/db` (
 
 | Helper | Who uses it | What it does |
 |---|---|---|
-| **User scope** | Web requests | Opens a transaction under the user's identity so RLS evaluates the user's memberships. The application additionally passes the resolved workspace context. |
-| **Workspace job scope** | Workers | Opens a transaction under the restricted worker role with the job's workspace set as the tenant context. RLS for the worker role admits only rows of that workspace. |
-| **System scope** | A short list of named system jobs (routing, scheduling fan-out, outbox relay, sweepers, health enumeration) | Opens a transaction under the system role, which can read only system tables (routing registry, schedules, outbox metadata, intent status) and **no tenant content**. Every system-scope entry point is named, reviewed and audited. |
+| **User scope** | Web requests | Connects as the dedicated **web login role** (R1). Inside one transaction: `SET LOCAL ROLE` to the fixed user role (R3), transaction-local identity claims from the server-verified token so RLS sees the real user (`auth.uid()`), then binds the resolved workspace with the sealed context function (R2). RLS evaluates the user's memberships and the bound workspace. |
+| **Workspace job scope** | Workers | Connects as the dedicated **worker login role**; inside one transaction, `SET LOCAL ROLE` to the restricted worker role and binds the job's workspace with the sealed context function. RLS for the worker role admits only rows of that workspace; rebinding inside the transaction is refused. |
+| **System scope** | A short list of named system jobs (routing, scheduling fan-out, outbox relay, sweepers, health enumeration) | Connects as the dedicated **system login role**; inside one transaction, `SET LOCAL ROLE` to the system role, which can read only system tables (routing registry, schedules, outbox metadata, intent status) and **no tenant content**. Every system-scope entry point is named, reviewed and audited. |
 
-There is **no** generic "service role" helper in application or job code. The Supabase service role (which bypasses RLS) is reserved for migrations and break-glass operations, and its key isn't present in the web or job runtime environments (§11.5).
+There is **no** generic "service role" helper in application or job code. Neither the Supabase service role nor the `postgres` role (both bypass RLS on Supabase) is used by the web or job runtime: they are reserved for migrations and audited break-glass operations, and their credentials aren't present in the web or job runtime environments (§11.5). The exact mechanism is the validated pattern in §11.6.
 
 ### 9.4 Organization-level access
 
@@ -711,11 +714,13 @@ Saved-reply governance (PD OQ-23) is a configurable mapping, not a structural ch
 
 | Identity | Used by | Database role | Can |
 |---|---|---|---|
-| **User** | Web requests | Authenticated user (RLS by membership) | What the user's memberships allow. |
-| **Workspace worker** | Jobs processing one workspace | Restricted worker role (RLS by job tenant context) | Read/write that workspace's rows needed by the job's module. |
-| **System worker** | Routing, fan-out, outbox relay, sweepers | System role | Read/write system tables only (no tenant content). |
+| **User** | Web requests | Web login role → `authenticated` (fixed `SET LOCAL ROLE`), real `auth.uid()` from transaction-local claims; RLS by membership and bound workspace | What the user's memberships allow. |
+| **Workspace worker** | Jobs processing one workspace | Worker login role → restricted worker role (RLS by sealed job workspace context) | Read/write that workspace's rows needed by the job's module. |
+| **System worker** | Routing, fan-out, outbox relay, sweepers | System login role → system role | Read/write system tables only (no tenant content). |
 | **Integration credential access** | Integration workers and the executor | Credential-access function, called inside a workspace job scope | Decrypt one workspace's provider credential for the duration of a provider call (§39). |
-| **Migration / break-glass** | CI migrations; audited emergencies | Service role (bypasses RLS) | Everything. Not available to application or job runtimes. |
+| **Migration / break-glass** | CI migrations; audited emergencies | Migration role (on Supabase, `postgres`, which bypasses RLS) or the service role for audited emergencies | Everything. Credentials not available to application or job runtimes; never used for runtime connections (R1). |
+
+Runtime login roles are `LOGIN NOINHERIT NOBYPASSRLS`, are members of exactly one runtime role, and can't `SET ROLE` to `postgres`, `service_role`, `supabase_admin`, `authenticator`, `anon`, the owner or each other (validated in TA-Q-29). They are long-lived; credential rotation follows §11.7 (R8).
 
 Every job run records its **initiator**: a user (for user-requested mutations, the original command's user and request ID), a policy (automation), or the system (sync, refresh). That initiator flows into audit (§41).
 
@@ -763,11 +768,13 @@ No SQL is written in this phase. This section defines the policy model that late
 
 ### 11.1 Principles
 
-1. **RLS is enabled on every table that holds tenant data**, with no exceptions. A schema test fails CI if a table is created without RLS or without a classification (tenant, organization, system, reference) (§54).
+1. **RLS is enabled and forced on every table that holds tenant data**, with no exceptions (R4). A schema test fails CI if a table is created without RLS or without a classification (tenant, organization, system, reference) (§54).
 2. **Deny by default.** A table without a matching policy is unreadable.
-3. **Policies check membership through a small set of reviewed helper functions** (e.g., "is the current principal a non-guest member of this workspace?", "is the current principal's role in this workspace at least X?"). Helpers are security-definer, stable, indexed and tested.
+3. **Policies check membership through a small set of reviewed helper functions** (e.g., "is the current principal a non-guest member of this workspace?", "is the current principal's role in this workspace at least X?"). Helpers are security-definer (empty `search_path`), stable, indexed and tested; where a helper reads a table with forced RLS, an explicit owner/definer policy admits it (R4).
 4. **RLS enforces visibility and tenant scope.** Fine-grained action permissions (e.g., who may reply) are enforced in the application layer and the executor; RLS adds backstops where a rule is simple and critical (e.g., guests can't read operational tables; mutation intents can't be inserted for a Monitor-only workspace).
 5. **RLS is defense in depth, not the only authorization layer (LOCKED, Phase 0E.1).** Every request and job follows: request/job identity → tenant context → application authorization → RLS → domain invariants. Business permissions are **not** moved solely into RLS, and tenant isolation does **not** rely solely on application `WHERE` clauses. Both layers are mandatory.
+6. **References between tenant tables are workspace-scoped** (R5): foreign keys are composite (workspace + identifier), so a reference to another workspace's row fails exactly like a reference to a non-existent row (no existence oracle).
+7. **Objects, grants and policies are explicit** (R4): product tables live in explicit schemas with explicit grants; Supabase default privileges are never relied on; policies that call `auth.uid()` are created by a role with `auth` schema access; introspection tests verify all of it (§54, §64).
 
 ### 11.2 Policy families
 
@@ -786,8 +793,8 @@ No SQL is written in this phase. This section defines the policy model that late
 
 ### 11.3 Workers and service jobs
 
-- Workers connect with the **restricted worker role**, which does **not** bypass RLS.
-- The job wrapper sets the tenant context (the job's workspace) for the transaction. Worker policies admit rows where the row's workspace equals that context. **If the context is missing, every policy evaluates false** and the job reads nothing: a forgotten scope produces an obvious failure, never a leak.
+- Workers connect with a dedicated **worker login role** and switch, per transaction and by fixed literal, to the **restricted worker role**; neither bypasses RLS (R1, R3).
+- The job wrapper binds the job's workspace for the transaction with the sealed context function (R2); a second binding in the same transaction is refused. Worker policies admit rows where the row's workspace equals that context. **If the context is missing, every policy evaluates false** and the job reads nothing: a forgotten scope produces an obvious failure, never a leak.
 - System jobs use the **system role**, whose grants cover only system tables. A system job that needs tenant data must enqueue per-workspace jobs instead.
 
 ### 11.4 Cross-workspace attention
@@ -798,37 +805,95 @@ The organization page queries the attention-signal table for "my workspaces". RL
 
 | Process | Mitigation |
 |---|---|
-| Migrations | Run by CI with the service role; reviewed; never at application runtime. |
+| Migrations | Run by CI with the migration role (on Supabase, `postgres` acting as a member of the owner role, so policies that call `auth.uid()` can be created, R4); reviewed; never at application runtime. Never drop or recreate pooled runtime roles (R8, §11.7). |
 | Break-glass operator access | Separate credential held outside runtime environments; access is time-boxed, requires a reason and is recorded in an operator audit log. |
 | Retention / deletion jobs | Dedicated retention role with delete rights on specific tables only, invoked per workspace or organization with an audited request (§61). |
 | Webhook receiver | Writes only to the provider event inbox (system-scoped insert, no reads of tenant data). |
 | Outbox relay and sweepers | System role: outbox and intent **metadata** only (IDs, status, timestamps). |
 
-The service-role key is **not configured** in the web or job runtime environments (LOCKED). A CI check scans runtime environment definitions for it (§64).
+The service-role key and the migration (`postgres`) credentials are **not configured** in the web or job runtime environments (LOCKED; validated in TA-Q-29). A CI check scans runtime environment definitions for them (§64).
 
-### 11.6 Pre-implementation security validation — TA-Q-29
+### 11.6 Validated RLS context pattern — TA-Q-29 (PASS)
 
-**TA-Q-29 — Direct Postgres RLS context under Supabase Auth + Drizzle + pooled connections.** Classification: **SECURITY VALIDATION** · **blocks the tenancy/database foundation (§73 steps 1–2)** · resolve in **Phase 0E.2**, before any implementation. No SQL policies are designed here.
+**TA-Q-29 — Direct Postgres RLS context under Supabase Auth + Drizzle + pooled connections.** Classification: **SECURITY VALIDATION · PASS.** Phase 0E.2 (local): 29/29 on PostgreSQL. Phase 0E.2b (managed): run of record **22/22** on a Supabase development project with real Supabase Auth tokens (JWKS, ES256), Supavisor transaction mode and Drizzle over node-postgres. Evidence and the full run history: `docs/pre-implementation-validation-v1.md` §6–§9 and §22–§24; managed evidence of record `spikes/ta-q-29-rls/evidence/ta-q-29-managed-2026-10-04T14-32-40-076Z.txt`. TA-Q-29 **no longer blocks** the tenancy/database foundation. The spike code is disposable and isn't the implementation; no production SQL is written here.
 
-The architecture assumes that web requests and workers can safely establish *authenticated actor + organization + workspace + database role/context* inside a transaction while using pooled PostgreSQL connections. The spike must prove, at minimum:
+**Validated pattern.** Web and workers use the same pattern; only the login role, the target role and the identity source differ.
 
-| # | Must be verified |
+```
+WEB REQUEST                                     WORKSPACE JOB                          SYSTEM JOB
+1. verify the access token server-side          1. payload: workspace ID + entity      1. named system task only
+   (JWKS / getClaims); the token's role claim      IDs (from the outbox)
+   is only allowlist-checked (R3)
+2. connect as the web login role (R1)           2. connect as the worker login role    2. connect as the system login role
+3. BEGIN                                        3. BEGIN                               3. BEGIN
+4. SET LOCAL ROLE authenticated (fixed literal) 4. SET LOCAL ROLE <worker role>        4. SET LOCAL ROLE <system role>
+5. transaction-local claims (request.jwt.claims,
+   request.jwt.claim.sub) → the real auth.uid()
+6. bind the workspace: sealed, transaction-     5. bind the workspace (sealed)
+   bound, refuses rebinding (R2)
+7. queries (Drizzle) under forced RLS (R4)      6. queries under forced RLS            5. system tables only
+8. COMMIT / ROLLBACK → role, claims, workspace and seal vanish; the pooled connection returns clean
+```
+
+**Rules adopted from the validation (LOCKED in v1.1):**
+
+| Rule | Requirement | Validated evidence (Phase 0E.2b) |
+|---|---|---|
+| **R1** Dedicated runtime login roles | One `LOGIN NOINHERIT NOBYPASSRLS` login role per runtime (web, worker, system), each a member of exactly one fixed runtime role and able to `SET ROLE` only to it. Runtimes never connect as `postgres` (which bypasses RLS on Supabase), `supabase_admin`, `authenticator` or `service_role`. No service-role key or migration credential in any runtime environment. | Every runtime login was denied `SET ROLE` to `service_role`, `postgres`, `supabase_admin`, `authenticator`, `anon`, the owner and the other runtime roles (`42501`). The runtime environment held no secret key, service-role key or bootstrap URL. |
+| **R2** Sealed, transaction-bound workspace context | The workspace is bound once per transaction by a reviewed `SECURITY DEFINER` function that stores transaction-local values plus a seal derived from a server-only secret, the transaction ID and the session user. The current-workspace function returns NULL when the seal doesn't match, so stale, replayed, raw `set_config` or session-level values grant nothing. Rebinding inside a transaction is refused. Nothing relies on session-level state (`SET` without `LOCAL`, session settings, named prepared statements). | Under Supavisor, deliberately buggy session-level state **did** reach other clients' transactions (15 of 60); the seal leaked **0 rows**. Rebind → `42501`; raw `set_config` and a replayed seal → 0 rows. |
+| **R3** Fixed-literal role switch | `SET LOCAL ROLE` uses a fixed literal chosen by the scope helper, never a value from a token or input. Token role claims are only checked against an allowlist (`authenticated`). | Escalation attempts denied; the role was never derived from the token. |
+| **R4** Forced RLS, explicit policies and grants | RLS **enabled and forced** on every tenant table; helpers read through explicit owner/definer policies. Policies that call `auth.uid()` are created by a role with `auth` schema access (the migration role acting as a member of the owner role), because a custom owner role lacks it. Product objects are created in explicit schemas with explicit grants; Supabase default privileges (which differ by creating role) are never relied on. Introspection tests verify forced RLS, grants and the absence of unexpected privileges for `anon`, `authenticated` and runtime logins. | F-S2: the custom owner role couldn't reference `auth.uid()`. F-S5: default privileges depend on the creating role. All spike tables had RLS enabled and forced; no unexpected Data API path. |
+| **R5** Workspace-scoped composite foreign keys | References between tenant tables include the workspace, so a cross-workspace reference fails with the same error as a non-existent one: no existence oracle. | `23503` identical for foreign and non-existent references. |
+
+**Pooling.** Web and workers use the Supavisor **transaction mode** (port 6543, `<role>.<project-ref>` usernames) with unnamed statements (the Drizzle/node-postgres default); named prepared statements aren't relied on. Stress run: 300 concurrent transactions across 4 tenant contexts on 12 shared server backends, every backend serving several tenants, no foreign row. Drizzle used without a scope helper fails closed (denied or 0 rows). Runtime role lifecycle under the pooler: §11.7 (R8).
+
+**The original 13 checks (v1.0) — all PASS.** They become permanent regression tests (T-26, §55):
+
+| # | Check | Result |
+|---|---|---|
+| 1 | A server-validated Supabase Auth session maps to the intended database/user context | PASS: real tokens; `auth.uid()` = token `sub`; tampered or foreign-signed tokens rejected before any query |
+| 2 | Workspace and actor context applied transaction-locally | PASS |
+| 3 | Context can't survive transaction completion | PASS: 45 sequential transactions, each starting with no claims, workspace or seal |
+| 4 | A reused pooled connection can't leak the previous tenant's context | PASS: shared backends served A → none → B in turn; 300-transaction stress |
+| 5 | Missing workspace context returns no tenant rows | PASS: 0 rows; inserts `42501` |
+| 6 | Workspace A can't read or reference Workspace B | PASS: 0 rows; writes `42501`; composite FK `23503` |
+| 7 | The restricted worker role obeys RLS | PASS |
+| 8 | Worker context can't escape its workspace | PASS: rebind `42501`; raw `set_config` and replayed seal → 0 rows |
+| 9 | The system role reaches only explicit system tables | PASS |
+| 10 | No service-role credential in the web or job runtime | PASS |
+| 11 | Direct Drizzle queries can't bypass RLS | PASS |
+| 12 | The selected pooling mode preserves all of the above | PASS: Supavisor transaction mode |
+| 13 | Failure behavior is fail-closed | PASS |
+
+**Still to validate (doesn't block the foundation):** the same pattern from deployed Trigger.dev workers in staging (worker login over Supavisor, egress/static IPs if required; TA-Q-31) and the Realtime authorization path (TA-Q-21).
+
+### 11.7 Database role lifecycle under the pooler — R8 and incident F-S6
+
+**Scope.** R8 is an **operational lifecycle principle discovered during the managed validation**; it is not part of what TA-Q-29 validates (R1–R5, §11.6). Its principles are adopted in v1.1; the production role-rotation procedure stays **VALIDATE** under TA-Q-30.
+
+Supavisor keeps pooled server connections per `<role>.<project-ref>`. Validated findings (Phase 0E.2b): recreating a dropped role under the same name breaks pooled connections for that name (`invalid role OID`, F-S3); and twice, right after spike login roles that Supavisor was actively pooling were terminated and dropped, Supavisor refused every pooled connection for the whole development project (both pooler ports, all roles) while PostgreSQL and Auth stayed healthy (F-S6).
+
+**R8 rules (LOCKED in v1.1 as principles; the procedure is confirmed with Supabase under TA-Q-30):**
+
+- Runtime login roles are **long-lived**. Deployments, migrations and tests never drop or recreate a pooled runtime role name.
+- Production credential rotation uses either an **in-place password rotation** of the existing role, followed by rolling the runtime secret, or a **new role name** with the old pool drained before the old role is dropped. Never drop and recreate the same name.
+- A role the pooler may still be serving is dropped only after the pooler has released it, and only as a runbook step.
+- The rotation procedure is written as a runbook (§65) and **confirmed with Supabase before the first production credential rotation**.
+- **Production and shared managed Supavisor environments** (shared Supabase development, staging and preview projects) use **long-lived** runtime and test login roles. They **must not** routinely create → pool → drop database login roles.
+- **Per-run disposable roles** are allowed only when the whole database/environment is isolated and disposable, or in local / non-Supavisor test environments. Per-run names avoid stale role-name/OID reuse (F-S3) but do **not** by themselves prevent the project-wide refusal observed in F-S6.
+- In a shared Supavisor project, test roles stay long-lived unless a vendor-confirmed drain/removal procedure exists (TA-Q-30).
+- A pooled role is never dropped until its pool has been drained/released according to the TA-Q-30 runbook.
+- Prefer deleting a whole isolated preview environment over dropping pooled roles inside a shared project.
+
+**Incident record F-S6 (Supabase development project).**
+
+| Aspect | Record |
 |---|---|
-| 1 | A server-validated Supabase Auth session can be mapped to the intended database/user context. |
-| 2 | Workspace and actor context is applied **transaction-locally**. |
-| 3 | Context cannot survive transaction completion. |
-| 4 | A reused pooled connection cannot leak the previous tenant's context. |
-| 5 | Missing workspace context returns **no** tenant rows. |
-| 6 | Workspace A cannot read or reference Workspace B. |
-| 7 | The restricted worker role obeys RLS. |
-| 8 | Worker context cannot escape its workspace. |
-| 9 | The system role can access **only** explicit system tables. |
-| 10 | Supabase service-role credentials are not required in the web or job runtime. |
-| 11 | Direct Drizzle queries cannot accidentally bypass RLS. |
-| 12 | The connection-pooling mode selected for serverless/web and for workers preserves all of the above. |
-| 13 | Failure behavior is fail-closed. |
-
-**If the spike fails**, the Technical Architecture (§9–§11, TA-06/07/09) must be revisited before any application code is built.
+| What happened | After the run of record's teardown (and once before, in an earlier run), Supavisor refused all pooled connections (session and transaction pooler) for the project. PostgreSQL stayed up and Auth was healthy. The refusal persisted after a project restart; a later read-only check (`SELECT 1` only) still failed on both pooler ports. |
+| Classification | **Operational pooler issue** of a development project. **Not a TA-Q-29 failure:** the run of record (22/22) completed and tore down cleanly before the refusal began, and the incident affects availability, not isolation. |
+| Cause | Strongly **correlated** with dropping roles Supavisor was actively pooling (2 of 2 occurrences), but **not proven**. |
+| Follow-up | Report to Supabase support **in parallel**; it doesn't gate the architecture. Its answer feeds the R8 runbook (TA-Q-30). |
+| Development environment | A fresh Supabase development project may replace the affected one **without reopening TA-Q-29**; the preserved evidence of record stands. |
 
 ---
 
@@ -1156,20 +1221,28 @@ Every external object is keyed by **(platform, provider object identity)**, uniq
 | **Public reply** | **Explicitly non-repeatable without verification.** After an unknown outcome, reconciliation searches for our reply under the parent before any resend. A human can resend only after the product shows "outcome unknown". | Duplicate public replies harm the brand. |
 | **Private reply** | **Explicitly non-repeatable.** No automatic retry after an unknown outcome. If the platform can't confirm, the record shows "outcome unknown — check on [platform]". | One-shot by definition (PD D-36). |
 
+**Execution rules (R6, LOCKED in v1.1; validated on Trigger.dev in TA-Q-04):**
+
+1. **Domain idempotency is authoritative.** Job-runtime idempotency keys only reduce duplicate runs; two runs of the same work must still produce one effect (validated: two runs without a key, one assessment written).
+2. **EXECUTING before the provider call.** The executor commits the intent as EXECUTING (attempt and run reference) before it calls the provider (§26.3).
+3. **An intent found EXECUTING without an outcome** (crash, lost response, redelivered run) never triggers a blind provider call: it becomes OUTCOME_UNKNOWN and reconciliation decides.
+4. **Ambiguous replies are never resent blindly.** Reconciliation looks for the reply first (validated: one provider call, one reply, reconciliation confirmed it).
+5. **Hide and unhide may retry** because they are state-setting, after re-reading state where possible (validated: hide timeout retried and confirmed).
+
 ---
 
 ## 19. Background job architecture
 
 ### 19.1 Technology
 
-**Trigger.dev as the preferred durable job runtime (vendor VALIDATE, TA-Q-04), fed by a Postgres transactional outbox (LOCKED)** (TA-10, TA-28). Requirements and how they're met:
+**Trigger.dev as the selected durable job runtime (TA-Q-04 PASS, Phase 0E.2b), fed by a Postgres transactional outbox (LOCKED)** (TA-10, TA-28). Graphile Worker is the documented fallback behind the same job port. Deployed (cloud) worker behavior is validated in staging before production (TA-Q-31). Requirements and how they're met:
 
 | Requirement | How |
 |---|---|
-| Durable | Runs persisted by the job runtime; business state persisted in Postgres; outbox guarantees dispatch after commit. |
+| Durable | Runs persisted by the job runtime; business state persisted in Postgres; outbox guarantees dispatch after commit; crashed runs recovered by the run-outcome sweeper (R7). |
 | Retryable | Per-task retry policies with exponential backoff and jitter; non-retryable error classes stop retries (§44). |
 | Observable | Run dashboard, structured logs with correlation IDs, Sentry, domain status tables (import progress, intent status). |
-| Idempotent | Idempotency key per dispatch; idempotent steps (§18). |
+| Idempotent | Idempotency key per dispatch; idempotent steps; domain idempotency authoritative (§18, R6). |
 | Rate-limit aware | Queues keyed by (provider, connected account) with concurrency limits; budget checks before provider calls; retry-after honored (§45). |
 | Concurrency controlled | Keyed concurrency per account and per workspace; global limits per provider app; priority lanes (§19.5). |
 
@@ -1192,7 +1265,7 @@ Every external object is keyed by **(platform, provider object identity)**, uniq
 | **Alerts and attention signals** | Outbox from relevant changes (debounced) | One workspace | workspace | §50. |
 | **Reconciliation** | Schedule per account + after incidents | One account | provider + account | §47. |
 | **Connection-health checks / token refresh** | Schedule + error-triggered | One connection | provider + connection | §39. |
-| **Outbox relay sweeper / intent sweeper** | Schedule | System | system | Re-dispatch stuck rows (§19.3). |
+| **Outbox dispatch sweeper / run-outcome sweeper (R7) / intent sweeper** | Schedule | System | system | Re-dispatch undispatched rows and CRASHED / SYSTEM_FAILURE runs (§19.3). |
 | **Retention jobs** (later) | Policy-driven | One workspace / organization | workspace | §61. |
 
 ### 19.3 Outbox and dispatch
@@ -1202,15 +1275,21 @@ command / ingestion transaction
    ├─ write state + history + audit
    └─ write outbox row (type, workspace, payload IDs, ordering key, dispatch key)
 commit
-   └─ post-commit: dispatch outbox rows to the job runtime (idempotency key = dispatch key), mark dispatched
-sweeper (scheduled): re-dispatch rows not marked dispatched after a threshold; alert if age exceeds SLO
+   └─ post-commit: dispatch outbox rows to the job runtime (idempotency key = dispatch key),
+      record the returned run ID, mark dispatched
+dispatch sweeper (scheduled): re-dispatch rows not marked dispatched after a threshold; alert if age exceeds SLO
+run-outcome sweeper (scheduled, R7): for dispatched rows without a recorded terminal status, read the run status;
+   record COMPLETED / FAILED / CANCELED; re-dispatch CRASHED and SYSTEM_FAILURE runs (same dispatch key → a new run);
+   alert on repeated crashes; domain idempotency keeps the effect single (R6)
 ```
+
+**R7 (LOCKED in v1.1; required part of the job foundation, §73 step 3).** The outbox records each dispatched run's ID and terminal status. Trigger.dev doesn't retry a run whose worker process crashed (documented and observed), and it releases the idempotency key when a run fails or crashes, so crash recovery belongs to the outbox, not to the vendor. Validated: a re-dispatched CRASHED run produced a new run and the domain effect happened exactly once. Runs that FAILED after exhausting retries, or were aborted as non-retryable, are surfaced for diagnosis and not re-dispatched blindly.
 
 At-least-once delivery + idempotent consumers = effectively-once effects. Ordering where it matters (e.g., interaction events for the same conversation) is preserved by keyed concurrency of 1 for that key or by version checks in consumers.
 
 ### 19.4 Job payload rules
 
-- Payloads contain **identifiers** (workspace, object IDs, intent ID, correlation ID), never comment text, author handles or credentials. Workers read content from Postgres inside the job's tenant scope. This keeps personal data out of the job vendor's storage and logs.
+- Payloads contain **identifiers** (workspace, object IDs, intent ID, correlation ID), never comment text, author handles or credentials. Workers read content from Postgres inside the job's tenant scope. This keeps personal data out of the job vendor's storage and logs (validated in TA-Q-04: payloads as stored by Trigger.dev contained identifiers only).
 - Every payload names its **workspace** (or is explicitly system-scoped) and its **initiator** (user/policy/system with request ID).
 
 ### 19.5 Priority lanes
@@ -1558,8 +1637,11 @@ All external changes go through the **Platform Mutation Executor**: public reply
             · lock intent (only PENDING/RETRYABLE executes)
             · guard chain RE-CHECK at execution time (mode, kill switches, policy state, protection, capability,
               connection, target still exists, stale-state check for replies)
+            · record status = EXECUTING (attempt, run reference) and COMMIT before any provider call (R6)
             · decrypt credential (integration boundary) → adapter mutation port
             · record outcome: CONFIRMED │ FAILED(reason) │ BLOCKED(reason) │ OUTCOME_UNKNOWN
+            · intent already EXECUTING without an outcome (crash, lost response, redelivered run)
+              → OUTCOME_UNKNOWN → reconciliation; never a blind provider call (§18.3)
                                │
                                ▼
           OUTCOME EVENTS (outbox): moderation event · outbound reply update · brand interaction link ·
@@ -1577,7 +1659,7 @@ All external changes go through the **Platform Mutation Executor**: public reply
 | **Kill switches / release gates** | Checked | Re-checked |
 | **Capability** | Availability resolver | Re-evaluated against current profile |
 | **Connection health** | Healthy required (else BLOCKED with recovery; draft kept) | Re-checked; credential valid |
-| **Idempotency** | Unique request key → returns the existing intent | Only one execution per intent; outcome-unknown handling (§18.3) |
+| **Idempotency** | Unique request key → returns the existing intent | Only one execution per intent; EXECUTING committed before the provider call; outcome-unknown handling (§18.3, R6) |
 | **Action-specific safety** | Delete/block: human, single target, explicit confirmation flag from the confirmation step (audit only; never authorization). Bulk hide: protected exclusion. Reply: stale-state check (teammate replied) surfaced to user. Private reply: one-shot check (already sent → shown, UX §12.3). | Same checks where state may have changed |
 | **Automation-only** | — | Automation Decision outcome HIDE; policy still On; **current** Protection Evaluation = NOT PROTECTED; eligibility re-check port implemented by the automation module |
 | **Audit context** | Correlation ID, initiator, reason | Same correlation ID carried into outcome and provider diagnostics |
@@ -1936,7 +2018,7 @@ Search latency beyond targets at real volumes; relevance needs (per-language ste
 
 ### 38.1 Least privilege
 
-- Database roles: anonymous (nothing), authenticated users (RLS), restricted worker (RLS with job tenant context), system (system tables only), retention (specific deletes, audited), service role (migrations and break-glass only; not in runtime) (§11).
+- Database roles: anonymous (nothing), authenticated users (RLS), restricted worker (RLS with sealed job workspace context), system (system tables only), retention (specific deletes, audited), migration role and service role (migrations and break-glass only; not in runtime) (§11). Runtimes connect only through dedicated `LOGIN NOINHERIT NOBYPASSRLS` login roles, each able to switch only to its fixed runtime role (R1, §11.6).
 - Vendor credentials scoped per environment and minimal (e.g., job-runtime keys can trigger tasks but not administer projects).
 - Provider app permissions requested only for validated, needed capabilities (PD OQ-27).
 
@@ -2195,10 +2277,11 @@ Server-side capture for domain events (reliable); client-side capture for naviga
 | **AI output invalid** | Fail closed (§23.2): no assessment; same as above. |
 | **Provider mutation times out after possibly succeeding** | Intent → OUTCOME_UNKNOWN; reconciliation verifies platform state; hide/unhide/delete/block converge safely; replies are never blindly resent; private reply shows "check on [platform]" if unverifiable (§18.3). |
 | **Connection revoked mid-job** | Job stops at next provider call with CONNECTION_PROBLEM; checkpoint kept; Connection → disconnected; coverage gap starts; queued intents → BLOCKED with recovery; resumes after re-authorization. |
-| **Worker crashes** | Job runtime retries from the last checkpoint; idempotent steps; intents locked by status so a crash between provider call and outcome write becomes OUTCOME_UNKNOWN → reconciliation. |
+| **Worker crashes** | Trigger.dev does **not** retry a run whose worker process crashed; the run-outcome sweeper re-dispatches CRASHED / SYSTEM_FAILURE runs with the same dispatch key (R7, §19.3) and the new run resumes from the last checkpoint; idempotent steps; intents are committed EXECUTING before the provider call, so a crash between provider call and outcome write becomes OUTCOME_UNKNOWN → reconciliation (R6). |
 | **Report generation fails** | Retry; previous generation stays available; UI shows "Couldn't generate — retry"; no partial report is published. |
 | **Aggregate becomes stale** | As-of times are always displayed; dirty-mark sweeper re-triggers refresh; staleness metric alerts beyond threshold. |
 | **Database temporarily unavailable** | Web returns a calm error; webhooks return non-2xx so providers retry (where they do) and reconciliation covers the rest; jobs retry with backoff; outbox guarantees no lost follow-ups once the database is back. |
+| **Connection pooler refuses connections** | Web returns a calm error; jobs retry with backoff; outbox rows accumulate and drain when the pooler returns; pooler health is monitored separately from database health; never "fixed" by dropping or recreating runtime roles (R8, §11.7); vendor escalation. |
 | **Job runtime unavailable** | Outbox rows accumulate; sweeper dispatches when available; user commands still create intents (shown as "Sending…" until executed); alert on outbox age. |
 | **AI provider outage** | Gateway fallback (if an eval-approved fallback exists) or degrade: items wait or go to Needs review; suggestions unavailable; automation naturally pauses (no NOT PROTECTED results). |
 | **Bad deployment** | Instant rollback of web; job runtime version rollback; migrations are expand-only during the release (§65). |
@@ -2376,7 +2459,7 @@ Most of the product — tenancy, Inbox, workflow, moderation and automation logi
 | **End-to-end** | Browser tests for critical journeys (onboarding with simulator, triage, reply, hide/undo, automation preview/enable, Monitor-only, guest journey). | PR (smoke subset) and pre-release (full) |
 | **Security regression** | The matrix in §55, plus CSRF, XSS rendering of hostile comment text, SSRF (no URL fetching), secret-in-log scans, webhook signature/replay cases. | Every PR |
 
-Additional structural checks: dependency-boundary lint (§6.4); "every exported command is registered with the action pipeline"; "every state-changing repository method writes history"; "no service-role key in runtime environment definitions".
+Additional structural checks: dependency-boundary lint (§6.4); "every exported command is registered with the action pipeline"; "every state-changing repository method writes history"; "no service-role key or migration credential in runtime environment definitions"; "every tenant table has RLS enabled and forced, with explicit grants" (R4).
 
 ---
 
@@ -2408,7 +2491,8 @@ Additional structural checks: dependency-boundary lint (§6.4); "every exported 
 | T-22 | **Webhook verification fails closed** | Bad signature, stale timestamp, replay → rejected and not processed. | Security |
 | T-23 | **Sentiment never drives moderation** | Changing only sentiment never changes priority-to-hide recommendation or automation decision. | Invariant |
 | T-25 | **Automation is forward-only** | Enabling, resuming or re-enabling a policy never hides interactions created or imported before activation; backfill, reprocessing, model upgrades and corrections never create automation intents. | Integration, invariant |
-| T-26 | **Pooled-connection tenant context is safe (TA-Q-29)** | The 13 checks in §11.6 become permanent regression tests. | RLS, security |
+| T-26 | **Pooled-connection tenant context is safe (TA-Q-29)** | The 13 checks in §11.6 **and the TA-Q-29 adversarial cases** are permanent regression tests: A → B → no-context sequences on reused pooled backends; concurrent multi-tenant stress; missing, foreign, forged, replayed and rebound context; leftover session-level state neutralized by the seal (R2); role escalation from every runtime login and the token role-claim allowlist (R1, R3); forced RLS, grants and default-privilege introspection (R4); composite-FK existence oracle (R5); no service-role or migration credential in runtime environments. | RLS, security |
+| T-27 | **Crashed runs and unknown outcomes recover safely (R6, R7)** | A crashed run is re-dispatched by the run-outcome sweeper and its domain effect happens exactly once; an intent found EXECUTING without an outcome never calls the provider blindly; ambiguous replies are reconciled, never resent. | Job, integration (fault injection) |
 | T-24 | **Insight numbers match aggregates** | Narrative numbers equal structured values; drivers labeled as hypotheses; follow-ups labeled descriptive. | Unit, AI structured-output |
 
 Every invariant in Model §50 maps to at least one test (Appendix A).
@@ -2592,7 +2676,8 @@ Web and jobs are always deployed from the same commit; both read a schema versio
    → lint · typecheck · dependency-boundary rules
    → unit + domain invariant tests
    → database checks: migrations apply on a fresh database; migration lint (destructive changes flagged);
-     schema introspection (every table classified, RLS enabled, no DM objects, append-only grants)
+     schema introspection (every table classified, RLS enabled and forced, explicit grants, no unexpected
+     `anon`/`authenticated` privileges, no DM objects, append-only grants) (R4)
    → RLS / tenant isolation suite · job tests · adapter contract tests · AI structured-output tests
    → security / invariant matrix (§55)
    → integration tests (simulator + AI stub)
@@ -2604,7 +2689,7 @@ Web and jobs are always deployed from the same commit; both read a schema versio
    → staging deploy → full e2e → approval → production deploy (§63.2)
 ```
 
-Safety-critical paths require review by a designated owner. CI fails if the service-role key appears in runtime environment definitions. No CI files are created in this phase.
+Safety-critical paths require review by a designated owner. CI fails if the service-role key or migration (`postgres`) credentials appear in runtime environment definitions (R1). No CI files are created in this phase.
 
 ---
 
@@ -2618,7 +2703,9 @@ Safety-critical paths require review by a designated owner. CI fails if the serv
 | Expand-contract | Add new structures and dual-write/backfill in release N; switch reads in N+1; remove old in N+2. Code is always compatible with the schema before and after a migration. |
 | Production discipline | Migrations run from CI, never by hand; long-running data backfills run as jobs, not inside migrations; lock-heavy operations scheduled and tested on production-like data volumes. |
 | Rollback | Prefer forward fixes; contract steps are delayed until the expand step is proven; PITR is the last resort. |
-| Tests | Every migration applied in CI on a fresh database and on a seeded database; RLS suite runs after migrations. |
+| Tests | Every migration applied in CI on a fresh database and on a seeded database; RLS suite (incl. T-26) runs after migrations. |
+| Roles, policies and grants (R4) | Migrations run as the migration role. Policies that call `auth.uid()` are created by a role with `auth` schema access (on Supabase, the migration role acting as a member of the owner role). RLS is enabled **and forced**; schemas, grants and privileges are explicit, never inherited from Supabase defaults; introspection tests verify them after every migration. |
+| Runtime role lifecycle (R8) | Runtime login roles are created once and are long-lived. Migrations and DB operations never drop or recreate a pooled runtime role name. Shared Supavisor projects (development, staging, preview) don't routinely create → pool → drop login roles; their test roles are long-lived unless a vendor-confirmed drain/removal procedure exists. Per-run disposable roles only in isolated disposable environments or local/non-Supavisor test databases; prefer deleting a whole isolated preview environment over dropping pooled roles. No pooled role is dropped before its pool is drained/released per the TA-Q-30 runbook. Credential rotation (§11.7): in-place password rotation, or a new role name with the old pool drained before the old role is dropped; the runbook is confirmed with Supabase before the first production rotation (TA-Q-30). |
 
 ---
 
@@ -2689,7 +2776,7 @@ Workspace-level "Pause all automation" is a **product feature** stored with poli
 | 16 | **Cross-workspace analytics leakage** | Violates D-37 and tenant trust | Attention signals only (§50) |
 | 17 | **Provider tokens in browser-accessible state** | Credential theft | Encrypted server-side store; decrypt only in integration boundary (§39) |
 | 18 | **Treating a failed import as zero activity** | Misleading intelligence (S11) | Coverage intervals + Measured values (§17) |
-| 19 | **A generic "service role" client in app code** | Silent RLS bypass | Worker role with tenant context; system role without content (§11) |
+| 19 | **A generic "service role" client in app code** (or connecting a runtime as `postgres`) | Silent RLS bypass | Dedicated runtime login roles (R1); worker role with sealed tenant context; system role without content (§11) |
 | 20 | **Personal content in job payloads, logs or analytics** | Spreads personal data to vendors | IDs only (§19.4, §42, §43) |
 | 21 | **Blind retries of replies** | Duplicate public replies | Verify before resend; private replies never auto-retried (§18.3) |
 | 22 | **AI computing numbers in insights** | Fabricated statistics | Code computes; validators compare (§31.3) |
@@ -2709,30 +2796,31 @@ Workspace-level "Pause all automation" is a **product feature** stored with poli
 | TR-06 | **AI cost** exceeds unit economics at entry price | High | Medium | Deterministic-first, tiered routing, batch processing, gating, budgets; plan limits rather than quality cuts (C-08) | Cost model before launch (PD A-09, OQ-14) |
 | TR-07 | **Classification quality** varies by language/region | High | Medium | Per-language evals, confidence, Needs review, corrections | AI eval program (PD OQ-28) |
 | TR-08 | **Auto-hide false positives** harm trust (PD R-03) | High | Low–Medium | Opt-in, hide-only, two-key protection, uncertain = veto, release gate, previews, Undo, precision monitoring, kill switches | AI eval + staged rollout |
-| TR-09 | **Tenant leakage** via a missed scope or a privileged path | Critical | Low | RLS everywhere, worker role with tenant context, no service role in runtime, schema tests, isolation suite | Foundation phase; every PR |
+| TR-09 | **Tenant leakage** via a missed scope or a privileged path | Critical | Low | RLS enabled and forced everywhere; validated context pattern (TA-Q-29 PASS; R1–R5): dedicated runtime logins, sealed transaction-bound context, fixed-literal role switch, composite workspace FKs; no service role or `postgres` in runtime; schema tests; permanent isolation suite (T-26) | Foundation phase; every PR |
 | TR-10 | **Asynchronous inconsistency** confuses users (stale insights vs fresh Inbox) | Medium | Medium | As-of times, explicit pending states, consistency model (§48) | UX validation in staging |
 | TR-11 | **Provider deprecations / API changes** break integrations | High | Medium | Pinned API versions, live contract checks, capability profile updates, circuit breakers | Ongoing |
 | TR-12 | **Retention / privacy obligations** (LGPD, GDPR, LatAm laws; platform terms) constrain storage | High | Medium | Data classes, content-copy registry, tombstones, deletion-capable design, minimal AI/analytics data | Legal review (PD OQ-21, OQ-22) |
 | TR-13 | **Connection ownership / offboarding** disputes (agency vs client) | Medium | Medium | Workspace-owned connections, Move operation, audit; M-01 recommendation | PD OQ-13 + M-01 review |
 | TR-14 | **Prompt injection** through comments | Medium | Medium | Untrusted-data handling, no tools, schema outputs, two-key protection, adversarial evals | AI eval |
-| TR-15 | **Vendor dependency** (Supabase, Trigger.dev, Vercel, AI provider) | Medium | Low–Medium | Standard Postgres; thin ports for jobs, realtime, storage, AI; documented fallbacks | Spikes (TA-Q-04, TA-Q-21) |
+| TR-15 | **Vendor dependency** (Supabase, Trigger.dev, Vercel, AI provider) | Medium | Low–Medium | Standard Postgres; thin ports for jobs, realtime, storage, AI; documented fallbacks (Graphile Worker for jobs) | TA-Q-04 passed (Trigger.dev selected); TA-Q-21 spike; TA-Q-31 staging |
 | TR-16 | **Duplicate or lost platform mutations** under failures | High | Low | Intents, idempotency keys, outcome-unknown verification, reconciliation | Integration tests with fault injection |
 | TR-17 | **Webhook spoofing / replay** | High | Low | Signature verification, timestamps, dedup, fail closed | Security tests |
-| TR-18 | **Data residency mismatch** between vendors (job runtime, AI, analytics) | Medium | Medium | IDs-only payloads; region selection; DPAs | Legal + vendor review (TA-Q-05, TA-Q-06) |
+| TR-18 | **Data residency mismatch** between vendors (job runtime, AI, analytics) | Medium | Medium | IDs-only payloads (proven on stored Trigger.dev payloads); region selection; DPAs (Trigger.dev documents AWS us-east-1) | Legal + vendor review (TA-Q-05, TA-Q-06) |
+| TR-19 | **Pooler outage or broken pool after database role changes** (F-S3, F-S6) | High | Low–Medium | Long-lived runtime roles; never drop or recreate pooled role names; rotation runbook confirmed with Supabase (R8, §11.7); pooler health monitored separately from database health; shared Supavisor projects (dev/staging/preview) never routinely create → pool → drop login roles; per-run roles only in isolated disposable or non-Supavisor environments; prefer deleting a whole isolated preview environment | Before the first production credential rotation (TA-Q-30); vendor follow-up in parallel |
 
 ---
 
 ## 71. Open technical decisions
 
-Only genuine architecture questions. Product, IA, UX and model open items are preserved in Appendix B and not reopened. Status after Phase 0E.1 is shown in the first column (**CONFIRMED**, **VALIDATE**, **OPEN**).
+Only genuine architecture questions. Product, IA, UX and model open items are preserved in Appendix B and not reopened. Status after Phase 0E.3 (v1.1) is shown in the first column (**CONFIRMED**, **PASS**, **VALIDATE**, **OPEN**).
 
 | ID | Question | Recommendation | Dependency | Blocks implementation? | When to resolve |
 |---|---|---|---|---|---|
 | **TA-Q-01** · CONFIRMED | M-01: one active workspace per content-bearing asset within an organization? | **Confirmed by the product owner in Phase 0E.1** (PD D-50; §8.3) | — | No longer blocking | Resolved (0E.1) |
 | **TA-Q-02** · VALIDATE | Can an ad account serve as a paid-context source for several workspaces of one organization? | Intended behavior recorded (§8.4): allowed only if platform APIs allow it safely; never defines the workspace boundary; never exposes another workspace's data or credentials | Official platform behavior (PD A-02, OQ-18) | Yes, for multi-workspace paid-context ingestion | API validation |
 | **TA-Q-03** · CONFIRMED | Does enabling an auto-hide policy act only on new arrivals? | **Confirmed in Phase 0E.1: forward-only** (PD D-51; §25.7) | — | No longer blocking | Resolved (0E.1) |
-| **TA-Q-04** · VALIDATE (mandatory) | Job runtime vendor: Trigger.dev (preferred) vs Graphile Worker (fallback) | Spike must validate: long-running imports, retries, idempotency, keyed/per-account concurrency, rate-limit controls, cancellation, scheduling, observability, payload privacy, data residency, pricing, recovery after worker failure | Spike | Yes, for the job foundation (§73 step 3) | Phase 0E.2 (pre-implementation validation) |
-| **TA-Q-05** · VALIDATE | Hosting region and data residency for database, web, jobs | Single region chosen with legal; co-locate all three | Legal (PD OQ-21, R-09); customer markets | Yes, for production; no for local/dev | Before staging setup |
+| **TA-Q-04** · PASS | Job runtime vendor: Trigger.dev vs Graphile Worker (fallback) | **Trigger.dev SELECTED.** Managed 14/14 on a Trigger.dev Development project (idempotency, retries and backoff, non-retryable abort, per-key concurrency, delay, schedules, cancellation, IDs-only stored payloads, outbox adapter, unknown-outcome handling); outbox 13/13 locally. Crashed runs aren't retried by the vendor → R7. Graphile Worker stays the fallback. Still open but not blocking the job foundation: deployed workers (TA-Q-31), data location (TA-Q-05), production plan sizing and cost (TA-Q-32) | — | **No longer blocking** the job foundation (§73 step 3) | Resolved (0E.2b; recorded in 0E.3) |
+| **TA-Q-05** · VALIDATE | Hosting region and data residency for database, web, jobs | Single region chosen with legal; co-locate all three. Trigger.dev documents run-data storage in AWS us-east-1 (DPA §4.1; sub-processors in the USA); job payloads carry identifiers only. Whether that is acceptable for the target markets is a legal decision | Legal (PD OQ-21, R-09); customer markets | Yes, for production; no for local/dev | Before staging setup |
 | **TA-Q-06** · VALIDATE | AI providers: data-processing terms, second provider, exact model per task | Anthropic as initial recommendation (not an architectural dependency); second provider only when evals/resilience justify; per-task models by eval | Legal; evals (PD OQ-28) | No for development (stubs); yes for production | Before production AI use |
 | **TA-Q-07** · VALIDATE | Key management for credential envelope encryption | Managed key service or platform vault outside the database | Vendor/security review | Yes, for the connections module | Before connections build |
 | **TA-Q-08** · VALIDATE | Log store vendor | Axiom or Better Stack (choose one) | Vendor review | No | Foundation phase |
@@ -2756,13 +2844,16 @@ Only genuine architecture questions. Product, IA, UX and model open items are pr
 | **TA-Q-26** · CONFIRMED | Are uncertain items excluded from human bulk hide? | **Confirmed in Phase 0E.1: excluded, counted, individual review** (PD D-52; §26.5). Individual human moderation unchanged | — | No longer blocking | Resolved (0E.1) |
 | **TA-Q-27** · OPEN | Operator (support) access to tenant content and customer consent | Time-boxed, reason-stated, audited; consent model per contract | Legal/commercial | No | Before production |
 | **TA-Q-28** · OPEN (operational) | RTO / RPO targets | RPO ≤ 15 min, RTO ≤ 4 h as **initial internal targets** for evaluating infrastructure; not customer commitments (§62) | Business | No | Before production |
-| **TA-Q-29** · VALIDATE (security-critical) | Direct Postgres RLS context under Supabase Auth + Drizzle + pooled connections | Spike per §11.6 (13 checks); fail-closed; if it fails, revisit the architecture before any code | Spike | **Yes — blocks the tenancy/database foundation** (§73 steps 1–2) | **Phase 0E.2**, before implementation |
+| **TA-Q-29** · PASS (security-critical) | Direct Postgres RLS context under Supabase Auth + Drizzle + pooled connections | **Validated tenant-isolation / pooled-context pattern adopted** (§11.6; R1–R5). R8, discovered during the same managed runs, is a separate operational lifecycle principle (§11.7); its rotation procedure stays VALIDATE under TA-Q-30. Local 29/29; managed run of record 22/22 (Supabase Auth, Supavisor transaction mode, Drizzle). The adversarial cases become the permanent isolation suite (T-26) | — | **No longer blocking** the tenancy/database foundation (§73 steps 1–2) | Resolved (0E.2b; recorded in 0E.3) |
+| **TA-Q-30** · VALIDATE (operational) | Database role rotation under Supavisor (R8) and the development pooler incident F-S6 | Confirm the R8 procedure (in-place password rotation, or new role name + drained pool) with Supabase support; report F-S6 in parallel (§11.7) | Supabase support | Yes, before the first production credential rotation; no for development | Before the first production rotation |
+| **TA-Q-31** · VALIDATE | Deployed Trigger.dev workers (staging) | Validate crash semantics, the run-outcome sweeper (R7) end to end, the worker login role over Supavisor, and egress/static IPs to the database | Staging environment | Yes, for production; no for development | Before production |
+| **TA-Q-32** · VALIDATE (commercial / operational) | Trigger.dev production plan sizing and cost at realistic product volumes | Size from: expected job/run volume; concurrency requirements; log-retention requirements; static-IP requirement; schedule-frequency requirements; compute/run cost at realistic MVP and early-production volumes; resulting Trigger.dev plan. **Development plan sufficiency is already validated** (TA-Q-04); realistic production cost and plan sizing are **not** validated | Volume assumptions (PD OQ-14, A-09); TA-Q-31 | No for development; yes before production plan selection and finalizing launch economics | Before production plan selection / launch economics |
 
 ---
 
 ## 72. ADR / decision register
 
-Locked in Phase 0E.1. Classification: **LOCKED** (architectural lock) · **VALIDATE** (vendor, operational, API, legal or security validation still required) · **DEFER** (later design or product decision). Architectural locks and vendor/operational validations are kept separate: a VALIDATE outcome changes a vendor or mechanism, not the locked boundary.
+Locked in Phase 0E.1; updated in Phase 0E.3 (v1.1) after the accepted pre-implementation validation. Classification: **LOCKED** (architectural lock) · **VALIDATE** (vendor, operational, API, legal or security validation still required) · **DEFER** (later design or product decision). Architectural locks and vendor/operational validations are kept separate: a VALIDATE outcome changes a vendor or mechanism, not the locked boundary.
 
 ### 72.1 Register
 
@@ -2774,12 +2865,12 @@ Locked in Phase 0E.1. Classification: **LOCKED** (architectural lock) · **VALID
 | ADR-04 | Server application services; no public API, no GraphQL/tRPC | TA-04 | LOCKED |
 | ADR-05 | PostgreSQL as single authoritative database | TA-05 | LOCKED |
 | ADR-06 | Supabase as initial managed Postgres/Auth/Storage platform | TA-06 | LOCKED · region VALIDATE (TA-Q-05) · Realtime VALIDATE (TA-Q-21) |
-| ADR-07 | Drizzle + SQL migrations + tenant-scoped transactions | TA-07 | LOCKED · pooled-connection RLS context VALIDATE (TA-Q-29) |
+| ADR-07 | Drizzle + SQL migrations + tenant-scoped transactions | TA-07 | LOCKED · pooled-connection RLS context VALIDATED (TA-Q-29 PASS) |
 | ADR-08 | Supabase Auth for authentication; app-owned authorization | TA-08 | LOCKED |
 | ADR-09 | Three-layer tenancy enforcement; workspace on every tenant row | TA-09 | LOCKED |
 | ADR-10 | RLS on every tenant table; worker role with tenant context; no service role in runtime | §11 | LOCKED |
-| ADR-11 | Job runtime vendor: Trigger.dev preferred, Graphile Worker fallback | TA-10 | VALIDATE (TA-Q-04) |
-| ADR-12 | Deployment shape: web + job runtime + data platform (vendors Vercel, Trigger.dev, Supabase recommended) | TA-11 | Shape LOCKED · hosting vendors VALIDATE (TA-Q-04, TA-Q-05) |
+| ADR-11 | Job runtime vendor: **Trigger.dev selected**; Graphile Worker fallback | TA-10 | SELECTED (TA-Q-04 PASS) · deployed workers VALIDATE in staging (TA-Q-31) · data location VALIDATE (TA-Q-05) |
+| ADR-12 | Deployment shape: web + job runtime + data platform (Supabase platform; Trigger.dev selected; Vercel recommended) | TA-11 | Shape LOCKED · job runtime Trigger.dev SELECTED (TA-Q-04 PASS) · web host and region VALIDATE (Vercel recommended; TA-Q-05) |
 | ADR-13 | Provider adapter contract; webhooks + polling + reconciliation | TA-12 | LOCKED |
 | ADR-14 | No DM read surface in the adapter contract or data model | §15.1, §27.3 | LOCKED |
 | ADR-15 | Single Platform Mutation Executor with intents and re-checks | TA-13 | LOCKED |
@@ -2820,32 +2911,42 @@ Locked in Phase 0E.1. Classification: **LOCKED** (architectural lock) · **VALID
 | ADR-50 | Bulk hide excludes uncertain items (in addition to protected) | §26.5 | LOCKED (PRODUCT OWNER: CONFIRMED, PD D-52) |
 | ADR-51 | Transactional outbox pattern | TA-28 | LOCKED |
 | ADR-52 | RLS is defense in depth; application authorization and RLS are both mandatory | §11.1 | LOCKED |
-| ADR-53 | Direct Postgres RLS context mechanism with pooled connections | §11.6 | VALIDATE (TA-Q-29, security-critical, blocks tenancy foundation) |
+| ADR-53 | Direct Postgres RLS context mechanism with pooled connections (validated pattern) | §11.6 | LOCKED (TA-Q-29 PASS, Phase 0E.2b) |
 | ADR-54 | MFA supported for all users; Owner/Admin enforcement undecided | §10.2 | LOCKED (support) · enforcement OPEN (TA-Q-10) |
 | ADR-55 | M-03, M-04, M-06, M-10 semantics | §30.1, §31.4, §33.2 | DEFER (open model questions) |
+| ADR-56 | R1: dedicated `LOGIN NOINHERIT NOBYPASSRLS` runtime login roles, each able to `SET ROLE` only to its fixed runtime role; never `postgres` or the service role in runtime | §10.4, §11.6 | LOCKED (validated, TA-Q-29) |
+| ADR-57 | R2: sealed, transaction-bound workspace context; no reliance on session-level state | §11.6 | LOCKED (validated, TA-Q-29) |
+| ADR-58 | R3: fixed-literal `SET LOCAL ROLE`; token role claims only allowlist-checked | §11.6 | LOCKED (validated, TA-Q-29) |
+| ADR-59 | R4: forced RLS; explicit owner/definer policies; `auth.uid()` policies created by a role with `auth` access; explicit schemas and grants; no reliance on Supabase default privileges; introspection tests | §11.1, §11.6, §65 | LOCKED (validated, TA-Q-29) |
+| ADR-60 | R5: workspace-scoped composite foreign keys (no existence oracle) | §11.1, §11.6 | LOCKED (validated, TA-Q-29) |
+| ADR-61 | R6: domain idempotency authoritative; EXECUTING committed before the provider call; OUTCOME_UNKNOWN → reconciliation; ambiguous replies never resent blindly; hide may retry | §18.3, §26.3 | LOCKED (validated, TA-Q-04) |
+| ADR-62 | R7: outbox run-outcome sweeper (run IDs and terminal status; re-dispatch CRASHED / SYSTEM_FAILURE); required in the job foundation | §19.3 | LOCKED (validated, TA-Q-04) |
+| ADR-63 | R8 (operational lifecycle principle found during managed validation; not part of the TA-Q-29 result): long-lived runtime roles in production and shared Supavisor environments; no routine create → pool → drop of login roles in shared projects; per-run roles only in isolated disposable or non-Supavisor environments; never drop/recreate pooled role names; rotation by in-place password or new role name + drained pool | §11.7, §65 | LOCKED (principles) · rotation and drain procedure VALIDATE with Supabase before the first production rotation (TA-Q-30) |
 
-### 72.2 Still VALIDATE after Phase 0E.1 (not locked)
+### 72.2 Still VALIDATE after Phase 0E.3 (not locked)
 
-Job vendor (TA-Q-04) · Realtime transport details (TA-Q-21) · exact AI provider/model per task and AI data-processing terms (TA-Q-06) · hosting/data-residency region (TA-Q-05) · credential key-management mechanism (TA-Q-07) · log-store vendor (TA-Q-08) · product-analytics region and consent (TA-Q-09) · transactional email vendor (TA-Q-24) · media URL/cache behavior (TA-Q-12) · provider webhook capabilities and polling cadence (TA-Q-22) · malicious-link reputation vendor (TA-Q-13) · two-key protection implementation details (TA-Q-14) · production retention periods (PD OQ-21; TA-Q-11) · provider API capability matrix (PD OQ-18) · ad-account multi-workspace use (TA-Q-02) · RLS context with pooled connections (TA-Q-29).
+Realtime transport details (TA-Q-21) · exact AI provider/model per task and AI data-processing terms (TA-Q-06) · hosting/data-residency region (TA-Q-05) · credential key-management mechanism (TA-Q-07) · log-store vendor (TA-Q-08) · product-analytics region and consent (TA-Q-09) · transactional email vendor (TA-Q-24) · media URL/cache behavior (TA-Q-12) · provider webhook capabilities and polling cadence (TA-Q-22) · malicious-link reputation vendor (TA-Q-13) · two-key protection implementation details (TA-Q-14) · production retention periods (PD OQ-21; TA-Q-11) · provider API capability matrix (PD OQ-18) · ad-account multi-workspace use (TA-Q-02) · Supavisor role-rotation procedure (TA-Q-30, R8) · deployed Trigger.dev workers in staging (TA-Q-31) · Trigger.dev production plan sizing and cost (TA-Q-32).
+
+**Resolved by validation (Phases 0E.2/0E.2b, recorded in 0E.3):** RLS context with pooled connections (TA-Q-29 PASS; ADR-53 LOCKED) · job runtime vendor (TA-Q-04 PASS; Trigger.dev selected, ADR-11).
 
 ---
 
 ## 73. Implementation sequence
 
-High-level build order **after** architecture approval (Phase 0E.1) and **after the Phase 0E.2 pre-implementation validation**; not started now. **Gates:** TA-Q-29 must pass before steps 1–2; TA-Q-04 must conclude before step 3. API validation (PD OQ-18, OQ-19, OQ-26, OQ-27) runs **in parallel** from the start, because it gates real adapters, not foundation work.
+High-level build order after architecture approval (Phase 0E.1) and the pre-implementation validation (Phases 0E.2/0E.2b, accepted in Phase 0E.3); not started now. **Validation gates:** TA-Q-29 **passed**, so steps 1–2 are no longer blocked by it; TA-Q-04 **passed** and Trigger.dev is selected, so step 3 is no longer blocked by it. Implementation still starts only after the architecture checkpoint and the repository `CLAUDE.md` (§74). API validation (PD OQ-18, OQ-19, OQ-26, OQ-27) runs **in parallel** from the start, because it gates real adapters, not foundation work.
 
 | Step | Scope | Why here | Exit criteria |
 |---|---|---|---|
 | 0 | **Repository foundation:** tooling, strict TypeScript, boundary lint, CI skeleton, observability skeleton, error taxonomy, i18n catalogs | Everything depends on it | CI runs lint/typecheck/tests; boundary rules active |
 | 1 | **Auth + tenancy:** organizations, workspaces, memberships, roles, grants, permission catalog, **workspace mode** (exists before any mutation), action pipeline, audit | Every later module needs tenant context and audit | Sign-in, invitations, role checks; audit written |
-| 2 | **Database foundation + RLS** (requires TA-Q-29 passed): roles, tenant-scoped helpers, RLS families, schema classification tests, tenant isolation suite, outbox | Isolation must precede data | T-01, T-11 pass on foundation tables |
-| 3 | **Job foundation** (after TA-Q-04 spike): job wrappers with tenant scope, outbox relay, sweepers, lanes; **flags and kill switches** | Async work and switches before integrations | Idempotent jobs; sweeper recovers lost dispatch |
+| 2 | **Database foundation + RLS** (TA-Q-29 passed; validated pattern §11.6): dedicated runtime login roles (R1), tenant-scoped helpers with sealed context and fixed-literal role switch (R2, R3), forced RLS families with explicit grants and introspection tests (R4), composite workspace foreign keys (R5), schema classification tests, the **permanent tenant-isolation suite including the TA-Q-29 adversarial cases** (T-26), outbox; long-lived runtime and test roles in any shared Supavisor project, per-run roles only in isolated disposable or local/non-Supavisor test databases, no pooled role dropped before the TA-Q-30 drain procedure (R8) | Isolation must precede data | T-01, T-11, T-26 pass on foundation tables |
+| 3 | **Job foundation** (Trigger.dev selected, TA-Q-04 passed): job wrappers with tenant scope behind the job port, outbox relay, dispatch sweeper, **run-outcome sweeper (R7)**, domain idempotency (R6), lanes; **flags and kill switches** | Async work and switches before integrations | Idempotent jobs; sweeper recovers lost dispatch; crashed runs recovered exactly once (T-27) |
 | 4 | **Provider adapter contracts + simulator + fixtures** | Build without live APIs | Contract tests pass for simulator |
 | 5 | **Connections, credentials, capability, coverage** (M-01 rule per D-50; needs TA-Q-07; multi-workspace ad accounts only after TA-Q-02) | Inputs for ingestion and availability | Connect (simulator), health, capability profile, coverage intervals |
 | 6 | **Ingestion + canonical conversation model:** webhook inbox, polling, backfill with checkpoints, dedup, source facts, native activity detection | Data before features | T-09 passes; backfill resumes; coverage truthful |
 | 7 | **Inbox read side + workflow:** list, detail, views, Open/Done, auto-Done (native), auto-reopen (fail-safe), assignment, notes, escalation, realtime invalidation | Operational value early | Inbox works with unclassified data (pending understanding) |
 | 8 | **AI gateway + classification + protection + priority + Needs review** | Understanding powers priority and safety | Fail-closed paths; T-05, T-13, T-14 pass |
-| 9 | **Mutation executor + human moderation + public reply + private reply** (Monitor-only enforced from day one) | Actions need the executor | T-04, T-08, T-10, T-12, T-16, T-17 pass |
+| 9 | **Mutation executor + human moderation + public reply + private reply** (Monitor-only enforced from day one) | Actions need the executor | T-04, T-08, T-10, T-12, T-16, T-17, T-27 pass (EXECUTING before provider calls, R6) |
 | 10 | **Brand Context + saved replies + reply suggestions** (grounding validators) | Assistance on top of the reply flow | Groundedness checks; suggestions withheld when unsafe |
 | 11 | **Safe automation:** policies, previews, evaluator, activation guard, Hidden automatically, Undo, pause all, IA-16 transitions — **behind the release gate** until evals pass (PD OQ-28) | Highest risk; built on stable foundations | T-05–T-07, T-15 pass; release gate closed by default |
 | 12 | **Topics + aggregation projection + Measured values** | Basis for intelligence | T-18 passes |
@@ -2853,7 +2954,7 @@ High-level build order **after** architecture approval (Phase 0E.1) and **after 
 | 14 | **Recommendations + tracked actions + follow-ups** | Learning loop | T-20 passes |
 | 15 | **Reports (internal + guest renderings)** | Assembles prior steps | Generations immutable; guest rendering safe |
 | 16 | **All workspaces attention + alerts** | Needs operational and intelligence signals | T-19 passes |
-| 17 | **Hardening:** reconciliation coverage, retention hooks, DR drills, load tests, eval gates, security review, real adapters behind validated capabilities | Before production | Launch readiness checklist |
+| 17 | **Hardening:** reconciliation coverage, retention hooks, DR drills, load tests, eval gates, security review, real adapters behind validated capabilities; deployed workers validated in staging (TA-Q-31); **R8 rotation runbook in DB operations, confirmed with Supabase before any production credential rotation** (TA-Q-30) | Before production | Launch readiness checklist |
 
 Steps 7–8 can overlap; step 9's executor can be built against the simulator while step 8 progresses. Real Meta/TikTok adapters replace the simulator per capability as API validation completes.
 
@@ -2867,17 +2968,17 @@ A repository-level `CLAUDE.md` is **not** created in this phase. When implementa
 |---|---|
 | **Architectural boundaries** | Modular monolith; module list and ownership; code vs deployment boundaries (web vs jobs); executor only in jobs. |
 | **Allowed dependency direction** | §6.3 and §7.2 rules; pure domain; no cross-module table access; boundary lint must pass. |
-| **Security invariants** | Server authority; no service role in runtime; credentials only via the credential-access function; no secrets/personal content in logs, payloads, analytics; CSRF/XSS/SSRF rules (§38). |
-| **Tenant rules** | Every tenant table has workspace and RLS; use tenant-scoped helpers only; system scope only for named jobs; cross-tenant = not found; one workspace per job. |
+| **Security invariants** | Server authority; no service role or `postgres` in runtime; dedicated runtime login roles (R1); credentials only via the credential-access function; no secrets/personal content in logs, payloads, analytics; CSRF/XSS/SSRF rules (§38). |
+| **Tenant rules** | Every tenant table has workspace and RLS; use tenant-scoped helpers only (sealed transaction-bound context, fixed-literal role switch, R2/R3); forced RLS and explicit grants (R4); composite workspace foreign keys (R5); never drop or recreate runtime roles, and never create → pool → drop login roles in a shared Supavisor project; per-run roles only in isolated disposable or local/non-Supavisor test environments (R8); system scope only for named jobs; cross-tenant = not found; one workspace per job. |
 | **Safety invariants** | Model §50 S1–S21 and the Appendix A map; the automation chain order; uncertain = veto; hide-only automation; forward-only automation (D-51); bulk hide excludes protected and uncertain items (D-52); no bulk delete/block; delete/block human-only; Monitor-only five-point enforcement; never resume automation silently; AI never sends; no DM objects. |
 | **Provider adapter rule** | Provider SDK/types only inside adapters; capability from the catalog, never hard-coded or inferred from data; mutation port only in the executor. |
-| **Job rules** | Outbox for async work; IDs-only payloads; idempotent steps; checkpoints; lanes and concurrency keys; replies never blindly retried. |
+| **Job rules** | Outbox for async work; IDs-only payloads; idempotent steps with domain idempotency (R6); EXECUTING before provider calls; run-outcome sweeper (R7); checkpoints; lanes and concurrency keys; replies never blindly retried. |
 | **AI rules** | Use the gateway; one task = one contract and version; structured outputs validated and fail-closed; numbers by code; no tools touching data or platforms; provenance on every output; evals for any prompt/model change. |
 | **Git protocol** | Git operations (commit, push, branch, PR) only when the user explicitly asks; never commit secrets, real customer data or raw provider captures; safety-critical paths require designated review. |
 | **Test requirements** | New tables need RLS tests; new commands need pipeline registration and permission tests; safety-relevant changes need matrix tests (§55); adapters need contract tests. |
 | **Prohibited shortcuts** | §69 anti-patterns; editing locked source documents; promoting open questions to decisions; frontend-only authorization; disabling RLS "temporarily"; bypassing the executor "for testing" in non-test code. |
-| **Source-of-truth documents** | PD v1.3, IA v1.1, UX v1.1, Model v1.1, and Technical Architecture v1.0 (approved); open questions stay open until the product owner decides. |
-| **Validation gates** | TA-Q-29 must have passed before tenancy/database foundation code; TA-Q-04 before job foundation; real adapters only for validated capabilities. |
+| **Source-of-truth documents** | PD v1.3, IA v1.1, UX v1.1, Model v1.1, and Technical Architecture v1.1 (approved baseline, validation-aligned); `docs/pre-implementation-validation-v1.md` as validation evidence; open questions stay open until the product owner decides. |
+| **Validation gates** | TA-Q-29 and TA-Q-04 have passed (Phase 0E.2b). Tenancy/database code follows the validated pattern (§11.6) and keeps T-26 green; the job foundation includes R6 and R7; R8 governs every runtime- and test-role change (procedure VALIDATE under TA-Q-30); real adapters only for validated capabilities; TA-Q-05, TA-Q-07, TA-Q-30, TA-Q-31, TA-Q-32 (before production plan selection) and the provider/API, AI and legal items gate what they name. |
 
 ---
 
@@ -2918,7 +3019,9 @@ A repository-level `CLAUDE.md` is **not** created in this phase. When implementa
 | 31 | Source documents were not modified. | Phase 0E: PD v1.2, IA v1.1, UX v1.0, Model v1.0 unchanged. (Phase 0E.1 aligned them; see below.) |
 | 32 | Only `docs/technical-architecture-v1.md` was created. | This phase's only file. |
 
-Criteria 30–32 describe Phase 0E. **Phase 0E.1 additions:** baseline locked and separated from vendor/operational validation (§2, §72); M-01 confirmed consistently (§8, PD D-50, Model v1.1); ad accounts remain capability-dependent (§8.4, TA-Q-02); automation forward-only (§25.7, T-25); uncertain items excluded from bulk hide with individual moderation preserved (§26.5, T-17); M-03, M-04, M-06, M-10 open; TA-Q-29 recorded as blocking (§11.6); service-role credentials absent from runtime; RLS and application authorization both mandatory (§11.1). Source documents aligned: PD v1.3, UX v1.1, Model v1.1; IA v1.1 metadata only.
+Criteria 30–32 describe Phase 0E. **Phase 0E.1 additions:** baseline locked and separated from vendor/operational validation (§2, §72); M-01 confirmed consistently (§8, PD D-50, Model v1.1); ad accounts remain capability-dependent (§8.4, TA-Q-02); automation forward-only (§25.7, T-25); uncertain items excluded from bulk hide with individual moderation preserved (§26.5, T-17); M-03, M-04, M-06, M-10 open; TA-Q-29 recorded as blocking (§11.6; passed and recorded in Phase 0E.3); service-role credentials absent from runtime; RLS and application authorization both mandatory (§11.1). Source documents aligned: PD v1.3, UX v1.1, Model v1.1; IA v1.1 metadata only.
+
+**Phase 0E.3 additions (v1.1):** TA-Q-29 and TA-Q-04 recorded as PASS with evidence references (§11.6, §19.1, §71); Trigger.dev selected and Graphile Worker kept as fallback (TA-10, ADR-11); R1–R8 integrated into the affected sections (§9.3, §10.4, §11, §18.3, §19.3, §26.3, §46, §55, §64, §65, §70) and registered as ADR-56–ADR-63; F-S6 recorded as an operational pooler incident with correlation, not proven causation (§11.7); TA-Q-05 kept VALIDATE with the Trigger.dev us-east-1 note; new tracking items TA-Q-30, TA-Q-31 and TA-Q-32 (Trigger.dev production plan sizing and cost, distinct from the AI unit-cost model TA-Q-23); implementation gates updated (§73, §74). No product, IA, UX or model document changed; M-02, M-03, M-04, M-06, M-08, M-09, M-10 and M-11 remain open.
 
 ---
 
@@ -2928,7 +3031,7 @@ Criteria 30–32 describe Phase 0E. **Phase 0E.1 additions:** baseline locked an
 
 | Invariant | Primary enforcement point(s) | Tests |
 |---|---|---|
-| Workspace is the primary operational/access/intelligence boundary | Workspace on every tenant row; RLS; tenant-scoped helpers; per-workspace jobs (§9, §11) | T-01, T-11 |
+| Workspace is the primary operational/access/intelligence boundary | Workspace on every tenant row; RLS; tenant-scoped helpers; per-workspace jobs (§9, §11) | T-01, T-11, T-26 |
 | Organizations may contain multiple workspaces | Tenancy model (§9.1) | DB integration |
 | Agencies and businesses use the same architecture | One codebase/data model; no agency-specific objects (§1.3) | — |
 | Facebook, Instagram and TikTok are first-class | Adapter contract per platform; capability catalog entries for all three (§15, §16) | Contract tests |
@@ -2983,7 +3086,7 @@ Criteria 30–32 describe Phase 0E. **Phase 0E.1 additions:** baseline locked an
 | S13 | Human corrections remain attributable | Human assessments; audit | T-14 |
 | S14 | Recommendation ≠ proven causality | Hypothesis labeling; validators | T-24 |
 | S15 | Before/after ≠ causality | Descriptive follow-up only | T-24 |
-| S16 | Workspace is the operational/access boundary | Tenancy enforcement | T-01, T-11 |
+| S16 | Workspace is the operational/access boundary | Tenancy enforcement; validated RLS context pattern (§11.6) | T-01, T-11, T-26 |
 | S17 | Cross-workspace doesn't become portfolio intelligence | Attention signals only | T-19 |
 | S18 | Client guests can't reach conversations | Guest projections + RLS | T-02 |
 | S19 | Keywords are never meaning | Candidate-only pattern matches + steps 2–3 | T-06 |

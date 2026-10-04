@@ -1,0 +1,27 @@
+R8 / F-S6 — Supavisor project-wide connection refusal after dropping pooled login roles (Supabase DEVELOPMENT project)
+Recorded 2026-10-04T14:34Z. Write-once evidence. Values redacted (<ref>, <ipv6>); no secrets.
+
+Sequence (clean managed run, see ta-q-29-managed-2026-10-04T14-32-40-076Z.txt):
+  14:32:40Z  managed suite finished 22/22; teardown report: terminated_spike_backends=13,
+             terminated_orphaned_after_drop=3 (Supavisor re-opened server connections for the spike login roles
+             between termination and DROP ROLE), remaining_spike_roles=0, remaining_spike_schemas=0,
+             synthetic_auth_users_deleted=5/5.
+  ~14:33Z    r8-rotation.mjs could not start: bootstrap connect via session pooler ->
+             08006 "Failed to connect to database: {:error, :econnrefused}".
+
+Diagnosis (non-destructive, 2026-10-04T14:33:30Z – 14:33:53Z):
+  session pooler :5432 as postgres      -> 08006 Failed to connect to database: {:error, :econnrefused}
+  transaction pooler :6543 as postgres  -> 08006 Failed to connect to database: {:error, :econnrefused}
+  direct host db.<ref>.supabase.co      -> A: ENODATA, AAAA: 1 record (IPv6-only); this machine has no IPv6 route
+                                           (EHOSTUNREACH). NOTE: the earlier "ENOTFOUND" for the direct host was caused
+                                           by this machine's lack of IPv6, NOT by the project.
+  Supabase Auth Admin API (GoTrue connects to PostgreSQL without Supavisor) -> listUsers OK (604 ms), users_in_project=0
+  PostgreSQL postmaster uptime at the start of the clean run: 15:31:46 -> PostgreSQL had NOT restarted during the
+  first outage (2026-10-04 ~12:13Z–?).
+
+Interpretation:
+  PostgreSQL is up; Supavisor refuses ALL pooled connections for the project (every role, both modes).
+  Observed twice (first outage after run 3 teardown + orphan termination; second after the clean run teardown), each
+  time immediately after login roles that Supavisor was actively pooling were terminated and dropped.
+  Causality is strongly suggested (2/2) but NOT proven; Supabase internals are not observable from here.
+  The R8 rotation script was therefore NOT re-run (it would repeat the trigger on the shared dev project).

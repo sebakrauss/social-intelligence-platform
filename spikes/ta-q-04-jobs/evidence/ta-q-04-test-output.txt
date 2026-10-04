@@ -1,0 +1,75 @@
+TA-Q-04 spike run — 2026-10-03T23:40:01.193Z
+PostgreSQL 17.10 on x86_64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit
+node v22.23.2
+exit code: 0
+
+▶ A — transaction rolls back => no outbox row, no job
+  ✔ nothing is ever dispatched (5.291458ms)
+✔ A — transaction rolls back => no outbox row, no job (12.28975ms)
+[worker(worker-b1e72c340c200abef4)] INFO: Completed task 1 (classify, 0.84ms) with success
+▶ B — commit, then dispatcher crashes BEFORE enqueue => sweeper dispatches later
+  ✔ outbox row survives; sweeper enqueues; worker completes (68.861708ms)
+✔ B — commit, then dispatcher crashes BEFORE enqueue => sweeper dispatches later (68.944333ms)
+[worker(worker-3e4c741473b186ab27)] INFO: Completed task 2 (classify, 0.40ms) with success
+▶ C — job enqueued, dispatcher crashes BEFORE marking dispatched => redispatch is harmless
+  ✔ C1: job still queued => same idempotency key collapses to ONE job (10.415541ms)
+[worker(worker-bd77101ef18935540e)] INFO: Completed task 4 (classify, 0.39ms) with success
+[worker(worker-edaf1a2d8e9864e01b)] INFO: Completed task 5 (classify, 0.37ms) with success
+  ✔ C2: job already ran => redispatch creates a second run, domain idempotency keeps ONE effect (see D) (18.604625ms)
+✔ C — job enqueued, dispatcher crashes BEFORE marking dispatched => redispatch is harmless (29.193125ms)
+[worker(worker-7c0b305cd7ec451491)] INFO: Completed task 6 (classify, 0.47ms) with success
+[worker(worker-7c0b305cd7ec451491)] INFO: Completed task 7 (classify, 0.33ms) with success
+▶ D — the same job delivered twice => one domain effect
+  ✔ two deliveries without a job key; assessment written once (9.679292ms)
+✔ D — the same job delivered twice => one domain effect (9.909542ms)
+[worker(worker-c91446b2077a67203a)] INFO: Completed task 8 (classify, 0.37ms) with success
+[worker(worker-c91446b2077a67203a)] ERROR: Failed task 9 (import, 2.13ms, attempt 1 of 25) with error 'simulated worker failure after page 3':
+  Error: simulated worker failure after page 3
+      at import (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/lib/outbox.mjs:124:92)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async doNext (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/node_modules/graphile-worker/dist/worker.js:191:26)
+[worker(worker-db3a9b938b3312dac1)] INFO: Completed task 9 (import, 4.27ms, attempt 2 of 25) with success
+▶ E — worker fails after partial work => retry resumes from checkpoint
+  ✔ E1: thrown error after page 3 => runtime retries with backoff; every page processed exactly once (2865.94875ms)
+E2 observed: job 10 still locked_by=pool-df71ff931b1be37d6b after SIGKILL
+[worker(worker-099e15698825ff5fdc)] INFO: Completed task 10 (import, 3.90ms, attempt 2 of 25) with success
+  ✔ E2: worker process HARD-KILLED mid-import => job stays locked (Graphile default) until unlocked; then resumes from checkpoint (2489.16225ms)
+✔ E — worker fails after partial work => retry resumes from checkpoint (5355.289333ms)
+[worker(worker-6de63258457e5b83c9)] INFO: Completed task 11 (mutate, 1.21ms) with success
+[worker(worker-71174944665d4087df)] INFO: Completed task 12 (mutate, 0.35ms) with success
+[worker(worker-270895b64771a34dbb)] INFO: Completed task 13 (reconcile, 0.65ms) with success
+▶ F — provider mutation times out with UNKNOWN outcome => never blindly repeated
+  ✔ F1: reply times out after the platform accepted it => no retry, outcome_unknown, reconciliation confirms; exactly ONE platform reply (32.4455ms)
+[worker(worker-db0840e9c6e00b225b)] INFO: Completed task 14 (mutate, 0.79ms) with success
+  ✔ F2: duplicate user submission (same request key) => one intent, one platform reply (14.011209ms)
+[worker(worker-38a23b96cd6913de93)] ERROR: Failed task 15 (mutate, 0.95ms, attempt 1 of 25) with error 'provider timeout':
+  Error: provider timeout
+      at Object.hide (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/lib/outbox.mjs:92:70)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async mutate (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/lib/outbox.mjs:138:106)
+      at async doNext (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/node_modules/graphile-worker/dist/worker.js:191:26)
+[worker(worker-be28a9cb0ad6be1c48)] INFO: Completed task 15 (mutate, 2.54ms, attempt 2 of 25) with success
+  ✔ F3: hide times out after success => retried (state-setting is idempotent); final state hidden, intent confirmed (2905.64375ms)
+✔ F — provider mutation times out with UNKNOWN outcome => never blindly repeated (2952.345583ms)
+[core] INFO: Failed to read crontab file '/Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/crontab'; cron is disabled
+[core] INFO: Worker connected and looking for jobs... (task names: 'classify', 'import', 'mutate', 'reconcile', 'slow')
+[worker(worker-ae3817a1cf1938fb80)] INFO: Completed task 16 (slow, 251.25ms) with success
+[worker(worker-3fc92e886f7699f418)] INFO: Completed task 19 (slow, 254.49ms) with success
+[worker(worker-3fc92e886f7699f418)] INFO: Completed task 17 (slow, 251.73ms) with success
+[worker(worker-49609cefb36fc71d19)] INFO: Completed task 20 (slow, 251.44ms) with success
+[worker(worker-a8fdfa178550bd5f69)] INFO: Completed task 18 (slow, 252.05ms) with success
+[worker(worker-3fc92e886f7699f418)] INFO: Completed task 21 (slow, 275.84ms) with success
+▶ Job runtime properties exercised on the fallback runtime
+  ✔ keyed concurrency: jobs in the same queue never overlap; different queues run in parallel (939.479834ms)
+[worker(worker-a388a67b08ab4824a1)] INFO: Completed task 22 (classify, 3.07ms) with success
+  ✔ delayed execution: a job with runAt in the future does not run early (1764.503666ms)
+  ✔ payload privacy: every dispatched payload carries identifiers only (no comment text, no credentials) (2.848167ms)
+✔ Job runtime properties exercised on the fallback runtime (2707.2445ms)
+ℹ tests 13
+ℹ suites 7
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11203.917875

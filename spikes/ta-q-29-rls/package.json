@@ -1,0 +1,16 @@
+{
+  "name": "spike-ta-q-29-rls",
+  "private": true,
+  "description": "DISPOSABLE SPIKE — NOT PRODUCTION CODE. Validates TA-Q-29 (RLS context with pooled connections).",
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/run.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.117.2",
+    "drizzle-orm": "0.45.3",
+    "embedded-postgres": "17.10.0-beta.17",
+    "jose": "6.2.12",
+    "pg": "8.23.1"
+  }
+}

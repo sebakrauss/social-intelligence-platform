@@ -1,0 +1,114 @@
+TA-Q-04 MANAGED run — Trigger.dev DEVELOPMENT environment — 2026-10-04T12:33:49.954Z
+exit code: 0
+Task code executed locally via `trigger.dev dev` (documented dev behavior); orchestration in Trigger.dev cloud.
+
+OBSERVED run correlation fields: {"id_prefix":"run_","status":"COMPLETED","tags":["outbox_1081dfbe"],"attemptCount":1,"durationMs":10,"costInCents":0,"has_startedAt":true,"has_finishedAt":true}
+▶ T1/T2/T17 — outbox → Trigger.dev by IDs → worker reloads PostgreSQL → idempotent domain operation
+  ✔ committed domain change is dispatched, executed and correlated (stable run id, tags, DB log) (1599.290625ms)
+  ✔ dispatcher crash after enqueue → redispatch returns the SAME run (vendor idempotency key) and executes once (1876.26825ms)
+✔ T1/T2/T17 — outbox → Trigger.dev by IDs → worker reloads PostgreSQL → idempotent domain operation (5549.366208ms)
+▶ T18 — vendor idempotency is NOT domain idempotency
+  ✔ two runs without a key both execute; the domain writes one assessment (2130.123209ms)
+✔ T18 — vendor idempotency is NOT domain idempotency (2130.728917ms)
+OBSERVED flaky attempts: {"status":"COMPLETED","attempts":3,"gaps_ms":[2272,3099]}
+▶ T5/T6/T7/T14 — retries, backoff, explicit non-retry, crash recovery
+  ✔ transient failures retry with configured exponential backoff and then succeed (7358.780667ms)
+  ✔ AbortTaskRunError fails the run without retries (1780.869ms)
+OBSERVED crash behavior: {"status":"CRASHED","attempts_logged":1,"attemptCount":1}
+  ✔ worker process crash (process.exit mid-attempt) → run CRASHED and is NOT retried by Trigger.dev (documented) (1538.79875ms)
+OBSERVED crash recovery via outbox sweeper: {"first_run":"CRASHED","redispatch_path":"same key created a new run","final_run":"COMPLETED","new_run_id":true}
+  ✔ recovery belongs to the outbox: a run-outcome sweeper re-dispatches CRASHED runs and the domain effect happens once (3262.035541ms)
+✔ T5/T6/T7/T14 — retries, backoff, explicit non-retry, crash recovery (13941.706792ms)
+OBSERVED concurrencyKey: {"same_key_overlaps":0,"cross_key_parallelism_observed":true}
+▶ T8/T9 — concurrencyKey per provider account
+  ✔ perKey: 1 → runs with the same key never overlap; different keys run in parallel (9312.16675ms)
+✔ T8/T9 — concurrencyKey per provider account (9312.724583ms)
+OBSERVED delay: {"status_right_after_trigger":"DELAYED","has_delayedUntil":true,"executed_after_ms":9578}
+▶ T10/T11/T12/T13 — delay, schedules, cancellation, long runs
+  ✔ delayed run waits before executing (11042.24925ms)
+OBSERVED schedule: {"same_id_on_dedup":true,"timezone":"America/Santiago","has_nextRun":true,"active":true}
+  ✔ imperative per-tenant schedule: create (deduplicated), inspect next run, delete (1125.356667ms)
+OBSERVED cancel: {"status":"CANCELED","outcomes":["started"]}
+  ✔ cancelling an executing run stops it before completion (6562.659958ms)
+✔ T10/T11/T12/T13 — delay, schedules, cancellation, long runs (18730.727292ms)
+OBSERVED unknown outcome: {"provider_calls":1,"final_status":"confirmed","outcomes":["reply_outcome_unknown","reply_not_repeated_needs_reconciliation"]}
+▶ T19 — unknown provider outcome → OUTCOME_UNKNOWN → reconciliation, never a blind resend
+  ✔ reply accepted by the platform but timed out: one platform call, no runtime retry, reconciled (6564.345167ms)
+  ✔ hide timed out after success: retried by the runtime (state-setting), ends confirmed (4373.006334ms)
+✔ T19 — unknown provider outcome → OUTCOME_UNKNOWN → reconciliation, never a blind resend (10937.698292ms)
+OBSERVED payload privacy: {"runs_checked":24}
+▶ T16 — payload privacy (IDs only) as stored by Trigger.dev
+  ✔ every run payload retrieved back from Trigger.dev contains only identifiers (4242.141166ms)
+✔ T16 — payload privacy (IDs only) as stored by Trigger.dev (4242.449792ms)
+ℹ tests 14
+ℹ suites 7
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 65026.198208
+
+
+--- trigger.dev dev CLI log (filtered, redacted) ---
+Key: Version | Task | Run
+○ Building local worker…
+○ Local worker ready on branch: default [node-24] -> 20261004.2
+○ Oct 04, 09:32:45.606 ->  20261004.2 | spike-classify | run_06ggdpo3v4cq3k7f3ia1ub3a01.1
+○ Oct 04, 09:32:47.121 ->  20261004.2 | spike-classify | run_06ggdpo3v4cq3k7f3ia1ub3a01.1 | Success (11ms)
+○ Oct 04, 09:32:47.433 ->  20261004.2 | spike-classify | run_06ggdpob1jjmnvud43q1hu1n01.1
+○ Oct 04, 09:32:48.520 ->  20261004.2 | spike-classify | run_06ggdpob1jjmnvud43q1hu1n01.1 | Success (10ms)
+○ Oct 04, 09:32:49.026 ->  20261004.2 | spike-classify | run_06ggdpoh84tn32o6ou178ptd01.1
+○ Oct 04, 09:32:50.128 ->  20261004.2 | spike-classify | run_06ggdpoh84tn32o6ou178ptd01.1 | Success (10ms)
+○ Oct 04, 09:32:50.889 ->  20261004.2 | spike-classify | run_06ggdpooieu8n8i5m0p0vc1k01.1
+○ Oct 04, 09:32:51.356 ->  20261004.2 | spike-classify | run_06ggdpoq9tf3irrt5eqeuu5301.1
+○ Oct 04, 09:32:51.838 ->  20261004.2 | spike-classify | run_06ggdpooieu8n8i5m0p0vc1k01.1 | Success (10ms)
+○ Oct 04, 09:32:52.368 ->  20261004.2 | spike-classify | run_06ggdpoq9tf3irrt5eqeuu5301.1 | Success (10ms)
+○ Oct 04, 09:32:53.020 ->  20261004.2 | spike-flaky | run_06ggdpp0t5jj3780ie2j95nf01.1
+○ Oct 04, 09:32:53.020 ->  20261004.2 | spike-flaky | run_06ggdpp0t5jj3780ie2j95nf01.2
+○ Oct 04, 09:32:53.020 ->  20261004.2 | spike-flaky | run_06ggdpp0t5jj3780ie2j95nf01.3
+○ Oct 04, 09:32:59.339 ->  20261004.2 | spike-flaky | run_06ggdpp0t5jj3780ie2j95nf01.3 | Success (9ms)
+○ Oct 04, 09:33:00.369 ->  20261004.2 | spike-abort | run_06ggdpptl03k5090pfruea0d01.1
+○ Oct 04, 09:33:01.819 ->  20261004.2 | spike-abort | run_06ggdpptl03k5090pfruea0d01.1 | Error (retrying skipped) (131ms)
+AbortTaskRunError: permanent failure: do not retry
+    at run (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/managed/trigger/tasks.ts:60:124)
+    at _tracer.startActiveSpan.attributes (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/node_modules/@trigger.dev/core/src/v3/workers/taskExecutor.ts:431:18)
+    at file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/node_modules/@trigger.dev/core/src/v3/workers/taskExecutor.ts:426:14
+    at _RunTimelineMetricsAPI.measureMetric (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/node_modules/@trigger.dev/core/src/v3/runTimelineMetrics/index.ts:67:22)
+    at file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/node_modules/@trigger.dev/core/src/v3/workers/taskExecutor.ts:190:26
+    at executeTask (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-04-jobs/node_modules/@trigger.dev/core/src/v3/workers/taskExecutor.ts:179:40)
+○ Oct 04, 09:33:02.166 ->  20261004.2 | spike-crash | run_06ggdpq4kjpavpsim0u5hvqc01.1
+○ Oct 04, 09:33:02.800 ->  20261004.2 | spike-crash | run_06ggdpq4kjpavpsim0u5hvqc01.1 | Error (0ms)
+○ Oct 04, 09:33:03.718 ->  20261004.2 | spike-classify | run_06ggdpqajj9f67br3ls4j89301.1
+○ Oct 04, 09:33:04.165 ->  20261004.2 | spike-crash-once | run_06ggdpqbb9eg3gsc85ka3dg201.1
+○ Oct 04, 09:33:04.710 ->  20261004.2 | spike-crash-once | run_06ggdpqbb9eg3gsc85ka3dg201.1 | Error (0ms)
+○ Oct 04, 09:33:05.072 ->  20261004.2 | spike-classify | run_06ggdpqajj9f67br3ls4j89301.1 | Success (10ms)
+○ Oct 04, 09:33:05.438 ->  20261004.2 | spike-crash-once | run_06ggdpqhagb4v8qlgci76bub01.1
+○ Oct 04, 09:33:06.528 ->  20261004.2 | spike-crash-once | run_06ggdpqhagb4v8qlgci76bub01.1 | Success (10ms)
+○ Oct 04, 09:33:06.950 ->  20261004.2 | spike-provider-call | run_06ggdpqnbhs9m9uc491r3bne01.1
+○ Oct 04, 09:33:07.737 ->  20261004.2 | spike-provider-call | run_06ggdpqqcolkejodaik1v0ee01.1
+○ Oct 04, 09:33:09.405 ->  20261004.2 | spike-provider-call | run_06ggdpqnbhs9m9uc491r3bne01.1 | Success (1.5s)
+○ Oct 04, 09:33:09.675 ->  20261004.2 | spike-provider-call | run_06ggdpqp1nssq7ep418fevg401.1
+○ Oct 04, 09:33:10.187 ->  20261004.2 | spike-provider-call | run_06ggdpqqcolkejodaik1v0ee01.1 | Success (1.5s)
+○ Oct 04, 09:33:10.462 ->  20261004.2 | spike-provider-call | run_06ggdpqr33kma3lqv1rkfbct01.1
+○ Oct 04, 09:33:12.140 ->  20261004.2 | spike-provider-call | run_06ggdpqp1nssq7ep418fevg401.1 | Success (1.5s)
+○ Oct 04, 09:33:12.407 ->  20261004.2 | spike-provider-call | run_06ggdpqpmgaq50satorg15ij01.1
+○ Oct 04, 09:33:13.109 ->  20261004.2 | spike-provider-call | run_06ggdpqr33kma3lqv1rkfbct01.1 | Success (1.5s)
+○ Oct 04, 09:33:13.381 ->  20261004.2 | spike-provider-call | run_06ggdpqrpopruk9hisprhiup01.1
+○ Oct 04, 09:33:14.842 ->  20261004.2 | spike-provider-call | run_06ggdpqpmgaq50satorg15ij01.1 | Success (1.5s)
+○ Oct 04, 09:33:15.843 ->  20261004.2 | spike-provider-call | run_06ggdpqrpopruk9hisprhiup01.1 | Success (1.5s)
+○ Oct 04, 09:33:24.994 ->  20261004.2 | spike-classify | run_06ggdprrnei81cb70bjunuff01.1
+○ Oct 04, 09:33:26.442 ->  20261004.2 | spike-classify | run_06ggdprrnei81cb70bjunuff01.1 | Success (10ms)
+○ Oct 04, 09:33:28.447 ->  20261004.2 | spike-long | run_06ggdptb8h6c38b1j9kns8v201.1
+○ Oct 04, 09:33:30.628 ->  20261004.2 | spike-long | run_06ggdptb8h6c38b1j9kns8v201.1 | Cancelled (0ms)
+○ Oct 04, 09:33:35.370 ->  20261004.2 | spike-classify | run_06ggdpu63m6er1umjd7jrb1k01.1
+○ Oct 04, 09:33:35.817 ->  20261004.2 | spike-mutate | run_06ggdpu76dre603b5t95t5a101.1
+○ Oct 04, 09:33:36.686 ->  20261004.2 | spike-classify | run_06ggdpu63m6er1umjd7jrb1k01.1 | Success (11ms)
+○ Oct 04, 09:33:37.164 ->  20261004.2 | spike-mutate | run_06ggdpu76dre603b5t95t5a101.1 | Success (12ms)
+○ Oct 04, 09:33:38.276 ->  20261004.2 | spike-mutate | run_06ggdpuhmpo859qnqq03cf1901.1
+○ Oct 04, 09:33:39.214 ->  20261004.2 | spike-mutate | run_06ggdpuhmpo859qnqq03cf1901.1 | Success (10ms)
+○ Oct 04, 09:33:40.047 ->  20261004.2 | spike-reconcile | run_06ggdpuojm42ei9h892mqvfj01.1
+○ Oct 04, 09:33:41.041 ->  20261004.2 | spike-reconcile | run_06ggdpuojm42ei9h892mqvfj01.1 | Success (11ms)
+○ Oct 04, 09:33:41.562 ->  20261004.2 | spike-mutate | run_06ggdpuuhct3d6ftuu9je6r101.1
+○ Oct 04, 09:33:41.562 ->  20261004.2 | spike-mutate | run_06ggdpuuhct3d6ftuu9je6r101.2
+○ Oct 04, 09:33:45.081 ->  20261004.2 | spike-mutate | run_06ggdpuuhct3d6ftuu9je6r101.2 | Success (11ms)

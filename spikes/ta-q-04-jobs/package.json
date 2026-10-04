@@ -1,0 +1,18 @@
+{
+  "name": "spike-ta-q-04-jobs",
+  "private": true,
+  "description": "DISPOSABLE SPIKE — NOT PRODUCTION CODE. Validates the transactional outbox integration shape for TA-Q-04.",
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/run.mjs"
+  },
+  "dependencies": {
+    "@trigger.dev/sdk": "4.7.2",
+    "embedded-postgres": "17.10.0-beta.17",
+    "graphile-worker": "0.18.0",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "trigger.dev": "4.7.2"
+  }
+}

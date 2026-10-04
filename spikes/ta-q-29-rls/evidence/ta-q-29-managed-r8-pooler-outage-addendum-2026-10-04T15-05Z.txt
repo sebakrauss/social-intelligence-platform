@@ -1,0 +1,3 @@
+Addendum to ta-q-29-managed-r8-pooler-outage-2026-10-04T14-34Z.txt (write-once)
+Passive recovery poll: one session-pooler connection attempt every 60 s from ~14:34Z.
+Result: STILL REFUSING (08006 econnrefused) at 2026-10-04T15:04:35Z, i.e. >=30 minutes. No further attempts made.

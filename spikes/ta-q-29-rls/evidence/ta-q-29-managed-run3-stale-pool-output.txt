@@ -1,0 +1,976 @@
+TA-Q-29 MANAGED run (Supabase DEVELOPMENT project) — 2026-10-04T12:12:21.831Z
+exit code: 1
+
+PROJECT FACTS (bootstrap inspection, redacted):
+{
+  "server_version": "17.11",
+  "bootstrap_role": {
+    "rolname": "postgres",
+    "rolsuper": false,
+    "rolbypassrls": true,
+    "rolcreaterole": true
+  },
+  "role_grants": {
+    "spike_web_login": "granted authenticated",
+    "spike_worker_login": "granted spike_app_worker",
+    "spike_system_login": "granted spike_app_system"
+  },
+  "default_acls": [
+    {
+      "creator": "postgres",
+      "schema": "public",
+      "type": "S",
+      "acl": "{postgres=rwU/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "public",
+      "type": "f",
+      "acl": "{postgres=X/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "public",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/postgres,anon=Dxtm/postgres,authenticated=Dxtm/postgres,service_role=Dxtm/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "storage",
+      "type": "S",
+      "acl": "{postgres=rwU/postgres,anon=rwU/postgres,authenticated=rwU/postgres,service_role=rwU/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "storage",
+      "type": "f",
+      "acl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "storage",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "extensions",
+      "type": "S",
+      "acl": "{postgres=r*w*U*/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "extensions",
+      "type": "f",
+      "acl": "{postgres=X*/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "extensions",
+      "type": "r",
+      "acl": "{postgres=a*r*w*d*D*x*t*m*/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_admin,anon=rwU/supabase_admin,authenticated=rwU/supabase_admin,service_role=rwU/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql",
+      "type": "f",
+      "acl": "{postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/supabase_admin,anon=arwdDxtm/supabase_admin,authenticated=arwdDxtm/supabase_admin,service_role=arwdDxtm/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql_public",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_admin,anon=rwU/supabase_admin,authenticated=rwU/supabase_admin,service_role=rwU/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql_public",
+      "type": "f",
+      "acl": "{postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql_public",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/supabase_admin,anon=arwdDxtm/supabase_admin,authenticated=arwdDxtm/supabase_admin,service_role=arwdDxtm/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "public",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_admin,anon=rwU/supabase_admin,authenticated=rwU/supabase_admin,service_role=rwU/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "public",
+      "type": "f",
+      "acl": "{postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "public",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/supabase_admin,anon=arwdDxtm/supabase_admin,authenticated=arwdDxtm/supabase_admin,service_role=arwdDxtm/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "realtime",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_admin,dashboard_user=rwU/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "realtime",
+      "type": "f",
+      "acl": "{postgres=X/supabase_admin,dashboard_user=X/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "realtime",
+      "type": "r",
+      "acl": "{postgres=a*r*wdDxtm/supabase_admin,dashboard_user=arwdDxtm/supabase_admin}"
+    },
+    {
+      "creator": "supabase_auth_admin",
+      "schema": "auth",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_auth_admin,dashboard_user=rwU/supabase_auth_admin}"
+    },
+    {
+      "creator": "supabase_auth_admin",
+      "schema": "auth",
+      "type": "f",
+      "acl": "{postgres=X/supabase_auth_admin,dashboard_user=X/supabase_auth_admin}"
+    },
+    {
+      "creator": "supabase_auth_admin",
+      "schema": "auth",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/supabase_auth_admin,dashboard_user=arwdDxtm/supabase_auth_admin}"
+    }
+  ],
+  "canary_privileges_after_create": [
+    {
+      "role": "anon",
+      "can_select": false
+    },
+    {
+      "role": "authenticated",
+      "can_select": false
+    },
+    {
+      "role": "spike_web_login",
+      "can_select": false
+    },
+    {
+      "role": "spike_worker_login",
+      "can_select": false
+    }
+  ],
+  "canary_rest_publishable_key_no_rls": {
+    "status": 401,
+    "rows": null
+  },
+  "canary_rest_publishable_key_with_rls": {
+    "status": 401,
+    "rows": null
+  },
+  "rest_spike29_schema_exposed": {
+    "status": 406,
+    "ok": false
+  },
+  "runtime_role_attributes": [
+    {
+      "rolname": "authenticated",
+      "rolcanlogin": false,
+      "rolinherit": true,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_app_system",
+      "rolcanlogin": false,
+      "rolinherit": true,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_app_worker",
+      "rolcanlogin": false,
+      "rolinherit": true,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_owner",
+      "rolcanlogin": false,
+      "rolinherit": true,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": true,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_system_login",
+      "rolcanlogin": true,
+      "rolinherit": false,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_web_login",
+      "rolcanlogin": true,
+      "rolinherit": false,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_worker_login",
+      "rolcanlogin": true,
+      "rolinherit": false,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    }
+  ],
+  "forced_rls_tables": {
+    "forced": 8,
+    "total": 8
+  },
+  "auth_uid_definition": "CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $function$ select coalesce( nullif(current_setting('request.jwt.claim.sub', true), ''), (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub') )::uuid $function$ "
+}
+
+TEARDOWN:
+{
+  "terminated_spike_backends": 10,
+  "remaining_spike_roles": 0,
+  "remaining_spike_schemas": 0,
+  "synthetic_auth_users_created": 5,
+  "synthetic_auth_users_deleted": 5
+}
+
+OBSERVED token header: {"alg":"ES256","has_kid":true}
+OBSERVED claims shape: ["aal","amr","app_metadata","aud","email","exp","iat","is_anonymous","iss","phone","role","session_id","sub","user_metadata"]
+▶ M01/M02 — REAL Supabase Auth identity verified server-side and mapped to transaction-local context
+  ✔ real tokens verify against the project JWKS; getClaims() agrees; header uses an asymmetric key (104.215292ms)
+  ✔ tampered, re-signed and foreign-key tokens are rejected before any query (1.568375ms)
+  ✖ inside the transaction: REAL auth.uid() = token sub, role = authenticated, session user = custom login, workspace bound (892.140625ms)
+✖ M01/M02 — REAL Supabase Auth identity verified server-side and mapped to transaction-local context (1000.429083ms)
+▶ M03 — direct PostgreSQL does not get PostgREST JWT injection
+  ✖ authenticated role without app-set claims: auth.uid() is NULL and tenant reads return nothing (593.474ms)
+✖ M03 — direct PostgreSQL does not get PostgREST JWT injection (595.438291ms)
+▶ M04/M05 — custom runtime login roles are safe
+  ✖ catalog (read by the runtime itself): LOGIN only on *_login roles, NOINHERIT, NOBYPASSRLS, not superuser (64.788916ms)
+  ✖ no runtime login can SET ROLE to service_role, postgres, supabase_admin, authenticator, anon, the owner, or another runtime role (2839.66375ms)
+✖ M04/M05 — custom runtime login roles are safe (2906.156125ms)
+▶ M06/M07 — Supavisor transaction mode and prepared statements
+  ✖ transactions multiplex onto server backends; unnamed statements (Drizzle/node-postgres default) work (66.066209ms)
+OBSERVED named prepared statement through transaction pooler: error 42704: invalid role OID: 17835
+  ✔ named prepared statement reuse behavior through the pooler is recorded (441.881416ms)
+✖ M06/M07 — Supavisor transaction mode and prepared statements (508.843084ms)
+▶ M08/M09 — transaction-local context disappears; reused backends serve A → B → none without leakage
+  ✖ sequential cycle A1 → B1 → none (users and workers): every transaction starts clean and sees only its own rows (585.571958ms)
+✖ M08/M09 — transaction-local context disappears; reused backends serve A → B → none without leakage (586.264875ms)
+▶ M10/M11 — missing and foreign context fail closed (reads, writes, references)
+  ✖ missing workspace context: zero rows, inserts denied (user and worker) (200.528625ms)
+  ✖ foreign reads return nothing; fabricated / cross-org context returns nothing (201.854083ms)
+  ✖ foreign writes: 0 rows updated/deleted; inserts/moves into B rejected (196.697959ms)
+  ✖ cross-workspace reference fails exactly like a non-existent one (R5) (591.554708ms)
+  ✖ client guest: guest projection only; attention signals follow non-guest memberships (REAL auth.uid()) (193.542125ms)
+✖ M10/M11 — missing and foreign context fail closed (reads, writes, references) (1384.940166ms)
+▶ M12 — worker cannot escape its workspace
+  ✖ query B from A, rebind, raw set_config, replayed seal: all fail closed (185.019542ms)
+✖ M12 — worker cannot escape its workspace (185.58975ms)
+▶ M13 — system role reaches only explicit system metadata
+  ✖ reads system table; tenant tables, helpers and Supabase auth tables denied (905.834708ms)
+✖ M13 — system role reaches only explicit system metadata (906.540875ms)
+▶ M14/M15 — Supabase default grants / auth roles create no unexpected path
+  ✖ authenticated (as used by the web runtime) cannot read Supabase auth or storage internals (401.275959ms)
+  ✔ runtime login roles have no privileges of their own (without SET ROLE everything is denied) (576.25075ms)
+✖ M14/M15 — Supabase default grants / auth roles create no unexpected path (978.024125ms)
+▶ M16 — runtime holds no service-role / bootstrap credential
+  ✔ runtime environment contains no secret key, service-role key or bootstrap DB URL (0.573875ms)
+✔ M16 — runtime holds no service-role / bootstrap credential (0.711042ms)
+▶ M17 — direct Drizzle without the tenant wrapper fails closed
+  ✖ unscoped queries are rejected; a leftover session-level SET ROLE yields zero rows (866.887958ms)
+✖ M17 — direct Drizzle without the tenant wrapper fails closed (867.434375ms)
+▶ R2 under Supavisor — session-level state left by buggy code
+  ✖ a session-level workspace/seal written outside a transaction may surface on other clients, but the seal makes it unusable (564.993667ms)
+✖ R2 under Supavisor — session-level state left by buggy code (565.920709ms)
+OBSERVED rejections: ["42501 permission denied to set role \"service_role\"","42501 permission denied to set role \"postgres\"","42501 permission denied to set role \"supabase_admin\"","42501 permission denied to set role \"authenticator\"","42501 permission denied to set role \"anon\"","42501 permission denied to set role \"spike_owner\"","42501 permission denied to set role \"spike_app_worker\"","42501 permission denied to set role \"spike_app_system\"","42501 permission denied to set role \"authenticated\"","42501 permission denied for schema spike29","42501 permission denied for schema spike29_system"]
+▶ M18 — pooling stress across synthetic tenants
+  ✖ 300 concurrent user/worker transactions over Supavisor never see foreign rows and always start clean (977.84925ms)
+✖ M18 — pooling stress across synthetic tenants (978.854042ms)
+ℹ tests 22
+ℹ suites 13
+ℹ pass 5
+ℹ fail 17
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11802.727459
+
+✖ failing tests:
+
+test at managed/managed.test.mjs:88:3
+✖ inside the transaction: REAL auth.uid() = token sub, role = authenticated, session user = custom login, workspace bound (892.140625ms)
+  error: password authentication failed for user "spike_web_login"
+      at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:182:48)
+      at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:89:15)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    length: 78,
+    severity: 'FATAL',
+    code: '28P01',
+    detail: undefined,
+    hint: undefined,
+    position: undefined,
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: undefined,
+    line: undefined,
+    routine: undefined
+  }
+
+test at managed/managed.test.mjs:95:3
+✖ authenticated role without app-set claims: auth.uid() is NULL and tenant reads return nothing (593.474ms)
+  Error: Failed query: set local role authenticated
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:96:57
+      ... 4 lines matching cause stack trace ...
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: 'set local role authenticated',
+    params: [],
+    cause: error: permission denied to set role "authenticated"
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:96:57
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:96:15)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Promise.all (index 0)
+        at async Suite.run (node:internal/test_runner/test:1442:7) {
+      length: 110,
+      severity: 'ERROR',
+      code: '42501',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'guc.c',
+      line: '6938',
+      routine: 'call_string_check_hook'
+    }
+  }
+
+test at managed/managed.test.mjs:103:3
+✖ catalog (read by the runtime itself): LOGIN only on *_login roles, NOINHERIT, NOBYPASSRLS, not superuser (64.788916ms)
+  Error: Failed query: select rolname, rolcanlogin, rolinherit, rolbypassrls, rolsuper from pg_roles where rolname like 'spike_%' order by 1
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:104:20)
+      ... 3 lines matching cause stack trace ...
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: "select rolname, rolcanlogin, rolinherit, rolbypassrls, rolsuper from pg_roles where rolname like 'spike_%' order by 1",
+    params: [],
+    cause: error: invalid role OID: 17835
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg-pool/index.js:45:11
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:104:20)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Promise.all (index 0)
+        at async Suite.run (node:internal/test_runner/test:1442:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+      length: 88,
+      severity: 'ERROR',
+      code: '42704',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'miscinit.c',
+      line: '1043',
+      routine: 'GetUserNameFromId'
+    }
+  }
+
+test at managed/managed.test.mjs:108:3
+✖ no runtime login can SET ROLE to service_role, postgres, supabase_admin, authenticator, anon, the owner, or another runtime role (2839.66375ms)
+  AssertionError [ERR_ASSERTION]: got 28P01: password authentication failed for user "spike_worker_login"
+      at expectPgError (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:55:164)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:112:9)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at managed/managed.test.mjs:119:3
+✖ transactions multiplex onto server backends; unnamed statements (Drizzle/node-postgres default) work (66.066209ms)
+  Error: Failed query: select pg_backend_pid() as pid
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:121:49)
+      ... 3 lines matching cause stack trace ...
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: 'select pg_backend_pid() as pid',
+    params: [],
+    cause: error: invalid role OID: 17835
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg-pool/index.js:45:11
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:121:49)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Promise.all (index 0)
+        at async Suite.run (node:internal/test_runner/test:1442:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+      length: 88,
+      severity: 'ERROR',
+      code: '42704',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'miscinit.c',
+      line: '1043',
+      routine: 'GetUserNameFromId'
+    }
+  }
+
+test at managed/managed.test.mjs:135:3
+✖ sequential cycle A1 → B1 → none (users and workers): every transaction starts clean and sees only its own rows (585.571958ms)
+  Error: Failed query: select pg_backend_pid() as pid, current_user as cu, coalesce(current_setting('request.jwt.claims', true),'') as claims, coalesce(current_setting('app.workspace_id', true),'') as ws, coalesce(current_setting('app.ctx_seal', true),'') as seal
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:147:90
+      ... 4 lines matching cause stack trace ...
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: "select pg_backend_pid() as pid, current_user as cu, coalesce(current_setting('request.jwt.claims', true),'') as claims, coalesce(current_setting('app.workspace_id', true),'') as ws, coalesce(current_setting('app.ctx_seal', true),'') as seal",
+    params: [],
+    cause: error: invalid role OID: 17835
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:147:90
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:147:21)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Promise.all (index 0)
+        at async Suite.run (node:internal/test_runner/test:1442:7) {
+      length: 88,
+      severity: 'ERROR',
+      code: '42704',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'miscinit.c',
+      line: '1043',
+      routine: 'GetUserNameFromId'
+    }
+  }
+
+test at managed/managed.test.mjs:163:3
+✖ missing workspace context: zero rows, inserts denied (user and worker) (200.528625ms)
+  Error: Failed query: set local role authenticated
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:164:57
+      ... 4 lines matching cause stack trace ...
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: 'set local role authenticated',
+    params: [],
+    cause: error: permission denied to set role "authenticated"
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:164:57
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:164:15)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Promise.all (index 0)
+        at async Suite.run (node:internal/test_runner/test:1442:7) {
+      length: 110,
+      severity: 'ERROR',
+      code: '42501',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'guc.c',
+      line: '6938',
+      routine: 'call_string_check_hook'
+    }
+  }
+
+test at managed/managed.test.mjs:168:3
+✖ foreign reads return nothing; fabricated / cross-org context returns nothing (201.854083ms)
+  Error: Failed query: set local role authenticated
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:43:5
+      ... 3 lines matching cause stack trace ...
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: 'set local role authenticated',
+    params: [],
+    cause: error: permission denied to set role "authenticated"
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:43:5
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:169:15)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+      length: 110,
+      severity: 'ERROR',
+      code: '42501',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'guc.c',
+      line: '6938',
+      routine: 'call_string_check_hook'
+    }
+  }
+
+test at managed/managed.test.mjs:174:3
+✖ foreign writes: 0 rows updated/deleted; inserts/moves into B rejected (196.697959ms)
+  Error: Failed query: set local role authenticated
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:43:5
+      ... 3 lines matching cause stack trace ...
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: 'set local role authenticated',
+    params: [],
+    cause: error: permission denied to set role "authenticated"
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:43:5
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:175:15)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+      length: 110,
+      severity: 'ERROR',
+      code: '42501',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'guc.c',
+      line: '6938',
+      routine: 'call_string_check_hook'
+    }
+  }
+
+test at managed/managed.test.mjs:182:3
+✖ cross-workspace reference fails exactly like a non-existent one (R5) (591.554708ms)
+  AssertionError [ERR_ASSERTION]: got 42501: permission denied to set role "spike_app_worker"
+      at expectPgError (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:55:164)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:183:5)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at managed/managed.test.mjs:186:3
+✖ client guest: guest projection only; attention signals follow non-guest memberships (REAL auth.uid()) (193.542125ms)
+  Error: Failed query: set local role authenticated
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:43:5
+      ... 3 lines matching cause stack trace ...
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: 'set local role authenticated',
+    params: [],
+    cause: error: permission denied to set role "authenticated"
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:43:5
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:187:15)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+      length: 110,
+      severity: 'ERROR',
+      code: '42501',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'guc.c',
+      line: '6938',
+      routine: 'call_string_check_hook'
+    }
+  }
+
+test at managed/managed.test.mjs:194:3
+✖ query B from A, rebind, raw set_config, replayed seal: all fail closed (185.019542ms)
+  Error: Failed query: set local role spike_app_worker
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:49:74
+      ... 4 lines matching cause stack trace ...
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: 'set local role spike_app_worker',
+    params: [],
+    cause: error: permission denied to set role "spike_app_worker"
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:49:74
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:195:19)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Promise.all (index 0)
+        at async Suite.run (node:internal/test_runner/test:1442:7) {
+      length: 113,
+      severity: 'ERROR',
+      code: '42501',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'guc.c',
+      line: '6938',
+      routine: 'call_string_check_hook'
+    }
+  }
+
+test at managed/managed.test.mjs:205:3
+✖ reads system table; tenant tables, helpers and Supabase auth tables denied (905.834708ms)
+  error: password authentication failed for user "spike_system_login"
+      at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:182:48)
+      at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:206:23)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    length: 81,
+    severity: 'FATAL',
+    code: '28P01',
+    detail: undefined,
+    hint: undefined,
+    position: undefined,
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: undefined,
+    line: undefined,
+    routine: undefined
+  }
+
+test at managed/managed.test.mjs:214:3
+✖ authenticated (as used by the web runtime) cannot read Supabase auth or storage internals (401.275959ms)
+  Error: Failed query: set local role authenticated
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:43:5
+      ... 4 lines matching cause stack trace ...
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: 'set local role authenticated',
+    params: [],
+    cause: error: permission denied to set role "authenticated"
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:43:5
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:216:22)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Promise.all (index 0)
+        at async Suite.run (node:internal/test_runner/test:1442:7) {
+      length: 110,
+      severity: 'ERROR',
+      code: '42501',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'guc.c',
+      line: '6938',
+      routine: 'call_string_check_hook'
+    }
+  }
+
+test at managed/managed.test.mjs:234:3
+✖ unscoped queries are rejected; a leftover session-level SET ROLE yields zero rows (866.887958ms)
+  error: permission denied to set role "authenticated"
+      at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:237:11)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    length: 110,
+    severity: 'ERROR',
+    code: '42501',
+    detail: undefined,
+    hint: undefined,
+    position: undefined,
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'guc.c',
+    line: '6938',
+    routine: 'call_string_check_hook'
+  }
+
+test at managed/managed.test.mjs:243:3
+✖ a session-level workspace/seal written outside a transaction may surface on other clients, but the seal makes it unusable (564.993667ms)
+  Error: Failed query: set local role spike_app_worker
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:49:74
+      ... 4 lines matching cause stack trace ...
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    query: 'set local role spike_app_worker',
+    params: [],
+    cause: error: permission denied to set role "spike_app_worker"
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:49:74
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:244:18)
+        at async Test.run (node:internal/test_runner/test:1054:7)
+        at async Promise.all (index 0)
+        at async Suite.run (node:internal/test_runner/test:1442:7) {
+      length: 113,
+      severity: 'ERROR',
+      code: '42501',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'guc.c',
+      line: '6938',
+      routine: 'call_string_check_hook'
+    }
+  }
+
+test at managed/managed.test.mjs:261:3
+✖ 300 concurrent user/worker transactions over Supavisor never see foreign rows and always start clean (977.84925ms)
+  Error: Failed query: set local role spike_app_worker
+  params: 
+      at NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:41:15)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:49:74
+      ... 4 lines matching cause stack trace ...
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1442:7) {
+    query: 'set local role spike_app_worker',
+    params: [],
+    cause: error: permission denied to set role "spike_app_worker"
+        at /Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/pg/lib/client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:113:20
+        at async NodePgPreparedQuery.queryWithCache (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/pg-core/session.js:39:16)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:49:74
+        at async NodePgSession.transaction (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/node_modules/drizzle-orm/node-postgres/session.js:186:22)
+        at async file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:269:28
+        at async Promise.all (index 6)
+        at async TestContext.<anonymous> (file:///Users/sebakrauss/Documents/social-intelligence-platform/spikes/ta-q-29-rls/managed/managed.test.mjs:266:7)
+        at async Test.run (node:internal/test_runner/test:1054:7) {
+      length: 113,
+      severity: 'ERROR',
+      code: '42501',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: undefined,
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'guc.c',
+      line: '6938',
+      routine: 'call_string_check_hook'
+    }
+  }

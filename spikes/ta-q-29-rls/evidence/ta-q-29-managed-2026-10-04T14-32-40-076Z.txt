@@ -1,0 +1,356 @@
+TA-Q-29 MANAGED run (Supabase DEVELOPMENT project) — 2026-10-04T14:32:40.068Z
+exit code: 0
+
+PROJECT FACTS (bootstrap inspection, redacted):
+{
+  "server_version": "17.11",
+  "postmaster_uptime_at_start": "15:31:46.548756",
+  "bootstrap_role": {
+    "rolname": "postgres",
+    "rolsuper": false,
+    "rolbypassrls": true,
+    "rolcreaterole": true
+  },
+  "role_grants": {
+    "spike_web_login_ctif": "granted authenticated",
+    "spike_worker_login_ctif": "granted spike_app_worker",
+    "spike_system_login_ctif": "granted spike_app_system"
+  },
+  "default_acls": [
+    {
+      "creator": "postgres",
+      "schema": "public",
+      "type": "S",
+      "acl": "{postgres=rwU/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "public",
+      "type": "f",
+      "acl": "{postgres=X/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "public",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/postgres,anon=Dxtm/postgres,authenticated=Dxtm/postgres,service_role=Dxtm/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "storage",
+      "type": "S",
+      "acl": "{postgres=rwU/postgres,anon=rwU/postgres,authenticated=rwU/postgres,service_role=rwU/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "storage",
+      "type": "f",
+      "acl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}"
+    },
+    {
+      "creator": "postgres",
+      "schema": "storage",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "extensions",
+      "type": "S",
+      "acl": "{postgres=r*w*U*/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "extensions",
+      "type": "f",
+      "acl": "{postgres=X*/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "extensions",
+      "type": "r",
+      "acl": "{postgres=a*r*w*d*D*x*t*m*/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_admin,anon=rwU/supabase_admin,authenticated=rwU/supabase_admin,service_role=rwU/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql",
+      "type": "f",
+      "acl": "{postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/supabase_admin,anon=arwdDxtm/supabase_admin,authenticated=arwdDxtm/supabase_admin,service_role=arwdDxtm/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql_public",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_admin,anon=rwU/supabase_admin,authenticated=rwU/supabase_admin,service_role=rwU/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql_public",
+      "type": "f",
+      "acl": "{postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "graphql_public",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/supabase_admin,anon=arwdDxtm/supabase_admin,authenticated=arwdDxtm/supabase_admin,service_role=arwdDxtm/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "public",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_admin,anon=rwU/supabase_admin,authenticated=rwU/supabase_admin,service_role=rwU/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "public",
+      "type": "f",
+      "acl": "{postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "public",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/supabase_admin,anon=arwdDxtm/supabase_admin,authenticated=arwdDxtm/supabase_admin,service_role=arwdDxtm/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "realtime",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_admin,dashboard_user=rwU/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "realtime",
+      "type": "f",
+      "acl": "{postgres=X/supabase_admin,dashboard_user=X/supabase_admin}"
+    },
+    {
+      "creator": "supabase_admin",
+      "schema": "realtime",
+      "type": "r",
+      "acl": "{postgres=a*r*wdDxtm/supabase_admin,dashboard_user=arwdDxtm/supabase_admin}"
+    },
+    {
+      "creator": "supabase_auth_admin",
+      "schema": "auth",
+      "type": "S",
+      "acl": "{postgres=rwU/supabase_auth_admin,dashboard_user=rwU/supabase_auth_admin}"
+    },
+    {
+      "creator": "supabase_auth_admin",
+      "schema": "auth",
+      "type": "f",
+      "acl": "{postgres=X/supabase_auth_admin,dashboard_user=X/supabase_auth_admin}"
+    },
+    {
+      "creator": "supabase_auth_admin",
+      "schema": "auth",
+      "type": "r",
+      "acl": "{postgres=arwdDxtm/supabase_auth_admin,dashboard_user=arwdDxtm/supabase_auth_admin}"
+    }
+  ],
+  "canary_privileges_after_create": [
+    {
+      "role": "anon",
+      "can_select": false
+    },
+    {
+      "role": "authenticated",
+      "can_select": false
+    },
+    {
+      "role": "spike_web_login_ctif",
+      "can_select": false
+    },
+    {
+      "role": "spike_worker_login_ctif",
+      "can_select": false
+    }
+  ],
+  "canary_rest_publishable_key_no_rls": {
+    "status": 404,
+    "rows": null
+  },
+  "canary_rest_publishable_key_with_rls": {
+    "status": 401,
+    "rows": null
+  },
+  "rest_spike29_schema_exposed": {
+    "status": 406,
+    "ok": false
+  },
+  "runtime_role_attributes": [
+    {
+      "rolname": "authenticated",
+      "rolcanlogin": false,
+      "rolinherit": true,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_app_system",
+      "rolcanlogin": false,
+      "rolinherit": true,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_app_worker",
+      "rolcanlogin": false,
+      "rolinherit": true,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_owner",
+      "rolcanlogin": false,
+      "rolinherit": true,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": true,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_system_login_ctif",
+      "rolcanlogin": true,
+      "rolinherit": false,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_web_login_ctif",
+      "rolcanlogin": true,
+      "rolinherit": false,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    },
+    {
+      "rolname": "spike_worker_login_ctif",
+      "rolcanlogin": true,
+      "rolinherit": false,
+      "rolbypassrls": false,
+      "rolsuper": false,
+      "member_service_role": false,
+      "member_postgres": false,
+      "member_owner": false,
+      "member_anon": false
+    }
+  ],
+  "forced_rls_tables": {
+    "forced": 8,
+    "total": 8
+  },
+  "auth_uid_definition": "CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $function$ select coalesce( nullif(current_setting('request.jwt.claim.sub', true), ''), (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub') )::uuid $function$ "
+}
+
+TEARDOWN:
+{
+  "terminated_spike_backends": 13,
+  "terminated_orphaned_after_drop": 3,
+  "remaining_spike_roles": 0,
+  "remaining_spike_schemas": 0,
+  "synthetic_auth_users_created": 5,
+  "synthetic_auth_users_deleted": 5
+}
+
+OBSERVED token header: {"alg":"ES256","has_kid":true}
+OBSERVED claims shape: ["aal","amr","app_metadata","aud","email","exp","iat","is_anonymous","iss","phone","role","session_id","sub","user_metadata"]
+▶ M01/M02 — REAL Supabase Auth identity verified server-side and mapped to transaction-local context
+  ✔ real tokens verify against the project JWKS; getClaims() agrees; header uses an asymmetric key (195.682458ms)
+  ✔ tampered, re-signed and foreign-key tokens are rejected before any query (1.815666ms)
+  ✔ inside the transaction: REAL auth.uid() = token sub, role = authenticated, session user = custom login, workspace bound (864.2735ms)
+✔ M01/M02 — REAL Supabase Auth identity verified server-side and mapped to transaction-local context (1062.336375ms)
+▶ M03 — direct PostgreSQL does not get PostgREST JWT injection
+  ✔ authenticated role without app-set claims: auth.uid() is NULL and tenant reads return nothing (341.524375ms)
+✔ M03 — direct PostgreSQL does not get PostgREST JWT injection (342.3705ms)
+OBSERVED runtime role attributes: [{"rolname":"spike_app_system","rolcanlogin":false,"rolinherit":true,"rolbypassrls":false,"rolsuper":false},{"rolname":"spike_app_worker","rolcanlogin":false,"rolinherit":true,"rolbypassrls":false,"rolsuper":false},{"rolname":"spike_owner","rolcanlogin":false,"rolinherit":true,"rolbypassrls":false,"rolsuper":false},{"rolname":"spike_system_login_ctif","rolcanlogin":true,"rolinherit":false,"rolbypassrls":false,"rolsuper":false},{"rolname":"spike_web_login_ctif","rolcanlogin":true,"rolinherit":false,"rolbypassrls":false,"rolsuper":false},{"rolname":"spike_worker_login_ctif","rolcanlogin":true,"rolinherit":false,"rolbypassrls":false,"rolsuper":false}]
+▶ M04/M05 — custom runtime login roles are safe
+  ✔ catalog (read by the runtime itself): LOGIN only on *_login roles, NOINHERIT, NOBYPASSRLS, not superuser (71.115792ms)
+  ✔ no runtime login can SET ROLE to service_role, postgres, supabase_admin, authenticator, anon, the owner, or another runtime role (5735.433041ms)
+✔ M04/M05 — custom runtime login roles are safe (5807.690333ms)
+OBSERVED backend pids seen by ONE client connection over 20 statements: {"distinct":1}
+▶ M06/M07 — Supavisor transaction mode and prepared statements
+  ✔ transactions multiplex onto server backends; unnamed statements (Drizzle/node-postgres default) work (1767.269416ms)
+OBSERVED named prepared statement through transaction pooler: reused without error
+  ✔ named prepared statement reuse behavior through the pooler is recorded (128.10675ms)
+✔ M06/M07 — Supavisor transaction mode and prepared statements (1896.2025ms)
+OBSERVED backend reuse across tenants (sequential): {"transactions":45,"backends":2,"backends_serving_2plus_contexts":2,"example":["A1","none","B1","A1","none","B1","A1","none","B1"]}
+▶ M08/M09 — transaction-local context disappears; reused backends serve A → B → none without leakage
+  ✔ sequential cycle A1 → B1 → none (users and workers): every transaction starts clean and sees only its own rows (24394.361834ms)
+✔ M08/M09 — transaction-local context disappears; reused backends serve A → B → none without leakage (24394.683875ms)
+▶ M10/M11 — missing and foreign context fail closed (reads, writes, references)
+  ✔ missing workspace context: zero rows, inserts denied (user and worker) (597.722917ms)
+  ✔ foreign reads return nothing; fabricated / cross-org context returns nothing (2429.2935ms)
+  ✔ foreign writes: 0 rows updated/deleted; inserts/moves into B rejected (1673.60975ms)
+  ✔ cross-workspace reference fails exactly like a non-existent one (R5) (1036.344083ms)
+  ✔ client guest: guest projection only; attention signals follow non-guest memberships (REAL auth.uid()) (925.290084ms)
+✔ M10/M11 — missing and foreign context fail closed (reads, writes, references) (6663.048375ms)
+▶ M12 — worker cannot escape its workspace
+  ✔ query B from A, rebind, raw set_config, replayed seal: all fail closed (1659.665875ms)
+✔ M12 — worker cannot escape its workspace (1660.053834ms)
+▶ M13 — system role reaches only explicit system metadata
+  ✔ reads system table; tenant tables, helpers and Supabase auth tables denied (1458.386167ms)
+✔ M13 — system role reaches only explicit system metadata (1458.704041ms)
+OBSERVED table grants visible to authenticated/anon/PUBLIC in this project (from runtime view): {"n":40}
+▶ M14/M15 — Supabase default grants / auth roles create no unexpected path
+  ✔ authenticated (as used by the web runtime) cannot read Supabase auth or storage internals (1198.023958ms)
+  ✔ runtime login roles have no privileges of their own (without SET ROLE everything is denied) (585.411875ms)
+✔ M14/M15 — Supabase default grants / auth roles create no unexpected path (1783.913458ms)
+▶ M16 — runtime holds no service-role / bootstrap credential
+  ✔ runtime environment contains no secret key, service-role key or bootstrap DB URL (0.844833ms)
+✔ M16 — runtime holds no service-role / bootstrap credential (1.051125ms)
+▶ M17 — direct Drizzle without the tenant wrapper fails closed
+  ✔ unscoped queries are rejected; a leftover session-level SET ROLE yields zero rows (1034.847166ms)
+✔ M17 — direct Drizzle without the tenant wrapper fails closed (1035.02225ms)
+OBSERVED session-level value surfaced in other clients' transactions: {"transactions":60,"surfaced":15,"rows_leaked":0}
+▶ R2 under Supavisor — session-level state left by buggy code
+  ✔ a session-level workspace/seal written outside a transaction may surface on other clients, but the seal makes it unusable (6540.994917ms)
+✔ R2 under Supavisor — session-level state left by buggy code (6541.224917ms)
+OBSERVED stress: {"transactions":300,"backends":12,"backends_serving_multiple_tenants":12,"dirtyStarts":0}
+OBSERVED rejections: ["42501 permission denied to set role \"service_role\"","42501 permission denied to set role \"postgres\"","42501 permission denied to set role \"supabase_admin\"","42501 permission denied to set role \"authenticator\"","42501 permission denied to set role \"anon\"","42501 permission denied to set role \"spike_owner\"","42501 permission denied to set role \"spike_app_worker\"","42501 permission denied to set role \"spike_app_system\"","42501 permission denied to set role \"authenticated\"","42501 new row violates row-level security policy for table \"conversations\"","23503 insert or update on table \"interactions\" violates foreign key constraint \"interactions_workspace_id_conversation_id_fkey\"","42501 tenant context: already bound in this transaction","42501 permission denied for schema spike29","42501 permission denied for schema spike29_app","42501 permission denied for schema auth","42501 permission denied for table users","42501 permission denied for schema spike29_system"]
+▶ M18 — pooling stress across synthetic tenants
+  ✔ 300 concurrent user/worker transactions over Supavisor never see foreign rows and always start clean (16380.950083ms)
+✔ M18 — pooling stress across synthetic tenants (16381.333084ms)
+ℹ tests 22
+ℹ suites 13
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 69351.290167
