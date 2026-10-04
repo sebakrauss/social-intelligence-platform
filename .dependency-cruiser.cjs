@@ -145,6 +145,43 @@ module.exports = {
       to: { path: "^(platform/db|integrations|ai/providers|mutations)/" },
     },
 
+    // ── Authentication boundary (TA §10.1–§10.2) ─────────────────────────────────────────────
+    {
+      name: "supabase-sdk-only-in-platform-auth",
+      severity: "error",
+      comment: "The Supabase SDK is imported only by the auth adapter in platform/auth; nothing else sees its types.",
+      from: { pathNot: "^platform/auth/" },
+      to: { path: "(^|/)node_modules/@supabase/" },
+    },
+    {
+      name: "app-ui-no-auth-adapter",
+      severity: "error",
+      comment: "app/ and ui/ reach authentication only through server/ (server/auth), never platform/auth.",
+      from: { path: "^(app|ui)/" },
+      to: { path: "^platform/auth/" },
+    },
+    {
+      name: "modules-no-auth-adapter",
+      severity: "error",
+      comment: "Domain and application code receive identities from the pipeline, never from the auth adapter.",
+      from: { path: "^modules/" },
+      to: { path: "^platform/auth/" },
+    },
+    {
+      name: "resolved-context-minted-by-pipeline-only",
+      severity: "error",
+      comment: "Tenant/user contexts are created only by server/pipeline (live resolution); others may import their types.",
+      from: { pathNot: "^(server/pipeline|tests)/" },
+      to: { path: "^server/pipeline/context\\.ts$", dependencyTypesNot: ["type-only"] },
+    },
+    {
+      name: "modules-not-to-upper-layers",
+      severity: "error",
+      comment: "Modules sit below the application layer: they never import server/, app/, ui/ or jobs/ (TA §6.3).",
+      from: { path: "^modules/" },
+      to: { path: "^(server|app|ui|jobs)/" },
+    },
+
     // ── AI boundary (TA §6.3 rule 4; §7.2) ───────────────────────────────────────────────────
     {
       name: "ai-no-mutations-integrations-or-writers",

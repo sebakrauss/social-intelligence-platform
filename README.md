@@ -13,6 +13,10 @@ Implementation rules live in [`CLAUDE.md`](CLAUDE.md); the approved design docum
 npm ci
 ```
 
+## Local authentication (optional)
+
+Sign-in uses Supabase Auth. To try it locally, copy `.env.example` to `.env.local` (git-ignored) and fill in the public project URL, the publishable key and `APP_BASE_URL`. Never add a service-role or secret key: the application doesn't use one. Without configuration the app builds and runs, and sign-in reports that it isn't available.
+
 ## Foundation commands
 
 | Command | What it checks |

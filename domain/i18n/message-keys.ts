@@ -3,7 +3,7 @@
  *
  * Code refers to user-facing text only through these keys; the text itself lives in
  * locale catalogs (`platform/i18n`). Keys are lowercase dotted identifiers and are never
- * renamed once shipped. Step 0 defines only the error-taxonomy keys.
+ * renamed once shipped.
  */
 export const MESSAGE_KEYS = [
   "error.permission_denied",
@@ -25,6 +25,28 @@ export const MESSAGE_KEYS = [
   "error.ai_refused",
   "error.ai_budget_exceeded",
   "error.job_failed",
+  "auth.sign_in.heading",
+  "auth.sign_in.submit",
+  "auth.sign_in.link",
+  "auth.sign_in_link.heading",
+  "auth.sign_in_link.submit",
+  "auth.sign_out.submit",
+  "auth.field.email",
+  "auth.field.password",
+  "auth.status.signed_in",
+  "auth.status.signed_out",
+  "auth.status.invalid_credentials",
+  "auth.status.verification_required",
+  "auth.status.link_sent",
+  "auth.status.invalid_link",
+  "auth.status.rate_limited",
+  "auth.status.invalid_input",
+  "auth.status.unavailable",
+  "auth.sign_up.heading",
+  "auth.sign_up.submit",
+  "auth.sign_up.link",
+  "auth.status.sign_up_check_email",
+  "auth.status.weak_password",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

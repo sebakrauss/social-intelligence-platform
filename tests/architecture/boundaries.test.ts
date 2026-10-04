@@ -88,6 +88,12 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["module-public-api-only", "modules/workflow/application/deep-import.ts", "modules/classification/domain/internal.ts"],
   // Persistence through ports only
   ["module-core-no-database", "modules/workflow/application/uses-content.ts", "platform/db/client.ts"],
+  // Authentication boundary and resolved contexts (Step 1)
+  ["supabase-sdk-only-in-platform-auth", "server/uses-supabase-directly.ts", "../../../../node_modules/@supabase/ssr/dist/module/index.js"],
+  ["app-ui-no-auth-adapter", "app/uses-auth-adapter.ts", "platform/auth/port.ts"],
+  ["modules-no-auth-adapter", "modules/tenancy/application/uses-auth-and-server.ts", "platform/auth/port.ts"],
+  ["modules-not-to-upper-layers", "modules/tenancy/application/uses-auth-and-server.ts", "server/handler.ts"],
+  ["resolved-context-minted-by-pipeline-only", "server/commands/forges-context.ts", "server/pipeline/context.ts"],
   // Jobs, executor port, adapters (TA §6.3 rules 3, 7; §15)
   ["jobs-no-business-logic", "jobs/run.ts", "modules/insights/domain/rule.ts"],
   ["jobs-are-entry-points", "server/handler.ts", "jobs/run.ts"],
