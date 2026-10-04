@@ -1,0 +1,57 @@
+# Foundation CI (TA §64, Step 0). Runs only the checks that exist today; database/RLS, job,
+# adapter, AI and end-to-end gates are added by the implementation steps that create them.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  foundation:
+    name: Foundation checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install (locked)
+        run: npm ci
+
+      - name: Secret scan
+        run: npm run secret-scan
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Dependency boundaries
+        run: npm run boundaries
+
+      - name: Unit and architecture tests
+        run: npm run test
+
+      - name: Production build
+        run: npm run build

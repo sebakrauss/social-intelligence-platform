@@ -1,0 +1,116 @@
+/**
+ * Proves the dependency-boundary rules are active: the real ruleset (.dependency-cruiser.cjs)
+ * is run against fixture trees that mirror the TA §6.2 layout. Forbidden imports must be
+ * reported under the expected rule; allowed imports must produce no violations.
+ * Fixtures live in tests/architecture/fixtures and are excluded from the application build,
+ * typecheck, lint and the repository boundary run.
+ */
+import { createRequire } from "node:module";
+import path from "node:path";
+import { cruise, type ICruiseOptions, type ICruiseResult, type IFlattenedRuleSet } from "dependency-cruiser";
+import { describe, expect, it } from "vitest";
+
+const require = createRequire(import.meta.url);
+const root = path.resolve(import.meta.dirname, "../..");
+const config = require(path.join(root, ".dependency-cruiser.cjs")) as {
+  forbidden: NonNullable<IFlattenedRuleSet["forbidden"]>;
+};
+
+interface Violation {
+  readonly rule: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+async function cruiseFixture(fixture: "violations" | "allowed"): Promise<Violation[]> {
+  const baseDir = path.join(root, "tests/architecture/fixtures", fixture);
+  const options: ICruiseOptions = {
+    baseDir,
+    validate: true,
+    ruleSet: { forbidden: config.forbidden },
+    doNotFollow: { path: "(^|/)node_modules/" },
+    tsPreCompilationDeps: true,
+    enhancedResolveOptions: {
+      extensions: [".ts", ".tsx", ".d.ts", ".js", ".mjs", ".cjs", ".json"],
+      exportsFields: ["exports"],
+      conditionNames: ["import", "require", "node", "default", "types"],
+      mainFields: ["module", "main", "types", "typings"],
+    },
+  };
+  const result = await cruise(["."], options);
+  const output = result.output as ICruiseResult;
+  return output.summary.violations.map((violation) => ({
+    rule: violation.rule.name,
+    from: violation.from,
+    to: violation.to,
+  }));
+}
+
+const cache = new Map<string, Promise<Violation[]>>();
+
+function violationsOf(fixture: "violations" | "allowed"): Promise<Violation[]> {
+  let result = cache.get(fixture);
+  if (result === undefined) {
+    result = cruiseFixture(fixture);
+    cache.set(fixture, result);
+  }
+  return result;
+}
+
+/** [rule, from, to] — every forbidden edge in the violations fixture and the rule that must reject it. */
+const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
+  // Pure domain and UI layers (TA §6.3 rules 1, 5)
+  ["shared-kernel-pure", "domain/impure.ts", "platform/db/client.ts"],
+  ["domain-no-packages", "domain/impure.ts", "../../../../node_modules/next/dist/server/next.js"],
+  ["app-ui-no-infrastructure", "app/page.ts", "mutations/executor.ts"],
+  ["mutation-execution-jobs-only", "app/page.ts", "mutations/executor.ts"],
+  // AI boundary (TA §6.3 rule 4; §7.2)
+  ["ai-no-mutations-integrations-or-writers", "ai/tasks/classify.ts", "mutations/executor.ts"],
+  ["mutation-execution-jobs-only", "ai/tasks/classify.ts", "mutations/executor.ts"],
+  ["modules-no-ai-providers", "modules/classification/application/uses-capability.ts", "ai/providers/vendor.ts"],
+  ["modules-no-ai-providers", "modules/topics/application/uses-ai-provider.ts", "ai/providers/vendor.ts"],
+  ["ai-gateway-only-for-approved-modules", "modules/topics/application/uses-ai-provider.ts", "ai/providers/vendor.ts"],
+  ["ai-gateway-only-for-approved-modules", "modules/automation/application/uses-content.ts", "ai/gateway/index.ts"],
+  ["deterministic-modules-no-ai", "modules/automation/application/uses-content.ts", "ai/gateway/index.ts"],
+  // TA §7.2 explicit module allowlists
+  ["module-allowlist-classification", "modules/classification/application/uses-capability.ts", "modules/capability/index.ts"],
+  ["module-allowlist-workflow", "modules/workflow/application/uses-content.ts", "modules/content/index.ts"],
+  ["module-allowlist-automation", "modules/automation/application/uses-content.ts", "modules/content/index.ts"],
+  ["module-allowlist-moderation", "modules/moderation/application/uses-connections.ts", "modules/connections/index.ts"],
+  ["module-allowlist-recommendations", "modules/recommendations/application/uses-workflow.ts", "modules/workflow/index.ts"],
+  ["module-allowlist-reports", "modules/reports/application/uses-content-and-workflow.ts", "modules/content/index.ts"],
+  ["module-allowlist-reports", "modules/reports/application/uses-content-and-workflow.ts", "modules/workflow/index.ts"],
+  ["module-allowlist-attention", "modules/attention/application/uses-content-and-aggregation.ts", "modules/content/index.ts"],
+  ["module-allowlist-attention", "modules/attention/application/uses-content-and-aggregation.ts", "modules/aggregation/index.ts"],
+  // TA §7.2 layering: upward and same-layer edges (no invented same-layer exceptions)
+  ["module-layering-tenancy", "modules/tenancy/application/uses-insights.ts", "modules/insights/index.ts"],
+  ["module-layering-tenancy", "modules/tenancy/application/writes-audit.ts", "modules/audit/index.ts"],
+  ["module-public-api-only", "modules/workflow/application/deep-import.ts", "modules/classification/domain/internal.ts"],
+  // Persistence through ports only
+  ["module-core-no-database", "modules/workflow/application/uses-content.ts", "platform/db/client.ts"],
+  // Jobs, executor port, adapters (TA §6.3 rules 3, 7; §15)
+  ["jobs-no-business-logic", "jobs/run.ts", "modules/insights/domain/rule.ts"],
+  ["jobs-are-entry-points", "server/handler.ts", "jobs/run.ts"],
+  ["mutation-port-executor-only", "server/handler.ts", "integrations/providers/contract/mutation-port.ts"],
+  ["provider-adapter-isolated", "integrations/providers/meta/adapter.ts", "modules/insights/index.ts"],
+];
+
+describe("architecture boundaries", () => {
+  it.each(EXPECTED_VIOLATIONS)("rejects %s: %s → %s", async (rule, from, to) => {
+    const violations = await violationsOf("violations");
+    expect(violations).toContainEqual({ rule, from, to });
+  });
+
+  it("reports no violation outside the expected set (fixtures resolve and rules are precise)", async () => {
+    const violations = await violationsOf("violations");
+    const expected = EXPECTED_VIOLATIONS.map(([rule, from, to]) => ({ rule, from, to }));
+    const unexpected = violations.filter(
+      (violation) => !expected.some((item) => item.rule === violation.rule && item.from === violation.from && item.to === violation.to),
+    );
+    expect(unexpected).toEqual([]);
+  });
+
+  it("accepts dependencies the architecture allows", async () => {
+    expect(await violationsOf("allowed")).toEqual([]);
+  });
+});
