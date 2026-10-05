@@ -85,12 +85,23 @@ describe("auth configuration", () => {
     expect(readSupabaseAuthConfig({ SUPABASE_SERVICE_ROLE_KEY: "x", SUPABASE_SECRET_KEY: "y", NEXT_PUBLIC_SUPABASE_URL: "https://abc.supabase.co" })).toBeUndefined();
   });
 
-  it("declares only public, value-free variables in .env.example", () => {
+  it("declares only reviewed, value-free variables in .env.example (no service-role or secret key)", () => {
     const lines = readFileSync(path.resolve(import.meta.dirname, "../../../.env.example"), "utf8")
       .split("\n")
       .filter((line) => line.trim() !== "" && !line.startsWith("#"));
-    expect(lines).toEqual(["NEXT_PUBLIC_SUPABASE_URL=", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=", "APP_BASE_URL="]);
-    expect(lines.join("\n")).not.toMatch(/SERVICE_ROLE|SECRET|POSTGRES|DATABASE_URL/);
+    expect(lines).toEqual([
+      "NEXT_PUBLIC_SUPABASE_URL=",
+      "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=",
+      "APP_BASE_URL=",
+      // Step 2 database configuration: per-runtime login-role URLs, CA path, tooling-only migration URL, target ref.
+      "DATABASE_WEB_URL=",
+      "DATABASE_WORKER_URL=",
+      "DATABASE_SYSTEM_URL=",
+      "DATABASE_SSL_ROOT_CERT=",
+      "DATABASE_MIGRATION_URL=",
+      "SUPABASE_PROJECT_REF=",
+    ]);
+    expect(lines.join("\n")).not.toMatch(/SERVICE_ROLE|SECRET|POSTGRES|DATABASE_URL=/);
   });
 });
 

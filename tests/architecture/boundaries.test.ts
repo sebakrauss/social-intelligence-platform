@@ -94,6 +94,12 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["modules-no-auth-adapter", "modules/tenancy/application/uses-auth-and-server.ts", "platform/auth/port.ts"],
   ["modules-not-to-upper-layers", "modules/tenancy/application/uses-auth-and-server.ts", "server/handler.ts"],
   ["resolved-context-minted-by-pipeline-only", "server/commands/forges-context.ts", "server/pipeline/context.ts"],
+  // Database foundation (Step 2): connections only in platform/db; persistence composed by server/jobs
+  ["db-drivers-only-in-persistence", "server/opens-pool.ts", "../../../../node_modules/pg/esm/index.mjs"],
+  ["db-connections-only-in-platform-db", "server/opens-pool.ts", "../../../../node_modules/pg/esm/index.mjs"],
+  ["db-connections-only-in-platform-db", "modules/tenancy/persistence/connects.ts", "../../../../node_modules/drizzle-orm/node-postgres/index.d.ts"],
+  ["module-persistence-composed-by-server", "app/uses-persistence.ts", "modules/tenancy/persistence/index.ts"],
+  ["production-not-to-tests-or-tools", "platform/db/uses-tooling.ts", "tools/db/migrate.ts"],
   // Jobs, executor port, adapters (TA §6.3 rules 3, 7; §15)
   ["jobs-no-business-logic", "jobs/run.ts", "modules/insights/domain/rule.ts"],
   ["jobs-are-entry-points", "server/handler.ts", "jobs/run.ts"],

@@ -306,9 +306,23 @@ module.exports = {
     {
       name: "db-drivers-only-in-persistence",
       severity: "error",
-      comment: "Database clients only in platform/db, db/ and module persistence.",
-      from: { pathNot: "^(platform/db|db|modules/[^/]+/persistence)/" },
+      comment: "Database clients only in platform/db, db/, module persistence, and the database tooling/tests.",
+      from: { pathNot: "^(platform/db|db|modules/[^/]+/persistence|tools/db|tests/db)/" },
       to: { path: npmPackage(DB_DRIVERS) },
+    },
+    {
+      name: "db-connections-only-in-platform-db",
+      severity: "error",
+      comment: "Only platform/db creates connections (raw `pg`, Drizzle's node-postgres constructor); modules get scoped transactions.",
+      from: { pathNot: "^(platform/db|tools/db|tests/db)/" },
+      to: { path: "(^|/)node_modules/(pg/|drizzle-orm/node-postgres/)" },
+    },
+    {
+      name: "module-persistence-composed-by-server",
+      severity: "error",
+      comment: "Module persistence adapters are wired only by composition roots (server/, jobs/), never by UI, domain or platform code.",
+      from: { path: "^(app|ui|domain|platform|integrations|ai|mutations)/" },
+      to: { path: "^modules/[^/]+/persistence/" },
     },
     {
       name: "platform-is-infrastructure",

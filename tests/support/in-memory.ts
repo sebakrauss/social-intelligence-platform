@@ -9,6 +9,7 @@ import { asVerifiedEmail } from "@/domain/email";
 import type { UserId } from "@/domain/ids";
 import { parseUserId } from "@/domain/ids";
 import type { AuditEvent, AuditLog } from "@/modules/audit";
+import type { OutboxMessage, OutboxWriter } from "@/platform/outbox";
 import type {
   Invitation,
   InvitationDelivery,
@@ -19,7 +20,7 @@ import type {
   WorkspaceMembership,
 } from "@/modules/tenancy";
 import type { AuthUser, IdentityPort } from "@/platform/auth/port";
-import type { Transaction, UnitOfWork } from "@/server/pipeline";
+import type { Transaction, TransactionScope, UnitOfWork } from "@/server/pipeline";
 
 export interface InMemoryState {
   organizations: Map<string, Organization>;
@@ -28,6 +29,7 @@ export interface InMemoryState {
   workspaceMemberships: Map<string, WorkspaceMembership>;
   invitations: Map<string, Invitation>;
   audit: AuditEvent[];
+  outbox: OutboxMessage[];
 }
 
 export function emptyState(): InMemoryState {
@@ -38,6 +40,7 @@ export function emptyState(): InMemoryState {
     workspaceMemberships: new Map(),
     invitations: new Map(),
     audit: [],
+    outbox: [],
   };
 }
 
@@ -108,7 +111,11 @@ export class InMemoryUnitOfWork implements UnitOfWork {
     this.state = state;
   }
 
-  async run<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
+  /** The scope of the most recent unit of work (tests assert what the pipeline asked to bind). */
+  lastScope: TransactionScope | undefined;
+
+  async run<T>(scope: TransactionScope, work: (tx: Transaction) => Promise<T>): Promise<T> {
+    this.lastScope = scope;
     const draft = structuredClone(this.state);
     const faults = this.faults;
     let appends = 0;
@@ -128,7 +135,8 @@ export class InMemoryUnitOfWork implements UnitOfWork {
       },
     };
     try {
-      const result = await work({ tenancy, audit });
+      const outbox: OutboxWriter = { append: (message) => done(void draft.outbox.push(message)) };
+      const result = await work({ tenancy, audit, outbox });
       this.state = draft;
       this.commits += 1;
       return result;

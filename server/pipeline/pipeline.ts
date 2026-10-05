@@ -2,7 +2,8 @@
  * The action pipeline (TA §10.6), Step 1 form. Every consequential command passes through:
  *
  *   1 authenticate → 2 resolve tenant → 3 authorize → 4 validate input → 5 mode guard
- *   → 6 execute (unit of work) → 7 audit (same unit of work) → 8 respond
+ *   → 6 execute (unit of work) → 7 audit (same unit of work; commands may also append outbox rows)
+ *   → 8 respond
  *
  * Identity always comes from the server-validated session; tenant, role, grants and mode always come
  * from a live lookup. A failing step stops the pipeline: nothing after it runs and the unit of work
@@ -10,12 +11,13 @@
  */
 import { parseRequestId, type CorrelationId } from "@/domain/correlation";
 import { AppError, isAppError } from "@/domain/errors";
+import { parseWorkspaceId } from "@/domain/ids";
 import { recordAuditEvent } from "@/modules/audit";
 import type { IdentityPort } from "@/platform/auth/port";
 import { continueOrStartCorrelation, newRequestId, type Logger } from "@/platform/observability";
 import type { AuditDraft, Command, CommandEnvironment } from "./command";
 import { OrganizationContext, UserContext, WorkspaceContext } from "./context";
-import type { Transaction, UnitOfWork } from "./unit-of-work";
+import type { Transaction, TransactionScope, UnitOfWork } from "./unit-of-work";
 
 export const PIPELINE_STEPS = [
   "authenticate",
@@ -90,10 +92,16 @@ export function createActionPipeline(deps: PipelineDependencies): ActionPipeline
       const user = UserContext.fromVerifiedIdentity(identity);
       const env: CommandEnvironment = { now: deps.clock(), newId: deps.newId, correlationId, requestId };
 
+      // The routed workspace is bound to the transaction up front (sealed, R2); membership is still
+      // verified live inside it. An unparseable ID binds nothing and resolves to NOT_FOUND below.
+      const routedWorkspace = command.scope === "workspace" ? parseWorkspaceId(request.workspaceId) : undefined;
+      const transactionScope: TransactionScope =
+        routedWorkspace === undefined ? { userId: user.userId } : { userId: user.userId, workspaceId: routedWorkspace };
+
       let output: O;
       let scope: { organizationId?: string; workspaceId?: string } = {};
       try {
-        output = await deps.unitOfWork.run(async (tx: Transaction) => {
+        output = await deps.unitOfWork.run(transactionScope, async (tx: Transaction) => {
           let result: O;
           if (command.scope === "workspace") {
             // 2. Resolve tenant (live) → 3. authorize → 4. validate → 5. mode guard.

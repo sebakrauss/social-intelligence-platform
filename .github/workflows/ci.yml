@@ -1,5 +1,5 @@
-# Foundation CI (TA §64, Step 0). Runs only the checks that exist today; database/RLS, job,
-# adapter, AI and end-to-end gates are added by the implementation steps that create them.
+# Foundation CI (TA §64). Runs the checks that exist today (Step 0 foundation, Step 2 database/RLS);
+# job, adapter, AI and end-to-end gates are added by the implementation steps that create them.
 name: CI
 
 on:
@@ -21,7 +21,7 @@ jobs:
   foundation:
     name: Foundation checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,6 +52,12 @@ jobs:
 
       - name: Unit and architecture tests
         run: npm run test
+
+      # Disposable local PostgreSQL 17 (embedded, no secrets): migrations on a fresh database, schema
+      # classification and grant introspection, T-26 isolation suite, last-Owner concurrency, persistence.
+      # The managed Supabase suite (npm run test:db:managed) needs local secrets and does not run here.
+      - name: Database tests (local PostgreSQL)
+        run: npm run test:db
 
       - name: Production build
         run: npm run build

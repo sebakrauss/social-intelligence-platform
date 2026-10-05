@@ -13,22 +13,31 @@
     "typecheck": "next typegen && tsc --noEmit",
     "boundaries": "depcruise . --config .dependency-cruiser.cjs",
     "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts",
+    "test:db:managed": "node tools/db/run-managed-tests.ts",
+    "db:preflight": "node tools/db/preflight.ts",
+    "db:migrate": "node tools/db/migrate.ts",
+    "db:provision-roles": "node tools/db/provision-roles.ts",
     "secret-scan": "node tools/secret-scan/cli.ts",
     "audit": "npm audit",
-    "verify": "npm run secret-scan && npm run audit && npm run lint && npm run typecheck && npm run boundaries && npm run test && npm run build"
+    "verify": "npm run secret-scan && npm run audit && npm run lint && npm run typecheck && npm run boundaries && npm run test && npm run test:db && npm run build"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.117.2",
+    "drizzle-orm": "0.45.3",
     "next": "16.3.8",
+    "pg": "8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
+    "@types/pg": "8.23.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "dependency-cruiser": "18.5.0",
+    "embedded-postgres": "17.10.0-beta.17",
     "eslint": "9.39.5",
     "eslint-plugin-react": "7.37.5",
     "eslint-plugin-react-hooks": "7.1.1",

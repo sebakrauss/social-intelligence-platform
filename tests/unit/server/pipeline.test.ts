@@ -110,6 +110,19 @@ describe("tenant resolution", () => {
     expect(expectOk(await h.pipeline.run(h.test.internalAction, { workspaceId: h.workspaceId, input: {} }))).toBe("done");
   });
 
+  it("binds exactly the routed workspace for workspace commands, and none for organization or user commands", async () => {
+    const h = await setup();
+    h.as(OWNER);
+    await h.pipeline.run(h.test.internalAction, { workspaceId: h.workspaceId, input: {} });
+    expect(h.unitOfWork.lastScope).toEqual({ userId: OWNER, workspaceId: h.workspaceId });
+    await h.pipeline.run(h.commands.createWorkspace, { organizationId: h.organizationId, workspaceId: h.workspaceId, input: { name: "W" } });
+    expect(h.unitOfWork.lastScope).toEqual({ userId: OWNER });
+    await h.pipeline.run(h.commands.createOrganization, { workspaceId: h.workspaceId, input: { name: "O" } });
+    expect(h.unitOfWork.lastScope).toEqual({ userId: OWNER });
+    await h.pipeline.run(h.test.internalAction, { workspaceId: "not-a-uuid", input: {} });
+    expect(h.unitOfWork.lastScope).toEqual({ userId: OWNER });
+  });
+
   it("resolves non-member, unknown and malformed workspaces as NOT_FOUND (never PERMISSION_DENIED)", async () => {
     const h = await setup();
     h.as(OUTSIDER);
