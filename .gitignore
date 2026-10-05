@@ -20,3 +20,9 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+
+# Local development certificates
+.local-certs/
+
+# Local review artifacts
+step-1-final-review.zip
