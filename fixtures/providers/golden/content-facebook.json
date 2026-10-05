@@ -1,0 +1,80 @@
+[
+  {
+    "account": {
+      "id": "fb_page_aurora",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "availability": "available",
+    "caption": "Horario de feriado (sintético)",
+    "contentKind": "post",
+    "publishedAt": "2026-09-13T09:00:00.000Z",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/content/fb_post_empty_03"
+    },
+    "ref": {
+      "id": "fb_post_empty_03",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "reportedSource": "organic",
+    "timestamps": {
+      "createdAt": "2026-09-13T09:00:00.000Z",
+      "updatedAt": null
+    }
+  },
+  {
+    "account": {
+      "id": "fb_page_aurora",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "availability": "available",
+    "caption": "Promo fin de semana: 2x1 en lattes (sintético)",
+    "contentKind": "post",
+    "publishedAt": "2026-09-12T10:00:00.000Z",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/content/fb_post_boosted_02"
+    },
+    "ref": {
+      "id": "fb_post_boosted_02",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "reportedSource": "mixed",
+    "timestamps": {
+      "createdAt": "2026-09-12T10:00:00.000Z",
+      "updatedAt": null
+    }
+  },
+  {
+    "account": {
+      "id": "fb_page_aurora",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "availability": "available",
+    "caption": "Nuevo café de temporada ☕ (contenido sintético)",
+    "contentKind": "post",
+    "publishedAt": "2026-09-10T15:00:00.000Z",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/content/fb_post_organic_01"
+    },
+    "ref": {
+      "id": "fb_post_organic_01",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "reportedSource": "organic",
+    "timestamps": {
+      "createdAt": "2026-09-10T15:00:00.000Z",
+      "updatedAt": null
+    }
+  }
+]

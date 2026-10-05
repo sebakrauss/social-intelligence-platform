@@ -1,0 +1,42 @@
+{
+  "description": "SYNTHETIC simulated webhook delivery bodies for the baseline scenario. Unsigned here: tests sign them with a synthetic test key at run time. The envelope and event types are the simulator's own, not any provider's format.",
+  "simulated": true,
+  "deliveries": {
+    "single_created": {
+      "deliveryId": "dlv-0001",
+      "events": [
+        { "eventId": "evt-0001", "type": "interaction.created", "platform": "facebook", "account": "fb_page_aurora", "target": { "kind": "interaction", "id": "fb_c_001" }, "content": "fb_post_organic_01", "occurredAt": "2026-09-10T16:00:00.000Z", "sequence": "101" }
+      ]
+    },
+    "batch_with_unknown": {
+      "deliveryId": "dlv-0002",
+      "events": [
+        { "eventId": "evt-0002", "type": "interaction.hidden", "platform": "facebook", "account": "fb_page_aurora", "target": { "kind": "interaction", "id": "fb_c_006" }, "content": "fb_post_organic_01", "occurredAt": "2026-09-10T20:05:00.000Z", "sequence": "106" },
+        { "eventId": "evt-0003", "type": "messages.received", "platform": "facebook", "account": "fb_page_aurora", "target": { "kind": "interaction", "id": "fb_c_001" }, "content": null, "occurredAt": "2026-09-10T20:06:00.000Z", "sequence": "107" },
+        { "eventId": "evt-0004", "type": "interaction.removed", "platform": "facebook", "account": "fb_page_aurora", "target": { "kind": "interaction", "id": "fb_c_007" }, "content": "fb_post_organic_01", "occurredAt": "2026-09-10T21:05:00.000Z", "sequence": "108" }
+      ]
+    },
+    "edit_late": {
+      "deliveryId": "dlv-0003",
+      "events": [
+        { "eventId": "evt-0005", "type": "interaction.edited", "platform": "facebook", "account": "fb_page_aurora", "target": { "kind": "interaction", "id": "fb_c_004" }, "content": "fb_post_organic_01", "occurredAt": "2026-09-11T08:00:00.000Z", "sequence": "205" }
+      ]
+    },
+    "create_early": {
+      "deliveryId": "dlv-0004",
+      "events": [
+        { "eventId": "evt-0006", "type": "interaction.created", "platform": "facebook", "account": "fb_page_aurora", "target": { "kind": "interaction", "id": "fb_c_004" }, "content": "fb_post_organic_01", "occurredAt": "2026-09-10T18:00:00.000Z", "sequence": "104" }
+      ]
+    },
+    "invalid_platform": {
+      "deliveryId": "dlv-0005",
+      "events": [
+        { "eventId": "evt-0007", "type": "interaction.created", "platform": "example_network", "account": "fb_page_aurora", "target": { "kind": "interaction", "id": "fb_c_001" }, "content": null, "occurredAt": "2026-09-10T16:00:00.000Z", "sequence": "109" }
+      ]
+    }
+  },
+  "rawBodies": {
+    "truncated_json": "{\"deliveryId\": \"dlv-0006\", \"events\": [",
+    "missing_events": "{\"deliveryId\": \"dlv-0007\"}"
+  }
+}

@@ -112,6 +112,10 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["system-scope-delivery-only", "server/enqueues-directly.ts", "platform/db/system-scope.ts"],
   ["system-scope-delivery-only", "jobs/uses-system-scope.ts", "platform/db/system-scope.ts"],
   ["product-code-no-job-runtime", "modules/workflow/application/enqueues.ts", "platform/jobs/port.ts"],
+  // Provider contract (Step 4): pure contract; adapter mutation implementations reachable only by the executor
+  ["provider-contract-pure", "integrations/providers/contract/uses-node.ts", "crypto"],
+  ["provider-mutation-implementations-executor-only", "integrations/providers/meta/index.ts", "integrations/providers/meta/mutation-port.ts"],
+  ["provider-mutation-implementations-executor-only", "server/obtains-adapter-mutations.ts", "integrations/providers/meta/mutation-port.ts"],
 ];
 
 describe("architecture boundaries", () => {

@@ -1,0 +1,33 @@
+{
+  "scenarioId": "unreported_budget",
+  "description": "SYNTHETIC minimal world whose simulated provider reports no usable rate-budget information (the normalized signal must be not_reported, never an invented budget). Not captured from any provider API.",
+  "simulated": true,
+  "apiVersion": "simulator-v1",
+  "clockStart": "2026-09-15T12:00:00.000Z",
+  "pageSize": 2,
+  "rateBudget": { "mode": "not_reported" },
+  "webhookToleranceSeconds": 300,
+  "credentials": [
+    { "id": "cred_min", "secret": "synthetic-minimal-not-a-secret", "status": "active", "expiresAt": null, "refresh": "not_supported", "assets": ["ig_min"] }
+  ],
+  "assets": [
+    {
+      "id": "ig_min", "platform": "instagram", "assetClass": "content_bearing", "displayName": "Minimal (synthetic)", "identity": "ig_min_author",
+      "permissions": ["sim.read_account", "sim.read_content", "sim.read_interactions"], "linkedAdAccounts": [], "webhooks": "not_supported", "subscribed": false
+    }
+  ],
+  "authors": [
+    { "id": "ig_min_author", "platform": "instagram", "role": "account_identity", "displayName": "Minimal", "handle": "sim_minimal" },
+    { "id": "ig_min_user", "platform": "instagram", "role": "user", "displayName": "Visitor (synthetic)", "handle": "sim_visitor" }
+  ],
+  "contents": [
+    { "id": "ig_min_post", "account": "ig_min", "kind": "reel", "reportedSource": "unknown", "caption": "Hello / Hola / Olá (synthetic)", "publishedAt": "2026-09-14T10:00:00.000Z", "availability": "available" }
+  ],
+  "interactions": [
+    { "id": "ig_min_c1", "content": "ig_min_post", "parent": null, "author": "ig_min_user", "text": "Nice!", "createdAt": "2026-09-14T11:00:00.000Z", "editedAt": null, "revision": null, "visibility": "visible", "presence": "present", "restrictions": [] }
+  ],
+  "campaigns": [],
+  "adGroups": [],
+  "ads": [],
+  "faultPresets": {}
+}

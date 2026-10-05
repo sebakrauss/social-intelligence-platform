@@ -1,5 +1,6 @@
 # Foundation CI (TA §64). Runs the checks that exist today (Step 0 foundation, Step 2 database/RLS, Step 3
-# job foundation); adapter, AI and end-to-end gates are added by the implementation steps that create them.
+# job foundation, Step 4 provider contracts + simulator); AI and end-to-end gates are added by the
+# implementation steps that create them.
 # No managed credentials are needed: the managed suites (test:db:managed, test:jobs:managed) run explicitly.
 name: CI
 
@@ -51,7 +52,8 @@ jobs:
       - name: Dependency boundaries
         run: npm run boundaries
 
-      - name: Unit and architecture tests
+      # Includes the provider contract suite and simulator behavior/golden tests (synthetic fixtures, no network).
+      - name: Unit, architecture and provider contract tests
         run: npm run test
 
       # Disposable local PostgreSQL 17 (embedded, no secrets): migrations on a fresh database, schema

@@ -1,0 +1,86 @@
+[
+  {
+    "case": "listing beyond the provider's rate budget",
+    "error": {
+      "details": {
+        "retryAfterSeconds": 120
+      },
+      "kind": "rate_limited",
+      "operation": "listInteractions",
+      "retry": "after_delay"
+    }
+  },
+  {
+    "case": "provider server error on a re-fetch",
+    "error": {
+      "details": {
+        "reason": "server_error"
+      },
+      "kind": "transient",
+      "operation": "getInteraction",
+      "retry": "with_backoff"
+    }
+  },
+  {
+    "case": "account granted without interaction access",
+    "error": {
+      "details": {
+        "capability": "read_interactions"
+      },
+      "kind": "permission_missing",
+      "operation": "listInteractions",
+      "retry": "never"
+    }
+  },
+  {
+    "case": "re-fetch of an object the provider doesn't return",
+    "error": {
+      "details": {},
+      "kind": "target_not_found",
+      "operation": "getInteraction",
+      "retry": "never"
+    }
+  },
+  {
+    "case": "hide refused for a target with a simulated restriction",
+    "error": {
+      "details": {
+        "reason": "unsupported_for_target"
+      },
+      "kind": "target_not_eligible",
+      "operation": "hide",
+      "retry": "never"
+    }
+  },
+  {
+    "case": "revoked credential",
+    "error": {
+      "details": {
+        "reason": "revoked"
+      },
+      "kind": "credential_invalid",
+      "operation": "describeAccount",
+      "retry": "after_recovery"
+    }
+  },
+  {
+    "case": "reply rejected by provider policy",
+    "error": {
+      "details": {
+        "reasonCode": "content_policy"
+      },
+      "kind": "permanent_rejected",
+      "operation": "replyPublicly",
+      "retry": "never"
+    }
+  },
+  {
+    "case": "reply timed out after the provider accepted it",
+    "error": {
+      "details": {},
+      "kind": "outcome_unknown",
+      "operation": "replyPublicly",
+      "retry": "verify_first"
+    }
+  }
+]

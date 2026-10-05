@@ -80,6 +80,28 @@ The Trigger.dev **CLI is not a repository dependency**. Run it only as a pinned,
 itself must stay `npm audit` clean; a guard fails CI if the CLI enters the dependency tree or if any resolved
 `ws` is below 8.21.0 (pinned through `overrides`).
 
+## Providers
+
+Social platforms are reached only through the provider adapter contract in `integrations/providers/contract`
+(TA §15): a READ port (discovery, listing, re-fetch, current state, paid context, webhook parsing, subscriptions,
+credential refresh) and a separate MUTATION port (public reply, private reply, hide, unhide, delete, block) that
+only the Platform Mutation Executor may obtain. DTOs carry provider identity, provider timestamps and an opaque
+raw reference; errors are normalized (`RateLimited`, `Transient`, `PermissionMissing`, `TargetNotFound`,
+`TargetNotEligible`, `CredentialInvalid`, `PermanentRejected`, `OutcomeUnknown`). There is no direct-message
+read surface.
+
+No real Meta or TikTok adapter exists yet. `integrations/providers/simulator` implements both ports from
+synthetic scenarios in `fixtures/providers/simulator/` (deterministic, resettable, with explicit fault
+injection and no network). **Simulator support means the architecture can represent a behavior, not that a real
+platform supports it**: every platform capability stays VALIDATE until official API validation (PD OQ-18,
+OQ-19, OQ-26, OQ-27).
+
+- The reusable contract suite (`tests/providers/contract`) runs against the simulator in `npm run test`; real
+  adapters will run the same suite from recorded, sanitized fixtures.
+- Golden files in `fixtures/providers/golden/` pin the normalized output. After an intended change, regenerate
+  them with `UPDATE_GOLDEN=1 npx vitest run tests/providers/golden.test.ts` and review the diff. CI never
+  regenerates them.
+
 ## Known tooling limitation
 
 Next.js-specific lint rules (`eslint-config-next` / `@next/eslint-plugin-next`) are temporarily not used: their dependency chain carries an unresolved high-severity advisory (GHSA-vfj7-8cjw-p6xm, `braces`) with no patched version, and `npm audit` is not suppressed. Linting currently covers TypeScript (strict, type-checked) and React. Revisit when an audit-clean official option exists.

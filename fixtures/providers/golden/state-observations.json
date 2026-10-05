@@ -1,0 +1,66 @@
+[
+  {
+    "basis": "provider_field",
+    "blocked": null,
+    "observedAt": "2026-09-15T12:00:00.000Z",
+    "presence": "present",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/interaction/fb_c_001@r1"
+    },
+    "target": {
+      "id": "fb_c_001",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "visibility": "visible"
+  },
+  {
+    "basis": "provider_field",
+    "blocked": null,
+    "observedAt": "2026-09-15T12:00:00.000Z",
+    "presence": "present",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/interaction/fb_c_006@r1"
+    },
+    "target": {
+      "id": "fb_c_006",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "visibility": "hidden"
+  },
+  {
+    "basis": "provider_signal",
+    "blocked": null,
+    "observedAt": "2026-09-15T12:00:00.000Z",
+    "presence": "removed_at_source",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/interaction/fb_c_007@r1"
+    },
+    "target": {
+      "id": "fb_c_007",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "visibility": null
+  },
+  {
+    "basis": "direct_fetch",
+    "blocked": null,
+    "observedAt": "2026-09-15T12:00:00.000Z",
+    "presence": "not_returned",
+    "rawReference": null,
+    "target": {
+      "id": "fb_c_008",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "visibility": "unknown"
+  }
+]

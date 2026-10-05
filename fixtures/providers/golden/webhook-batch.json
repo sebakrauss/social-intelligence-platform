@@ -1,0 +1,50 @@
+{
+  "deliveryId": "dlv-0002",
+  "hints": [
+    {
+      "account": {
+        "id": "fb_page_aurora",
+        "kind": "asset",
+        "platform": "facebook"
+      },
+      "change": "hidden",
+      "content": {
+        "id": "fb_post_organic_01",
+        "kind": "content",
+        "platform": "facebook"
+      },
+      "deliveryId": "dlv-0002",
+      "eventId": "evt-0002",
+      "occurredAt": "2026-09-10T20:05:00.000Z",
+      "sequence": "106",
+      "target": {
+        "id": "fb_c_006",
+        "kind": "interaction",
+        "platform": "facebook"
+      }
+    },
+    {
+      "account": {
+        "id": "fb_page_aurora",
+        "kind": "asset",
+        "platform": "facebook"
+      },
+      "change": "removed",
+      "content": {
+        "id": "fb_post_organic_01",
+        "kind": "content",
+        "platform": "facebook"
+      },
+      "deliveryId": "dlv-0002",
+      "eventId": "evt-0004",
+      "occurredAt": "2026-09-10T21:05:00.000Z",
+      "sequence": "108",
+      "target": {
+        "id": "fb_c_007",
+        "kind": "interaction",
+        "platform": "facebook"
+      }
+    }
+  ],
+  "ignoredEventCount": 1
+}

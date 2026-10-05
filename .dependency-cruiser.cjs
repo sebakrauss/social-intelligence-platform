@@ -278,6 +278,20 @@ module.exports = {
       to: { path: "^integrations/providers/(?!contract/)[^/]+/" },
     },
     ...providerSdkRules,
+    {
+      name: "provider-contract-pure",
+      severity: "error",
+      comment: "The provider contract is pure TypeScript: no packages, no Node built-ins (no SDK, HTTP or I/O types can leak through it).",
+      from: { path: "^integrations/providers/contract/" },
+      to: { dependencyTypes: [...NPM, "core"] },
+    },
+    {
+      name: "provider-mutation-implementations-executor-only",
+      severity: "error",
+      comment: "An adapter's mutation-port implementation is obtained only by the executor (mutations/), its composition root (jobs/) and tests — never re-exported, never reachable from server/, modules/ or other adapters (TA §6.3 rule 3; §26.2).",
+      from: { pathNot: "^(mutations|jobs|tests)/" },
+      to: { path: "^integrations/providers/(?!contract/)[^/]+/mutation" },
+    },
 
     // ── Modules (TA §6.3 rule 6; §7.2) ───────────────────────────────────────────────────────
     {

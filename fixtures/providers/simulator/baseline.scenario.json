@@ -1,0 +1,132 @@
+{
+  "scenarioId": "baseline",
+  "description": "SYNTHETIC simulator world for provider-contract tests. Every account, author, text and identifier is invented. It shows what the architecture can represent, not what Facebook, Instagram or TikTok support (PD OQ-18/OQ-19 stay VALIDATE). Not captured from any provider API.",
+  "simulated": true,
+  "apiVersion": "simulator-v1",
+  "clockStart": "2026-09-15T12:00:00.000Z",
+  "pageSize": 3,
+  "rateBudget": { "mode": "reported", "limit": 200, "windowSeconds": 3600 },
+  "webhookToleranceSeconds": 300,
+
+  "credentials": [
+    { "id": "cred_meta_main", "secret": "synthetic-meta-main-not-a-secret", "status": "active", "expiresAt": "2026-11-30T00:00:00.000Z", "refresh": "supported", "assets": ["fb_page_aurora", "ig_acct_aurora", "ig_acct_limited", "act_meta_100"] },
+    { "id": "cred_meta_expiring", "secret": "synthetic-meta-expiring-not-a-secret", "status": "active", "expiresAt": "2026-09-18T00:00:00.000Z", "refresh": "supported", "assets": ["fb_page_aurora"] },
+    { "id": "cred_tiktok_main", "secret": "synthetic-tiktok-main-not-a-secret", "status": "active", "expiresAt": null, "refresh": "not_supported", "assets": ["tt_acct_aurora", "tt_adv_200"] },
+    { "id": "cred_revoked", "secret": "synthetic-revoked-not-a-secret", "status": "revoked", "expiresAt": null, "refresh": "supported", "assets": ["fb_page_aurora"] },
+    { "id": "cred_expired", "secret": "synthetic-expired-not-a-secret", "status": "expired", "expiresAt": "2026-09-01T00:00:00.000Z", "refresh": "supported", "assets": ["ig_acct_aurora"] }
+  ],
+
+  "assets": [
+    {
+      "id": "fb_page_aurora", "platform": "facebook", "assetClass": "content_bearing", "displayName": "Café Aurora (synthetic page)", "identity": "fb_author_aurora",
+      "permissions": ["sim.read_account", "sim.read_content", "sim.read_interactions", "sim.manage_webhooks", "sim.reply_public", "sim.reply_private", "sim.hide", "sim.delete", "sim.block"],
+      "linkedAdAccounts": ["act_meta_100"], "webhooks": "supported", "subscribed": false
+    },
+    {
+      "id": "ig_acct_aurora", "platform": "instagram", "assetClass": "content_bearing", "displayName": "Café Aurora (synthetic profile)", "identity": "ig_author_aurora",
+      "permissions": ["sim.read_account", "sim.read_content", "sim.read_interactions", "sim.manage_webhooks", "sim.reply_public", "sim.reply_private", "sim.hide", "sim.delete", "sim.block"],
+      "linkedAdAccounts": ["act_meta_100"], "webhooks": "supported", "subscribed": true
+    },
+    {
+      "id": "ig_acct_limited", "platform": "instagram", "assetClass": "content_bearing", "displayName": "Aurora Outlet (synthetic, limited simulated permissions)", "identity": "ig_author_outlet",
+      "permissions": ["sim.read_account", "sim.read_content"],
+      "linkedAdAccounts": [], "webhooks": "not_supported", "subscribed": false
+    },
+    {
+      "id": "tt_acct_aurora", "platform": "tiktok", "assetClass": "content_bearing", "displayName": "Café Aurora (synthetic account)", "identity": "tt_author_aurora",
+      "permissions": ["sim.read_account", "sim.read_content", "sim.read_interactions", "sim.manage_webhooks", "sim.reply_public", "sim.reply_private", "sim.hide", "sim.delete", "sim.block"],
+      "linkedAdAccounts": ["tt_adv_200"], "webhooks": "supported", "subscribed": false
+    },
+    {
+      "id": "act_meta_100", "platform": "facebook", "assetClass": "ad_account", "displayName": "Aurora Ads (synthetic ad account)", "identity": null,
+      "permissions": ["sim.read_account", "sim.read_paid_context"], "linkedAdAccounts": [], "webhooks": "not_supported", "subscribed": false
+    },
+    {
+      "id": "tt_adv_200", "platform": "tiktok", "assetClass": "ad_account", "displayName": "Aurora Ads TT (synthetic ad account)", "identity": null,
+      "permissions": ["sim.read_account", "sim.read_paid_context"], "linkedAdAccounts": [], "webhooks": "not_supported", "subscribed": false
+    }
+  ],
+
+  "authors": [
+    { "id": "fb_author_aurora", "platform": "facebook", "role": "account_identity", "displayName": "Café Aurora", "handle": "sim_cafe_aurora" },
+    { "id": "ig_author_aurora", "platform": "instagram", "role": "account_identity", "displayName": "Café Aurora", "handle": "sim_cafe_aurora_ig" },
+    { "id": "ig_author_outlet", "platform": "instagram", "role": "account_identity", "displayName": "Aurora Outlet", "handle": "sim_aurora_outlet" },
+    { "id": "tt_author_aurora", "platform": "tiktok", "role": "account_identity", "displayName": "Café Aurora", "handle": "sim_cafe_aurora_tt" },
+    { "id": "fb_user_01", "platform": "facebook", "role": "user", "displayName": "Camila R. (synthetic)", "handle": "sim_camila_cl" },
+    { "id": "fb_user_02", "platform": "facebook", "role": "user", "displayName": "Diego M. (synthetic)", "handle": "sim_diego_mx" },
+    { "id": "fb_user_03", "platform": "facebook", "role": "user", "displayName": "Lucía P. (synthetic)", "handle": "sim_lucia_ar" },
+    { "id": "fb_user_04", "platform": "facebook", "role": "user", "displayName": "Promo Bot 7 (synthetic)", "handle": "sim_promo_bot7" },
+    { "id": "ig_user_01", "platform": "instagram", "role": "user", "displayName": "Ana Clara S. (synthetic)", "handle": "sim_anaclara_br" },
+    { "id": "ig_user_02", "platform": "instagram", "role": "user", "displayName": "Jordan K. (synthetic)", "handle": "sim_jordan_us" },
+    { "id": "ig_user_03", "platform": "instagram", "role": "user", "displayName": "Mateo V. (synthetic)", "handle": "sim_mateo_co" },
+    { "id": "tt_user_01", "platform": "tiktok", "role": "user", "displayName": "Bia (synthetic)", "handle": "sim_bia_br" },
+    { "id": "tt_user_02", "platform": "tiktok", "role": "user", "displayName": "Rocío (synthetic)", "handle": "sim_rocio_pe" },
+    { "id": "tt_user_03", "platform": "tiktok", "role": "user", "displayName": "Sam (synthetic)", "handle": "sim_sam_us" },
+    { "id": "tt_user_04", "platform": "tiktok", "role": "user", "displayName": "Joaquín (synthetic)", "handle": "sim_joaquin_cl" }
+  ],
+
+  "contents": [
+    { "id": "fb_post_organic_01", "account": "fb_page_aurora", "kind": "post", "reportedSource": "organic", "caption": "Nuevo café de temporada ☕ (contenido sintético)", "publishedAt": "2026-09-10T15:00:00.000Z", "availability": "available" },
+    { "id": "fb_post_boosted_02", "account": "fb_page_aurora", "kind": "post", "reportedSource": "mixed", "caption": "Promo fin de semana: 2x1 en lattes (sintético)", "publishedAt": "2026-09-12T10:00:00.000Z", "availability": "available" },
+    { "id": "fb_post_empty_03", "account": "fb_page_aurora", "kind": "post", "reportedSource": "organic", "caption": "Horario de feriado (sintético)", "publishedAt": "2026-09-13T09:00:00.000Z", "availability": "available" },
+    { "id": "ig_ad_only_10", "account": "ig_acct_aurora", "kind": "ad_creative", "reportedSource": "paid", "caption": "Envíos a todo el país 🚚 (sintético)", "publishedAt": "2026-09-08T12:00:00.000Z", "availability": "available" },
+    { "id": "ig_post_unknown_11", "account": "ig_acct_aurora", "kind": "carousel", "reportedSource": "unknown", "caption": "Detrás de escena (sintético)", "publishedAt": "2026-09-11T18:00:00.000Z", "availability": "available" },
+    { "id": "ig_outlet_post_12", "account": "ig_acct_limited", "kind": "post", "reportedSource": "organic", "caption": "Outlet day (synthetic)", "publishedAt": "2026-09-09T12:00:00.000Z", "availability": "available" },
+    { "id": "tt_video_multi_20", "account": "tt_acct_aurora", "kind": "video", "reportedSource": "paid", "caption": "Receta en 30 segundos / Receita em 30 segundos (sintético)", "publishedAt": "2026-09-07T20:00:00.000Z", "availability": "available" },
+    { "id": "tt_video_quiet_22", "account": "tt_acct_aurora", "kind": "video", "reportedSource": "organic", "caption": "Video sin comentarios todavía (sintético)", "publishedAt": "2026-09-13T16:00:00.000Z", "availability": "available" },
+    { "id": "tt_video_removed_21", "account": "tt_acct_aurora", "kind": "video", "reportedSource": "organic", "caption": "Video retirado (sintético)", "publishedAt": "2026-09-02T10:00:00.000Z", "availability": "removed_at_source" }
+  ],
+
+  "interactions": [
+    { "id": "fb_c_001", "content": "fb_post_organic_01", "parent": null, "author": "fb_user_01", "text": "¿Cuánto sale el envío a Valparaíso?", "createdAt": "2026-09-10T16:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "fb_c_002", "content": "fb_post_organic_01", "parent": "fb_c_001", "author": "fb_author_aurora", "text": "¡Hola Camila! Depende del peso; te pasamos el detalle por aquí mismo.", "createdAt": "2026-09-10T16:30:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "fb_c_003", "content": "fb_post_organic_01", "parent": "fb_c_002", "author": "fb_user_01", "text": "Gracias, ¿y llega antes del viernes?", "createdAt": "2026-09-10T17:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "fb_c_004", "content": "fb_post_organic_01", "parent": null, "author": "fb_user_02", "text": "¿Tienen envío a Monterrey y Guadalajara? 🙏", "createdAt": "2026-09-10T18:00:00.000Z", "editedAt": "2026-09-11T08:00:00.000Z", "revision": "r2", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "fb_c_005", "content": "fb_post_organic_01", "parent": null, "author": "fb_user_03", "text": "Che, ¿cuándo vuelve a haber stock del de avellana?", "createdAt": "2026-09-10T19:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "fb_c_006", "content": "fb_post_organic_01", "parent": null, "author": "fb_user_04", "text": "Gana un premio aquí 👉 example.test/premio (sintético)", "createdAt": "2026-09-10T20:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "hidden", "presence": "present", "restrictions": [] },
+    { "id": "fb_c_007", "content": "fb_post_organic_01", "parent": null, "author": "fb_user_02", "text": "Comentario retirado en la plataforma (sintético)", "createdAt": "2026-09-10T21:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "removed_signaled", "restrictions": [] },
+    { "id": "fb_c_008", "content": "fb_post_organic_01", "parent": null, "author": "fb_user_03", "text": "Comentario que ya no devuelve la plataforma (sintético)", "createdAt": "2026-09-10T22:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "vanished", "restrictions": [] },
+    { "id": "fb_c_010", "content": "fb_post_boosted_02", "parent": null, "author": "fb_user_01", "text": "Me encanta el color pero is it waterproof?", "createdAt": "2026-09-12T11:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": ["hide"] },
+    { "id": "fb_c_011", "content": "fb_post_boosted_02", "parent": null, "author": "fb_user_02", "text": "¿El 2x1 aplica en todas las sucursales?", "createdAt": "2026-09-12T12:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "ig_c_001", "content": "ig_ad_only_10", "parent": null, "author": "ig_user_01", "text": "Vocês entregam em Recife? Quanto custa o frete?", "createdAt": "2026-09-08T13:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "ig_c_002", "content": "ig_ad_only_10", "parent": null, "author": "ig_user_02", "text": "Do you ship internationally?", "createdAt": "2026-09-08T14:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "ig_c_003", "content": "ig_ad_only_10", "parent": null, "author": "ig_user_01", "text": "Comprei ontem y todavía no llegó 😕", "createdAt": "2026-09-08T15:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "ig_c_010", "content": "ig_post_unknown_11", "parent": null, "author": "ig_user_03", "text": "Qué lindo el local, ¿dónde queda?", "createdAt": "2026-09-11T19:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "ig_c_020", "content": "ig_outlet_post_12", "parent": null, "author": "ig_user_02", "text": "Is the outlet open on Sundays?", "createdAt": "2026-09-09T13:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "tt_c_001", "content": "tt_video_multi_20", "parent": null, "author": "tt_user_01", "text": "Qual o nome da música? 🎶", "createdAt": "2026-09-07T21:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "tt_c_002", "content": "tt_video_multi_20", "parent": null, "author": "tt_user_02", "text": "¿Dónde compro esto en Lima?", "createdAt": "2026-09-07T21:10:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "tt_c_003", "content": "tt_video_multi_20", "parent": null, "author": "tt_user_03", "text": "This looks amazing, where can I get it?", "createdAt": "2026-09-07T21:20:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "tt_c_004", "content": "tt_video_multi_20", "parent": null, "author": "tt_user_04", "text": "Muito caro pra mim 😅", "createdAt": "2026-09-07T21:30:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "tt_c_005", "content": "tt_video_multi_20", "parent": null, "author": "tt_user_01", "text": "Fiz a receita e ficou ótima!", "createdAt": "2026-09-07T21:40:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "tt_c_006", "content": "tt_video_multi_20", "parent": null, "author": "tt_user_02", "text": "¿Sirve con leche de avena?", "createdAt": "2026-09-07T21:50:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "tt_c_007", "content": "tt_video_multi_20", "parent": null, "author": "tt_user_03", "text": "ok but what's the price en soles?", "createdAt": "2026-09-07T22:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "tt_c_008", "content": "tt_video_multi_20", "parent": null, "author": "tt_user_04", "text": "Precio porfa 🙏", "createdAt": "2026-09-07T22:10:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "tt_c_009", "content": "tt_video_multi_20", "parent": "tt_c_002", "author": "tt_author_aurora", "text": "¡Hola! Estamos en Miraflores (sintético).", "createdAt": "2026-09-07T22:20:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] }
+  ],
+
+  "campaigns": [
+    { "id": "cmp_meta_01", "adAccount": "act_meta_100", "name": "Lanzamiento temporada (synthetic)", "status": "active", "createdAt": "2026-09-05T09:00:00.000Z" },
+    { "id": "cmp_tt_01", "adAccount": "tt_adv_200", "name": "Recetas (synthetic)", "status": "active", "createdAt": "2026-09-06T09:00:00.000Z" }
+  ],
+  "adGroups": [
+    { "id": "adg_meta_01", "adAccount": "act_meta_100", "campaign": "cmp_meta_01", "name": "Chile + México (synthetic)", "status": "active", "createdAt": "2026-09-05T09:05:00.000Z" },
+    { "id": "adg_tt_01", "adAccount": "tt_adv_200", "campaign": "cmp_tt_01", "name": "Perú + Brasil (synthetic)", "status": "active", "createdAt": "2026-09-06T09:05:00.000Z" }
+  ],
+  "ads": [
+    { "id": "ad_meta_01", "adAccount": "act_meta_100", "adGroup": "adg_meta_01", "campaign": "cmp_meta_01", "content": "fb_post_boosted_02", "name": "Boost 2x1 (synthetic)", "status": "active", "createdAt": "2026-09-12T10:30:00.000Z" },
+    { "id": "ad_meta_02", "adAccount": "act_meta_100", "adGroup": "adg_meta_01", "campaign": "cmp_meta_01", "content": "ig_ad_only_10", "name": "Envíos (synthetic)", "status": "active", "createdAt": "2026-09-08T11:30:00.000Z" },
+    { "id": "ad_meta_03", "adAccount": "act_meta_100", "adGroup": "adg_meta_01", "campaign": "cmp_meta_01", "content": null, "name": "Creative link not exposed (synthetic)", "status": "paused", "createdAt": "2026-09-09T11:30:00.000Z" },
+    { "id": "ad_tt_01", "adAccount": "tt_adv_200", "adGroup": "adg_tt_01", "campaign": "cmp_tt_01", "content": "tt_video_multi_20", "name": "Receta A (synthetic)", "status": "active", "createdAt": "2026-09-07T19:00:00.000Z" },
+    { "id": "ad_tt_02", "adAccount": "tt_adv_200", "adGroup": "adg_tt_01", "campaign": "cmp_tt_01", "content": "tt_video_multi_20", "name": "Receta B (synthetic)", "status": "paused", "createdAt": "2026-09-07T19:30:00.000Z" }
+  ],
+
+  "faultPresets": {
+    "rate_limited_listing": [{ "operation": "listInteractions", "on": 1, "fault": { "kind": "rate_limited", "retryAfterSeconds": 120 } }],
+    "transient_refetch": [{ "operation": "getInteraction", "on": 1, "fault": { "kind": "transient", "reason": "server_error" } }],
+    "permanent_reply_rejection": [{ "operation": "replyPublicly", "on": 1, "fault": { "kind": "permanent_rejected", "reasonCode": "content_policy" } }],
+    "reply_timeout_after_send": [{ "operation": "replyPublicly", "on": 1, "fault": { "kind": "outcome_unknown" } }],
+    "hide_timeout_after_send": [{ "operation": "hide", "on": 1, "fault": { "kind": "outcome_unknown" } }],
+    "private_reply_timeout_before_send": [{ "operation": "replyPrivately", "on": 1, "fault": { "kind": "timeout_before_send" } }],
+    "credential_revoked_mid_listing": [{ "operation": "listInteractions", "on": 2, "fault": { "kind": "credential_invalid", "reason": "revoked" } }]
+  }
+}

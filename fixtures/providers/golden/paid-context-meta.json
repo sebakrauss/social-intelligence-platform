@@ -1,0 +1,168 @@
+[
+  {
+    "adAccount": {
+      "id": "act_meta_100",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "name": "Lanzamiento temporada (synthetic)",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/campaign/cmp_meta_01"
+    },
+    "ref": {
+      "id": "cmp_meta_01",
+      "kind": "campaign",
+      "platform": "facebook"
+    },
+    "status": "active",
+    "timestamps": {
+      "createdAt": "2026-09-05T09:00:00.000Z",
+      "updatedAt": null
+    },
+    "type": "campaign"
+  },
+  {
+    "adAccount": {
+      "id": "act_meta_100",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "campaign": {
+      "id": "cmp_meta_01",
+      "kind": "campaign",
+      "platform": "facebook"
+    },
+    "name": "Chile + México (synthetic)",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/ad_group/adg_meta_01"
+    },
+    "ref": {
+      "id": "adg_meta_01",
+      "kind": "ad_group",
+      "platform": "facebook"
+    },
+    "status": "active",
+    "timestamps": {
+      "createdAt": "2026-09-05T09:05:00.000Z",
+      "updatedAt": null
+    },
+    "type": "ad_group"
+  },
+  {
+    "adAccount": {
+      "id": "act_meta_100",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "adGroup": {
+      "id": "adg_meta_01",
+      "kind": "ad_group",
+      "platform": "facebook"
+    },
+    "campaign": {
+      "id": "cmp_meta_01",
+      "kind": "campaign",
+      "platform": "facebook"
+    },
+    "content": {
+      "id": "fb_post_boosted_02",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "name": "Boost 2x1 (synthetic)",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/ad/ad_meta_01"
+    },
+    "ref": {
+      "id": "ad_meta_01",
+      "kind": "ad",
+      "platform": "facebook"
+    },
+    "status": "active",
+    "timestamps": {
+      "createdAt": "2026-09-12T10:30:00.000Z",
+      "updatedAt": null
+    },
+    "type": "ad"
+  },
+  {
+    "adAccount": {
+      "id": "act_meta_100",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "adGroup": {
+      "id": "adg_meta_01",
+      "kind": "ad_group",
+      "platform": "facebook"
+    },
+    "campaign": {
+      "id": "cmp_meta_01",
+      "kind": "campaign",
+      "platform": "facebook"
+    },
+    "content": {
+      "id": "ig_ad_only_10",
+      "kind": "content",
+      "platform": "instagram"
+    },
+    "name": "Envíos (synthetic)",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/ad/ad_meta_02"
+    },
+    "ref": {
+      "id": "ad_meta_02",
+      "kind": "ad",
+      "platform": "facebook"
+    },
+    "status": "active",
+    "timestamps": {
+      "createdAt": "2026-09-08T11:30:00.000Z",
+      "updatedAt": null
+    },
+    "type": "ad"
+  },
+  {
+    "adAccount": {
+      "id": "act_meta_100",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "adGroup": {
+      "id": "adg_meta_01",
+      "kind": "ad_group",
+      "platform": "facebook"
+    },
+    "campaign": {
+      "id": "cmp_meta_01",
+      "kind": "campaign",
+      "platform": "facebook"
+    },
+    "content": null,
+    "name": "Creative link not exposed (synthetic)",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/ad/ad_meta_03"
+    },
+    "ref": {
+      "id": "ad_meta_03",
+      "kind": "ad",
+      "platform": "facebook"
+    },
+    "status": "paused",
+    "timestamps": {
+      "createdAt": "2026-09-09T11:30:00.000Z",
+      "updatedAt": null
+    },
+    "type": "ad"
+  }
+]

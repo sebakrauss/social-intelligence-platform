@@ -1,0 +1,238 @@
+[
+  {
+    "author": {
+      "displayName": "Promo Bot 7 (synthetic)",
+      "handle": "sim_promo_bot7",
+      "ref": {
+        "id": "fb_user_04",
+        "kind": "author",
+        "platform": "facebook"
+      },
+      "role": "user"
+    },
+    "availability": "available",
+    "content": {
+      "id": "fb_post_organic_01",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "editedAt": null,
+    "interactionKind": "comment",
+    "parent": null,
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/interaction/fb_c_006@r1"
+    },
+    "ref": {
+      "id": "fb_c_006",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "text": "Gana un premio aquí 👉 example.test/premio (sintético)",
+    "textRevision": "r1",
+    "timestamps": {
+      "createdAt": "2026-09-10T20:00:00.000Z",
+      "updatedAt": "2026-09-10T20:00:00.000Z"
+    },
+    "visibility": "hidden"
+  },
+  {
+    "author": {
+      "displayName": "Lucía P. (synthetic)",
+      "handle": "sim_lucia_ar",
+      "ref": {
+        "id": "fb_user_03",
+        "kind": "author",
+        "platform": "facebook"
+      },
+      "role": "user"
+    },
+    "availability": "available",
+    "content": {
+      "id": "fb_post_organic_01",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "editedAt": null,
+    "interactionKind": "comment",
+    "parent": null,
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/interaction/fb_c_005@r1"
+    },
+    "ref": {
+      "id": "fb_c_005",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "text": "Che, ¿cuándo vuelve a haber stock del de avellana?",
+    "textRevision": "r1",
+    "timestamps": {
+      "createdAt": "2026-09-10T19:00:00.000Z",
+      "updatedAt": "2026-09-10T19:00:00.000Z"
+    },
+    "visibility": "visible"
+  },
+  {
+    "author": {
+      "displayName": "Diego M. (synthetic)",
+      "handle": "sim_diego_mx",
+      "ref": {
+        "id": "fb_user_02",
+        "kind": "author",
+        "platform": "facebook"
+      },
+      "role": "user"
+    },
+    "availability": "available",
+    "content": {
+      "id": "fb_post_organic_01",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "editedAt": "2026-09-11T08:00:00.000Z",
+    "interactionKind": "comment",
+    "parent": null,
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/interaction/fb_c_004@r2"
+    },
+    "ref": {
+      "id": "fb_c_004",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "text": "¿Tienen envío a Monterrey y Guadalajara? 🙏",
+    "textRevision": "r2",
+    "timestamps": {
+      "createdAt": "2026-09-10T18:00:00.000Z",
+      "updatedAt": "2026-09-11T08:00:00.000Z"
+    },
+    "visibility": "visible"
+  },
+  {
+    "author": {
+      "displayName": "Camila R. (synthetic)",
+      "handle": "sim_camila_cl",
+      "ref": {
+        "id": "fb_user_01",
+        "kind": "author",
+        "platform": "facebook"
+      },
+      "role": "user"
+    },
+    "availability": "available",
+    "content": {
+      "id": "fb_post_organic_01",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "editedAt": null,
+    "interactionKind": "reply",
+    "parent": {
+      "id": "fb_c_002",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/interaction/fb_c_003@r1"
+    },
+    "ref": {
+      "id": "fb_c_003",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "text": "Gracias, ¿y llega antes del viernes?",
+    "textRevision": "r1",
+    "timestamps": {
+      "createdAt": "2026-09-10T17:00:00.000Z",
+      "updatedAt": "2026-09-10T17:00:00.000Z"
+    },
+    "visibility": "visible"
+  },
+  {
+    "author": {
+      "displayName": "Café Aurora",
+      "handle": "sim_cafe_aurora",
+      "ref": {
+        "id": "fb_author_aurora",
+        "kind": "author",
+        "platform": "facebook"
+      },
+      "role": "account_identity"
+    },
+    "availability": "available",
+    "content": {
+      "id": "fb_post_organic_01",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "editedAt": null,
+    "interactionKind": "reply",
+    "parent": {
+      "id": "fb_c_001",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/interaction/fb_c_002@r1"
+    },
+    "ref": {
+      "id": "fb_c_002",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "text": "¡Hola Camila! Depende del peso; te pasamos el detalle por aquí mismo.",
+    "textRevision": "r1",
+    "timestamps": {
+      "createdAt": "2026-09-10T16:30:00.000Z",
+      "updatedAt": "2026-09-10T16:30:00.000Z"
+    },
+    "visibility": "visible"
+  },
+  {
+    "author": {
+      "displayName": "Camila R. (synthetic)",
+      "handle": "sim_camila_cl",
+      "ref": {
+        "id": "fb_user_01",
+        "kind": "author",
+        "platform": "facebook"
+      },
+      "role": "user"
+    },
+    "availability": "available",
+    "content": {
+      "id": "fb_post_organic_01",
+      "kind": "content",
+      "platform": "facebook"
+    },
+    "editedAt": null,
+    "interactionKind": "comment",
+    "parent": null,
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/interaction/fb_c_001@r1"
+    },
+    "ref": {
+      "id": "fb_c_001",
+      "kind": "interaction",
+      "platform": "facebook"
+    },
+    "text": "¿Cuánto sale el envío a Valparaíso?",
+    "textRevision": "r1",
+    "timestamps": {
+      "createdAt": "2026-09-10T16:00:00.000Z",
+      "updatedAt": "2026-09-10T16:00:00.000Z"
+    },
+    "visibility": "visible"
+  }
+]

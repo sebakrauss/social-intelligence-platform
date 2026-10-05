@@ -1,0 +1,38 @@
+{
+  "accountIdentity": {
+    "id": "fb_author_aurora",
+    "kind": "author",
+    "platform": "facebook"
+  },
+  "asset": {
+    "id": "fb_page_aurora",
+    "kind": "asset",
+    "platform": "facebook"
+  },
+  "assetClass": "content_bearing",
+  "describedAt": "2026-09-15T12:00:00.000Z",
+  "displayName": "Café Aurora (synthetic page)",
+  "grantedPermissions": [
+    "sim.block",
+    "sim.delete",
+    "sim.hide",
+    "sim.manage_webhooks",
+    "sim.read_account",
+    "sim.read_content",
+    "sim.read_interactions",
+    "sim.reply_private",
+    "sim.reply_public"
+  ],
+  "linkedAdAccounts": [
+    {
+      "id": "act_meta_100",
+      "kind": "asset",
+      "platform": "facebook"
+    }
+  ],
+  "rawReference": {
+    "apiVersion": "simulator-v1",
+    "provider": "simulator",
+    "ref": "sim://baseline/account/fb_page_aurora"
+  }
+}

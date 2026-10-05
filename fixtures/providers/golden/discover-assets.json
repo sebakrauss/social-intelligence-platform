@@ -1,0 +1,74 @@
+[
+  {
+    "assetClass": "ad_account",
+    "displayName": "Aurora Ads (synthetic ad account)",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/asset/act_meta_100"
+    },
+    "ref": {
+      "id": "act_meta_100",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "relatedAssets": []
+  },
+  {
+    "assetClass": "content_bearing",
+    "displayName": "Café Aurora (synthetic page)",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/asset/fb_page_aurora"
+    },
+    "ref": {
+      "id": "fb_page_aurora",
+      "kind": "asset",
+      "platform": "facebook"
+    },
+    "relatedAssets": [
+      {
+        "id": "act_meta_100",
+        "kind": "asset",
+        "platform": "facebook"
+      }
+    ]
+  },
+  {
+    "assetClass": "content_bearing",
+    "displayName": "Café Aurora (synthetic profile)",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/asset/ig_acct_aurora"
+    },
+    "ref": {
+      "id": "ig_acct_aurora",
+      "kind": "asset",
+      "platform": "instagram"
+    },
+    "relatedAssets": [
+      {
+        "id": "act_meta_100",
+        "kind": "asset",
+        "platform": "facebook"
+      }
+    ]
+  },
+  {
+    "assetClass": "content_bearing",
+    "displayName": "Aurora Outlet (synthetic, limited simulated permissions)",
+    "rawReference": {
+      "apiVersion": "simulator-v1",
+      "provider": "simulator",
+      "ref": "sim://baseline/asset/ig_acct_limited"
+    },
+    "ref": {
+      "id": "ig_acct_limited",
+      "kind": "asset",
+      "platform": "instagram"
+    },
+    "relatedAssets": []
+  }
+]

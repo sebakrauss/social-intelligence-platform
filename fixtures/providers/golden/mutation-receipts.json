@@ -1,0 +1,131 @@
+[
+  {
+    "budget": {
+      "kind": "reported",
+      "remainingCalls": 199,
+      "resetAt": "2026-09-15T13:00:00.000Z",
+      "scope": "account",
+      "usedRatio": 0.005
+    },
+    "data": {
+      "confirmedAt": "2026-09-15T12:00:00.000Z",
+      "createdInteraction": {
+        "id": "sim-facebook-int-1",
+        "kind": "interaction",
+        "platform": "facebook"
+      },
+      "kind": "public_reply",
+      "rawReference": {
+        "apiVersion": "simulator-v1",
+        "provider": "simulator",
+        "ref": "sim://baseline/interaction/sim-facebook-int-1@r1"
+      },
+      "target": {
+        "id": "fb_c_001",
+        "kind": "interaction",
+        "platform": "facebook"
+      }
+    }
+  },
+  {
+    "budget": {
+      "kind": "reported",
+      "remainingCalls": 198,
+      "resetAt": "2026-09-15T13:00:00.000Z",
+      "scope": "account",
+      "usedRatio": 0.01
+    },
+    "data": {
+      "confirmedAt": "2026-09-15T12:00:00.000Z",
+      "kind": "private_reply",
+      "providerReceiptId": "sim-pr-2",
+      "rawReference": {
+        "apiVersion": "simulator-v1",
+        "provider": "simulator",
+        "ref": "sim://baseline/private_reply/sim-pr-2"
+      },
+      "target": {
+        "id": "fb_c_001",
+        "kind": "interaction",
+        "platform": "facebook"
+      }
+    }
+  },
+  {
+    "budget": {
+      "kind": "reported",
+      "remainingCalls": 197,
+      "resetAt": "2026-09-15T13:00:00.000Z",
+      "scope": "account",
+      "usedRatio": 0.015
+    },
+    "data": {
+      "changed": true,
+      "confirmedAt": "2026-09-15T12:00:00.000Z",
+      "kind": "hide",
+      "rawReference": {
+        "apiVersion": "simulator-v1",
+        "provider": "simulator",
+        "ref": "sim://baseline/interaction/fb_c_001@r1"
+      },
+      "target": {
+        "id": "fb_c_001",
+        "kind": "interaction",
+        "platform": "facebook"
+      }
+    }
+  },
+  {
+    "budget": {
+      "kind": "reported",
+      "remainingCalls": 196,
+      "resetAt": "2026-09-15T13:00:00.000Z",
+      "scope": "account",
+      "usedRatio": 0.02
+    },
+    "data": {
+      "changed": true,
+      "confirmedAt": "2026-09-15T12:00:00.000Z",
+      "kind": "unhide",
+      "rawReference": {
+        "apiVersion": "simulator-v1",
+        "provider": "simulator",
+        "ref": "sim://baseline/interaction/fb_c_001@r1"
+      },
+      "target": {
+        "id": "fb_c_001",
+        "kind": "interaction",
+        "platform": "facebook"
+      }
+    }
+  },
+  {
+    "budget": {
+      "kind": "reported",
+      "remainingCalls": 195,
+      "resetAt": "2026-09-15T13:00:00.000Z",
+      "scope": "account",
+      "usedRatio": 0.025
+    },
+    "data": {
+      "account": {
+        "id": "fb_page_aurora",
+        "kind": "asset",
+        "platform": "facebook"
+      },
+      "author": {
+        "id": "fb_user_04",
+        "kind": "author",
+        "platform": "facebook"
+      },
+      "changed": true,
+      "confirmedAt": "2026-09-15T12:00:00.000Z",
+      "kind": "block",
+      "rawReference": {
+        "apiVersion": "simulator-v1",
+        "provider": "simulator",
+        "ref": "sim://baseline/block/fb_page_aurora.fb_user_04"
+      }
+    }
+  }
+]
