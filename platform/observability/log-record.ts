@@ -8,8 +8,9 @@
  * validated: identifiers must be identifier-shaped and nothing may look like a credential.
  * An invalid declared value is omitted, never echoed; only the declared field name is reported.
  *
- * Job fields (job type, run ID, attempt, dispatch key, lane, queue key) are added to
- * `LogFields` in the job-foundation step, each with its own validator.
+ * Job fields (task, run ID, attempt, dispatch key fingerprint, lane, outbox ID, run status, counters,
+ * age and failure class) carry identifiers, closed vocabularies and numbers only. The dispatch key itself
+ * is never logged: only a short, non-reversible fingerprint.
  */
 import {
   parseCorrelationId,
@@ -30,6 +31,20 @@ export type ActorType = (typeof ACTOR_TYPES)[number];
 export const LOG_OUTCOMES = ["ok", "error"] as const;
 export type LogOutcome = (typeof LOG_OUTCOMES)[number];
 
+export const LOG_RUN_STATUSES = [
+  "QUEUED", "EXECUTING", "WAITING", "COMPLETED", "FAILED", "CANCELED", "CRASHED", "SYSTEM_FAILURE", "EXPIRED", "TIMED_OUT", "UNKNOWN",
+] as const;
+export type LogRunStatus = (typeof LOG_RUN_STATUSES)[number];
+
+export const LOG_FAILURE_CLASSES = [
+  "enqueue_rejected", "enqueue_unavailable", "unknown_task", "invalid_payload", "run_failed", "run_canceled", "run_crashed",
+  "run_system_failure", "run_expired", "run_timed_out", "run_not_found", "run_status_unknown", "non_retryable", "retryable", "scope_rejected",
+] as const;
+export type LogFailureClass = (typeof LOG_FAILURE_CLASSES)[number];
+
+export const LOG_LANES = ["1", "2", "3", "4", "5", "system"] as const;
+export type LogLane = (typeof LOG_LANES)[number];
+
 export interface LogFields {
   /** Owning module or component, e.g. "platform.i18n". */
   readonly module?: string;
@@ -44,6 +59,21 @@ export interface LogFields {
   readonly durationMs?: number;
   readonly outcome?: LogOutcome;
   readonly errorCode?: ErrorCode;
+  // Job foundation (TA §42.1 worker/job logs).
+  readonly task?: string;
+  readonly lane?: LogLane;
+  readonly outboxId?: string;
+  readonly runId?: string;
+  readonly runStatus?: LogRunStatus;
+  readonly attempt?: number;
+  readonly dispatchAttempts?: number;
+  readonly recoveryCount?: number;
+  readonly ageMs?: number;
+  readonly failureClass?: LogFailureClass;
+  /** First 12 hex chars of SHA-256(dispatch key): correlates runs without exposing the key. */
+  readonly dispatchKeyFingerprint?: string;
+  /** Counts in a sweep or relay pass. */
+  readonly count?: number;
 }
 
 export interface LogRecord extends LogFields {
@@ -77,6 +107,14 @@ function duration(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+function counter(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1_000_000 ? value : undefined;
+}
+
+function fingerprint(value: unknown): string | undefined {
+  return typeof value === "string" && /^[0-9a-f]{12}$/.test(value) ? value : undefined;
+}
+
 function safeTraceId<T>(parse: (value: unknown) => T | undefined): (value: unknown) => T | undefined {
   return (value) => (typeof value === "string" && looksLikeSecret(value) ? undefined : parse(value));
 }
@@ -94,6 +132,18 @@ const FIELD_VALIDATORS: FieldValidators = {
   durationMs: duration,
   outcome: oneOf(LOG_OUTCOMES),
   errorCode: (value) => (isErrorCode(value) ? value : undefined),
+  task: identifier,
+  lane: oneOf(LOG_LANES),
+  outboxId: opaqueId,
+  runId: opaqueId,
+  runStatus: oneOf(LOG_RUN_STATUSES),
+  attempt: counter,
+  dispatchAttempts: counter,
+  recoveryCount: counter,
+  ageMs: duration,
+  failureClass: oneOf(LOG_FAILURE_CLASSES),
+  dispatchKeyFingerprint: fingerprint,
+  count: counter,
 };
 
 const DECLARED_FIELDS = Object.keys(FIELD_VALIDATORS) as (keyof LogFields)[];

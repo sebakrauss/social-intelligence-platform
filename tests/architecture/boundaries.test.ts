@@ -105,6 +105,13 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["jobs-are-entry-points", "server/handler.ts", "jobs/run.ts"],
   ["mutation-port-executor-only", "server/handler.ts", "integrations/providers/contract/mutation-port.ts"],
   ["provider-adapter-isolated", "integrations/providers/meta/adapter.ts", "modules/insights/index.ts"],
+  // Job runtime boundary (Step 3): SDK and adapter behind the port; no direct enqueue, delivery or system scope
+  ["trigger-sdk-only-in-job-runtime-boundary", "server/enqueues-directly.ts", "../../../../node_modules/@trigger.dev/sdk/dist/esm/v3/index.d.ts"],
+  ["job-runtime-adapter-composed-only", "server/enqueues-directly.ts", "platform/jobs/trigger-dev.ts"],
+  ["outbox-delivery-jobs-only", "server/enqueues-directly.ts", "platform/outbox/delivery.ts"],
+  ["system-scope-delivery-only", "server/enqueues-directly.ts", "platform/db/system-scope.ts"],
+  ["system-scope-delivery-only", "jobs/uses-system-scope.ts", "platform/db/system-scope.ts"],
+  ["product-code-no-job-runtime", "modules/workflow/application/enqueues.ts", "platform/jobs/port.ts"],
 ];
 
 describe("architecture boundaries", () => {

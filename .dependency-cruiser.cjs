@@ -348,6 +348,43 @@ module.exports = {
       to: { path: "^(db|modules/[^/]+/(domain|persistence))/" },
     },
 
+    // ── Job runtime boundary (Step 3; TA §19) ────────────────────────────────────────────────
+    {
+      name: "trigger-sdk-only-in-job-runtime-boundary",
+      severity: "error",
+      comment: "The Trigger.dev SDK is imported only by its JobRuntime adapter and the jobs deployment; everything else uses the port.",
+      from: { pathNot: "^(platform/jobs/trigger-dev\\.ts$|jobs/|tests/)" },
+      to: { path: npmPackage(["@trigger.dev/sdk", "@trigger.dev/core", "trigger.dev"]) },
+    },
+    {
+      name: "job-runtime-adapter-composed-only",
+      severity: "error",
+      comment: "The concrete job runtime is wired only at composition roots (jobs/, server/jobs/); product code depends on the JobRuntime port.",
+      from: { pathNot: "^(jobs|server/jobs|tests)/" },
+      to: { path: "^platform/jobs/trigger-dev\\.ts$" },
+    },
+    {
+      name: "product-code-no-job-runtime",
+      severity: "error",
+      comment: "Domain, modules, UI, AI and adapters never enqueue jobs: they append to the outbox in their transaction and the relay dispatches.",
+      from: { path: "^(domain|modules|app|ui|ai|integrations)/" },
+      to: { path: "^platform/jobs/" },
+    },
+    {
+      name: "system-scope-delivery-only",
+      severity: "error",
+      comment: "System scope and outbox delivery state are reachable only from the outbox delivery service (no generic privileged helper).",
+      from: { pathNot: "^(platform/outbox/delivery\\.ts$|platform/db/|tests/)" },
+      to: { path: "^platform/db/(system-scope|outbox-delivery)\\.ts$" },
+    },
+    {
+      name: "outbox-delivery-jobs-only",
+      severity: "error",
+      comment: "Outbox relay and sweepers run only in the jobs deployment (system tasks); nothing else executes delivery directly.",
+      from: { pathNot: "^(jobs|tests)/" },
+      to: { path: "^platform/outbox/delivery\\.ts$" },
+    },
+
     // ── Hygiene ──────────────────────────────────────────────────────────────────────────────
     {
       name: "production-not-to-tests-or-tools",

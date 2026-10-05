@@ -16,12 +16,12 @@ import {
   RUNTIME_LOGIN_ROLES,
   ScopeError,
   createRuntimeDatabase,
-  withSystemScope,
   withUserScope,
   withWorkspaceJobScope,
   type DatabaseTransaction,
   type RuntimeDatabase,
 } from "@/platform/db";
+import { withSystemScope } from "@/platform/db/system-scope";
 import { APPLICATION_SCHEMAS } from "@/db/schema/classification";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld, seedWorld, type World } from "../support/world";

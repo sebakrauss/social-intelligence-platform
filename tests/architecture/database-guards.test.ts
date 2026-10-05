@@ -98,7 +98,7 @@ describe("migration lint", () => {
         expect(["app_owner"], `${source.name}: set role ${match[1] ?? ""}`).toContain((match[1] ?? "").trim());
       }
     }
-    const scopes = read("platform/db/scopes.ts");
+    const scopes = read("platform/db/scopes.ts") + read("platform/db/system-scope.ts");
     const switches = [...scopes.matchAll(/set local role ([a-z_]+)/g)].map((match) => match[1]);
     expect(switches.sort()).toEqual(["app_system", "app_worker", "authenticated"]);
     expect(scopes).not.toMatch(/set local role \$\{/);

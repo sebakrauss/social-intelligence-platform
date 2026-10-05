@@ -3,8 +3,8 @@
  * commits or rolls back with the state change it follows up. Web users and workers can append but not
  * read; only the system role reads delivery metadata (Step 3 relay).
  */
-import { jsonb, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { createOutboxMessage, type OutboxMessage, type OutboxWriter } from "@/platform/outbox";
+import { integer, jsonb, pgSchema, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { createOutboxMessage, type OutboxMessage, type OutboxWriter } from "@/platform/outbox/message";
 import type { DatabaseTransaction } from "./scopes";
 
 const system = pgSchema("system");
@@ -22,7 +22,37 @@ export const outbox = system.table("outbox", {
   status: text("status").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  // Delivery state (0005, R7): written only by the system relay and sweepers.
+  dispatchAttempts: integer("dispatch_attempts").notNull().default(0),
+  nextDispatchAt: timestamp("next_dispatch_at", { withTimezone: true }),
+  claimedUntil: timestamp("claimed_until", { withTimezone: true }),
+  recoveryCount: integer("recovery_count").notNull().default(0),
+  runOutcome: text("run_outcome"),
+  runOutcomeAt: timestamp("run_outcome_at", { withTimezone: true }),
+  lastFailureClass: text("last_failure_class"),
+  sloBreachedAt: timestamp("slo_breached_at", { withTimezone: true }),
+  runDiagnostic: text("run_diagnostic"),
+  runDiagnosticAt: timestamp("run_diagnostic_at", { withTimezone: true }),
 });
+
+/** Every vendor run dispatched for an outbox row; the latest is current (R7 diagnosability). */
+export const outboxRuns = system.table(
+  "outbox_runs",
+  {
+    outboxId: uuid("outbox_id").notNull(),
+    runId: text("run_id").notNull(),
+    dispatchAttempt: integer("dispatch_attempt").notNull(),
+    recoveryGeneration: integer("recovery_generation").notNull(),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }).notNull(),
+    lastStatus: text("last_status"),
+    statusCheckedAt: timestamp("status_checked_at", { withTimezone: true }),
+    attemptCount: integer("attempt_count"),
+    terminalAt: timestamp("terminal_at", { withTimezone: true }),
+    unknownChecks: integer("unknown_checks").notNull().default(0),
+    firstUnknownAt: timestamp("first_unknown_at", { withTimezone: true }),
+  },
+  (table) => [primaryKey({ columns: [table.outboxId, table.runId] })],
+);
 
 export function createPostgresOutbox(tx: DatabaseTransaction): OutboxWriter {
   return {

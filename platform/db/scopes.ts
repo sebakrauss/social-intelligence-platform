@@ -52,7 +52,7 @@ function parseWorkspace(workspaceId: unknown, required: boolean): string | undef
   return workspaceId;
 }
 
-function assertKind(database: RuntimeDatabase, kind: RuntimeDatabase["kind"]): void {
+export function assertKind(database: RuntimeDatabase, kind: RuntimeDatabase["kind"]): void {
   // Type-level kinds can be erased by casts; check at runtime too.
   if (database.kind !== kind) throw new ScopeError(`scope requires the ${kind} runtime database`);
 }
@@ -89,15 +89,6 @@ export async function withWorkspaceJobScope<T>(
   return database.db.transaction(async (tx) => {
     await tx.execute(sql`set local role app_worker`);
     await tx.execute(sql`select app.bind_workspace(${workspace}::uuid)`);
-    return work(tx);
-  });
-}
-
-/** Named system jobs only: system tables, no tenant content. */
-export async function withSystemScope<T>(database: RuntimeDatabase<"system">, work: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
-  assertKind(database, "system");
-  return database.db.transaction(async (tx) => {
-    await tx.execute(sql`set local role app_system`);
     return work(tx);
   });
 }

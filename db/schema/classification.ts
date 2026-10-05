@@ -21,6 +21,8 @@ export const TABLE_CLASSES = [
   "privileged",
   /** Migration bookkeeping, owned by the migration role; no runtime access. */
   "migration_ledger",
+  /** Operational configuration (flags, kill switches): readable by runtimes, written only by operators. */
+  "operational_config",
   /** TEST ONLY: the T-26 isolation fixture (never created by migrations). */
   "test_fixture",
 ] as const;
@@ -37,7 +39,7 @@ export interface TableClassification {
 const ALL_DML = ["SELECT", "INSERT", "UPDATE", "DELETE"] as const;
 
 /** Schemas owned by this application. Any other schema owned by app_owner fails the classification test. */
-export const APPLICATION_SCHEMAS = ["app", "app_private", "tenancy", "audit", "system", "app_migrations", "t26_fixture"] as const;
+export const APPLICATION_SCHEMAS = ["app", "app_private", "tenancy", "audit", "system", "idempotency", "app_migrations", "t26_fixture"] as const;
 
 /** Schema USAGE per runtime role (no other role may hold USAGE or CREATE). */
 export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number], readonly RuntimeGrantee[]>> = {
@@ -46,6 +48,7 @@ export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number],
   tenancy: ["authenticated", "app_worker"],
   audit: ["authenticated", "app_worker"],
   system: ["authenticated", "app_worker", "app_system"],
+  idempotency: ["app_worker"],
   app_migrations: [],
   t26_fixture: ["authenticated", "app_worker"],
 };
@@ -122,7 +125,56 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "delivery_metadata SELECT app_system",
       "delivery_status UPDATE app_system",
     ],
-    privileges: { authenticated: ["INSERT"], app_worker: ["INSERT"], app_system: ["SELECT", "UPDATE(dispatched_at)", "UPDATE(status)"] },
+    privileges: {
+      authenticated: ["INSERT"],
+      app_worker: ["INSERT"],
+      app_system: [
+        "SELECT",
+        "UPDATE(claimed_until)",
+        "UPDATE(dispatch_attempts)",
+        "UPDATE(dispatched_at)",
+        "UPDATE(last_failure_class)",
+        "UPDATE(next_dispatch_at)",
+        "UPDATE(recovery_count)",
+        "UPDATE(run_diagnostic)",
+        "UPDATE(run_diagnostic_at)",
+        "UPDATE(run_outcome)",
+        "UPDATE(run_outcome_at)",
+        "UPDATE(slo_breached_at)",
+        "UPDATE(status)",
+      ],
+    },
+  },
+  "system.outbox_runs": {
+    class: "system",
+    policies: ["delivery_runs ALL app_system"],
+    privileges: {
+      app_system: [
+        "INSERT",
+        "SELECT",
+        "UPDATE(attempt_count)",
+        "UPDATE(first_unknown_at)",
+        "UPDATE(last_status)",
+        "UPDATE(status_checked_at)",
+        "UPDATE(terminal_at)",
+        "UPDATE(unknown_checks)",
+      ],
+    },
+  },
+  "idempotency.effect_keys": {
+    class: "append_only_history",
+    policies: ["worker_claim INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { app_worker: ["INSERT", "SELECT"] },
+  },
+  "system.operational_switches": {
+    class: "operational_config",
+    policies: ["member_read SELECT authenticated", "system_read SELECT app_system", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["SELECT"], app_system: ["SELECT"] },
+  },
+  "system.operational_switch_changes": {
+    class: "append_only_history",
+    policies: ["owner_append INSERT app_owner"],
+    privileges: {},
   },
   "t26_fixture.conversations": {
     class: "test_fixture",
@@ -162,4 +214,6 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "audit.is_workspace_membership_state(jsonb)": ["app_worker", "authenticated"],
   "audit.is_organization_membership_state(jsonb)": ["app_worker", "authenticated"],
   "system.is_identifier_map(jsonb)": ["app_system", "app_worker", "authenticated"],
+  "system.record_switch_change()": [],
+  "app.current_workspace_organization()": ["app_worker"],
 };

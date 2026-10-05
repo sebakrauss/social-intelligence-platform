@@ -55,6 +55,31 @@ SQL migrations (`db/migrations/`); Drizzle mappings only type queries. Every tab
 Configuration names are listed in `.env.example`; values go only in `.env.local`. Runtime login roles are
 long-lived: no script, test or migration may drop, rename or recreate them (enforced by a repository guard).
 
+## Jobs
+
+Background work runs on Trigger.dev (selected, TA-Q-04) behind the vendor-neutral `JobRuntime` port in
+`platform/jobs`. Product code never enqueues directly: a command appends an IDs-only row to the transactional
+outbox in its own transaction; after commit the web nudges the **system relay**, which dispatches the row under
+its stable dispatch key. Scheduled sweepers re-dispatch lost rows (`outbox.dispatch_sweep`) and observe run
+outcomes (`outbox.outcome_sweep`, R7: CRASHED/SYSTEM_FAILURE re-dispatched within a bound; FAILED/CANCELED
+recorded and surfaced, never blindly re-dispatched). Effects are protected by domain idempotency
+(`idempotency.effect_keys`, R6), claimed in the same transaction as the effect.
+
+- Tenant jobs run as `worker_login` bound to exactly one workspace; the named system jobs run as `system_login`.
+- Five priority lanes, each its own bounded queue (`platform/jobs/lanes.ts`), plus a system delivery queue.
+- Operational switches and kill switches (TA §66) live in `system.operational_switches`; runtimes only read
+  them. Changes go through `npm run ops:switch` (dry run unless `--apply`), which records who and why.
+
+| Command | What it does |
+|---|---|
+| `npm run ops:switch -- set\|clear --key … --scope … [--qualifier …] [--value '{…}'] --operator <id> --reason <code> [--apply]` | Audited operator change to one switch on the configured development project. |
+| `npm run test:jobs:managed` | T-27 managed leg on the Trigger.dev **DEVELOPMENT** environment (crash → R7 → new run → one effect). Reports **NOT RUN** (exit 2) without `TRIGGER_SECRET_KEY` / `TRIGGER_PROJECT_REF`; refuses non-`tr_dev_` keys. |
+
+The Trigger.dev **CLI is not a repository dependency**. Run it only as a pinned, ephemeral tool
+(`npx trigger.dev@4.7.2 …`), e.g. `npx trigger.dev@4.7.2 login` once for your own CLI session. The repository
+itself must stay `npm audit` clean; a guard fails CI if the CLI enters the dependency tree or if any resolved
+`ws` is below 8.21.0 (pinned through `overrides`).
+
 ## Known tooling limitation
 
 Next.js-specific lint rules (`eslint-config-next` / `@next/eslint-plugin-next`) are temporarily not used: their dependency chain carries an unresolved high-severity advisory (GHSA-vfj7-8cjw-p6xm, `braces`) with no patched version, and `npm audit` is not suppressed. Linting currently covers TypeScript (strict, type-checked) and React. Revisit when an audit-clean official option exists.

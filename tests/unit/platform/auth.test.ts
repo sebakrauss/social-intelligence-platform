@@ -100,8 +100,11 @@ describe("auth configuration", () => {
       "DATABASE_SSL_ROOT_CERT=",
       "DATABASE_MIGRATION_URL=",
       "SUPABASE_PROJECT_REF=",
+      // Step 3 job runtime (Trigger.dev): the environment's API key and project reference, names only.
+      "TRIGGER_SECRET_KEY=",
+      "TRIGGER_PROJECT_REF=",
     ]);
-    expect(lines.join("\n")).not.toMatch(/SERVICE_ROLE|SECRET|POSTGRES|DATABASE_URL=/);
+    expect(lines.join("\n")).not.toMatch(/SERVICE_ROLE|SUPABASE_SECRET|POSTGRES|DATABASE_URL=/);
   });
 });
 

@@ -15,9 +15,11 @@
     "test": "vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",
     "test:db:managed": "node tools/db/run-managed-tests.ts",
+    "test:jobs:managed": "node tools/jobs/run-managed-trigger.ts",
     "db:preflight": "node tools/db/preflight.ts",
     "db:migrate": "node tools/db/migrate.ts",
     "db:provision-roles": "node tools/db/provision-roles.ts",
+    "ops:switch": "node tools/ops/switch.ts",
     "secret-scan": "node tools/secret-scan/cli.ts",
     "audit": "npm audit",
     "verify": "npm run secret-scan && npm run audit && npm run lint && npm run typecheck && npm run boundaries && npm run test && npm run test:db && npm run build"
@@ -25,6 +27,7 @@
   "dependencies": {
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.117.2",
+    "@trigger.dev/sdk": "4.7.2",
     "drizzle-orm": "0.45.3",
     "next": "16.3.8",
     "pg": "8.23.1",
@@ -44,5 +47,8 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.0",
     "vitest": "5.0.3"
+  },
+  "overrides": {
+    "ws": "8.21.0"
   }
 }

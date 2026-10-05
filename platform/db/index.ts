@@ -17,10 +17,11 @@ export {
   ALLOWED_CLAIM_ROLES,
   ScopeError,
   parseDatabaseClaims,
-  withSystemScope,
   withUserScope,
   withWorkspaceJobScope,
   type DatabaseClaims,
   type DatabaseTransaction,
 } from "./scopes";
-export { createPostgresOutbox, outbox } from "./outbox";
+export { createPostgresOutbox, outbox, outboxRuns } from "./outbox";
+export { InvalidEffectKeyError, claimEffect, effectKeys, type EffectClaim, type EffectClaimRequest } from "./effects";
+export { operationalSwitches, readSwitchRows, type SwitchRow } from "./switches";
