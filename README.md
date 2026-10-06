@@ -102,6 +102,19 @@ OQ-19, OQ-26, OQ-27).
   them with `UPDATE_GOLDEN=1 npx vitest run tests/providers/golden.test.ts` and review the diff. CI never
   regenerates them.
 
+## Credential crypto
+
+Provider credentials are protected by envelope encryption (TA §39; TA-Q-07 PASS, ADR-64), in
+`platform/crypto/credentials`. Each record gets a fresh 256-bit data key and AES-256-GCM encryption, and the
+data key is wrapped by a key-encryption key. Both the wrapped key and the payload are bound to the
+authenticated context `app · purpose · env · v · workspace_id · credential_id`.
+
+- **`CredentialSealer` seals only.** It is what the web deployment may hold.
+- **`CredentialOpener` opens.** Boundary rules allow it only in the job runtime.
+- **The local keyring is for development and tests only.** `LOCAL_KEYRING_KEY` must be exactly 32 bytes in
+  unpadded base64url, and the keyring is refused unless `NODE_ENV` is `development` or `test`. The AWS KMS
+  adapter (slice 5I) is not added yet.
+
 ## Known tooling limitation
 
 Next.js-specific lint rules (`eslint-config-next` / `@next/eslint-plugin-next`) are temporarily not used: their dependency chain carries an unresolved high-severity advisory (GHSA-vfj7-8cjw-p6xm, `braces`) with no patched version, and `npm audit` is not suppressed. Linting currently covers TypeScript (strict, type-checked) and React. Revisit when an audit-clean official option exists.

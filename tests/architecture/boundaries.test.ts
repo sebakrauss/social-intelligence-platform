@@ -116,6 +116,12 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["provider-contract-pure", "integrations/providers/contract/uses-node.ts", "crypto"],
   ["provider-mutation-implementations-executor-only", "integrations/providers/meta/index.ts", "integrations/providers/meta/mutation-port.ts"],
   ["provider-mutation-implementations-executor-only", "server/obtains-adapter-mutations.ts", "integrations/providers/meta/mutation-port.ts"],
+  // Credential crypto (Step 5A): the web seals but never opens; local keyring only at composition roots
+  ["credential-opening-job-runtime-only", "server/opens-credentials.ts", "platform/crypto/credentials/open.ts"],
+  ["credential-opening-job-runtime-only", "app/opens-credentials.ts", "platform/crypto/credentials/local-opener.ts"],
+  ["credential-local-keyring-composed-only", "app/opens-credentials.ts", "platform/crypto/credentials/local-opener.ts"],
+  ["credential-local-keyring-composed-only", "modules/connections/application/uses-local-keyring.ts", "platform/crypto/credentials/local-sealer.ts"],
+  ["integrations-no-credential-crypto", "integrations/providers/meta/uses-credential-crypto.ts", "platform/crypto/credentials/seal.ts"],
 ];
 
 describe("architecture boundaries", () => {

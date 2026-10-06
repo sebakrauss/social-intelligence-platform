@@ -103,6 +103,8 @@ describe("auth configuration", () => {
       // Step 3 job runtime (Trigger.dev): the environment's API key and project reference, names only.
       "TRIGGER_SECRET_KEY=",
       "TRIGGER_PROJECT_REF=",
+      // Step 5A credential crypto: local/test-only keyring KEK (refused outside NODE_ENV development/test), name only.
+      "LOCAL_KEYRING_KEY=",
     ]);
     expect(lines.join("\n")).not.toMatch(/SERVICE_ROLE|SUPABASE_SECRET|POSTGRES|DATABASE_URL=/);
   });

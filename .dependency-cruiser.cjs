@@ -399,6 +399,36 @@ module.exports = {
       to: { path: "^platform/outbox/delivery\\.ts$" },
     },
 
+    // ── Credential crypto boundary (Step 5A; TA §39, ADR-64) ─────────────────────────────────
+    {
+      name: "credential-opening-job-runtime-only",
+      severity: "error",
+      comment: "Opening credentials (opener, local opener, keyring internals) happens only in the job runtime: the web deployment (app/, ui/, server/) seals but never decrypts (TA §39).",
+      from: { pathNot: "^(jobs|tests|platform/crypto/credentials)/" },
+      to: { path: "^platform/crypto/credentials/(open|local-opener|local-keyring|aead)\\.ts$" },
+    },
+    {
+      name: "credential-local-keyring-composed-only",
+      severity: "error",
+      comment: "The local/test keyring is selected only by composition roots (server/ seals, jobs/ opens) and tests.",
+      from: { pathNot: "^(jobs|server|tests|platform/crypto/credentials)/" },
+      to: { path: "^platform/crypto/credentials/local-" },
+    },
+    {
+      name: "integrations-no-credential-crypto",
+      severity: "error",
+      comment: "The provider contract and adapters receive ProviderCredential values only; they never touch credential crypto or keyrings.",
+      from: { path: "^integrations/" },
+      to: { path: "^platform/crypto/credentials/" },
+    },
+    {
+      name: "aws-kms-sdk-only-in-credential-adapter",
+      severity: "error",
+      comment: "The AWS KMS SDK (slice 5I, not adopted yet) may be imported only by its credential keyring adapter.",
+      from: { pathNot: "^platform/crypto/credentials/aws-kms\\.ts$" },
+      to: { path: npmPackage(["@aws-sdk/client-kms"]) },
+    },
+
     // ── Hygiene ──────────────────────────────────────────────────────────────────────────────
     {
       name: "production-not-to-tests-or-tools",
