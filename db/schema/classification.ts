@@ -39,7 +39,9 @@ export interface TableClassification {
 const ALL_DML = ["SELECT", "INSERT", "UPDATE", "DELETE"] as const;
 
 /** Schemas owned by this application. Any other schema owned by app_owner fails the classification test. */
-export const APPLICATION_SCHEMAS = ["app", "app_private", "tenancy", "audit", "system", "idempotency", "app_migrations", "t26_fixture"] as const;
+export const APPLICATION_SCHEMAS = [
+  "app", "app_private", "tenancy", "audit", "system", "idempotency", "connections", "credentials", "app_migrations", "t26_fixture",
+] as const;
 
 /** Schema USAGE per runtime role (no other role may hold USAGE or CREATE). */
 export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number], readonly RuntimeGrantee[]>> = {
@@ -49,6 +51,9 @@ export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number],
   audit: ["authenticated", "app_worker"],
   system: ["authenticated", "app_worker", "app_system"],
   idempotency: ["app_worker"],
+  connections: ["authenticated", "app_worker"],
+  // USAGE only to reach the credential definer functions: no runtime role holds any privilege on its table.
+  credentials: ["authenticated", "app_worker"],
   app_migrations: [],
   t26_fixture: ["authenticated", "app_worker"],
 };
@@ -176,6 +181,88 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     policies: ["owner_append INSERT app_owner"],
     privileges: {},
   },
+  // ── Step 5B: connections and credentials (0007) ────────────────────────────────────────────────────
+  "connections.connections": {
+    class: "workspace_tenant",
+    policies: [
+      "manage_insert INSERT authenticated",
+      "manage_update UPDATE authenticated",
+      "member_read SELECT authenticated",
+      "owner_bound_read SELECT app_owner",
+      "worker_read SELECT app_worker",
+      "worker_update UPDATE app_worker",
+    ],
+    privileges: {
+      authenticated: [
+        "INSERT", "SELECT", "UPDATE(active_credential_id)", "UPDATE(authorized_at)", "UPDATE(authorized_by)",
+        "UPDATE(last_problem_at)", "UPDATE(last_problem_code)", "UPDATE(status)", "UPDATE(updated_at)", "UPDATE(version)",
+      ],
+      app_worker: [
+        "SELECT", "UPDATE(active_credential_id)", "UPDATE(last_problem_at)", "UPDATE(last_problem_code)",
+        "UPDATE(last_success_at)", "UPDATE(status)", "UPDATE(updated_at)", "UPDATE(version)",
+      ],
+    },
+  },
+  "connections.connection_events": {
+    class: "append_only_history",
+    policies: ["manage_append INSERT authenticated", "member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
+  "connections.connect_attempts": {
+    class: "workspace_tenant",
+    policies: ["creator_read SELECT authenticated", "creator_update UPDATE authenticated", "manage_insert INSERT authenticated"],
+    privileges: {
+      authenticated: ["INSERT", "SELECT", "UPDATE(closed_at)", "UPDATE(pkce_envelope)", "UPDATE(pkce_secret_id)", "UPDATE(status)"],
+    },
+  },
+  "connections.discovered_assets": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: {
+      authenticated: ["SELECT"],
+      app_worker: ["INSERT", "SELECT", "UPDATE(display_name)", "UPDATE(last_seen_at)", "UPDATE(updated_at)"],
+    },
+  },
+  "connections.connected_accounts": {
+    class: "workspace_tenant",
+    policies: [
+      "manage_insert INSERT authenticated",
+      "manage_update UPDATE authenticated",
+      "member_read SELECT authenticated",
+      "worker_insert INSERT app_worker",
+      "worker_read SELECT app_worker",
+      "worker_update UPDATE app_worker",
+    ],
+    privileges: {
+      authenticated: ["INSERT", "SELECT", "UPDATE(deactivated_at)", "UPDATE(deactivation_reason)", "UPDATE(move_id)", "UPDATE(status)", "UPDATE(updated_at)"],
+      app_worker: ["INSERT", "SELECT", "UPDATE(deactivated_at)", "UPDATE(deactivation_reason)", "UPDATE(move_id)", "UPDATE(status)", "UPDATE(updated_at)"],
+    },
+  },
+  "connections.connected_account_events": {
+    class: "append_only_history",
+    policies: ["manage_append INSERT authenticated", "member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
+  "connections.asset_moves": {
+    class: "workspace_tenant",
+    policies: [
+      "manage_request INSERT authenticated",
+      "manage_update UPDATE authenticated",
+      "member_read SELECT authenticated",
+      "worker_insert INSERT app_worker",
+      "worker_read SELECT app_worker",
+      "worker_update UPDATE app_worker",
+    ],
+    privileges: {
+      authenticated: ["INSERT", "SELECT", "UPDATE(reason_code)", "UPDATE(status)", "UPDATE(updated_at)"],
+      app_worker: ["INSERT", "SELECT", "UPDATE(connected_account_id)", "UPDATE(reason_code)", "UPDATE(status)", "UPDATE(updated_at)"],
+    },
+  },
+  "credentials.provider_credentials": {
+    class: "privileged",
+    policies: ["owner_bound_delete DELETE app_owner", "owner_bound_insert INSERT app_owner", "owner_bound_read SELECT app_owner"],
+    privileges: {},
+  },
   "t26_fixture.conversations": {
     class: "test_fixture",
     policies: ["user_content ALL authenticated", "worker_bound ALL app_worker"],
@@ -216,4 +303,7 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "system.is_identifier_map(jsonb)": ["app_system", "app_worker", "authenticated"],
   "system.record_switch_change()": [],
   "app.current_workspace_organization()": ["app_worker"],
+  "credentials.store_envelope(uuid,uuid,integer,bytea,timestamp with time zone)": ["app_worker", "authenticated"],
+  "credentials.load_envelope(uuid)": ["app_worker"],
+  "credentials.delete_envelope(uuid)": ["app_worker", "authenticated"],
 };

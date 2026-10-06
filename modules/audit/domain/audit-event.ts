@@ -18,6 +18,7 @@ import {
   type WorkspaceMode,
   type WorkspaceRole,
 } from "@/domain/access";
+import { isConnectionStatus, type ConnectionStatus } from "@/domain/connections";
 import { parseCorrelationId, parseRequestId, type CorrelationId, type RequestId } from "@/domain/correlation";
 import {
   isUuid,
@@ -45,10 +46,32 @@ export const AUDIT_ACTIONS = [
   "invitation.created",
   "invitation.revoked",
   "invitation.accepted",
+  // Step 5 connections (vocabulary prepared in migration 0007; written by later slices)
+  "connection.created",
+  "connection.credential_replaced",
+  "connection.validated",
+  "connection.status_changed",
+  "connection.removed",
+  "connected_account.linked",
+  "connected_account.unlinked",
+  "connected_account.move_requested",
+  "connected_account.moved_out",
+  "connected_account.moved_in",
+  "connected_account.move_failed",
+  "connected_account.move_rejected",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-export const AUDIT_TARGET_TYPES = ["organization", "workspace", "organization_membership", "workspace_membership", "invitation"] as const;
+export const AUDIT_TARGET_TYPES = [
+  "organization",
+  "workspace",
+  "organization_membership",
+  "workspace_membership",
+  "invitation",
+  "connection",
+  "connected_account",
+  "asset_move",
+] as const;
 export type AuditTargetType = (typeof AUDIT_TARGET_TYPES)[number];
 
 /** Initiator kinds (TA §41.1). Step 1 records only "user"; the others arrive with later modules. */
@@ -74,7 +97,8 @@ export interface OrganizationMembershipState {
 export type AuditChange =
   | { readonly kind: "workspace_mode"; readonly previous: WorkspaceMode; readonly current: WorkspaceMode }
   | { readonly kind: "workspace_membership"; readonly previous: WorkspaceMembershipState; readonly current: WorkspaceMembershipState | null }
-  | { readonly kind: "organization_membership"; readonly previous: OrganizationMembershipState; readonly current: OrganizationMembershipState | null };
+  | { readonly kind: "organization_membership"; readonly previous: OrganizationMembershipState; readonly current: OrganizationMembershipState | null }
+  | { readonly kind: "connection_status"; readonly previous: ConnectionStatus; readonly current: ConnectionStatus };
 
 /** Actions that must carry a change summary, its kind, and whether the change is a removal. Others carry none. */
 const CHANGE_RULES: Partial<Record<AuditAction, { readonly kind: AuditChange["kind"]; readonly removal: boolean }>> = {
@@ -84,6 +108,7 @@ const CHANGE_RULES: Partial<Record<AuditAction, { readonly kind: AuditChange["ki
   "workspace_membership.removed": { kind: "workspace_membership", removal: true },
   "organization_membership.role_changed": { kind: "organization_membership", removal: false },
   "organization_membership.removed": { kind: "organization_membership", removal: true },
+  "connection.status_changed": { kind: "connection_status", removal: false },
 };
 
 export interface AuditEvent {
@@ -171,6 +196,8 @@ function parseChange(value: unknown, rule: { readonly kind: AuditChange["kind"];
       const after = rule.removal ? (current === null ? null : undefined) : parseOrganizationMembershipState(current);
       return before === undefined || after === undefined ? undefined : Object.freeze({ kind: rule.kind, previous: before, current: after });
     }
+    case "connection_status":
+      return isConnectionStatus(previous) && isConnectionStatus(current) ? Object.freeze({ kind: rule.kind, previous, current }) : undefined;
   }
 }
 

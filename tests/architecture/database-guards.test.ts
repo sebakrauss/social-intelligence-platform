@@ -40,26 +40,172 @@ const sqlSources = (): { name: string; sql: string }[] => [
   { name: FIXTURE, sql: normalize(read(FIXTURE)) },
 ];
 
+/**
+ * Closed-vocabulary CHECK constraints that may only ever be WIDENED (audit vocabulary, TA §41). PostgreSQL can't
+ * alter a CHECK expression in place, so widening is, in ONE migration and as top-level statements in this order:
+ *   alter table audit.audit_events drop constraint <name>;
+ *   alter table audit.audit_events add constraint <name> check (<column> in ('…', …)) not valid;
+ *   alter table audit.audit_events validate constraint <name>;
+ * The value list must be quoted literals only and must contain every value earlier migrations allowed (equal is
+ * fine; narrowing is not). Only the exact DROP statement of an exactly listed constraint is exempted from the
+ * lint; every other DROP, REVOKE or RLS weakening is still rejected. This is a text guard (see the limits test).
+ */
+const WIDENABLE_CHECKS: Readonly<Record<string, { readonly table: string; readonly column: string }>> = {
+  audit_events_action_check: { table: "audit.audit_events", column: "action" },
+  audit_events_target_type_check: { table: "audit.audit_events", column: "target_type" },
+};
+
+const LITERAL_LIST = /^\s*'[^']*'(\s*,\s*'[^']*')*\s*$/;
+const quotedValues = (list: string): string[] => [...list.matchAll(/'([^']*)'/g)].map((match) => match[1] ?? "");
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Only top-level SQL: block comments and dollar-quoted bodies (function/DO bodies) are not executed by the migration. */
+const topLevel = (sql: string): string => sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\$([a-z_]*)\$[\s\S]*?\$\1\$/g, " ");
+
+/** Positions of a top-level statement (at the start or right after a `;`). */
+function statements(sql: string, statement: RegExp): RegExpExecArray[] {
+  return [...sql.matchAll(new RegExp(`(?:^|;)\\s*(${statement.source})`, "g"))];
+}
+
+/** Migrations with each VERIFIED widening's DROP removed; throws if any exempted-looking drop isn't one. */
+function withVerifiedWideningsRemoved(sources: readonly { name: string; sql: string }[]): { name: string; sql: string }[] {
+  const allowed = new Map<string, Set<string>>();
+  return sources.map((source) => {
+    let sql = source.sql;
+    const top = topLevel(source.sql);
+    for (const [name, { table, column }] of Object.entries(WIDENABLE_CHECKS)) {
+      const t = escapeRegExp(table);
+      const inline = new RegExp(`\\b${column} text not null check \\(${column} in \\(([^)]*)\\)\\)`).exec(top);
+      if (inline && !allowed.has(name) && top.includes(`create table ${table} (`)) allowed.set(name, new Set(quotedValues(inline[1] ?? "")));
+      const drops = statements(top, new RegExp(`alter table ${t} drop constraint ${name};`));
+      if (drops.length === 0) continue;
+      const fail = (reason: string): never => {
+        throw new Error(`${source.name}: ${name} ${reason}`);
+      };
+      if (drops.length > 1) fail("is dropped more than once");
+      const dropAt = drops[0]?.index ?? -1;
+      const readds = statements(top, new RegExp(`alter table ${t} add constraint ${name} check \\(${column} in \\(([^)]*)\\)\\) not valid;`));
+      const validates = statements(top, new RegExp(`alter table ${t} validate constraint ${name};`));
+      const readd = readds.find((match) => match.index > dropAt);
+      if (readds.length !== 1 || readd === undefined) fail("is dropped without exactly one later same-name NOT VALID re-add in the same migration");
+      const validate = validates.find((match) => match.index > (readd?.index ?? Number.POSITIVE_INFINITY));
+      if (validates.length !== 1 || validate === undefined) fail("is re-added without exactly one later VALIDATE CONSTRAINT");
+      const list = readd?.[2] ?? "";
+      if (!LITERAL_LIST.test(list)) fail("is re-added with a non-literal value list");
+      const previous = allowed.get(name) ?? fail("has no earlier definition to widen");
+      const next = new Set(quotedValues(list));
+      const lost = [...previous].filter((value) => !next.has(value));
+      if (lost.length > 0) fail(`would narrow (removes ${lost.join(", ")})`);
+      allowed.set(name, next);
+      sql = sql.replace(`alter table ${table} drop constraint ${name};`, " ");
+    }
+    return { name: source.name, sql };
+  });
+}
+
+const FORBIDDEN: readonly [RegExp, string][] = [
+  [/\bdrop\s+(table|column|schema|role|user|owned|database|function|policy|trigger|index|view|type)\b/, "DROP"],
+  [/\btruncate\b/, "TRUNCATE"],
+  [/\brename\s+(to|column)\b/, "RENAME"],
+  [/\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?\S+\s+(alter\s+column\s+\S+\s+type|drop)\b/, "column narrowing"],
+  [/\bdrop\s+(column|constraint)\b/, "DROP column/constraint (anywhere in ALTER TABLE)"],
+  [/\bdisable\s+row\s+level\s+security\b|\bno\s+force\s+row\s+level\s+security\b/, "RLS weakening"],
+  [/\brevoke\b[^;]*\bfrom\s+(?!public\s*(?:;|'|$))/, "grant narrowing (REVOKE from anything but PUBLIC)"],
+  [/\bbypassrls\b(?![^;]*\bnobypassrls\b)/, "BYPASSRLS grant"],
+  [/\bpassword\b/, "password in SQL"],
+  [/set_config\([^)]*,\s*false\s*\)/, "session-level set_config"],
+  [/(^|;|\$\$|then|begin)\s*set\s+(?!local\b|role\s+app_owner\b|search_path)/, "session-level SET"],
+  [/(^|;)\s*(begin|commit|rollback)\s*;/, "transaction control (the runner owns transactions)"],
+  [/\bpg_terminate_backend\b/, "backend termination"],
+];
+
+/** Lint findings for a migration sequence (empty = clean). */
+function lintMigrations(sources: readonly { name: string; sql: string }[]): string[] {
+  let checked: { name: string; sql: string }[];
+  try {
+    checked = withVerifiedWideningsRemoved(sources);
+  } catch (error) {
+    return [(error as Error).message];
+  }
+  return checked.flatMap((source) => FORBIDDEN.filter(([pattern]) => pattern.test(source.sql)).map(([, label]) => `${source.name}: ${label}`));
+}
+
 describe("migration lint", () => {
   it("contains no destructive or lifecycle-unsafe statements", () => {
-    const forbidden: [RegExp, string][] = [
-      [/\bdrop\s+(table|column|schema|role|user|owned|database|function|policy|trigger|index|view|type)\b/, "DROP"],
-      [/\btruncate\b/, "TRUNCATE"],
-      [/\brename\s+(to|column)\b/, "RENAME"],
-      [/\balter\s+table\s+\S+\s+(alter\s+column\s+\S+\s+type|drop)\b/, "column narrowing"],
-      [/\bdisable\s+row\s+level\s+security\b|\bno\s+force\s+row\s+level\s+security\b/, "RLS weakening"],
-      [/\bbypassrls\b(?![^;]*\bnobypassrls\b)/, "BYPASSRLS grant"],
-      [/\bpassword\b/, "password in SQL"],
-      [/set_config\([^)]*,\s*false\s*\)/, "session-level set_config"],
-      [/(^|;|\$\$|then|begin)\s*set\s+(?!local\b|role\s+app_owner\b|search_path)/, "session-level SET"],
-      [/(^|;)\s*(begin|commit|rollback)\s*;/, "transaction control (the runner owns transactions)"],
-      [/\bpg_terminate_backend\b/, "backend termination"],
-    ];
-    for (const source of sqlSources()) {
-      for (const [pattern, label] of forbidden) {
-        expect(pattern.test(source.sql), `${source.name}: ${label}`).toBe(false);
-      }
-    }
+    expect(lintMigrations(sqlSources())).toEqual([]);
+  });
+
+  describe("the audit-vocabulary widening exemption is narrow (adversarial)", () => {
+    const BASE = { name: "0001_base.sql", sql: normalize("create table audit.audit_events ( action text not null check (action in ('a', 'b')), target_type text not null check (target_type in ('x')) );") };
+    const widen = (extra = ""): string =>
+      "alter table audit.audit_events drop constraint audit_events_action_check;" +
+      " alter table audit.audit_events add constraint audit_events_action_check check (action in ('a', 'b', 'c')) not valid;" +
+      " alter table audit.audit_events validate constraint audit_events_action_check;" + extra;
+    const lint = (...later: string[]): string[] => lintMigrations([BASE, ...later.map((sql, i) => ({ name: `000${String(i + 2)}_m.sql`, sql: normalize(sql) }))]);
+
+    it("accepts a verified widening, an equal set, and case/whitespace/comment formatting variants", () => {
+      expect(lint(widen())).toEqual([]);
+      expect(lint(widen().replace("'a', 'b', 'c'", "'b', 'a'"))).toEqual([]);
+      expect(lint(widen().toUpperCase().replace(/'A', 'B', 'C'/, "'a', 'b', 'c'").replace(/\s+/g, "\n   "))).toEqual([]);
+      expect(lint(`-- note\n${widen()}`)).toEqual([]);
+    });
+
+    it("rejects narrowing, non-literal lists and a missing/misplaced re-add or VALIDATE", () => {
+      expect(lint(widen().replace("'a', 'b', 'c'", "'a'"))[0]).toMatch(/would narrow/);
+      expect(lint(widen().replace("'a', 'b', 'c'", "'a', 'b', action"))[0]).toMatch(/non-literal/);
+      expect(lint("alter table audit.audit_events drop constraint audit_events_action_check;")[0]).toMatch(/without exactly one later/);
+      expect(lint(widen().replace("not valid;", ";"))[0]).toMatch(/without exactly one later/);
+      expect(lint(widen().replace("add constraint audit_events_action_check", "add constraint audit_events_action_check2"))[0]).toMatch(/without exactly one later/);
+      expect(lint(widen().replace(" alter table audit.audit_events validate constraint audit_events_action_check;", ""))[0]).toMatch(/VALIDATE/);
+      const validateFirst = "alter table audit.audit_events validate constraint audit_events_action_check; " + widen().replace(" alter table audit.audit_events validate constraint audit_events_action_check;", "");
+      expect(lint(validateFirst)[0]).toMatch(/VALIDATE/);
+      expect(lint(widen(" alter table audit.audit_events drop constraint audit_events_action_check;"))[0]).toMatch(/more than once/);
+    });
+
+    it("re-add/VALIDATE hidden in comments or dollar-quoted bodies doesn't count", () => {
+      const hidden = "alter table audit.audit_events drop constraint audit_events_action_check; /* " + widen().slice(widen().indexOf(" alter")) + " */";
+      expect(lint(hidden)[0]).toMatch(/without exactly one later/);
+      const inBody = "alter table audit.audit_events drop constraint audit_events_action_check; do $$ begin " + widen().slice(widen().indexOf(" alter")) + " end $$;";
+      expect(lint(inBody)[0]).toMatch(/without exactly one later/);
+    });
+
+    it("the re-add must be in the SAME migration", () => {
+      const findings = lint(
+        "alter table audit.audit_events drop constraint audit_events_action_check;",
+        widen().slice(widen().indexOf(" alter")),
+      );
+      expect(findings[0]).toMatch(/without exactly one later/);
+    });
+
+    it.each([
+      ["another CHECK", "alter table tenancy.workspaces drop constraint workspaces_mode_check;"],
+      ["a UNIQUE constraint", "alter table connections.connections drop constraint connections_workspace_id_id_key;"],
+      ["a foreign key", "alter table connections.connected_accounts drop constraint connected_accounts_workspace_id_connection_id_fkey;"],
+      ["an exempt name on another table", "alter table tenancy.workspaces drop constraint audit_events_action_check;"],
+      ["drop if exists", "alter table audit.audit_events drop constraint if exists audit_events_action_check;"],
+      ["alter table only", "alter table only audit.audit_events drop constraint audit_events_action_check;"],
+      ["combined drop", "alter table audit.audit_events drop constraint audit_events_action_check, drop column action;"],
+      ["a column", "alter table audit.audit_events drop column change;"],
+      ["a column after another clause", "alter table audit.audit_events add column x int, drop column change;"],
+      ["a constraint after another clause", "alter table tenancy.workspaces add column x int, drop constraint workspaces_mode_check;"],
+      ["a table", "drop table connections.asset_moves;"],
+      ["a policy", "drop policy member_read on connections.connections;"],
+      ["an index", "drop index connections.connected_accounts_m01_active_content_asset;"],
+      ["RLS disabled", "alter table connections.connections disable row level security;"],
+      ["RLS not forced", "alter table connections.connections no force row level security;"],
+      ["a runtime grant", "revoke select on connections.connections from authenticated;"],
+      ["a runtime grant listed after PUBLIC", "revoke all on schema connections from public, app_worker;"],
+    ])("still rejects dropping %s, even next to a valid widening", (_label, statement) => {
+      expect(lint(widen(` ${statement}`)).length).toBeGreaterThan(0);
+      expect(lint(statement).length).toBeGreaterThan(0);
+    });
+
+    it("known limit: it is a text guard — the database tests prove the applied result", () => {
+      // The lint can't evaluate SQL semantics (e.g. string literals that mimic statements). The DB suites check the
+      // live constraints after migrating (validated, closed vocabulary equal to the application's) — see
+      // tests/db/suites/connections.ts "the audit vocabulary constraints are validated and match the application".
+      expect(Object.keys(WIDENABLE_CHECKS).sort()).toEqual(["audit_events_action_check", "audit_events_target_type_check"]);
+    });
   });
 
   it("grants nothing to anon, service_role, PUBLIC or the login roles", () => {
