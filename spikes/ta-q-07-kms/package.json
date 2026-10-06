@@ -1,0 +1,23 @@
+{
+  "name": "spike-ta-q-07-kms",
+  "private": true,
+  "description": "DISPOSABLE SPIKE — NOT PRODUCTION CODE. TA-Q-07b managed AWS KMS validation (development account only, synthetic data only).",
+  "type": "module",
+  "scripts": {
+    "selftest": "node scripts/selftest.mjs",
+    "validate": "node scripts/run.mjs validate",
+    "reconcile": "node scripts/run.mjs reconcile",
+    "audit": "node scripts/run.mjs audit",
+    "cleanup:plan": "node scripts/run.mjs cleanup --offline",
+    "cleanup:dry-run": "node scripts/run.mjs cleanup",
+    "cleanup:verify": "node scripts/run.mjs cleanup-verify"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudtrail": "3.1146.0",
+    "@aws-sdk/client-iam": "3.1146.0",
+    "@aws-sdk/client-kms": "3.1146.0",
+    "@aws-sdk/client-sso": "3.1146.0",
+    "@aws-sdk/client-sso-oidc": "3.1146.0",
+    "@aws-sdk/client-sts": "3.1146.0"
+  }
+}

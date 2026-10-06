@@ -35,7 +35,7 @@ Non-negotiable product stances (PD §1, §7):
 | `docs/information-architecture-v1.md` (IA) | 1.1, approved | Where concepts live; navigation; role visibility (IA §18) |
 | `docs/core-ux-flows-v1.md` (UX) | 1.1, approved | User journeys, interaction behavior, unavailable states |
 | `docs/intelligence-data-model-v1.md` (Model) | 1.1, approved | Conceptual meaning, provenance, relationships, invariants S1–S21 (Model §50) |
-| `docs/technical-architecture-v1.md` (TA) | 1.1, approved | Implementation boundaries, stack, runtime patterns, security, operations |
+| `docs/technical-architecture-v1.md` (TA) | 1.2, approved | Implementation boundaries, stack, runtime patterns, security, operations |
 | `docs/pre-implementation-validation-v1.md` | 1.0, accepted (0E.3) | Evidence for validated technical patterns (TA-Q-29, TA-Q-04, R1–R8). Evidence, not a decision document |
 
 Rules:
@@ -310,7 +310,7 @@ Still open: **TA-Q-31** (deployed workers in staging), **TA-Q-32** (production p
 - **Never** log, print or echo secrets, provider access tokens, API keys, database passwords or connection strings, including during diagnostic work.
 - **Never** log raw personal or comment content unless an explicitly approved secure path requires it. Logs, metrics and traces carry **identifiers** (data classes in TA §38.11). Raw AI prompts and responses are not logged by default.
 - Job payloads stay **IDs-only**. Product analytics use identifiers and allowed enums only. No comment text, author identities, Brand Context, notes or reply text.
-- Provider credentials are envelope-encrypted, with the key outside the database (key mechanism **VALIDATE**, TA-Q-07). They are decrypted only inside the integration boundary, through the single credential-access function, within a workspace job scope, for one provider call. Never in the web deployment, the browser, payloads, logs or AI calls (TA §39).
+- Provider credentials are envelope-encrypted, with the key outside the database (key mechanism **AWS KMS**, TA-Q-07 PASS; TA §39, ADR-64; production account/key topology still open). They are decrypted only inside the integration boundary, through the single credential-access function, within a workspace job scope, for one provider call. Never in the web deployment, the browser, payloads, logs or AI calls (TA §39).
 - Web security (TA §38.7):
   - **Server authority**: never rely on frontend-only authorization.
   - **CSRF**: SameSite cookies, origin checks, OAuth `state` bound to user and workspace.
@@ -396,7 +396,7 @@ Follow TA §73 in order. Don't jump ahead because a later feature is visually at
 | 2 | Database foundation + RLS (R1–R5, R8 lifecycle), scope helpers, outbox | T-01, T-11, **T-26** |
 | 3 | Job foundation: tenant-scoped wrappers, outbox relay, dispatch and **run-outcome sweepers (R7)**, R6, lanes, flags and kill switches | **T-27** |
 | 4 | Provider adapter contracts + simulator + fixtures | Contract tests on simulator |
-| 5 | Connections, credentials, capability, coverage | Needs **TA-Q-07**; multi-workspace ad accounts only after **TA-Q-02** |
+| 5 | Connections, credentials, capability, coverage | TA-Q-07 passed (AWS KMS, TA §39); multi-workspace ad accounts only after **TA-Q-02** |
 | 6 | Ingestion + canonical conversation model | T-09; coverage truthful |
 | 7 | Inbox read side + workflow | — |
 | 8 | AI gateway + understanding + protection + priority + Needs review | T-05, T-13, T-14 |
@@ -421,13 +421,13 @@ Parallel work is allowed only where TA §73 allows it:
 
 ## 18. Current validation status
 
-Verified against TA §71 (v1.1).
+Verified against TA §71 (v1.2).
 
-**PASSED / SELECTED:** TA-Q-29 PASS (R1–R5) · TA-Q-04 PASS · Trigger.dev selected · Graphile Worker fallback · R1–R8 adopted as architecture refinements (R8 procedure still VALIDATE under TA-Q-30).
+**PASSED / SELECTED:** TA-Q-29 PASS (R1–R5) · TA-Q-04 PASS · TA-Q-07 PASS (AWS KMS; deployed-worker authentication stays under TA-Q-31) · Trigger.dev selected · Graphile Worker fallback · R1–R8 adopted as architecture refinements (R8 procedure still VALIDATE under TA-Q-30).
 
 **Confirmed (no longer open):** TA-Q-01 (M-01 / PD D-50) · TA-Q-03 (forward-only, PD D-51) · TA-Q-26 (uncertain excluded from bulk hide, PD D-52).
 
-**Still VALIDATE:** TA-Q-02 · 05 · 06 · 07 · 08 · 09 · 11 · 12 · 13 · 14 · 15 · 21 · 22 · 24 · 25 · 30 · 31 · 32.
+**Still VALIDATE:** TA-Q-02 · 05 · 06 · 08 · 09 · 11 · 12 · 13 · 14 · 15 · 21 · 22 · 24 · 25 · 30 · 31 · 32.
 
 **Still OPEN:** TA-Q-10 · 16 (M-04) · 17 (M-03) · 18 (M-06) · 19 (M-10) · 20 · 23 (AI unit-cost model) · 27 · 28.
 

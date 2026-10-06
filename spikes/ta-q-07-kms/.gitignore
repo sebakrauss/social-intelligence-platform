@@ -1,0 +1,6 @@
+# Raw TA-Q-07b per-run evidence carries AWS-generated identifiers (key IDs, generated role suffixes). It stays
+# local for audit/debugging and is never committed; evidence/ta-q-07b-validation-summary.md is the sanitized
+# record. These patterns match only the harness's run directories (<UTC stamp>-<hex>, reconcile-*, cleanup-*).
+/evidence/2[0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-*/
+/evidence/reconcile-*/
+/evidence/cleanup-*/
