@@ -26,3 +26,7 @@ npm-debug.log*
 
 # Local review artifacts
 step-1-final-review.zip
+.vercel
+.env*
+
+!.env.example
