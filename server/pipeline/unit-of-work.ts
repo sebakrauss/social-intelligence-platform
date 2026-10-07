@@ -7,6 +7,7 @@
  */
 import type { UserId, WorkspaceId } from "@/domain/ids";
 import type { AuditLog } from "@/modules/audit";
+import type { ConnectionStore } from "@/modules/connections";
 import type { TenancyStore } from "@/modules/tenancy";
 import type { OutboxWriter } from "@/platform/outbox";
 
@@ -14,6 +15,7 @@ export interface Transaction {
   readonly tenancy: TenancyStore;
   readonly audit: AuditLog;
   readonly outbox: OutboxWriter;
+  readonly connections: ConnectionStore;
 }
 
 /**

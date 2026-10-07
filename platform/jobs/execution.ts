@@ -41,6 +41,24 @@ export interface TenantJobContext {
   readonly claimEffect: (effectKey: string) => Promise<EffectClaim>;
 }
 
+/** One scoped step of a multi-step tenant job: a fresh worker transaction bound to the payload's workspace. */
+export interface TenantJobScope {
+  readonly tx: DatabaseTransaction;
+  /** R6: claims a domain effect in THIS step's transaction. */
+  readonly claimEffect: (effectKey: string) => Promise<EffectClaim>;
+}
+
+/**
+ * Context of a tenant job whose handler makes provider calls: no transaction is held across the handler. Each
+ * `inScope` call opens a fresh worker transaction bound to the SAME single workspace (from the validated payload)
+ * and commits or rolls back on its own, so external calls happen between transactions, never inside one.
+ */
+export interface TenantStepJobContext {
+  readonly payload: TenantJobPayload;
+  readonly run: RunInfo;
+  readonly inScope: <T>(work: (scope: TenantJobScope) => Promise<T>) => Promise<T>;
+}
+
 export interface SystemJobContext {
   readonly payload: SystemJobPayload;
   readonly run: RunInfo;
@@ -66,14 +84,8 @@ function classify(error: unknown): unknown {
   return error;
 }
 
-/** Runs a tenant task in its single workspace. Throws NonRetryableJobError for permanent failures. */
-export async function runTenantJob<T>(
-  deps: TenantJobDependencies,
-  taskName: string,
-  rawPayload: unknown,
-  run: RunInfo,
-  handler: (context: TenantJobContext) => Promise<T>,
-): Promise<T> {
+/** Validates a tenant run before anything else happens (fail closed, no connection taken). */
+function admitTenantRun(deps: TenantJobDependencies, taskName: string, rawPayload: unknown, run: RunInfo) {
   const log = deps.logger.child({ module: "platform.jobs", task: taskName, runId: run.runId, attempt: run.attempt });
   const definition = deps.registry.tenant(taskName);
   if (definition === undefined) {
@@ -98,17 +110,13 @@ export async function runTenantJob<T>(
     lane: laneLabel(definition.lane),
     ...(correlationId === undefined ? {} : { correlationId }),
   });
+  return { payload, scoped };
+}
+
+async function observe<T>(scoped: Logger, work: () => Promise<T>): Promise<T> {
   const startedAt = Date.now();
   try {
-    const result = await withWorkspaceJobScope(deps.worker, payload.workspaceId, (tx) =>
-      handler({
-        tx,
-        payload,
-        run,
-        claimEffect: (effectKey) =>
-          claimEffect(tx, { workspaceId: payload.workspaceId, effectKey, task: taskName, outboxId: payload.outboxId, runId: run.runId }),
-      }),
-    );
+    const result = await work();
     scoped.info("job.completed", { outcome: "ok", durationMs: Date.now() - startedAt });
     return result;
   } catch (error) {
@@ -120,6 +128,48 @@ export async function runTenantJob<T>(
     });
     throw classified;
   }
+}
+
+function scopeFor(tx: DatabaseTransaction, payload: TenantJobPayload, taskName: string, run: RunInfo): TenantJobScope {
+  return {
+    tx,
+    claimEffect: (effectKey) => claimEffect(tx, { workspaceId: payload.workspaceId, effectKey, task: taskName, outboxId: payload.outboxId, runId: run.runId }),
+  };
+}
+
+/** Runs a tenant task in its single workspace. Throws NonRetryableJobError for permanent failures. */
+export async function runTenantJob<T>(
+  deps: TenantJobDependencies,
+  taskName: string,
+  rawPayload: unknown,
+  run: RunInfo,
+  handler: (context: TenantJobContext) => Promise<T>,
+): Promise<T> {
+  const { payload, scoped } = admitTenantRun(deps, taskName, rawPayload, run);
+  return observe(scoped, () =>
+    withWorkspaceJobScope(deps.worker, payload.workspaceId, (tx) => handler({ ...scopeFor(tx, payload, taskName, run), payload, run })),
+  );
+}
+
+/**
+ * Runs a multi-step tenant task (e.g. one that calls a provider): same admission and single workspace as
+ * runTenantJob, but each step gets its own scoped transaction and nothing is held open between steps.
+ */
+export async function runTenantStepJob<T>(
+  deps: TenantJobDependencies,
+  taskName: string,
+  rawPayload: unknown,
+  run: RunInfo,
+  handler: (context: TenantStepJobContext) => Promise<T>,
+): Promise<T> {
+  const { payload, scoped } = admitTenantRun(deps, taskName, rawPayload, run);
+  return observe(scoped, () =>
+    handler({
+      payload,
+      run,
+      inScope: (work) => withWorkspaceJobScope(deps.worker, payload.workspaceId, (tx) => work(scopeFor(tx, payload, taskName, run))),
+    }),
+  );
 }
 
 /** Runs a named system task. Only tasks registered as system-scoped are accepted. */

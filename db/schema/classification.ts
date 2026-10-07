@@ -212,7 +212,10 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     class: "workspace_tenant",
     policies: ["creator_read SELECT authenticated", "creator_update UPDATE authenticated", "manage_insert INSERT authenticated"],
     privileges: {
-      authenticated: ["INSERT", "SELECT", "UPDATE(closed_at)", "UPDATE(pkce_envelope)", "UPDATE(pkce_secret_id)", "UPDATE(status)"],
+      authenticated: [
+        "INSERT", "SELECT", "UPDATE(closed_at)", "UPDATE(exchange_started_at)", "UPDATE(failure_code)", "UPDATE(pkce_envelope)",
+        "UPDATE(pkce_secret_id)", "UPDATE(status)",
+      ],
     },
   },
   "connections.discovered_assets": {

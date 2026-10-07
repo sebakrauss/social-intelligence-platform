@@ -41,18 +41,22 @@ const sqlSources = (): { name: string; sql: string }[] => [
 ];
 
 /**
- * Closed-vocabulary CHECK constraints that may only ever be WIDENED (audit vocabulary, TA §41). PostgreSQL can't
- * alter a CHECK expression in place, so widening is, in ONE migration and as top-level statements in this order:
- *   alter table audit.audit_events drop constraint <name>;
- *   alter table audit.audit_events add constraint <name> check (<column> in ('…', …)) not valid;
- *   alter table audit.audit_events validate constraint <name>;
+ * Closed-vocabulary CHECK constraints that may only ever be WIDENED: the audit vocabulary (TA §41) and the
+ * connect-attempt state machine (Step 5D, 0008). PostgreSQL can't alter a CHECK expression in place, so widening
+ * is, in ONE migration and as top-level statements in this order:
+ *   alter table <table> drop constraint <name>;
+ *   alter table <table> add constraint <name> check (<column> in ('…', …)) not valid;
+ *   alter table <table> validate constraint <name>;
  * The value list must be quoted literals only and must contain every value earlier migrations allowed (equal is
- * fine; narrowing is not). Only the exact DROP statement of an exactly listed constraint is exempted from the
- * lint; every other DROP, REVOKE or RLS weakening is still rejected. This is a text guard (see the limits test).
+ * fine; narrowing is not). The earlier value set is read from the column's inline CHECK inside that table's own
+ * CREATE TABLE statement (PostgreSQL names it <table>_<column>_check deterministically), never from another table.
+ * Only the exact DROP statement of an exactly listed constraint is exempted from the lint; every other DROP, REVOKE
+ * or RLS weakening is still rejected. This is a text guard (see the limits test).
  */
 const WIDENABLE_CHECKS: Readonly<Record<string, { readonly table: string; readonly column: string }>> = {
   audit_events_action_check: { table: "audit.audit_events", column: "action" },
   audit_events_target_type_check: { table: "audit.audit_events", column: "target_type" },
+  connect_attempts_status_check: { table: "connections.connect_attempts", column: "status" },
 };
 
 const LITERAL_LIST = /^\s*'[^']*'(\s*,\s*'[^']*')*\s*$/;
@@ -61,6 +65,12 @@ const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\
 
 /** Only top-level SQL: block comments and dollar-quoted bodies (function/DO bodies) are not executed by the migration. */
 const topLevel = (sql: string): string => sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\$([a-z_]*)\$[\s\S]*?\$\1\$/g, " ");
+
+/** The body of the top-level CREATE TABLE statement for `table` (up to its terminating `;`), if this SQL has one. */
+function createTableBody(sql: string, table: string): string | undefined {
+  const match = statements(sql, new RegExp(`create table ${escapeRegExp(table)} (\\([^;]*);`))[0];
+  return match?.[2];
+}
 
 /** Positions of a top-level statement (at the start or right after a `;`). */
 function statements(sql: string, statement: RegExp): RegExpExecArray[] {
@@ -75,8 +85,9 @@ function withVerifiedWideningsRemoved(sources: readonly { name: string; sql: str
     const top = topLevel(source.sql);
     for (const [name, { table, column }] of Object.entries(WIDENABLE_CHECKS)) {
       const t = escapeRegExp(table);
-      const inline = new RegExp(`\\b${column} text not null check \\(${column} in \\(([^)]*)\\)\\)`).exec(top);
-      if (inline && !allowed.has(name) && top.includes(`create table ${table} (`)) allowed.set(name, new Set(quotedValues(inline[1] ?? "")));
+      const body = createTableBody(top, table);
+      const inline = body === undefined ? null : new RegExp(`(?:\\(|,) ${column} text not null check \\(${column} in \\(([^)]*)\\)\\)`).exec(body);
+      if (inline && !allowed.has(name)) allowed.set(name, new Set(quotedValues(inline[1] ?? "")));
       const drops = statements(top, new RegExp(`alter table ${t} drop constraint ${name};`));
       if (drops.length === 0) continue;
       const fail = (reason: string): never => {
@@ -103,6 +114,61 @@ function withVerifiedWideningsRemoved(sources: readonly { name: string; sql: str
   });
 }
 
+/**
+ * Exactly PINNED CHECK rewrites: a non-vocabulary CHECK that a reviewed decision changes in one exact way. Each entry
+ * names the table, the constraint, the exact (normalized) expression the table was CREATED with, and the ONE exact
+ * expression it may become. Nothing is inferred or compared semantically: any other expression, table, name or
+ * order is rejected, so this is not a general CHECK-rewrite escape hatch. Same statement shape as a widening:
+ *   alter table <table> drop constraint <name>;
+ *   alter table <table> add constraint <name> check <to> not valid;
+ *   alter table <table> validate constraint <name>;
+ *
+ *   connect_attempts_closed_recorded (0008, Step 5D): EXCHANGING is an intermediate, not closed, state. Identical for
+ *   every pre-0008 status; the only expansion is EXCHANGING ⇔ closed_at IS NULL.
+ */
+const PINNED_CHECK_REWRITES: Readonly<Record<string, { readonly table: string; readonly from: string; readonly to: string }>> = {
+  connect_attempts_closed_recorded: {
+    table: "connections.connect_attempts",
+    from: "((status = 'pending') = (closed_at is null))",
+    to: "((status in ('pending', 'exchanging')) = (closed_at is null))",
+  },
+};
+
+/** Migrations with each verified pinned rewrite's DROP removed; throws if a rewrite isn't exactly the pinned one. */
+function withPinnedRewritesRemoved(sources: readonly { name: string; sql: string }[]): { name: string; sql: string }[] {
+  const current = new Map<string, string>();
+  return sources.map((source) => {
+    let sql = source.sql;
+    const top = topLevel(source.sql);
+    for (const [name, { table, from, to }] of Object.entries(PINNED_CHECK_REWRITES)) {
+      const t = escapeRegExp(table);
+      const body = createTableBody(top, table);
+      if (body !== undefined && !current.has(name)) {
+        const defined = new RegExp(`(?:\\(|,) constraint ${name} check (.*?)(?=,|\\) ?$)`).exec(body);
+        if (defined) current.set(name, (defined[1] ?? "").trim());
+      }
+      const drops = statements(top, new RegExp(`alter table ${t} drop constraint ${name};`));
+      if (drops.length === 0) continue;
+      const fail = (reason: string): never => {
+        throw new Error(`${source.name}: ${name} ${reason}`);
+      };
+      if (drops.length > 1) fail("is dropped more than once");
+      const dropAt = drops[0]?.index ?? -1;
+      const readds = statements(top, new RegExp(`alter table ${t} add constraint ${name} check ([^;]*?) not valid;`));
+      const readd = readds.find((match) => match.index > dropAt);
+      if (readds.length !== 1 || readd === undefined) fail("is dropped without exactly one later same-name NOT VALID re-add in the same migration");
+      const validates = statements(top, new RegExp(`alter table ${t} validate constraint ${name};`));
+      const validate = validates.find((match) => match.index > (readd?.index ?? Number.POSITIVE_INFINITY));
+      if (validates.length !== 1 || validate === undefined) fail("is re-added without exactly one later VALIDATE CONSTRAINT");
+      if (current.get(name) !== from) fail("rewrites a definition other than the pinned original");
+      if ((readd?.[2] ?? "").trim() !== to) fail("is re-added with an expression other than the pinned rewrite");
+      current.set(name, to);
+      sql = sql.replace(`alter table ${table} drop constraint ${name};`, " ");
+    }
+    return { name: source.name, sql };
+  });
+}
+
 const FORBIDDEN: readonly [RegExp, string][] = [
   [/\bdrop\s+(table|column|schema|role|user|owned|database|function|policy|trigger|index|view|type)\b/, "DROP"],
   [/\btruncate\b/, "TRUNCATE"],
@@ -123,7 +189,7 @@ const FORBIDDEN: readonly [RegExp, string][] = [
 function lintMigrations(sources: readonly { name: string; sql: string }[]): string[] {
   let checked: { name: string; sql: string }[];
   try {
-    checked = withVerifiedWideningsRemoved(sources);
+    checked = withPinnedRewritesRemoved(withVerifiedWideningsRemoved(sources));
   } catch (error) {
     return [(error as Error).message];
   }
@@ -204,7 +270,88 @@ describe("migration lint", () => {
       // The lint can't evaluate SQL semantics (e.g. string literals that mimic statements). The DB suites check the
       // live constraints after migrating (validated, closed vocabulary equal to the application's) — see
       // tests/db/suites/connections.ts "the audit vocabulary constraints are validated and match the application".
-      expect(Object.keys(WIDENABLE_CHECKS).sort()).toEqual(["audit_events_action_check", "audit_events_target_type_check"]);
+      expect(Object.keys(WIDENABLE_CHECKS).sort()).toEqual(["audit_events_action_check", "audit_events_target_type_check", "connect_attempts_status_check"]);
+    });
+  });
+
+  describe("the pinned closed_at rewrite (0008) allows exactly one transformation (adversarial)", () => {
+    const BASE = {
+      name: "0001_base.sql",
+      sql: normalize(
+        "create table connections.connect_attempts ( id uuid, status text not null check (status in ('PENDING', 'COMPLETED')), closed_at timestamptz," +
+          " constraint connect_attempts_closed_recorded check ((status = 'PENDING') = (closed_at is null)), x int );",
+      ),
+    };
+    const rewrite = (expression = "((status in ('PENDING', 'EXCHANGING')) = (closed_at is null))", table = "connections.connect_attempts"): string =>
+      `alter table ${table} drop constraint connect_attempts_closed_recorded;` +
+      ` alter table ${table} add constraint connect_attempts_closed_recorded check ${expression} not valid;` +
+      ` alter table ${table} validate constraint connect_attempts_closed_recorded;`;
+    const lint = (...later: string[]): string[] => lintMigrations([BASE, ...later.map((sql, i) => ({ name: `000${String(i + 2)}_m.sql`, sql: normalize(sql) }))]);
+
+    it("accepts exactly the pinned rewrite (case and whitespace normalized)", () => {
+      expect(lint(rewrite())).toEqual([]);
+      expect(lint(rewrite().replace(/ /g, "\n  ").toUpperCase().replace("'PENDING', 'EXCHANGING'", "'pending', 'exchanging'"))).toEqual([]);
+    });
+
+    it.each([
+      ["a broader expression", "((status in ('PENDING', 'EXCHANGING', 'COMPLETED')) = (closed_at is null))"],
+      ["a weaker expression", "(true)"],
+      ["a reordered value list", "((status in ('EXCHANGING', 'PENDING')) = (closed_at is null))"],
+      ["an extra clause", "((status in ('PENDING', 'EXCHANGING')) = (closed_at is null) or true)"],
+    ])("rejects %s", (_label, expression) => {
+      expect(lint(rewrite(expression))[0]).toMatch(/other than the pinned rewrite/);
+    });
+
+    it("rejects a rewrite of anything but the pinned original, a missing VALIDATE/NOT VALID, and other tables or names", () => {
+      const altered = { ...BASE, sql: BASE.sql.replace("((status = 'pending') = (closed_at is null))", "((status = 'pending') = (closed_at is null) or true)") };
+      expect(lintMigrations([altered, { name: "0002_m.sql", sql: normalize(rewrite()) }])[0]).toMatch(/other than the pinned original/);
+      expect(lint(rewrite().replace(/ alter table connections\.connect_attempts validate[^;]*;/, ""))[0]).toMatch(/VALIDATE/);
+      expect(lint(rewrite().replace(" not valid;", ";"))[0]).toMatch(/without exactly one later/);
+      expect(lint(rewrite(undefined, "connections.connections")).length).toBeGreaterThan(0);
+      expect(lint("alter table connections.connect_attempts drop constraint connect_attempts_pkce_cleared_when_closed;").length).toBeGreaterThan(0);
+      expect(lint(`${rewrite()} ${rewrite()}`)[0]).toMatch(/more than once/);
+    });
+
+    it("pins exactly one rewrite", () => {
+      expect(Object.keys(PINNED_CHECK_REWRITES)).toEqual(["connect_attempts_closed_recorded"]);
+    });
+  });
+
+  describe("the connect-attempt status widening (0008) is equally narrow (adversarial)", () => {
+    const BASE = {
+      name: "0001_base.sql",
+      sql: normalize(
+        "create table connections.connections ( id uuid, status text not null check (status in ('ACTIVE', 'REMOVED', 'EXTRA')) );" +
+          " create table connections.connect_attempts ( id uuid, status text not null check (status in ('PENDING', 'COMPLETED')), x int );",
+      ),
+    };
+    const widen = (values = "'PENDING', 'COMPLETED', 'EXCHANGING'"): string =>
+      "alter table connections.connect_attempts drop constraint connect_attempts_status_check;" +
+      ` alter table connections.connect_attempts add constraint connect_attempts_status_check check (status in (${values})) not valid;` +
+      " alter table connections.connect_attempts validate constraint connect_attempts_status_check;";
+    const lint = (...later: string[]): string[] => lintMigrations([BASE, ...later.map((sql, i) => ({ name: `000${String(i + 2)}_m.sql`, sql: normalize(sql) }))]);
+
+    it("accepts a verified widening of exactly connect_attempts.status", () => {
+      expect(lint(widen())).toEqual([]);
+    });
+
+    it("reads the earlier values from connect_attempts' own CREATE TABLE, never from another table's status column", () => {
+      // 'ACTIVE'/'REMOVED' belong to connections.connections: dropping PENDING/COMPLETED is still narrowing.
+      expect(lint(widen("'ACTIVE', 'REMOVED', 'EXTRA'"))[0]).toMatch(/would narrow \(removes pending, completed\)/);
+      expect(lint(widen("'PENDING'"))[0]).toMatch(/would narrow/);
+    });
+
+    it("rejects a missing VALIDATE, a non-literal list, another constraint name and another table", () => {
+      expect(lint(widen().replace(/ alter table connections\.connect_attempts validate[^;]*;/, ""))[0]).toMatch(/VALIDATE/);
+      expect(lint(widen("'PENDING', 'COMPLETED', status"))[0]).toMatch(/non-literal/);
+      expect(lint("alter table connections.connect_attempts drop constraint connect_attempts_provider_check;").length).toBeGreaterThan(0);
+      expect(lint("alter table connections.connections drop constraint connect_attempts_status_check;").length).toBeGreaterThan(0);
+      expect(lint("alter table connections.connect_attempts drop constraint connect_attempts_pkce_paired;").length).toBeGreaterThan(0);
+    });
+
+    it("has no earlier definition to widen when the table was never created with an inline status CHECK", () => {
+      const findings = lintMigrations([{ name: "0001_base.sql", sql: normalize("create table connections.connect_attempts ( id uuid );") }, { name: "0002_m.sql", sql: normalize(widen()) }]);
+      expect(findings[0]).toMatch(/no earlier definition/);
     });
   });
 

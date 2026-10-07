@@ -422,6 +422,13 @@ module.exports = {
       to: { path: "^platform/crypto/credentials/" },
     },
     {
+      name: "oauth-secrets-web-composition-only",
+      severity: "error",
+      comment: "OAuth state and the stateless PKCE derivation key (Step 5D, B1) are web secrets: only server/ composes them. Modules get the OAuthSecrets port; jobs/, integrations/, app/ and ui/ never reach the key.",
+      from: { pathNot: "^(server|tests|platform/crypto)/" },
+      to: { path: "^platform/crypto/oauth\\.ts$" },
+    },
+    {
       name: "aws-kms-sdk-only-in-credential-adapter",
       severity: "error",
       comment: "The AWS KMS SDK (slice 5I, not adopted yet) may be imported only by its credential keyring adapter.",

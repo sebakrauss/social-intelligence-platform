@@ -105,6 +105,8 @@ describe("auth configuration", () => {
       "TRIGGER_PROJECT_REF=",
       // Step 5A credential crypto: local/test-only keyring KEK (refused outside NODE_ENV development/test), name only.
       "LOCAL_KEYRING_KEY=",
+      // Step 5D OAuth: web-only stateless PKCE derivation key, name only.
+      "OAUTH_PKCE_DERIVATION_KEY=",
     ]);
     expect(lines.join("\n")).not.toMatch(/SERVICE_ROLE|SUPABASE_SECRET|POSTGRES|DATABASE_URL=/);
   });

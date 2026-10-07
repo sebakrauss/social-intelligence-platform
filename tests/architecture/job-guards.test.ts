@@ -89,6 +89,9 @@ describe("dispatch path", () => {
     expect(users(/\btask\(\{/)).toEqual(["jobs/trigger/define.ts", "jobs/trigger/delivery.ts"]);
     expect(users(/\bschedules\.task\(/)).toEqual(["jobs/trigger/delivery.ts"]);
     expect(codeOf("jobs/trigger/define.ts")).toMatch(/runTenantJob\(/);
+    expect(codeOf("jobs/trigger/define.ts")).toMatch(/runTenantStepJob\(/);
+    // Tenant tasks are declared only through the wrappers (Step 5D: connections.discover_assets).
+    expect(codeOf("jobs/trigger/connections.ts")).toMatch(/defineTenantStepTask\(PRODUCTION_TASKS, "connections\.discover_assets"/);
   });
 
   it("run tags carry the outbox identifier only, and relay payloads pass the IDs-only validator", () => {

@@ -41,9 +41,12 @@ export {
 export {
   runSystemJob,
   runTenantJob,
+  runTenantStepJob,
   type RunInfo,
   type SystemJobContext,
   type SystemJobDependencies,
   type TenantJobContext,
   type TenantJobDependencies,
+  type TenantJobScope,
+  type TenantStepJobContext,
 } from "./execution";

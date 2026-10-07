@@ -128,6 +128,30 @@ authenticated context `app · purpose · env · v · workspace_id · credential_
   unpadded base64url, and the keyring is refused unless `NODE_ENV` is `development` or `test`. The AWS KMS
   adapter (slice 5I) is not added yet.
 
+## Connections (Step 5D)
+
+`modules/connections` owns the authorization round trip, the Connection lifecycle and discovered assets
+(migrations 0007, 0008). Only the **provider simulator** can be connected; real Meta/TikTok OAuth stays VALIDATE.
+
+- **Start** (Owner/Admin, `connections.manage`; allowed in Monitor-only, it is configuration): the OAuth state
+  is `v1.<workspace>.<256-bit nonce>`. Only its SHA-256 is stored. The workspace prefix is routing, never
+  authentication.
+- **PKCE without storage** (decision B1): the verifier is derived with HMAC-SHA256 from the state and the
+  web-only `OAUTH_PKCE_DERIVATION_KEY` (exactly 32 bytes, 43-char unpadded base64url; no default). It is
+  derived again at the callback and never persisted.
+- **Callback**: the adapter parses the query, then the application matches the digest to the caller's own
+  pending attempt and claims it (`PENDING → EXCHANGING`) before the single code exchange. A replayed or
+  concurrent callback can't exchange again. Failures close the attempt as `EXCHANGE_FAILED` with a closed
+  code, or `OUTCOME_UNKNOWN`, and the code is never replayed.
+- **Credentials**: the issued credential becomes bytes, is sealed at once (web: sealer only) and is stored
+  as an envelope with the Connection in one transaction. Discovery runs in the job runtime
+  (`connections.discover_assets`), which alone opens envelopes.
+- **Removal** marks the Connection `REMOVED`, clears the pointer and crypto-shreds the envelope.
+
+The web callback route is `app/api/oauth/[provider]/callback`. Both runtimes refuse `LOCAL_KEYRING_KEY`
+outside development/test. The simulator world is process-local, so a cross-process local run (web + jobs)
+does not share issued credentials; that end-to-end path is Step 5J.
+
 ## Known tooling limitation
 
 Next.js-specific lint rules (`eslint-config-next` / `@next/eslint-plugin-next`) are temporarily not used: their dependency chain carries an unresolved high-severity advisory (GHSA-vfj7-8cjw-p6xm, `braces`) with no patched version, and `npm audit` is not suppressed. Linting currently covers TypeScript (strict, type-checked) and React. Revisit when an audit-clean official option exists.

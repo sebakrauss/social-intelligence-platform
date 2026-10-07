@@ -10,6 +10,7 @@
  */
 import { AppError } from "@/domain/errors";
 import { createPostgresAuditLog } from "@/modules/audit/persistence";
+import { createPostgresConnectionStore } from "@/modules/connections/persistence";
 import { createPostgresTenancyStore } from "@/modules/tenancy/persistence";
 import { classifyDatabaseError, createPostgresOutbox, withUserScope, type RuntimeDatabase } from "@/platform/db";
 import type { Transaction, TransactionScope, UnitOfWork } from "@/server/pipeline";
@@ -32,7 +33,12 @@ export function createPostgresUnitOfWork(database: RuntimeDatabase<"web">): Unit
     async run<T>(scope: TransactionScope, work: (tx: Transaction) => Promise<T>): Promise<T> {
       try {
         return await withUserScope(database, { sub: scope.userId, role: "authenticated" }, scope.workspaceId, (tx) =>
-          work({ tenancy: createPostgresTenancyStore(tx), audit: createPostgresAuditLog(tx), outbox: createPostgresOutbox(tx) }),
+          work({
+            tenancy: createPostgresTenancyStore(tx),
+            audit: createPostgresAuditLog(tx),
+            outbox: createPostgresOutbox(tx),
+            connections: createPostgresConnectionStore(tx),
+          }),
         );
       } catch (error) {
         throw normalizeDatabaseError(error);

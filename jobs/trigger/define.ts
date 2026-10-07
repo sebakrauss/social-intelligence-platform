@@ -4,7 +4,15 @@
  * permanent failures end FAILED after one attempt and are surfaced rather than retried.
  */
 import { AbortTaskRunError, task } from "@trigger.dev/sdk";
-import { NonRetryableJobError, runTenantJob, type RetryPolicy, type TaskRegistry, type TenantJobContext } from "@/platform/jobs";
+import {
+  NonRetryableJobError,
+  runTenantJob,
+  runTenantStepJob,
+  type RetryPolicy,
+  type TaskRegistry,
+  type TenantJobContext,
+  type TenantStepJobContext,
+} from "@/platform/jobs";
 import { jobLogger, workerDatabase } from "../runtime";
 import { LANE_QUEUES } from "./queues";
 
@@ -33,6 +41,24 @@ export function defineTenantTask<T>(registry: TaskRegistry, name: string, handle
     run: async (payload: unknown, { ctx }) => {
       try {
         return await runTenantJob({ registry, worker: workerDatabase(), logger: jobLogger }, definition.name, payload, { runId: ctx.run.id, attempt: ctx.attempt.number }, handler);
+      } catch (error) {
+        throw toVendorError(error);
+      }
+    },
+  });
+}
+
+/** Like defineTenantTask, for multi-step handlers that call providers: no transaction is held across the handler. */
+export function defineTenantStepTask<T>(registry: TaskRegistry, name: string, handler: (context: TenantStepJobContext) => Promise<T>) {
+  const definition = registry.tenant(name);
+  if (definition === undefined) throw new Error(`tenant task not registered: ${name}`);
+  return task({
+    id: definition.name,
+    queue: LANE_QUEUES[definition.lane],
+    retry: triggerRetry(definition.retry),
+    run: async (payload: unknown, { ctx }) => {
+      try {
+        return await runTenantStepJob({ registry, worker: workerDatabase(), logger: jobLogger }, definition.name, payload, { runId: ctx.run.id, attempt: ctx.attempt.number }, handler);
       } catch (error) {
         throw toVendorError(error);
       }

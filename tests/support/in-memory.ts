@@ -9,6 +9,7 @@ import { asVerifiedEmail } from "@/domain/email";
 import type { UserId } from "@/domain/ids";
 import { parseUserId } from "@/domain/ids";
 import type { AuditEvent, AuditLog } from "@/modules/audit";
+import type { ConnectionStore } from "@/modules/connections";
 import type { OutboxMessage, OutboxWriter } from "@/platform/outbox";
 import type {
   Invitation,
@@ -101,6 +102,17 @@ export interface InMemoryFaults {
 
 const simulatedFailure = (operation: string): Promise<never> => Promise.reject(new Error(`simulated failure: ${operation}`));
 
+/** Connections are proven on the real database only (RLS, definer functions, constraints): no in-memory fake. */
+const unavailable = (): Promise<never> => Promise.reject(new Error("in-memory unit of work: connections store not available"));
+const NO_CONNECTIONS: ConnectionStore = {
+  attempts: { insert: unavailable, get: unavailable, findByStateDigest: unavailable, claim: unavailable, close: unavailable, recoverStale: unavailable },
+  connections: { get: unavailable, list: unavailable, insert: unavailable, update: unavailable },
+  events: { append: unavailable },
+  credentials: { store: unavailable, delete: unavailable },
+  connectedAccounts: { deactivateForConnection: unavailable },
+  discoveredAssets: { list: unavailable },
+};
+
 export class InMemoryUnitOfWork implements UnitOfWork {
   state: InMemoryState;
   commits = 0;
@@ -136,7 +148,7 @@ export class InMemoryUnitOfWork implements UnitOfWork {
     };
     try {
       const outbox: OutboxWriter = { append: (message) => done(void draft.outbox.push(message)) };
-      const result = await work({ tenancy, audit, outbox });
+      const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS });
       this.state = draft;
       this.commits += 1;
       return result;

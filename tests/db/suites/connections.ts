@@ -499,10 +499,13 @@ export function defineConnectionsSuite(getTarget: () => DbTarget): void {
       expect((await sqlState(attempt({ pkce: sealed }))).constraint).toBe("connect_attempts_pkce_paired");
       const id = randomUUID();
       await attempt({ id, pkceId: randomUUID(), pkce: sealed });
+      // CANCELLED: a close without an exchange (0008: COMPLETED now requires a recorded, claimed exchange).
       const close = (clearPkce: boolean) => asUser(world.users.ownerA, world.A1, (tx) => tx.execute(clearPkce
-        ? sql`update connections.connect_attempts set status = 'COMPLETED', closed_at = now(), pkce_secret_id = null, pkce_envelope = null where id = ${id}`
-        : sql`update connections.connect_attempts set status = 'COMPLETED', closed_at = now() where id = ${id}`));
+        ? sql`update connections.connect_attempts set status = 'CANCELLED', closed_at = now(), pkce_secret_id = null, pkce_envelope = null where id = ${id}`
+        : sql`update connections.connect_attempts set status = 'CANCELLED', closed_at = now() where id = ${id}`));
       expect((await sqlState(close(false))).constraint).toBe("connect_attempts_pkce_cleared_when_closed");
+      expect((await sqlState(asUser(world.users.ownerA, world.A1, (tx) => tx.execute(sql`update connections.connect_attempts
+        set status = 'COMPLETED', closed_at = now(), pkce_secret_id = null, pkce_envelope = null where id = ${id}`)))).constraint).toBe("connect_attempts_exchange_recorded");
       expect((await sqlState(asUser(world.users.ownerA, world.A1, (tx) =>
         tx.execute(sql`update connections.connect_attempts set status = 'EXPIRED' where id = ${id}`)))).constraint).toBe("connect_attempts_closed_recorded");
       await close(true);

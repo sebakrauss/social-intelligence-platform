@@ -105,9 +105,14 @@ describe("task registry", () => {
     expect(payloadMatchesTask(tenant({ subjects: [] }), payload())).toBe(false);
   });
 
-  it("the production registry holds exactly the named system delivery jobs, with explicit schedules", () => {
-    expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS].sort());
-    expect(PRODUCTION_TASKS.tasks.every((task) => task.scope === "system")).toBe(true);
+  it("the production registry holds exactly the named system delivery jobs (explicit schedules) and the Step 5D tenant task", () => {
+    expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS, "connections.discover_assets"].sort());
+    expect(PRODUCTION_TASKS.tasks.filter((task) => task.scope === "system").map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS].sort());
+    expect(PRODUCTION_TASKS.tenant("connections.discover_assets")).toMatchObject({
+      lane: 3,
+      concurrency: { by: "subject", subject: "connection_id" },
+      subjects: ["connection_id"],
+    });
     expect(PRODUCTION_TASKS.system("outbox.dispatch_sweep")?.schedule?.cron).toBe(SWEEPER_SCHEDULES.dispatchSweep);
     expect(PRODUCTION_TASKS.system("outbox.outcome_sweep")?.schedule?.cron).toBe(SWEEPER_SCHEDULES.outcomeSweep);
     expect(PRODUCTION_TASKS.system("outbox.relay")?.schedule).toBeUndefined();
