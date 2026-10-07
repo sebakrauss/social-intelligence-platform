@@ -1,10 +1,21 @@
 /**
- * Contract primitives: identity and instant parsing, raw references, secret wrapping and error serialization.
+ * Contract primitives: identity and instant parsing, raw references, secret wrapping, error serialization and
+ * the authorization primitives (state, redirect URI, PKCE, code, scope).
  */
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
+  AUTHORIZATION_OPERATIONS,
+  CALLBACK_DENIAL_REASONS,
   CredentialInvalidError,
+  PKCE_SUPPORT,
+  SecretValue,
+  isGrantedScope,
+  parseAuthorizationCode,
+  parseOAuthState,
+  parsePkceChallenge,
+  parsePkceVerifier,
+  parseRedirectUri,
   OutcomeUnknownError,
   PermanentRejectedError,
   PermissionMissingError,
@@ -119,5 +130,80 @@ describe("errors", () => {
     const error = new WebhookRejectedError("invalid_signature");
     expect(error.message).toBe("webhook_rejected_invalid_signature");
     expect(JSON.stringify(error)).toBe('{"reason":"invalid_signature"}');
+  });
+});
+
+describe("authorization primitives (Step 5C)", () => {
+  it("states are URL-safe, bounded, high-length correlation values", () => {
+    const ok = "a".repeat(32);
+    expect(parseOAuthState(ok)).toBe(ok);
+    expect(parseOAuthState("Ab0._~-".repeat(10))).toBeDefined();
+    for (const bad of ["a".repeat(31), "a".repeat(513), `${"a".repeat(32)} `, `${"a".repeat(32)}&x=1`, `${"a".repeat(32)}%20`, 42, null]) {
+      expect(parseOAuthState(bad)).toBeUndefined();
+    }
+  });
+
+  it("redirect URIs are exact, canonical HTTPS (HTTP only on loopback), query allowed, without userinfo or fragment", () => {
+    for (const ok of [
+      "https://app.example.test/api/oauth/meta/callback",
+      "http://localhost:3000/cb",
+      "http://127.0.0.1:3000/cb",
+      "http://[::1]/cb",
+      "https://app.example.test/cb?next=1",
+      "https://app.example.test/cb?b=2&a=1",
+      "https://app.example.test/cb?",
+    ]) {
+      expect(parseRedirectUri(ok)).toBe(ok);
+    }
+    for (const bad of [
+      "http://app.example.test/cb",
+      "http://app.example.test/cb?next=1",
+      "https://app.example.test/cb#frag",
+      "https://app.example.test/cb?next=1#frag",
+      "https://app.example.test/cb#",
+      "https://app.example.test/cb?x=a b",
+      "https://app.example.test/cb?x=<y>",
+      "https://user@app.example.test/cb",
+      "https://APP.example.test/cb",
+      "https://app.example.test",
+      "https://app.example.test/a/../cb",
+      "/relative/cb",
+      "javascript:alert(1)",
+      `https://app.example.test/${"x".repeat(2048)}`,
+      42,
+    ]) {
+      expect(parseRedirectUri(bad), String(bad)).toBeUndefined();
+    }
+  });
+
+  it("PKCE challenges are S256 only (43 base64url chars); verifiers are wrapped secrets of RFC 7636 shape", () => {
+    const challenge = parsePkceChallenge("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    expect(challenge).toEqual({ method: "S256", challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM" });
+    expect(Object.isFrozen(challenge)).toBe(true);
+    for (const bad of ["x".repeat(42), "x".repeat(44), `${"x".repeat(42)}+`, `${"x".repeat(42)}=`]) expect(parsePkceChallenge(bad)).toBeUndefined();
+    expect(PKCE_SUPPORT).toEqual(["required", "supported", "not_supported"]);
+
+    const raw = `verifier-marker-${"v".repeat(40)}`;
+    const verifier = parsePkceVerifier(raw);
+    expect(verifier).toBeInstanceOf(SecretValue);
+    expect(`${String(verifier)} ${JSON.stringify({ verifier })} ${inspect(verifier)}`).not.toContain(raw);
+    for (const bad of ["v".repeat(42), "v".repeat(129), `${"v".repeat(43)} `, `${"v".repeat(43)}/`]) expect(parsePkceVerifier(bad)).toBeUndefined();
+  });
+
+  it("authorization codes are printable bounded values wrapped as secrets; scopes are opaque printable tokens", () => {
+    const code = parseAuthorizationCode("code-marker-123/+=");
+    expect(code).toBeInstanceOf(SecretValue);
+    expect(`${String(code)} ${JSON.stringify(code)} ${inspect(code)}`).not.toContain("code-marker");
+    for (const bad of ["", "has space", "x".repeat(2049), "tab\t", 1]) expect(parseAuthorizationCode(bad)).toBeUndefined();
+    expect(isGrantedScope("pages_read_engagement")).toBe(true);
+    expect(isGrantedScope("user.info.basic")).toBe(true);
+    for (const bad of ["", "two words", "x".repeat(257), 3]) expect(isGrantedScope(bad)).toBe(false);
+  });
+
+  it("authorization errors name an authorization operation and stay value-free", () => {
+    expect([...AUTHORIZATION_OPERATIONS]).toEqual(["authorizationRequest", "parseCallback", "exchangeCode"]);
+    expect(new CredentialInvalidError("exchangeCode", "expired").toJSON()).toEqual({ kind: "credential_invalid", operation: "exchangeCode", retry: "after_recovery", details: { reason: "expired" } });
+    expect(new PermanentRejectedError("authorizationRequest", "invalid_request").toJSON().details).toEqual({ reasonCode: "invalid_request" });
+    expect([...CALLBACK_DENIAL_REASONS]).toEqual(["user_cancelled", "access_denied", "other"]);
   });
 });

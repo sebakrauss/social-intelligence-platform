@@ -3,10 +3,28 @@
  * ads) plus Facebook webhook fixtures, with every normalized error produced through public ports and explicit
  * fault rules.
  */
-import { isoInstant, providerObjectRef, type ProviderAccess, type TimeWindow, parseIsoInstant } from "@/integrations/providers/contract";
-import { createSimulatorReadPort, signSimulatorDelivery, SimulatorWorld } from "@/integrations/providers/simulator";
+import {
+  isoInstant,
+  parseIsoInstant,
+  parseOAuthState,
+  parseRedirectUri,
+  providerObjectRef,
+  type OAuthState,
+  type PkceSupport,
+  type ProviderAccess,
+  type RedirectUri,
+  type TimeWindow,
+} from "@/integrations/providers/contract";
+import {
+  createSimulatorAuthorizationPort,
+  createSimulatorReadPort,
+  signSimulatorDelivery,
+  simulateConsent,
+  SimulatorWorld,
+  type SimulatedConsent,
+} from "@/integrations/providers/simulator";
 import { createSimulatorMutationPort } from "@/integrations/providers/simulator/mutation-port";
-import type { ProviderContractHarness } from "../contract/harness";
+import type { AuthorizationContractHarness, ConsentDecision, ProviderContractHarness } from "../contract/harness";
 import { deliveryBody, loadScenario, rawBody } from "./fixtures";
 
 /** A synthetic signing key for simulated webhooks (test-only, not a secret). */
@@ -137,3 +155,72 @@ export function simulatorContractHarness(): ProviderContractHarness {
 }
 
 export const SCENARIO_NOW = isoInstant(new Date("2026-09-15T12:00:00.000Z"));
+
+// ── Authorization (Step 5C) ─────────────────────────────────────────────────────────────────────────────
+
+function must<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("invalid synthetic test value");
+  return value;
+}
+
+/** Synthetic callback endpoints (never contacted). */
+export const SIM_REDIRECT_URI: RedirectUri = must(parseRedirectUri("https://app.example.test/api/oauth/simulator/callback"));
+export const SIM_OTHER_REDIRECT_URI: RedirectUri = must(parseRedirectUri("https://app.example.test/api/oauth/simulator/other-callback"));
+export const SIM_QUERY_REDIRECT_URI: RedirectUri = must(parseRedirectUri("https://app.example.test/api/oauth/simulator/callback?tenant=t-01&flow=connect"));
+
+/** A deterministic, valid state for test number `n` (synthetic; real states are random, Step 5D). */
+export function syntheticState(n: number): OAuthState {
+  return must(parseOAuthState(`synthetic-state-${String(n).padStart(6, "0")}-0123456789abcdef`));
+}
+
+export const CONSENT: Readonly<Record<ConsentDecision, SimulatedConsent>> = {
+  grant: { kind: "grant", grant: "meta_full" },
+  grant_without_required_permission: { kind: "grant", grant: "tiktok_without_discovery" },
+  cancel: { kind: "deny", error: "user_cancelled" },
+  deny: { kind: "deny", error: "access_denied" },
+};
+
+export function createAuthorizationSimulator(pkce?: PkceSupport) {
+  const world = new SimulatorWorld(loadScenario("baseline"));
+  const port = createSimulatorAuthorizationPort(world, pkce === undefined ? {} : { pkce });
+  return { world, port };
+}
+
+export function simulatorAuthorizationHarness(pkce: PkceSupport): () => AuthorizationContractHarness {
+  return () => {
+    const { world, port } = createAuthorizationSimulator(pkce);
+    let states = 0;
+    const state = syntheticState(0);
+    return {
+      name: `simulator (baseline scenario, PKCE ${pkce})`,
+      provider: "simulator",
+      port,
+      reset: () => {
+        world.reset();
+      },
+      redirectUri: SIM_REDIRECT_URI,
+      otherRedirectUri: SIM_OTHER_REDIRECT_URI,
+      redirectUriWithQuery: SIM_QUERY_REDIRECT_URI,
+      newState: () => syntheticState((states += 1)),
+      consent: (url, decision) => simulateConsent(world, url, CONSENT[decision]),
+      expireCodes: () => {
+        world.advanceClock(world.scenario.authorization?.codeLifetimeSeconds ?? 0);
+      },
+      failNextExchange: (kind) => {
+        world.applyFaultPreset({ transient: "exchange_transient", rate_limited: "exchange_rate_limited", outcome_unknown: "exchange_response_lost" }[kind]);
+      },
+      exchangeCalls: () => world.journal.filter((entry) => entry.operation === "exchangeCode").length,
+      malformedCallbacks: {
+        missing_state: [["code", "sim-code-baseline-1"]],
+        missing_result: [["state", state]],
+        duplicate_state: [["code", "sim-code-baseline-1"], ["state", state], ["state", state]],
+        duplicate_code: [["code", "sim-code-baseline-1"], ["code", "sim-code-baseline-1"], ["state", state]],
+        duplicate_error: [["error", "access_denied"], ["error", "access_denied"], ["state", state]],
+        code_and_error: [["code", "sim-code-baseline-1"], ["error", "access_denied"], ["state", state]],
+        invalid_state: [["code", "sim-code-baseline-1"], ["state", "too-short"]],
+        empty_code: [["code", ""], ["state", state]],
+      },
+      secrets: world.scenario.credentials.map((c) => c.secret),
+    };
+  };
+}

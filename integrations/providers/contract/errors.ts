@@ -30,9 +30,13 @@ export const READ_OPERATIONS = [
 
 export const MUTATION_OPERATIONS = ["replyPublicly", "replyPrivately", "hide", "unhide", "delete", "block"] as const;
 
+/** Authorization-code grant operations (./authorization-port). */
+export const AUTHORIZATION_OPERATIONS = ["authorizationRequest", "parseCallback", "exchangeCode"] as const;
+
 export type ReadOperation = (typeof READ_OPERATIONS)[number];
 export type MutationOperation = (typeof MUTATION_OPERATIONS)[number];
-export type ProviderOperation = ReadOperation | MutationOperation;
+export type AuthorizationOperation = (typeof AUTHORIZATION_OPERATIONS)[number];
+export type ProviderOperation = ReadOperation | MutationOperation | AuthorizationOperation;
 
 /** What a missing permission blocks, in normalized terms (never a provider scope name). */
 export const PERMISSION_CAPABILITIES = [

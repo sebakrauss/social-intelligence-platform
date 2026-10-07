@@ -1,7 +1,7 @@
 /**
  * Static provider-boundary guards (Step 4; TA §6.3, §15, §27.3, §53). Run in every CI build without network.
  *
- *   contract surface  — exact read/mutation operation sets (type-level and runtime); no DM-like operation,
+ *   contract surface  — exact read/mutation/authorization operation sets (type-level and runtime); no DM-like operation,
  *                       type or interaction kind; the mutation port isn't re-exported by any public index
  *   leakage           — the contract imports only its own files and the shared kernel (no SDK/HTTP types)
  *   no network        — simulator and contract never reach the network or HTTP clients
@@ -14,10 +14,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  AUTHORIZATION_OPERATIONS,
   INTERACTION_KINDS,
   MUTATION_OPERATIONS,
   READ_OPERATIONS,
+  type AuthorizationOperation,
   type MutationOperation,
+  type ProviderAuthorizationPort,
   type ProviderReadPort,
   type ReadOperation,
 } from "@/integrations/providers/contract";
@@ -29,9 +32,11 @@ const root = path.resolve(import.meta.dirname, "../..");
 // ── Type-level: the operation lists are exactly the port interfaces (both directions) ─────────────────────
 type ReadKeys = Exclude<keyof ProviderReadPort, "provider">;
 type MutationKeys = Exclude<keyof ProviderMutationPort, "provider">;
+type AuthorizationKeys = Exclude<keyof ProviderAuthorizationPort, "provider" | "pkce">;
 type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const readListIsExact: Exact<ReadKeys, ReadOperation> = true;
 const mutationListIsExact: Exact<MutationKeys, MutationOperation> = true;
+const authorizationListIsExact: Exact<AuthorizationKeys, AuthorizationOperation> = true;
 
 /** Camel- and snake-case DM vocabulary anywhere inside identifiers, plus short words on word boundaries. */
 const DM_LIKE_IDENTIFIER = /direct_?messages?|private_?messages?|inbox|(?:message|conversation|dm)_?threads?|(?:read|list|get|fetch)_?messages?|\b(?:dms?|threads?|conversations?)\b/i;
@@ -47,6 +52,13 @@ describe("provider contract surface", () => {
       "getCurrentState", "retrievePaidContext", "parseWebhook", "subscribe", "unsubscribe", "refreshCredential",
     ]);
     expect([...MUTATION_OPERATIONS]).toEqual(["replyPublicly", "replyPrivately", "hide", "unhide", "delete", "block"]);
+  });
+
+  it("declares exactly the Step 5C authorization operations, with no persistence, session or crypto surface", () => {
+    expect(authorizationListIsExact).toBe(true);
+    expect([...AUTHORIZATION_OPERATIONS]).toEqual(["authorizationRequest", "parseCallback", "exchangeCode"]);
+    const code = codeOf("integrations/providers/contract/authorization-port.ts");
+    expect(code).not.toMatch(/workspace|connect_?attempt|seal|envelope|keyring|session|cookie|persist|repository/i);
   });
 
   it("the DM vocabulary detector catches camelCase, snake_case and short forms", () => {

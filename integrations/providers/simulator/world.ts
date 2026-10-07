@@ -3,9 +3,10 @@
  * ports read and change it; tests inspect it and drive "things that happen on the platform" (an audience
  * comment, a native brand reply, an edit, a native hide, a removal, a revoked credential).
  *
- * Determinism: time comes only from the scenario clock (`advanceClock`), new identities from per-world
- * counters, and faults from explicit rules. `reset()` restores the scenario exactly. No network, no I/O,
- * no randomness, no wall clock.
+ * Determinism: time comes only from the scenario clock (`advanceClock`), new identities (including
+ * authorization codes and issued credentials) from per-world counters, and faults from explicit rules.
+ * `reset()` restores the scenario exactly and forgets every issued code. No network, no I/O, no randomness,
+ * no wall clock.
  *
  * The simulator is a provider implementation, not the product's safety layer: it applies requested
  * mutations as a platform would and implements no product guard (mode, protection, permissions).
@@ -23,6 +24,7 @@ import {
   TargetNotFoundError,
   TransientError,
   isProviderError,
+  type AuthorizationOperation,
   type PermissionCapability,
   type ProviderError,
   type ProviderOperation,
@@ -67,6 +69,15 @@ export interface CredentialState {
 
 export interface AssetState extends ScenarioAsset {
   subscribed: boolean;
+}
+
+/** An authorization code the simulated authorization server issued (process-local, cleared by `reset()`). */
+export interface AuthorizationCodeState {
+  readonly grant: string;
+  readonly redirectUri: string;
+  readonly challenge: string | null;
+  readonly expiresAtMs: number;
+  consumed: boolean;
 }
 
 export interface PrivateReplyRecord {
@@ -130,6 +141,9 @@ const REQUIRED_CAPABILITY: Readonly<Record<ProviderOperation, PermissionCapabili
   unhide: "hide",
   delete: "delete",
   block: "block",
+  authorizationRequest: null,
+  parseCallback: null,
+  exchangeCode: null,
 };
 
 export const simulatedPermission = (capability: PermissionCapability): string => `sim.${capability}`;
@@ -156,6 +170,7 @@ export class SimulatorWorld {
   #interactions = new Map<string, InteractionState>();
   #blocks = new Set<string>();
   #budgetUse = new Map<string, number>();
+  #authorizationCodes = new Map<string, AuthorizationCodeState>();
 
   constructor(scenario: SimulatorScenario) {
     this.scenario = scenario;
@@ -179,6 +194,7 @@ export class SimulatorWorld {
     this.#interactions = new Map(s.interactions.map((i: ScenarioInteraction) => [i.id, { ...i, updatedAt: i.editedAt ?? i.createdAt }]));
     this.#blocks = new Set();
     this.#budgetUse = new Map();
+    this.#authorizationCodes = new Map();
   }
 
   // ── Clock ────────────────────────────────────────────────────────────────────────────────────────────
@@ -321,6 +337,56 @@ export class SimulatorWorld {
       this.#record(operation, all, isProviderError(error) ? error.kind : "error");
       throw error;
     }
+  }
+
+  /**
+   * The lifecycle of an app-level authorization call (no credential, no account): injected fault → effect.
+   * An `outcome_unknown` fault lets the effect happen (the code is redeemed) and then loses the response.
+   * The simulated token endpoint reports no rate budget. Journal entries carry no code, verifier or state.
+   */
+  executeAuthorization<T>(operation: AuthorizationOperation, effect: () => T): ProviderResult<T> {
+    try {
+      const fault = this.#faults.next(operation, []);
+      if (fault !== undefined && fault.kind !== "outcome_unknown") throw faultError(operation, fault);
+      const data = effect();
+      if (fault?.kind === "outcome_unknown") throw new OutcomeUnknownError(operation);
+      this.#record(operation, [], "ok");
+      return { data, budget: BUDGET_NOT_REPORTED };
+    } catch (error) {
+      this.#record(operation, [], isProviderError(error) ? error.kind : "error");
+      throw error;
+    }
+  }
+
+  /** Issues a deterministic, single-use authorization code. */
+  issueAuthorizationCode(state: Omit<AuthorizationCodeState, "consumed">): string {
+    this.#seq += 1;
+    const code = `sim-code-${this.scenario.scenarioId}-${String(this.#seq)}`;
+    this.#authorizationCodes.set(code, { ...state, consumed: false });
+    return code;
+  }
+
+  authorizationCode(code: string): AuthorizationCodeState | undefined {
+    return this.#authorizationCodes.get(code);
+  }
+
+  /** Issues a new active credential exposing `assets` (usable with the read port). */
+  issueCredential(assets: readonly string[], expiresAt: IsoInstant | null): CredentialState {
+    this.#seq += 1;
+    const state: CredentialState = {
+      id: `sim-cred-${String(this.#seq)}`,
+      secret: `sim-access-token-${this.scenario.scenarioId}-${String(this.#seq)}`,
+      status: "active",
+      expiresAt,
+      refresh: "supported",
+      assets: [...assets],
+    };
+    this.#credentials.set(state.id, state);
+    return state;
+  }
+
+  nowMs(): number {
+    return this.#now;
   }
 
   recordWebhookParse(outcome: string): void {

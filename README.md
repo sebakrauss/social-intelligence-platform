@@ -102,6 +102,19 @@ OQ-19, OQ-26, OQ-27).
   them with `UPDATE_GOLDEN=1 npx vitest run tests/providers/golden.test.ts` and review the diff. CI never
   regenerates them.
 
+**Authorization port** (`contract/authorization-port.ts`, Step 5C). An authorization-code grant has three
+parts: build the authorization URL from a caller-supplied state, an exact redirect URI (a query is allowed and
+matched exactly) and an optional S256 PKCE challenge; parse the callback into a closed outcome (`code`,
+`denied` or `malformed`); and exchange the code for a `ProviderCredential`, its expiry and opaque granted scopes. The authorization code, the PKCE verifier
+and the issued credential are `SecretValue`s.
+
+The port does no state/CSRF matching, persistence, sealing or retries. Those belong to the caller (Step 5D).
+The simulator implements it in all three PKCE modes (`required`, `supported`, `not_supported`) and has a
+simulated consent screen (`simulateConsent`). Its codes are single-use and are consumed only when a credential
+is issued. A response lost after the exchange is `OutcomeUnknown`: the code may already be redeemed, so it is never
+replayed blindly. This is simulator contract behavior, not evidence about Meta or TikTok OAuth: PD OQ-18, OQ-19,
+OQ-26 and OQ-27 stay VALIDATE.
+
 ## Credential crypto
 
 Provider credentials are protected by envelope encryption (TA §39; TA-Q-07 PASS, ADR-64), in

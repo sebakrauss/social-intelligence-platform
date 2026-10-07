@@ -1,6 +1,6 @@
 /**
- * Provider adapter contract (TA §15): provider-neutral ports, normalized DTOs, errors, pagination, rate-budget
- * signals and webhook hints. Pure: depends only on the shared kernel; no SDK, HTTP or I/O.
+ * Provider adapter contract (TA §15): provider-neutral ports (read, authorization), normalized DTOs, errors,
+ * pagination, rate-budget signals and webhook hints. Pure: depends only on the shared kernel; no SDK, HTTP or I/O.
  *
  * The MUTATION port is deliberately NOT re-exported here: it lives in `./mutation-port`, which only the
  * executor's composition may import (TA §6.3 rule 3; enforced by dependency rules).
@@ -75,6 +75,7 @@ export {
   type SubscriptionResultDto,
 } from "./dto";
 export {
+  AUTHORIZATION_OPERATIONS,
   CREDENTIAL_INVALID_REASONS,
   MUTATION_OPERATIONS,
   NOT_ELIGIBLE_REASONS,
@@ -94,6 +95,7 @@ export {
   TransientError,
   isDefiniteFailure,
   isProviderError,
+  type AuthorizationOperation,
   type CredentialInvalidReason,
   type MutationOperation,
   type NotEligibleReason,
@@ -117,3 +119,29 @@ export {
   type WebhookRequest,
 } from "./webhooks";
 export type { InteractionScope, ProviderReadPort } from "./read-port";
+export {
+  CALLBACK_DENIAL_REASONS,
+  CALLBACK_MALFORMED_REASONS,
+  PKCE_SUPPORT,
+  isGrantedScope,
+  isPkceVerifierShape,
+  parseAuthorizationCode,
+  parseOAuthState,
+  parsePkceChallenge,
+  parsePkceVerifier,
+  parseRedirectUri,
+  type AuthorizationRequest,
+  type AuthorizationRequestInput,
+  type CallbackDenialReason,
+  type CallbackMalformedReason,
+  type CallbackOutcome,
+  type CallbackQuery,
+  type CodeExchangeInput,
+  type CodeExchangeResult,
+  type OAuthState,
+  type PkceChallenge,
+  type PkceChallengeValue,
+  type PkceSupport,
+  type ProviderAuthorizationPort,
+  type RedirectUri,
+} from "./authorization-port";

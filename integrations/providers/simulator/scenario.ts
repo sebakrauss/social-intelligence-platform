@@ -21,6 +21,7 @@ import {
   type InteractionVisibility,
   type PaidStatus,
 } from "../contract/dto";
+import { PKCE_SUPPORT, isGrantedScope, type PkceSupport } from "../contract/authorization-port";
 import { parseIsoInstant, parseProviderObjectId, type IsoInstant } from "../contract/identity";
 import { parseFaultRule, type FaultRule } from "./faults";
 
@@ -99,6 +100,27 @@ export interface ScenarioAd extends ScenarioPaidObject {
   readonly content: string | null;
 }
 
+/** What a simulated user can consent to: the assets the issued credential exposes and the scopes granted. */
+export interface ScenarioGrant {
+  readonly id: string;
+  readonly assets: readonly string[];
+  readonly scopes: readonly string[];
+}
+
+/**
+ * The simulated authorization server (authorization-code grant). Synthetic: its PKCE mode, scopes and
+ * lifetimes are test conditions, never evidence about a real provider (PD OQ-19, OQ-26, OQ-27 VALIDATE).
+ */
+export interface ScenarioAuthorization {
+  readonly clientId: string;
+  readonly pkce: PkceSupport;
+  readonly requestedScopes: readonly string[];
+  readonly codeLifetimeSeconds: number;
+  /** Lifetime of issued credentials; `null` = the simulated provider reports no expiry. */
+  readonly credentialLifetimeSeconds: number | null;
+  readonly grants: readonly ScenarioGrant[];
+}
+
 export type ScenarioRateBudget =
   | { readonly mode: "not_reported" }
   | { readonly mode: "reported"; readonly limit: number; readonly windowSeconds: number };
@@ -121,6 +143,8 @@ export interface SimulatorScenario {
   readonly adGroups: readonly ScenarioAdGroup[];
   readonly ads: readonly ScenarioAd[];
   readonly faultPresets: Readonly<Record<string, readonly FaultRule[]>>;
+  /** `null` when the scenario has no authorization server (the authorization port can't be built for it). */
+  readonly authorization: ScenarioAuthorization | null;
 }
 
 export class ScenarioError extends Error {
@@ -190,7 +214,7 @@ function unique(ids: readonly string[], path: string): void {
 export function parseScenario(input: unknown): SimulatorScenario {
   const root = record(input, "$", [
     "scenarioId", "description", "simulated", "apiVersion", "clockStart", "pageSize", "rateBudget", "webhookToleranceSeconds",
-    "credentials", "assets", "authors", "contents", "interactions", "campaigns", "adGroups", "ads", "faultPresets",
+    "credentials", "assets", "authors", "contents", "interactions", "campaigns", "adGroups", "ads", "faultPresets", "authorization",
   ]);
   if (root["simulated"] !== true) fail("$.simulated");
   const apiVersion = str(root["apiVersion"], "$.apiVersion", { max: 32 });
@@ -307,6 +331,28 @@ export function parseScenario(input: unknown): SimulatorScenario {
     faultPresets[name] = array(rules, `$.faultPresets.${name}`, (rule, path) => parseFaultRule(rule) ?? fail(path));
   }
 
+  const scope = (value: unknown, path: string): string => (isGrantedScope(value) ? value : fail(path));
+  const authorizationRaw = root["authorization"];
+  let authorization: ScenarioAuthorization | null = null;
+  if (authorizationRaw !== undefined) {
+    const a = record(authorizationRaw, "$.authorization", ["clientId", "pkce", "requestedScopes", "codeLifetimeSeconds", "credentialLifetimeSeconds", "grants"]);
+    authorization = {
+      clientId: id(a["clientId"], "$.authorization.clientId"),
+      pkce: oneOf(PKCE_SUPPORT, a["pkce"], "$.authorization.pkce"),
+      requestedScopes: array(a["requestedScopes"], "$.authorization.requestedScopes", scope),
+      codeLifetimeSeconds: positiveInt(a["codeLifetimeSeconds"], "$.authorization.codeLifetimeSeconds"),
+      credentialLifetimeSeconds: a["credentialLifetimeSeconds"] === null ? null : positiveInt(a["credentialLifetimeSeconds"], "$.authorization.credentialLifetimeSeconds"),
+      grants: array(a["grants"], "$.authorization.grants", (value, path) => {
+        const g = record(value, path, ["id", "assets", "scopes"]);
+        return {
+          id: id(g["id"], `${path}.id`),
+          assets: array(g["assets"], `${path}.assets`, id),
+          scopes: array(g["scopes"], `${path}.scopes`, scope),
+        } satisfies ScenarioGrant;
+      }),
+    };
+  }
+
   const scenario: SimulatorScenario = {
     scenarioId: id(root["scenarioId"], "$.scenarioId"),
     description: str(root["description"], "$.description"),
@@ -324,6 +370,7 @@ export function parseScenario(input: unknown): SimulatorScenario {
     adGroups,
     ads,
     faultPresets,
+    authorization,
   };
   checkReferences(scenario);
   return scenario;
@@ -346,6 +393,13 @@ function checkReferences(s: SimulatorScenario): void {
   };
 
   for (const c of s.credentials) for (const a of c.assets) if (!assets.has(a)) fail(`$.credentials.${c.id}.assets`);
+  if (s.authorization !== null) {
+    unique(s.authorization.grants.map((g) => g.id), "$.authorization.grants[].id");
+    for (const g of s.authorization.grants) {
+      for (const a of g.assets) if (!assets.has(a)) fail(`$.authorization.grants.${g.id}.assets`);
+      unique(g.scopes, `$.authorization.grants.${g.id}.scopes`);
+    }
+  }
   for (const a of s.assets) {
     if (a.identity !== null && authors.get(a.identity)?.role !== "account_identity") fail(`$.assets.${a.id}.identity`);
     for (const linked of a.linkedAdAccounts) adAccount(linked, `$.assets.${a.id}.linkedAdAccounts`);

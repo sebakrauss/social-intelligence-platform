@@ -4,7 +4,20 @@
  * TikTok adapters later (driven by recorded, sanitized fixtures; TA §53). Nothing here may assume simulator
  * internals.
  */
-import type { ProviderAccess, ProviderCredential, ProviderErrorKind, ProviderName, ProviderObjectRef, ProviderReadPort, TimeWindow, WebhookRequest } from "@/integrations/providers/contract";
+import type {
+  CallbackQuery,
+  OAuthState,
+  ProviderAccess,
+  ProviderAuthorizationPort,
+  ProviderCredential,
+  ProviderErrorKind,
+  ProviderName,
+  ProviderObjectRef,
+  ProviderReadPort,
+  RedirectUri,
+  TimeWindow,
+  WebhookRequest,
+} from "@/integrations/providers/contract";
 import type { ProviderMutationPort } from "@/integrations/providers/contract/mutation-port";
 
 export interface ContractErrorCase {
@@ -58,6 +71,56 @@ export interface ProviderContractHarness {
   readonly webhooks: WebhookCases;
   /** Must cover every normalized error kind. */
   readonly errorCases: readonly ContractErrorCase[];
+  /** Secret values that must never appear in errors, results or serialized output. */
+  readonly secrets: readonly string[];
+}
+
+/** What the simulated or real user does on the provider's consent screen. */
+export type ConsentDecision = "grant" | "grant_without_required_permission" | "cancel" | "deny";
+
+/** Malformed callbacks every adapter must be shown to reject (in its own wire format). */
+export const REQUIRED_MALFORMED_CALLBACKS = [
+  "missing_state",
+  "missing_result",
+  "duplicate_state",
+  "duplicate_code",
+  "duplicate_error",
+  "code_and_error",
+  "invalid_state",
+  "empty_code",
+] as const;
+export type RequiredMalformedCallback = (typeof REQUIRED_MALFORMED_CALLBACKS)[number];
+
+/**
+ * What an adapter must provide to run the provider AUTHORIZATION contract suite. Real adapters will drive it
+ * from recorded, sanitized exchanges (TA §53); nothing here may assume simulator internals.
+ */
+export interface AuthorizationContractHarness {
+  readonly name: string;
+  readonly provider: ProviderName;
+  readonly port: ProviderAuthorizationPort;
+  /** Restores a known state (no outstanding codes, no injected failures) before each test. */
+  reset(): void | Promise<void>;
+  readonly redirectUri: RedirectUri;
+  /** A different valid redirect URI, for mismatch cases. */
+  readonly otherRedirectUri: RedirectUri;
+  /** A valid redirect URI with a query component (`?a=b&c=d` form), matched exactly like any other. */
+  readonly redirectUriWithQuery: RedirectUri;
+  /** A fresh valid state per call. */
+  newState(): OAuthState;
+  /** Completes the provider's consent screen for `authorizationUrl`; returns the callback redirect URL. */
+  consent(authorizationUrl: string, decision: ConsentDecision): string;
+  /** Lets every outstanding authorization code expire (e.g. advances the provider clock). */
+  expireCodes(): void;
+  /**
+   * Makes the next exchange fail with `kind`: `transient` / `rate_limited` before the provider redeems the code;
+   * `outcome_unknown` after the request was sent, with the response lost (the code may have been redeemed).
+   */
+  failNextExchange(kind: "transient" | "rate_limited" | "outcome_unknown"): void;
+  /** Provider calls made by `exchangeCode` so far (proves the port never retries on its own). */
+  exchangeCalls(): number;
+  /** Raw malformed callbacks in the adapter's wire format. */
+  readonly malformedCallbacks: Readonly<Record<RequiredMalformedCallback, CallbackQuery>>;
   /** Secret values that must never appear in errors, results or serialized output. */
   readonly secrets: readonly string[];
 }

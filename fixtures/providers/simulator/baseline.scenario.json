@@ -127,6 +127,32 @@
     "reply_timeout_after_send": [{ "operation": "replyPublicly", "on": 1, "fault": { "kind": "outcome_unknown" } }],
     "hide_timeout_after_send": [{ "operation": "hide", "on": 1, "fault": { "kind": "outcome_unknown" } }],
     "private_reply_timeout_before_send": [{ "operation": "replyPrivately", "on": 1, "fault": { "kind": "timeout_before_send" } }],
-    "credential_revoked_mid_listing": [{ "operation": "listInteractions", "on": 2, "fault": { "kind": "credential_invalid", "reason": "revoked" } }]
+    "credential_revoked_mid_listing": [{ "operation": "listInteractions", "on": 2, "fault": { "kind": "credential_invalid", "reason": "revoked" } }],
+    "exchange_transient": [{ "operation": "exchangeCode", "on": 1, "fault": { "kind": "transient", "reason": "provider_unavailable" } }],
+    "exchange_rate_limited": [{ "operation": "exchangeCode", "on": 1, "fault": { "kind": "rate_limited", "retryAfterSeconds": 60 } }],
+    "exchange_response_lost": [{ "operation": "exchangeCode", "on": 1, "fault": { "kind": "outcome_unknown" } }]
+  },
+
+  "authorization": {
+    "clientId": "sim-client-baseline",
+    "pkce": "supported",
+    "requestedScopes": [
+      "sim.discover_assets", "sim.read_account", "sim.read_content", "sim.read_interactions", "sim.read_paid_context",
+      "sim.manage_webhooks", "sim.reply_public", "sim.reply_private", "sim.hide", "sim.delete", "sim.block"
+    ],
+    "codeLifetimeSeconds": 600,
+    "credentialLifetimeSeconds": 5184000,
+    "grants": [
+      {
+        "id": "meta_full",
+        "assets": ["fb_page_aurora", "ig_acct_aurora", "act_meta_100"],
+        "scopes": [
+          "sim.discover_assets", "sim.read_account", "sim.read_content", "sim.read_interactions", "sim.read_paid_context",
+          "sim.manage_webhooks", "sim.reply_public", "sim.reply_private", "sim.hide", "sim.delete", "sim.block"
+        ]
+      },
+      { "id": "meta_partial", "assets": ["ig_acct_limited"], "scopes": ["sim.read_content", "sim.discover_assets", "sim.read_account"] },
+      { "id": "tiktok_without_discovery", "assets": ["tt_acct_aurora"], "scopes": ["sim.read_account", "sim.read_content"] }
+    ]
   }
 }

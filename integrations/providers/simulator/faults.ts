@@ -3,11 +3,14 @@
  * list, or a named preset from the scenario), never randomness. A rule matches by operation (and optionally
  * by target id) and fires on the n-th matching call, or on every matching call.
  *
- * Mutation-only faults:
- *   - `outcome_unknown`: the platform APPLIES the change, then the response is lost → OutcomeUnknownError;
- *   - `timeout_before_send`: the request never left → TransientError("timeout_before_send"), nothing applied.
+ * Ambiguity faults (mutations; `outcome_unknown` also on `exchangeCode`):
+ *   - `outcome_unknown`: the platform APPLIES the change (for `exchangeCode`: redeems the code and issues a
+ *     credential), then the response is lost → OutcomeUnknownError;
+ *   - `timeout_before_send` (mutations only): the request never left → TransientError("timeout_before_send"),
+ *     nothing applied.
  */
 import {
+  AUTHORIZATION_OPERATIONS,
   CREDENTIAL_INVALID_REASONS,
   MUTATION_OPERATIONS,
   NOT_ELIGIBLE_REASONS,
@@ -43,7 +46,7 @@ export interface FaultRule {
   readonly fault: FaultSpec;
 }
 
-const OPERATIONS: readonly string[] = [...READ_OPERATIONS, ...MUTATION_OPERATIONS];
+const OPERATIONS: readonly string[] = [...READ_OPERATIONS, ...MUTATION_OPERATIONS, ...AUTHORIZATION_OPERATIONS];
 const MUTATIONS: readonly string[] = MUTATION_OPERATIONS;
 
 export class FaultConfigError extends Error {
@@ -84,7 +87,7 @@ function parseSpec(value: unknown): FaultSpec | undefined {
   }
 }
 
-/** Validates one rule (fixture or test input). Mutation-only faults on read operations are rejected. */
+/** Validates one rule (fixture or test input). Ambiguity faults on read operations are rejected. */
 export function parseFaultRule(value: unknown): FaultRule | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const rule = value as Readonly<Record<string, unknown>>;
@@ -96,7 +99,8 @@ export function parseFaultRule(value: unknown): FaultRule | undefined {
   if (!isIn(OPERATIONS as readonly ProviderOperation[], operation) || fault === undefined) return undefined;
   if (!(on === "every" || (typeof on === "number" && Number.isInteger(on) && on >= 1))) return undefined;
   if (target !== undefined && (typeof target !== "string" || target.length === 0)) return undefined;
-  if ((fault.kind === "outcome_unknown" || fault.kind === "timeout_before_send") && !MUTATIONS.includes(operation)) return undefined;
+  const ambiguityAllowed = MUTATIONS.includes(operation) || (fault.kind === "outcome_unknown" && operation === "exchangeCode");
+  if ((fault.kind === "outcome_unknown" || fault.kind === "timeout_before_send") && !ambiguityAllowed) return undefined;
   return { operation, on, fault, ...(target === undefined ? {} : { target }) };
 }
 
