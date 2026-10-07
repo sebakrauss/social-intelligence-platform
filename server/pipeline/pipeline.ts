@@ -14,7 +14,7 @@ import { AppError, isAppError } from "@/domain/errors";
 import { parseWorkspaceId } from "@/domain/ids";
 import { recordAuditEvent } from "@/modules/audit";
 import type { IdentityPort } from "@/platform/auth/port";
-import type { OutboxMessage } from "@/platform/outbox";
+import type { OutboxNotice } from "@/platform/outbox";
 import { continueOrStartCorrelation, newRequestId, type Logger } from "@/platform/observability";
 import type { AuditDraft, Command, CommandEnvironment } from "./command";
 import { OrganizationContext, UserContext, WorkspaceContext } from "./context";
@@ -42,10 +42,10 @@ export interface PipelineDependencies {
   readonly onStep?: (step: PipelineStep) => void;
   /**
    * Post-commit outbox notification (TA §5, §10.6 step 9): told which outbox rows a committed command
-   * appended, e.g. to nudge the system relay. Best effort: a failure is logged, never surfaced, because
+   * appended or routed through a reviewed definer, e.g. to nudge the system relay. Best effort: a failure is logged, never surfaced, because
    * the scheduled dispatch sweeper delivers the rows anyway.
    */
-  readonly outboxCommitted?: (messages: readonly OutboxMessage[]) => Promise<void>;
+  readonly outboxCommitted?: (notices: readonly OutboxNotice[]) => Promise<void>;
 }
 
 /** Everything here is untrusted request data: only routing IDs and the command input. */
@@ -106,12 +106,24 @@ export function createActionPipeline(deps: PipelineDependencies): ActionPipeline
         routedWorkspace === undefined ? { userId: user.userId } : { userId: user.userId, workspaceId: routedWorkspace };
 
       let output: O;
-      const appended: OutboxMessage[] = [];
+      const appended: OutboxNotice[] = [];
       let scope: { organizationId?: string; workspaceId?: string } = {};
       try {
         output = await deps.unitOfWork.run(transactionScope, async (base: Transaction) => {
-          // Record what the command appends to the outbox, for the post-commit notification.
-          const tx: Transaction = { ...base, outbox: { append: (message) => { appended.push(message); return base.outbox.append(message); } } };
+          // Record what the command appends (or routes through a definer), for the post-commit notification only.
+          const tx: Transaction = {
+            ...base,
+            outbox: {
+              append: (message) => {
+                appended.push(message);
+                return base.outbox.append(message);
+              },
+              routed: (notice) => {
+                appended.push(notice);
+                base.outbox.routed(notice);
+              },
+            },
+          };
           let result: O;
           if (command.scope === "workspace") {
             // 2. Resolve tenant (live) → 3. authorize → 4. validate → 5. mode guard.

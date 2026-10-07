@@ -130,7 +130,10 @@ export interface DiscoveredAsset {
   readonly lastSeenAt: Date;
 }
 
-/** A Connected Account as other steps need it (identity, asset dimensions, status). Linking itself is Step 5F. */
+export const DEACTIVATION_REASONS = ["UNLINKED", "MOVED", "DISCONNECTED", "REMOVED"] as const;
+export type DeactivationReason = (typeof DEACTIVATION_REASONS)[number];
+
+/** A Social Asset activated in one workspace (Step 5F links, unlinks and moves it). */
 export interface ConnectedAccount {
   readonly id: string;
   readonly organizationId: OrganizationId;
@@ -140,6 +143,145 @@ export interface ConnectedAccount {
   readonly providerAssetId: string;
   readonly assetClass: AssetClass;
   readonly status: "ACTIVE" | "INACTIVE";
+  /** First activation of this row (0007 grants no update of it; a reactivation is recorded as history). */
+  readonly activatedAt: Date;
+  readonly deactivatedAt: Date | null;
+  readonly deactivationReason: DeactivationReason | null;
+  /** The Move that moved this account out (deactivation reason MOVED); null otherwise. */
+  readonly moveId: string | null;
+}
+
+export const ACCOUNT_EVENT_TYPES = ["LINKED", "UNLINKED", "MOVED_OUT", "MOVED_IN", "DEACTIVATED"] as const;
+export type AccountEventType = (typeof ACCOUNT_EVENT_TYPES)[number];
+export const ACCOUNT_EVENT_REASONS = ["USER_LINKED", "USER_UNLINKED", "MOVE", "CONNECTION_DISCONNECTED", "CONNECTION_REMOVED"] as const;
+export type AccountEventReason = (typeof ACCOUNT_EVENT_REASONS)[number];
+
+/** Append-only link/move history (connected_account_events). Workers record as `system`; web as the user. */
+export interface ConnectedAccountEvent {
+  readonly id: string;
+  readonly organizationId: OrganizationId;
+  readonly workspaceId: WorkspaceId;
+  readonly connectedAccountId: string;
+  readonly eventType: AccountEventType;
+  /** Required exactly for MOVED_OUT / MOVED_IN. */
+  readonly moveId: string | null;
+  readonly reasonCode: AccountEventReason;
+  readonly actor: { readonly type: "user"; readonly userId: UserId } | { readonly type: "system" };
+  readonly occurredAt: Date;
+}
+
+// ── M-01 and the TEMPORARY TA-Q-02 restriction ──────────────────────────────────────────────────────────────
+
+/**
+ * Which "active in at most one workspace per organization" rule applies to an asset. M-01 (LOCKED, PD D-50) covers
+ * content-bearing assets; the ad-account rule is the TEMPORARY TA-Q-02 safety restriction (VALIDATE), kept distinct so
+ * relaxing it never touches M-01. Both are enforced by separately named unique indexes (0007): the database decides.
+ */
+export type SingleWorkspaceRule = "M-01" | "TA-Q-02";
+
+export function singleWorkspaceRule(assetClass: AssetClass): SingleWorkspaceRule {
+  return assetClass === "ad_account" ? "TA-Q-02" : "M-01";
+}
+
+/** The unique index that refused an activation → its rule (undefined: not one of the two). */
+export const SINGLE_WORKSPACE_INDEXES: Readonly<Record<string, SingleWorkspaceRule>> = {
+  connected_accounts_m01_active_content_asset: "M-01",
+  connected_accounts_taq02_tmp_ad_account_single_workspace: "TA-Q-02",
+};
+
+// ── Move saga (decision D4) ─────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Closed Move reasons (asset_moves.reason_code). 0010 adds the TA-Q-02 one (distinct from ASSET_ACTIVE_ELSEWHERE) and
+ * SOURCE_RELEASE_REJECTED: the destination's generic outcome when the source refused to release. The precise source
+ * reason (AUTHORITY_REVOKED, SOURCE_NOT_ACTIVE) is recorded on the SOURCE side only and never crosses workspaces.
+ */
+export const MOVE_REASON_CODES = [
+  "SOURCE_NOT_ACTIVE",
+  "AUTHORITY_REVOKED",
+  "DESTINATION_CONNECTION_UNHEALTHY",
+  "ASSET_ACTIVE_ELSEWHERE",
+  "ASSET_NOT_DISCOVERED",
+  "ACTIVATION_RETRIES_EXHAUSTED",
+  "AD_ACCOUNT_SINGLE_WORKSPACE_PENDING_VALIDATION",
+  "SOURCE_RELEASE_REJECTED",
+] as const;
+export type MoveReasonCode = (typeof MOVE_REASON_CODES)[number];
+
+/** The closed reason when an asset is already active in another workspace of the organization. */
+export function activeElsewhereReason(rule: SingleWorkspaceRule): MoveReasonCode {
+  return rule === "TA-Q-02" ? "AD_ACCOUNT_SINGLE_WORKSPACE_PENDING_VALIDATION" : "ASSET_ACTIVE_ELSEWHERE";
+}
+
+export const INCOMING_MOVE_STATUSES = ["REQUESTED", "COMPLETED", "ACTIVATION_FAILED", "REJECTED"] as const;
+export type IncomingMoveStatus = (typeof INCOMING_MOVE_STATUSES)[number];
+export const OUTGOING_MOVE_STATUSES = ["RELEASED", "REJECTED"] as const;
+export type OutgoingMoveStatus = (typeof OUTGOING_MOVE_STATUSES)[number];
+
+interface MoveSideBase {
+  readonly organizationId: OrganizationId;
+  readonly workspaceId: WorkspaceId;
+  readonly moveId: string;
+  /** Another workspace of the SAME organization (0007 composite FK). */
+  readonly counterpartWorkspaceId: WorkspaceId;
+  readonly platform: AssetPlatform;
+  readonly initiatorUserId: UserId;
+  readonly reasonCode: MoveReasonCode | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+/** Destination side: the request, in the destination workspace, through its own Connection. */
+export interface IncomingMove extends MoveSideBase {
+  readonly side: "INCOMING";
+  readonly status: IncomingMoveStatus;
+  readonly connectionId: string;
+  readonly providerAssetId: string;
+  /** The destination Connected Account once activated. */
+  readonly connectedAccountId: string | null;
+}
+
+/** Source side: the release (or its refusal), in the source workspace. */
+export interface OutgoingMove extends MoveSideBase {
+  readonly side: "OUTGOING";
+  readonly status: OutgoingMoveStatus;
+  readonly connectedAccountId: string;
+}
+
+export type AssetMove = IncomingMove | OutgoingMove;
+
+/** The three closed cross-workspace transitions (connections.route_move_step). */
+export const MOVE_STEPS = ["release_source", "activate_destination", "reject_destination"] as const;
+export type MoveStep = (typeof MOVE_STEPS)[number];
+/** The local routing step of a human retry: a NEW durable activation attempt in the destination (topic: activation). */
+export const RETRY_ACTIVATION_STEP = "retry_activation";
+
+/**
+ * What connections.route_move_step did: routed = the step's row exists (now or from an earlier identical routing);
+ * outboxId = the row inserted by THIS call (null for a duplicate), so the caller can wake the relay after commit.
+ */
+export interface RouteResult {
+  readonly routed: boolean;
+  readonly outboxId: string | null;
+}
+
+/** Outbox topic = task name of each step (the definer derives the same strings). */
+export const MOVE_TOPICS: Readonly<Record<MoveStep, string>> = {
+  release_source: "connections.move.release_source",
+  activate_destination: "connections.move.activate_destination",
+  reject_destination: "connections.move.reject_destination",
+};
+
+/** Closed audit steps of connections.record_move_audit (the human initiator is the actor, TA §41.1). */
+export const MOVE_AUDIT_STEPS = ["moved_out", "moved_in", "move_failed", "move_rejected"] as const;
+export type MoveAuditStep = (typeof MOVE_AUDIT_STEPS)[number];
+
+/** Capability evaluation after an activation (link or move-in): connections hands off to the capability module. */
+export const CAPABILITY_EVALUATION_TOPIC = "capability.evaluate_account";
+
+/** Only a failed activation can be retried by a human (same move, no source restoration). */
+export function isRetryable(move: IncomingMove): boolean {
+  return move.status === "ACTIVATION_FAILED";
 }
 
 // ── State routing (decision B3) ─────────────────────────────────────────────────────────────────────────

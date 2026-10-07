@@ -2,6 +2,12 @@ export {
   AUTHORIZABLE_PROVIDERS,
   ATTEMPT_STATUSES,
   ATTEMPT_TTL_MS,
+  CAPABILITY_EVALUATION_TOPIC,
+  MOVE_REASON_CODES,
+  MOVE_STEPS,
+  MOVE_TOPICS,
+  activeElsewhereReason,
+  singleWorkspaceRule,
   CONNECTION_EVENT_REASONS,
   CONNECTION_PROBLEM_CODES,
   CONNECTION_PROVIDERS,
@@ -13,6 +19,11 @@ export {
   type ConnectAttempt,
   type ConnectedAccount,
   type Connection,
+  type IncomingMove,
+  type MoveReasonCode,
+  type MoveStep,
+  type OutgoingMove,
+  type SingleWorkspaceRule,
   type ConnectionProblemCode,
   type ConnectionProvider,
   type DiscoveredAsset,
@@ -20,6 +31,7 @@ export {
 } from "./domain/model";
 export {
   CredentialUnreadableError,
+  type ActiveLink,
   type AuthorizationProviders,
   type ConnectionStore,
   type ConnectionWorkerStore,
@@ -51,3 +63,24 @@ export {
 } from "./application/discovery";
 export { CredentialCodecError, decodeProviderCredential, encodeProviderCredential } from "./application/credential-codec";
 export { refreshAccountCapabilities, type CapabilityRefreshDependencies, type CapabilityRefreshOutcome } from "./application/capability-refresh";
+export {
+  linkAccount,
+  listConnectedAccounts,
+  unlinkAccount,
+  type ActiveElsewhere,
+  type ConnectedAccountSummary,
+  type LinkOutput,
+  type UnlinkOutput,
+} from "./application/linking";
+export {
+  activateDestination,
+  rejectDestination,
+  releaseSource,
+  requestMove,
+  retryMove,
+  type ActivationResult,
+  type MoveRequestOutput,
+  type RejectionResult,
+  type ReleaseOutcome,
+  type SagaStepInput,
+} from "./application/moves";

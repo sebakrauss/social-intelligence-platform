@@ -72,5 +72,7 @@ export function createPostgresOutbox(tx: DatabaseTransaction): OutboxWriter {
         createdAt: message.createdAt,
       });
     },
+    // The row is already written (by the definer, in this transaction); only the caller's notifier cares.
+    routed: () => undefined,
   };
 }

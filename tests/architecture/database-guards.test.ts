@@ -125,14 +125,57 @@ function withVerifiedWideningsRemoved(sources: readonly { name: string; sql: str
  *
  *   connect_attempts_closed_recorded (0008, Step 5D): EXCHANGING is an intermediate, not closed, state. Identical for
  *   every pre-0008 status; the only expansion is EXCHANGING ⇔ closed_at IS NULL.
+ *   asset_moves_reason_code_check (0010, Steps 5F/5G): the TEMPORARY TA-Q-02 rejection reason, distinct from M-01's
+ *   ASSET_ACTIVE_ELSEWHERE, and the destination's generic SOURCE_RELEASE_REJECTED (G4). The 0007 CHECK is the
+ *   NULLABLE column's inline check (`reason_code text check (…)`, named <table>_<column>_check by PostgreSQL), so
+ *   the entry names its `column`: the original is read from exactly that
+ *   column definition in the table's own CREATE TABLE (balanced parentheses), never from another column or table.
+ *   This is not the vocabulary-widening mechanism above: the exact expression is pinned, value order included.
  */
-const PINNED_CHECK_REWRITES: Readonly<Record<string, { readonly table: string; readonly from: string; readonly to: string }>> = {
+const PINNED_CHECK_REWRITES: Readonly<Record<string, { readonly table: string; readonly column?: string; readonly from: string; readonly to: string }>> = {
   connect_attempts_closed_recorded: {
     table: "connections.connect_attempts",
     from: "((status = 'pending') = (closed_at is null))",
     to: "((status in ('pending', 'exchanging')) = (closed_at is null))",
   },
+  asset_moves_reason_code_check: {
+    table: "connections.asset_moves",
+    column: "reason_code",
+    from:
+      "(reason_code in ( 'source_not_active', 'authority_revoked', 'destination_connection_unhealthy', 'asset_active_elsewhere'," +
+      " 'asset_not_discovered', 'activation_retries_exhausted'))",
+    to:
+      "(reason_code in ( 'source_not_active', 'authority_revoked', 'destination_connection_unhealthy', 'asset_active_elsewhere'," +
+      " 'asset_not_discovered', 'activation_retries_exhausted', 'ad_account_single_workspace_pending_validation'," +
+      " 'source_release_rejected'))",
+  },
 };
+
+/** The parenthesized expression starting at `open` (which must be "("), with balanced parentheses; undefined if unbalanced. */
+function balanced(text: string, open: number): string | undefined {
+  if (text[open] !== "(") return undefined;
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    if (text[i] === "(") depth += 1;
+    else if (text[i] === ")") depth -= 1;
+    if (depth === 0) return text.slice(open, i + 1);
+  }
+  return undefined;
+}
+
+/** A pinned constraint's definition inside its table's CREATE TABLE body: named constraint, or a nullable column's inline check. */
+function pinnedDefinition(body: string, name: string, table: string, column: string | undefined): string | undefined {
+  if (column === undefined) {
+    const defined = new RegExp(`(?:\\(|,) constraint ${name} check (.*?)(?=,|\\) ?$)`).exec(body);
+    return defined ? (defined[1] ?? "").trim() : undefined;
+  }
+  // PostgreSQL's deterministic name for the inline check; any other pairing is a misconfigured entry.
+  if (name !== `${table.slice(table.indexOf(".") + 1)}_${column}_check`) throw new Error(`${name}: not the inline check name of ${table}.${column}`);
+  const definitions = [...body.matchAll(new RegExp(`(?:\\(|,) ${column} text check `, "g"))];
+  if (definitions.length !== 1) return undefined;
+  const match = definitions[0];
+  return match === undefined ? undefined : balanced(body, match.index + match[0].length);
+}
 
 /** Migrations with each verified pinned rewrite's DROP removed; throws if a rewrite isn't exactly the pinned one. */
 function withPinnedRewritesRemoved(sources: readonly { name: string; sql: string }[]): { name: string; sql: string }[] {
@@ -140,12 +183,12 @@ function withPinnedRewritesRemoved(sources: readonly { name: string; sql: string
   return sources.map((source) => {
     let sql = source.sql;
     const top = topLevel(source.sql);
-    for (const [name, { table, from, to }] of Object.entries(PINNED_CHECK_REWRITES)) {
+    for (const [name, { table, column, from, to }] of Object.entries(PINNED_CHECK_REWRITES)) {
       const t = escapeRegExp(table);
       const body = createTableBody(top, table);
       if (body !== undefined && !current.has(name)) {
-        const defined = new RegExp(`(?:\\(|,) constraint ${name} check (.*?)(?=,|\\) ?$)`).exec(body);
-        if (defined) current.set(name, (defined[1] ?? "").trim());
+        const defined = pinnedDefinition(body, name, table, column);
+        if (defined !== undefined) current.set(name, defined);
       }
       const drops = statements(top, new RegExp(`alter table ${t} drop constraint ${name};`));
       if (drops.length === 0) continue;
@@ -312,8 +355,66 @@ describe("migration lint", () => {
       expect(lint(`${rewrite()} ${rewrite()}`)[0]).toMatch(/more than once/);
     });
 
-    it("pins exactly one rewrite", () => {
-      expect(Object.keys(PINNED_CHECK_REWRITES)).toEqual(["connect_attempts_closed_recorded"]);
+    it("pins exactly the reviewed rewrites", () => {
+      expect(Object.keys(PINNED_CHECK_REWRITES)).toEqual(["connect_attempts_closed_recorded", "asset_moves_reason_code_check"]);
+    });
+  });
+
+  describe("the pinned TA-Q-02 reason rewrite (0010) allows exactly one transformation (adversarial)", () => {
+    const VALUES = "'SOURCE_NOT_ACTIVE', 'AUTHORITY_REVOKED', 'DESTINATION_CONNECTION_UNHEALTHY', 'ASSET_ACTIVE_ELSEWHERE', 'ASSET_NOT_DISCOVERED', 'ACTIVATION_RETRIES_EXHAUSTED'";
+    const BASE = {
+      name: "0001_base.sql",
+      sql: normalize(
+        `create table connections.connections ( id uuid, reason_code text check (reason_code in ('X')) );` +
+          ` create table connections.asset_moves ( move_id uuid, status text not null, reason_code text check (reason_code in (\n ${VALUES})),` +
+          " created_at timestamptz not null, constraint asset_moves_failure_reason check (status <> 'REJECTED' or reason_code is not null) );",
+      ),
+    };
+    const TO = `(reason_code in (\n ${VALUES}, 'AD_ACCOUNT_SINGLE_WORKSPACE_PENDING_VALIDATION', 'SOURCE_RELEASE_REJECTED'))`;
+    const rewrite = (expression = TO, table = "connections.asset_moves", name = "asset_moves_reason_code_check"): string =>
+      `alter table ${table} drop constraint ${name};` +
+      ` alter table ${table} add constraint ${name} check ${expression} not valid;` +
+      ` alter table ${table} validate constraint ${name};`;
+    const lint = (...later: string[]): string[] => lintMigrations([BASE, ...later.map((sql, i) => ({ name: `000${String(i + 2)}_m.sql`, sql: normalize(sql) }))]);
+
+    it("accepts exactly the pinned rewrite (case and whitespace normalized)", () => {
+      expect(lint(rewrite())).toEqual([]);
+      expect(lint(rewrite().replace(/ /g, "\n  ").toUpperCase())).toEqual([]);
+    });
+
+    it.each([
+      ["a broader expression (another extra reason)", TO.replace("'))", "', 'SOMETHING_ELSE'))")],
+      ["TRUE", "(true)"],
+      ["an expression that also admits anything", `(${TO.slice(1, -1)} or true)`],
+      ["the original list (no TA-Q-02 reason)", `(reason_code in (\n ${VALUES}))`],
+      ["only the TA-Q-02 reason (no generic source rejection)", `(reason_code in (\n ${VALUES}, 'AD_ACCOUNT_SINGLE_WORKSPACE_PENDING_VALIDATION'))`],
+      ["a destination reason that leaks the source's precise state", TO.replace("'SOURCE_RELEASE_REJECTED'", "'SOURCE_RELEASE_REJECTED', 'SOURCE_AUTHORITY_REVOKED'")],
+      ["a narrowed list", "(reason_code in ('AD_ACCOUNT_SINGLE_WORKSPACE_PENDING_VALIDATION'))"],
+      ["a reordered list", TO.replace("'SOURCE_NOT_ACTIVE', 'AUTHORITY_REVOKED'", "'AUTHORITY_REVOKED', 'SOURCE_NOT_ACTIVE'")],
+    ])("rejects %s", (_label, expression) => {
+      expect(lint(rewrite(expression))[0]).toMatch(/other than the pinned rewrite/);
+    });
+
+    it("rejects another table, another constraint, a missing NOT VALID or VALIDATE, and a double DROP", () => {
+      expect(lint(rewrite(TO, "connections.connections")).length).toBeGreaterThan(0);
+      expect(lint(rewrite(TO, "connections.asset_moves", "asset_moves_failure_reason")).length).toBeGreaterThan(0);
+      expect(lint(rewrite(TO, "connections.asset_moves", "asset_moves_status_check")).length).toBeGreaterThan(0);
+      expect(lint(rewrite().replace(" not valid;", ";"))[0]).toMatch(/without exactly one later/);
+      expect(lint(rewrite().replace(/ alter table connections\.asset_moves validate[^;]*;/, ""))[0]).toMatch(/VALIDATE/);
+      expect(lint(`${rewrite()} alter table connections.asset_moves drop constraint asset_moves_reason_code_check;`)[0]).toMatch(/more than once/);
+      expect(lint(rewrite(), rewrite())[0]).toMatch(/other than the pinned original/);
+    });
+
+    it("reads the original from asset_moves' own reason_code column, never from another table's or column's check", () => {
+      // connections.connections.reason_code is not the pinned original; neither is an altered asset_moves definition.
+      const altered = { ...BASE, sql: BASE.sql.replace("'activation_retries_exhausted'))", "'activation_retries_exhausted', 'extra'))") };
+      expect(lintMigrations([altered, { name: "0002_m.sql", sql: normalize(rewrite()) }])[0]).toMatch(/other than the pinned original/);
+      const notNull = { ...BASE, sql: BASE.sql.replace("status text not null, reason_code text check (", "status text not null, reason_code text not null check (") };
+      expect(lintMigrations([notNull, { name: "0002_m.sql", sql: normalize(rewrite()) }])[0]).toMatch(/other than the pinned original/);
+    });
+
+    it("is not a vocabulary widening: the generic widening parser still doesn't cover asset_moves.reason_code", () => {
+      expect(Object.keys(WIDENABLE_CHECKS)).not.toContain("asset_moves_reason_code_check");
     });
   });
 

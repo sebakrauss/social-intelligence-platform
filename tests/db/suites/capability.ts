@@ -36,7 +36,8 @@ import { createLocalSimulator, type LocalSimulator } from "@/server/connections/
 import { capabilityRefreshStores } from "@/server/persistence/connections";
 import { createPostgresUnitOfWork } from "@/server/persistence/postgres-unit-of-work";
 import { createActionPipeline } from "@/server/pipeline";
-import { createCredentialAccess, runDiscoverAssets } from "@/jobs/connections";
+import { createConnectedAccountCommands } from "@/server/commands/connected-accounts";
+import { createCredentialAccess, runDiscoverAssets, runEvaluateAccountCapabilities } from "@/jobs/connections";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { FakeIdentity, verifiedUser } from "../../support/in-memory";
 import { errorCode, expectOk } from "../../support/harness";
@@ -114,7 +115,7 @@ export function defineCapabilitySuite(getTarget: () => DbTarget): void {
 
   const refreshDeps = (workspace: string): CapabilityRefreshDependencies => ({
     inScope: (work) =>
-      withWorkspaceJobScope(worker, workspace, (tx) => work(capabilityRefreshStores({ tx, claimEffect: () => Promise.reject(new Error("unused")) }))),
+      withWorkspaceJobScope(worker, workspace, (tx) => work(capabilityRefreshStores({ tx, claimEffect: () => Promise.reject(new Error("unused")), noteOutbox: () => undefined }))),
     access: access(),
     providers,
     clock,
@@ -404,6 +405,31 @@ export function defineCapabilitySuite(getTarget: () => DbTarget): void {
       const columns = (await oracle<{ column_name: string }>("select column_name from information_schema.columns where table_schema = 'capability'")).map((r) => r.column_name);
       expect(columns.filter((name) => /(token|secret|password|raw|payload|plaintext|state$)/i.test(name) && name !== "state")).toEqual([]);
       expect(createHash("sha256").update("x").digest("hex")).toHaveLength(64);
+    });
+  });
+
+  describe("Step 5F hand-off: linking enqueues capability evaluation, the job evaluates the new account", () => {
+    it("the real link command → capability.evaluate_account (IDs only) → refreshAccountCapabilities in the job runtime", async () => {
+      const connectionB = await connect(world.B1);
+      const discovered = (await oracle<{ id: string }>("select id from connections.discovered_assets where connection_id = $1 and provider_asset_id = 'ig_acct_aurora'", [connectionB]))[0];
+      as(world.users.ownerB);
+      const linked = expectOk(await deps.pipeline.run(createConnectedAccountCommands().link, { workspaceId: world.B1, input: { discoveredAssetId: discovered?.id } }));
+      if (linked.kind !== "linked") throw new Error("not linked");
+      const row = (await oracle<{ id: string; subject_ids: Record<string, string>; correlation_id: string; initiator_user_id: string }>(
+        "select id, subject_ids, correlation_id, initiator_user_id from system.outbox where topic = 'capability.evaluate_account' and subject_ids->>'connected_account_id' = $1",
+        [linked.connectedAccountId],
+      ))[0];
+      expect(row?.subject_ids).toEqual({ connected_account_id: linked.connectedAccountId });
+      expect(await header(linked.connectedAccountId)).toBeUndefined(); // nothing evaluated in the web transaction
+      const outcome = await runTenantStepJob(
+        { registry: PRODUCTION_TASKS, worker, logger },
+        "capability.evaluate_account",
+        { v: 1, scope: "workspace", task: "capability.evaluate_account", workspaceId: world.B1, outboxId: row?.id, subjectIds: row?.subject_ids, correlationId: row?.correlation_id, initiator: { type: "user", userId: row?.initiator_user_id } },
+        { runId: `run_${randomUUID()}`, attempt: 1 },
+        (context) => runEvaluateAccountCapabilities(context, { access: access(), providers }),
+      );
+      expect(outcome).toMatchObject({ kind: "evaluated", factsAvailable: true, write: { kind: "applied", revision: 1 } });
+      expect(await header(linked.connectedAccountId)).toMatchObject({ workspace_id: world.B1, catalog_id: "simulator" });
     });
   });
 }

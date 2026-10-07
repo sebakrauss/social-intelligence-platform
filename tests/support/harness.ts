@@ -7,11 +7,11 @@ import type { OrganizationId, UserId, WorkspaceId } from "@/domain/ids";
 import { opaqueTokens } from "@/platform/crypto";
 import { createLogger } from "@/platform/observability";
 import { createTenancyCommands } from "@/server/commands/tenancy";
-import type { OutboxMessage } from "@/platform/outbox";
+import type { OutboxNotice } from "@/platform/outbox";
 import { createActionPipeline, type PipelineResult, type PipelineStep } from "@/server/pipeline";
 import { CapturingDelivery, FakeIdentity, FixedClock, InMemoryUnitOfWork, emailOf, sequentialIds, verifiedUser } from "./in-memory";
 
-export function createHarness(options: { readonly outboxCommitted?: (messages: readonly OutboxMessage[]) => Promise<void> } = {}) {
+export function createHarness(options: { readonly outboxCommitted?: (notices: readonly OutboxNotice[]) => Promise<void> } = {}) {
   const unitOfWork = new InMemoryUnitOfWork();
   const identity = new FakeIdentity();
   const clock = new FixedClock();

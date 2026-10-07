@@ -105,13 +105,34 @@ describe("task registry", () => {
     expect(payloadMatchesTask(tenant({ subjects: [] }), payload())).toBe(false);
   });
 
-  it("the production registry holds exactly the named system delivery jobs (explicit schedules) and the Step 5D tenant task", () => {
-    expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS, "connections.discover_assets"].sort());
+  it("the production registry holds exactly the named system delivery jobs (explicit schedules) and the Step 5D/5F tenant tasks", () => {
+    const tenantTasks = [
+      "connections.discover_assets",
+      "connections.move.release_source",
+      "connections.move.activate_destination",
+      "connections.move.reject_destination",
+      "capability.evaluate_account",
+    ];
+    expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS, ...tenantTasks].sort());
     expect(PRODUCTION_TASKS.tasks.filter((task) => task.scope === "system").map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS].sort());
     expect(PRODUCTION_TASKS.tenant("connections.discover_assets")).toMatchObject({
       lane: 3,
       concurrency: { by: "subject", subject: "connection_id" },
       subjects: ["connection_id"],
+    });
+    // Step 5F: the saga steps serialize per move; release_source alone carries the definer-derived account and counterpart.
+    expect(PRODUCTION_TASKS.tenant("connections.move.release_source")).toMatchObject({
+      lane: 3,
+      concurrency: { by: "subject", subject: "move_id" },
+      subjects: ["move_id", "connected_account_id", "counterpart_workspace_id"],
+    });
+    for (const name of ["connections.move.activate_destination", "connections.move.reject_destination"]) {
+      expect(PRODUCTION_TASKS.tenant(name)).toMatchObject({ lane: 3, concurrency: { by: "subject", subject: "move_id" }, subjects: ["move_id"] });
+    }
+    expect(PRODUCTION_TASKS.tenant("capability.evaluate_account")).toMatchObject({
+      lane: 3,
+      concurrency: { by: "subject", subject: "connected_account_id" },
+      subjects: ["connected_account_id"],
     });
     expect(PRODUCTION_TASKS.system("outbox.dispatch_sweep")?.schedule?.cron).toBe(SWEEPER_SCHEDULES.dispatchSweep);
     expect(PRODUCTION_TASKS.system("outbox.outcome_sweep")?.schedule?.cron).toBe(SWEEPER_SCHEDULES.outcomeSweep);

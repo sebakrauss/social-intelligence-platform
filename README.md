@@ -171,8 +171,37 @@ right now, and why?" in three separate layers (TA §16). Migration 0009 stores t
    rewriting the stored profile.
 
 The evaluation never reads data volume. Only `PermissionMissing` and `TargetNotEligible(unsupported_for_target)` are
-observations; transient and rate-limited outcomes never change a profile. Linking accounts is Step 5F, which will
-call `refreshAccountCapabilities` after activation.
+observations; transient and rate-limited outcomes never change a profile. After every activation (Step 5F) the job
+`capability.evaluate_account` calls `refreshAccountCapabilities` for the new account.
+
+## Connected Accounts and Moves (Step 5F)
+
+`modules/connections` also links, unlinks and moves Connected Accounts (migration 0010). This is configuration, so
+it is allowed in Monitor-only. No provider is called in these transactions.
+
+- **Link** (Owner/Admin): the asset must have been discovered by one of the workspace's own ACTIVE Connections. An
+  INACTIVE row is reactivated; otherwise a row is inserted. Linking again is a no-op. Capability evaluation is
+  enqueued after activation.
+- **Unlink**: ACTIVE → INACTIVE (`UNLINKED`). No credential is shredded and no data is deleted. The slot is freed.
+- **M-01** (content assets) and the **TEMPORARY TA-Q-02** rule (ad accounts) are two separately named unique indexes.
+  The database decides. Each has its own closed reason (`ASSET_ACTIVE_ELSEWHERE` vs
+  `AD_ACCOUNT_SINGLE_WORKSPACE_PENDING_VALIDATION`). A refusal names the other workspace only to a user who can read
+  it; anyone else sees "active in another workspace in your organization". Other organizations are never visible.
+- **Move** (decision D4) is a saga with one transaction per workspace: request in the destination → release in the
+  source → activation (or rejection) in the destination. Each workspace keeps its own `asset_moves` row. Saga audit is
+  attributed to the human initiator through `connections.record_move_audit`. The initiator's Owner/Admin authority is
+  re-checked live in each workspace. A failed activation never restores the source.
+- **Routing**: every saga outbox row is created by `connections.route_move_step`. Web and worker can't append the saga
+  topics themselves (a restrictive policy). A human retry is routed too, as a new activation attempt with its own
+  idempotency key. Correlation ids passed to the definers are trace metadata only.
+- **Rejections**: the source keeps its exact reason (`AUTHORITY_REVOKED`, `SOURCE_NOT_ACTIVE`). The destination only
+  records `SOURCE_RELEASE_REJECTED`: the source could not be released and the move did not proceed.
+- **Delivery**: after a transaction commits, any rows it appended or routed wake the system relay (web and job runtime
+  alike). The dispatch sweeper only recovers a lost wake-up.
+- **Already active in the destination**: the move completes on that account and its completion is audited once
+  (`moved_in`). No second account, `MOVED_IN` event or capability evaluation is created.
+- `connections.account.list` (read-only, `workspace.read_operational`) lists the workspace's Connected Accounts:
+  identifiers, dimensions and status only.
 
 ## Known tooling limitation
 

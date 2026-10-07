@@ -4,6 +4,11 @@
  *
  *   connections.discover_assets (Step 5D)  lane 3 (health/validation), one run per connection at a time,
  *                                          payload subject: connection_id only
+ *   connections.move.* (Step 5F)           the Move saga steps, lane 3, one run per move at a time; routed across
+ *                                          workspaces only by connections.route_move_step (0010). release_source
+ *                                          also names the source account and the destination workspace (derived by
+ *                                          the definer); activate/reject name the move only
+ *   capability.evaluate_account (Step 5F)  capability evaluation after an activation, lane 3, one run per account
  */
 import { RETRY_POLICIES, defineTaskRegistry } from "@/platform/jobs";
 
@@ -24,5 +29,37 @@ export const PRODUCTION_TASKS = defineTaskRegistry([
     retry: RETRY_POLICIES.transient,
     concurrency: { by: "subject", subject: "connection_id" },
     subjects: ["connection_id"],
+  },
+  {
+    name: "connections.move.release_source",
+    scope: "workspace",
+    lane: 3,
+    retry: RETRY_POLICIES.transient,
+    concurrency: { by: "subject", subject: "move_id" },
+    subjects: ["move_id", "connected_account_id", "counterpart_workspace_id"],
+  },
+  {
+    name: "connections.move.activate_destination",
+    scope: "workspace",
+    lane: 3,
+    retry: RETRY_POLICIES.transient,
+    concurrency: { by: "subject", subject: "move_id" },
+    subjects: ["move_id"],
+  },
+  {
+    name: "connections.move.reject_destination",
+    scope: "workspace",
+    lane: 3,
+    retry: RETRY_POLICIES.transient,
+    concurrency: { by: "subject", subject: "move_id" },
+    subjects: ["move_id"],
+  },
+  {
+    name: "capability.evaluate_account",
+    scope: "workspace",
+    lane: 3,
+    retry: RETRY_POLICIES.transient,
+    concurrency: { by: "subject", subject: "connected_account_id" },
+    subjects: ["connected_account_id"],
   },
 ]);

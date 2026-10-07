@@ -11,11 +11,17 @@
  * Fail closed: an unknown task, a malformed or content-bearing payload, a missing workspace or a task/scope
  * mismatch is a NonRetryableJobError before a database connection is taken. Nothing is taken from process
  * state: the workspace comes only from the validated payload.
+ *
+ * Post-commit wake-up (TA §5; Step 5G G5): outbox rows a tenant transaction appended or routed are reported through
+ * `noteOutbox`; only AFTER that transaction commits are they passed to `outboxCommitted` (e.g. to wake the system
+ * relay). Best effort and outside any transaction: a failed or lost wake-up is logged and the dispatch sweeper (R7)
+ * still delivers the rows; a rolled-back transaction reports nothing.
  */
 import { parseCorrelationId } from "@/domain/correlation";
 import { isAppError } from "@/domain/errors";
 import { claimEffect, withWorkspaceJobScope, type DatabaseTransaction, type EffectClaim, type RuntimeDatabase } from "@/platform/db";
 import type { Logger } from "@/platform/observability";
+import type { OutboxNotice } from "@/platform/outbox/message";
 import { laneLabel } from "./lanes";
 import { InvalidJobPayloadError, parseSystemJobPayload, parseTenantJobPayload, type SystemJobPayload, type TenantJobPayload } from "./payload";
 import { NonRetryableJobError } from "./port";
@@ -39,6 +45,8 @@ export interface TenantJobContext {
   readonly run: RunInfo;
   /** R6: claims a domain effect in THIS transaction. Skip the effect when it returns "already_applied". */
   readonly claimEffect: (effectKey: string) => Promise<EffectClaim>;
+  /** Reports an outbox row this transaction appended or routed; announced only after commit. */
+  readonly noteOutbox: (notice: OutboxNotice) => void;
 }
 
 /** One scoped step of a multi-step tenant job: a fresh worker transaction bound to the payload's workspace. */
@@ -46,6 +54,8 @@ export interface TenantJobScope {
   readonly tx: DatabaseTransaction;
   /** R6: claims a domain effect in THIS step's transaction. */
   readonly claimEffect: (effectKey: string) => Promise<EffectClaim>;
+  /** Reports an outbox row this step's transaction appended or routed; announced only after that step commits. */
+  readonly noteOutbox: (notice: OutboxNotice) => void;
 }
 
 /**
@@ -69,6 +79,8 @@ export interface TenantJobDependencies {
   readonly registry: TaskRegistry;
   readonly worker: RuntimeDatabase<"worker">;
   readonly logger: Logger;
+  /** Post-commit wake-up for the outbox rows a committed transaction reported (best effort; never fails the run). */
+  readonly outboxCommitted?: (notices: readonly OutboxNotice[]) => Promise<void>;
 }
 
 export interface SystemJobDependencies {
@@ -130,11 +142,28 @@ async function observe<T>(scoped: Logger, work: () => Promise<T>): Promise<T> {
   }
 }
 
-function scopeFor(tx: DatabaseTransaction, payload: TenantJobPayload, taskName: string, run: RunInfo): TenantJobScope {
+function scopeFor(tx: DatabaseTransaction, payload: TenantJobPayload, taskName: string, run: RunInfo, notices: OutboxNotice[]): TenantJobScope {
   return {
     tx,
     claimEffect: (effectKey) => claimEffect(tx, { workspaceId: payload.workspaceId, effectKey, task: taskName, outboxId: payload.outboxId, runId: run.runId }),
+    noteOutbox: (notice) => {
+      notices.push({ id: notice.id, correlationId: notice.correlationId });
+    },
   };
+}
+
+/** One scoped transaction; its reported outbox rows are announced only after it COMMITTED. */
+async function committed<T>(deps: TenantJobDependencies, scoped: Logger, payload: TenantJobPayload, taskName: string, run: RunInfo, work: (scope: TenantJobScope) => Promise<T>): Promise<T> {
+  const notices: OutboxNotice[] = [];
+  const result = await withWorkspaceJobScope(deps.worker, payload.workspaceId, (tx) => work(scopeFor(tx, payload, taskName, run, notices)));
+  if (notices.length > 0 && deps.outboxCommitted !== undefined) {
+    try {
+      await deps.outboxCommitted(notices);
+    } catch {
+      scoped.warn("outbox.nudge.failed", { outcome: "error", count: notices.length });
+    }
+  }
+  return result;
 }
 
 /** Runs a tenant task in its single workspace. Throws NonRetryableJobError for permanent failures. */
@@ -146,9 +175,7 @@ export async function runTenantJob<T>(
   handler: (context: TenantJobContext) => Promise<T>,
 ): Promise<T> {
   const { payload, scoped } = admitTenantRun(deps, taskName, rawPayload, run);
-  return observe(scoped, () =>
-    withWorkspaceJobScope(deps.worker, payload.workspaceId, (tx) => handler({ ...scopeFor(tx, payload, taskName, run), payload, run })),
-  );
+  return observe(scoped, () => committed(deps, scoped, payload, taskName, run, (scope) => handler({ ...scope, payload, run })));
 }
 
 /**
@@ -167,7 +194,7 @@ export async function runTenantStepJob<T>(
     handler({
       payload,
       run,
-      inScope: (work) => withWorkspaceJobScope(deps.worker, payload.workspaceId, (tx) => work(scopeFor(tx, payload, taskName, run))),
+      inScope: (work) => committed(deps, scoped, payload, taskName, run, work),
     }),
   );
 }

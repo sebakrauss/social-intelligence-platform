@@ -7,13 +7,31 @@ import { describe, expect, it } from "vitest";
 import { AppError } from "@/domain/errors";
 import { object, oneOf } from "@/domain/validation";
 import type { JobRuntime } from "@/platform/jobs";
-import { RELAY_TASK, type OutboxMessage } from "@/platform/outbox";
+import { RELAY_TASK, type OutboxNotice } from "@/platform/outbox";
 import type { WorkspaceCommand } from "@/server/pipeline";
 import { createOutboxNotifier } from "@/server/jobs/outbox-notifier";
 import { createHarness, errorCode, expectOk } from "../../support/harness";
 import { userId } from "../../support/in-memory";
 
 const OWNER = userId(1);
+
+/** A command whose row was inserted by a reviewed definer in its transaction (e.g. a routed Move saga step). */
+function routingCommand(fail: boolean): WorkspaceCommand<Record<string, never>, string, string> {
+  return {
+    scope: "workspace",
+    name: "test.route_outbox",
+    permission: "workflow.internal",
+    requiresStandardMode: false,
+    validate: object({}),
+    execute(_context, _input, tx, env) {
+      const id = env.newId();
+      tx.outbox.routed({ id, correlationId: env.correlationId });
+      return fail ? Promise.reject(new AppError("CONFLICT", {})) : Promise.resolve(id);
+    },
+    audit: () => undefined,
+    respond: (id) => id,
+  };
+}
 
 function appendingCommand(): WorkspaceCommand<{ readonly fail: "yes" | "no"; readonly append: "yes" | "no" }, string, string> {
   return {
@@ -45,7 +63,7 @@ function appendingCommand(): WorkspaceCommand<{ readonly fail: "yes" | "no"; rea
   };
 }
 
-async function setup(notify: (messages: readonly OutboxMessage[]) => Promise<void>) {
+async function setup(notify: (notices: readonly OutboxNotice[]) => Promise<void>) {
   const harness = createHarness({ outboxCommitted: notify });
   const organizationId = await harness.createOrganization(OWNER);
   const workspaceId = await harness.createWorkspace(OWNER, organizationId);
@@ -63,6 +81,19 @@ describe("post-commit outbox notification", () => {
     const commitsBefore = h.unitOfWork.commits;
     const id = expectOk(await h.pipeline.run(appendingCommand(), { workspaceId: h.workspaceId, input: { fail: "no", append: "yes" } }));
     expect(calls).toEqual([{ ids: [id], commitsAtCall: commitsBefore + 1 }]);
+  });
+
+  it("rows routed through a definer get the same post-commit wake-up, and none after a rollback (G5)", async () => {
+    const calls: { ids: string[]; commitsAtCall: number }[] = [];
+    const h = await setup((notices) => {
+      calls.push({ ids: notices.map((notice) => notice.id), commitsAtCall: h.unitOfWork.commits });
+      return Promise.resolve();
+    });
+    const commitsBefore = h.unitOfWork.commits;
+    const id = expectOk(await h.pipeline.run(routingCommand(false), { workspaceId: h.workspaceId, input: {} }));
+    expect(calls).toEqual([{ ids: [id], commitsAtCall: commitsBefore + 1 }]);
+    expect(errorCode(await h.pipeline.run(routingCommand(true), { workspaceId: h.workspaceId, input: {} }))).toBe("CONFLICT");
+    expect(calls).toHaveLength(1);
   });
 
   it("is never called for a rolled-back unit of work, or when nothing was appended", async () => {
@@ -96,7 +127,7 @@ describe("post-commit outbox notification", () => {
       },
       getRun: () => Promise.reject(new Error("not used")),
     };
-    const message = { id: "7f1c0a52-3d0e-4c39-9d0a-0d1f5f7b2c11", correlationId: "corr-notify-1" } as OutboxMessage;
+    const message: OutboxNotice = { id: "7f1c0a52-3d0e-4c39-9d0a-0d1f5f7b2c11", correlationId: "corr-notify-1" };
     await createOutboxNotifier(runtime)([message]);
     await createOutboxNotifier(runtime)([]);
     expect(enqueued).toEqual([

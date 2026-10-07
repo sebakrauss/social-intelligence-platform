@@ -120,7 +120,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   },
   "audit.audit_events": {
     class: "append_only_history",
-    policies: ["append_bound_workspace INSERT app_worker", "append_own INSERT authenticated"],
+    // owner_move_audit (0010): only connections.record_move_audit (human initiator of a LOCAL move, Move actions).
+    policies: ["append_bound_workspace INSERT app_worker", "append_own INSERT authenticated", "owner_move_audit INSERT app_owner"],
     privileges: { authenticated: ["INSERT"], app_worker: ["INSERT"] },
   },
   "system.outbox": {
@@ -130,6 +131,10 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "append_own INSERT authenticated",
       "delivery_metadata SELECT app_system",
       "delivery_status UPDATE app_system",
+      // 0010: only connections.route_move_step (three move topics, matching LOCAL asset_moves row).
+      "owner_move_route INSERT app_owner",
+      // 0010 (G6): RESTRICTIVE — web and worker can't append the three Move saga topics themselves.
+      "no_direct_move_routing INSERT app_worker,authenticated",
     ],
     privileges: {
       authenticated: ["INSERT"],
@@ -221,7 +226,13 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   },
   "connections.discovered_assets": {
     class: "workspace_tenant",
-    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    policies: [
+      "member_read SELECT authenticated",
+      "owner_bound_read SELECT app_owner",
+      "worker_insert INSERT app_worker",
+      "worker_read SELECT app_worker",
+      "worker_update UPDATE app_worker",
+    ],
     privileges: {
       authenticated: ["SELECT"],
       app_worker: ["INSERT", "SELECT", "UPDATE(display_name)", "UPDATE(last_seen_at)", "UPDATE(updated_at)"],
@@ -233,6 +244,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "manage_insert INSERT authenticated",
       "manage_update UPDATE authenticated",
       "member_read SELECT authenticated",
+      // 0010: ACTIVE rows of the bound workspace's organization, for the M-01 definer lookups only (never web/worker).
+      "owner_organization_active_read SELECT app_owner",
       "worker_insert INSERT app_worker",
       "worker_read SELECT app_worker",
       "worker_update UPDATE app_worker",
@@ -253,6 +266,7 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "manage_request INSERT authenticated",
       "manage_update UPDATE authenticated",
       "member_read SELECT authenticated",
+      "owner_bound_read SELECT app_owner",
       "worker_insert INSERT app_worker",
       "worker_read SELECT app_worker",
       "worker_update UPDATE app_worker",
@@ -312,6 +326,12 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   },
 };
 
+/**
+ * The only RESTRICTIVE policies (every other policy is permissive). A restrictive policy narrows what the listed roles'
+ * permissive policies allow; flipping one either way changes isolation, so the set is pinned exactly.
+ */
+export const RESTRICTIVE_POLICIES: readonly string[] = ["system.outbox no_direct_move_routing"];
+
 /** EXECUTE grants per function (non-owner grantees). Every function in an application schema is listed. */
 export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]>> = {
   "app.current_workspace()": ["app_worker", "authenticated"],
@@ -338,4 +358,9 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "credentials.store_envelope(uuid,uuid,integer,bytea,timestamp with time zone)": ["app_worker", "authenticated"],
   "credentials.load_envelope(uuid)": ["app_worker"],
   "credentials.delete_envelope(uuid)": ["app_worker", "authenticated"],
+  // Step 5F (0010): M-01 lookup, Move routing, initiator authority and initiator-attributed Move audit.
+  "connections.locate_active_link(uuid)": ["app_worker", "authenticated"],
+  "connections.route_move_step(uuid,text,text,timestamp with time zone)": ["app_worker", "authenticated"],
+  "connections.move_initiator_can_manage(uuid)": ["app_worker"],
+  "connections.record_move_audit(uuid,text,text)": ["app_worker"],
 };

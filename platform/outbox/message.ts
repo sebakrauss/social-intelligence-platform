@@ -23,8 +23,19 @@ export interface OutboxMessage {
   readonly createdAt: Date;
 }
 
+/** What a post-commit relay wake-up needs to know about a committed outbox row: identifiers only. */
+export interface OutboxNotice {
+  readonly id: string;
+  readonly correlationId: string;
+}
+
 export interface OutboxWriter {
   append(message: OutboxMessage): Promise<void>;
+  /**
+   * Reports a row THIS transaction inserted through a reviewed definer function (e.g. connections.route_move_step),
+   * so it gets the same post-commit relay wake-up as an appended one. Writes nothing.
+   */
+  routed(notice: OutboxNotice): void;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

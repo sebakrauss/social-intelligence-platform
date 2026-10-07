@@ -109,8 +109,11 @@ const NO_CONNECTIONS: ConnectionStore = {
   connections: { get: unavailable, list: unavailable, insert: unavailable, update: unavailable },
   events: { append: unavailable },
   credentials: { store: unavailable, delete: unavailable },
-  connectedAccounts: { get: unavailable, deactivateForConnection: unavailable },
-  discoveredAssets: { list: unavailable },
+  connectedAccounts: { get: unavailable, findForAsset: unavailable, activate: unavailable, list: unavailable, unlink: unavailable, deactivateForConnection: unavailable },
+  accountEvents: { append: unavailable },
+  discoveredAssets: { list: unavailable, get: unavailable },
+  links: { locateActive: unavailable },
+  moves: { getIncoming: unavailable, findRequested: unavailable, insertIncoming: unavailable, retry: unavailable, routeRelease: unavailable, routeRetry: unavailable },
 };
 
 export class InMemoryUnitOfWork implements UnitOfWork {
@@ -147,7 +150,7 @@ export class InMemoryUnitOfWork implements UnitOfWork {
       },
     };
     try {
-      const outbox: OutboxWriter = { append: (message) => done(void draft.outbox.push(message)) };
+      const outbox: OutboxWriter = { append: (message) => done(void draft.outbox.push(message)), routed: () => undefined };
       const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS, capability: { header: unavailable, entries: unavailable } });
       this.state = draft;
       this.commits += 1;

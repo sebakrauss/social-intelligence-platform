@@ -5,11 +5,11 @@
  */
 import type { JobRuntime } from "@/platform/jobs";
 import { createTriggerDevRuntime } from "@/platform/jobs/trigger-dev";
-import { nudgeRelay, type OutboxMessage } from "@/platform/outbox";
+import { nudgeRelay, type OutboxNotice } from "@/platform/outbox";
 
-export function createOutboxNotifier(runtime: JobRuntime): (messages: readonly OutboxMessage[]) => Promise<void> {
-  return async (messages) => {
-    const first = messages[0];
+export function createOutboxNotifier(runtime: JobRuntime): (notices: readonly OutboxNotice[]) => Promise<void> {
+  return async (notices) => {
+    const first = notices[0];
     if (first === undefined) return;
     await nudgeRelay(runtime, { outboxId: first.id, correlationId: first.correlationId });
   };

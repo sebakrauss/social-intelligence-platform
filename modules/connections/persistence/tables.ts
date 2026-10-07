@@ -1,8 +1,8 @@
 /**
- * Drizzle mappings of the connections tables (db/migrations/0007, 0008). The SQL migrations are the source of
- * truth for structure, RLS, grants and constraints; these definitions only type the queries. Owned by the
- * connections module: no other module reads or writes these tables. The credentials schema has no mapping at
- * all: it is reached only through the reviewed definer functions.
+ * Drizzle mappings of the connections tables (db/migrations/0007, 0008; 0010 adds definer functions, no columns).
+ * The SQL migrations are the source of truth for structure, RLS, grants and constraints; these definitions only
+ * type the queries. Owned by the connections module: no other module reads or writes these tables. The credentials
+ * schema has no mapping at all: it is reached only through the reviewed definer functions.
  */
 import { integer, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
@@ -79,8 +79,11 @@ export const connectedAccounts = connections.table("connected_accounts", {
   providerAssetId: text("provider_asset_id").notNull(),
   assetClass: text("asset_class").notNull(),
   status: text("status").notNull(),
+  activatedAt: at("activated_at").notNull(),
   deactivatedAt: at("deactivated_at"),
   deactivationReason: text("deactivation_reason"),
+  moveId: uuid("move_id"),
+  createdAt: at("created_at").notNull(),
   updatedAt: at("updated_at").notNull(),
 });
 
@@ -95,4 +98,21 @@ export const connectedAccountEvents = connections.table("connected_account_event
   actorType: text("actor_type").notNull(),
   actorUserId: uuid("actor_user_id"),
   occurredAt: at("occurred_at").notNull(),
+});
+
+export const assetMoves = connections.table("asset_moves", {
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  moveId: uuid("move_id").notNull(),
+  side: text("side").notNull(),
+  counterpartWorkspaceId: uuid("counterpart_workspace_id").notNull(),
+  connectionId: uuid("connection_id"),
+  connectedAccountId: uuid("connected_account_id"),
+  platform: text("platform").notNull(),
+  providerAssetId: text("provider_asset_id"),
+  initiatorUserId: uuid("initiator_user_id").notNull(),
+  status: text("status").notNull(),
+  reasonCode: text("reason_code"),
+  createdAt: at("created_at").notNull(),
+  updatedAt: at("updated_at").notNull(),
 });

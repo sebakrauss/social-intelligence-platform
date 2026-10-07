@@ -8,7 +8,7 @@
 import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { APPLICATION_SCHEMAS, FUNCTION_EXECUTE, SCHEMA_USAGE, TABLE_CLASSIFICATION } from "@/db/schema/classification";
+import { APPLICATION_SCHEMAS, FUNCTION_EXECUTE, RESTRICTIVE_POLICIES, SCHEMA_USAGE, TABLE_CLASSIFICATION } from "@/db/schema/classification";
 import { auditEvents } from "@/modules/audit/persistence";
 import { invitations, organizationMemberships, organizations, workspaceMemberships, workspaces } from "@/modules/tenancy/persistence";
 import { outbox } from "@/platform/db";
@@ -57,7 +57,7 @@ export function defineIntrospectionSuite(getTarget: () => DbTarget): void {
       const rows = await query<{ name: string; policy: string }>(
         `select n.nspname || '.' || c.relname as name,
                 p.polname || ' ' || case p.polcmd when 'r' then 'SELECT' when 'a' then 'INSERT' when 'w' then 'UPDATE' when 'd' then 'DELETE' else 'ALL' end
-                || ' ' || coalesce((select string_agg(case when r = 0 then 'PUBLIC' else pg_get_userbyid(r) end, ',' order by 1) from unnest(p.polroles) r), '') as policy
+                || ' ' || coalesce((select string_agg(g, ',' order by g) from (select case when r = 0 then 'PUBLIC' else pg_get_userbyid(r)::text end as g from unnest(p.polroles) r) roles), '') as policy
            from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace
           where n.nspname = any($1::text[])`, [schemas]);
       for (const [name, expected] of Object.entries(TABLE_CLASSIFICATION)) {
@@ -65,6 +65,14 @@ export function defineIntrospectionSuite(getTarget: () => DbTarget): void {
         expect(actual, name).toEqual([...expected.policies].sort());
       }
       expect(Object.values(COMMANDS)).toContain("ALL");
+    });
+
+    it("exactly the pinned policies are RESTRICTIVE; every other policy is permissive", async () => {
+      const rows = await query<{ policy: string }>(
+        `select n.nspname || '.' || c.relname || ' ' || p.polname as policy
+           from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace
+          where n.nspname = any($1::text[]) and not p.polpermissive`, [schemas]);
+      expect(rows.map((row) => row.policy).sort()).toEqual([...RESTRICTIVE_POLICIES].sort());
     });
 
     it("each table grants exactly the expected privileges, to runtime roles only", async () => {

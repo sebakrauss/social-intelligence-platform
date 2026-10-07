@@ -7,8 +7,9 @@
  *   - Starts the Trigger.dev CLI as a PINNED, EPHEMERAL tool (`npx trigger.dev@<pinned>`), outside the
  *     repository dependency tree, with trigger.managed-test.config.ts (test tasks only, no schedules). The
  *     CLI uses the operator's own CLI login (`npx trigger.dev@<pinned> login`); this script never handles it.
- *   - The dev worker gets ONLY the worker runtime URL and the CA path, through a 0600 temp file that is
- *     deleted afterwards. All CLI output is redacted before display; secrets are never printed.
+ *   - The dev worker gets ONLY the worker and system runtime URLs (exactly what a job deployment holds: the
+ *     Step 5H relay task runs in system scope) and the CA path, through a 0600 temp file that is deleted
+ *     afterwards. Never the web or migration credential. All CLI output is redacted; secrets are never printed.
  *   - The dev session is stopped at the end, so no test task keeps running.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -59,7 +60,7 @@ const scratch = mkdtempSync(path.join(os.tmpdir(), "sip-jobs-managed-"));
 const envFile = path.join(scratch, "worker.env");
 writeFileSync(
   envFile,
-  `${RUNTIME_URL_VARIABLES.worker}=${workerUrl}\n${VARIABLES.sslRootCert}=${path.resolve(ROOT, env[VARIABLES.sslRootCert] ?? "")}\n`,
+  `${RUNTIME_URL_VARIABLES.worker}=${workerUrl}\n${RUNTIME_URL_VARIABLES.system}=${env[RUNTIME_URL_VARIABLES.system] ?? ""}\n${VARIABLES.sslRootCert}=${path.resolve(ROOT, env[VARIABLES.sslRootCert] ?? "")}\n`,
   { mode: 0o600 },
 );
 
