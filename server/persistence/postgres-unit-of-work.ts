@@ -11,6 +11,8 @@
 import { AppError } from "@/domain/errors";
 import { createPostgresAuditLog } from "@/modules/audit/persistence";
 import { createPostgresConnectionStore } from "@/modules/connections/persistence";
+import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
+import type { CapabilityProfileStore, CapabilityReadStore } from "@/modules/capability";
 import { createPostgresTenancyStore } from "@/modules/tenancy/persistence";
 import { classifyDatabaseError, createPostgresOutbox, withUserScope, type RuntimeDatabase } from "@/platform/db";
 import type { Transaction, TransactionScope, UnitOfWork } from "@/server/pipeline";
@@ -28,6 +30,8 @@ export function normalizeDatabaseError(error: unknown): unknown {
   }
 }
 
+const readOnly = (store: CapabilityProfileStore): CapabilityReadStore => ({ header: store.header, entries: store.entries });
+
 export function createPostgresUnitOfWork(database: RuntimeDatabase<"web">): UnitOfWork {
   return {
     async run<T>(scope: TransactionScope, work: (tx: Transaction) => Promise<T>): Promise<T> {
@@ -38,6 +42,7 @@ export function createPostgresUnitOfWork(database: RuntimeDatabase<"web">): Unit
             audit: createPostgresAuditLog(tx),
             outbox: createPostgresOutbox(tx),
             connections: createPostgresConnectionStore(tx),
+            capability: readOnly(createPostgresCapabilityStore(tx)),
           }),
         );
       } catch (error) {

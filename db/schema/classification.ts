@@ -40,7 +40,7 @@ const ALL_DML = ["SELECT", "INSERT", "UPDATE", "DELETE"] as const;
 
 /** Schemas owned by this application. Any other schema owned by app_owner fails the classification test. */
 export const APPLICATION_SCHEMAS = [
-  "app", "app_private", "tenancy", "audit", "system", "idempotency", "connections", "credentials", "app_migrations", "t26_fixture",
+  "app", "app_private", "tenancy", "audit", "system", "idempotency", "connections", "credentials", "capability", "app_migrations", "t26_fixture",
 ] as const;
 
 /** Schema USAGE per runtime role (no other role may hold USAGE or CREATE). */
@@ -54,6 +54,7 @@ export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number],
   connections: ["authenticated", "app_worker"],
   // USAGE only to reach the credential definer functions: no runtime role holds any privilege on its table.
   credentials: ["authenticated", "app_worker"],
+  capability: ["authenticated", "app_worker"],
   app_migrations: [],
   t26_fixture: ["authenticated", "app_worker"],
 };
@@ -259,6 +260,34 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     privileges: {
       authenticated: ["INSERT", "SELECT", "UPDATE(reason_code)", "UPDATE(status)", "UPDATE(updated_at)"],
       app_worker: ["INSERT", "SELECT", "UPDATE(connected_account_id)", "UPDATE(reason_code)", "UPDATE(status)", "UPDATE(updated_at)"],
+    },
+  },
+  // Step 5E (0009): derived, recomputable current state; written only by the worker, read by non-guest members.
+  "capability.account_profiles": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: {
+      authenticated: ["SELECT"],
+      app_worker: [
+        "INSERT", "SELECT", "UPDATE(catalog_id)", "UPDATE(catalog_revision)", "UPDATE(evaluated_at)", "UPDATE(facts_account_identity_known)",
+        "UPDATE(facts_asset_class)", "UPDATE(facts_available)", "UPDATE(facts_granted_permissions)", "UPDATE(facts_linked_ad_account_ids)",
+        "UPDATE(facts_observed_at)", "UPDATE(input_digest)", "UPDATE(inputs_as_of)", "UPDATE(last_verified_at)", "UPDATE(observations)",
+        "UPDATE(revision)", "UPDATE(updated_at)",
+      ],
+    },
+  },
+  "capability.profile_entries": {
+    class: "workspace_tenant",
+    policies: [
+      "member_read SELECT authenticated", "worker_delete DELETE app_worker", "worker_insert INSERT app_worker", "worker_read SELECT app_worker",
+      "worker_update UPDATE app_worker",
+    ],
+    privileges: {
+      authenticated: ["SELECT"],
+      app_worker: [
+        "DELETE", "INSERT", "SELECT", "UPDATE(catalog_validation)", "UPDATE(evaluated_at)", "UPDATE(evidence_ref)", "UPDATE(limitation_code)",
+        "UPDATE(limitation_value)", "UPDATE(observation_refs)", "UPDATE(reason_codes)", "UPDATE(revision)", "UPDATE(state)",
+      ],
     },
   },
   "credentials.provider_credentials": {

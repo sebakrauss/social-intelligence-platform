@@ -152,6 +152,28 @@ The web callback route is `app/api/oauth/[provider]/callback`. Both runtimes ref
 outside development/test. The simulator world is process-local, so a cross-process local run (web + jobs)
 does not share issued credentials; that end-to-end path is Step 5J.
 
+## Capability (Step 5E)
+
+`modules/capability` answers "for this Connected Account, content type, source and capability, can the product do it
+right now, and why?" in three separate layers (TA §16). Migration 0009 stores the profiles.
+
+1. **Platform Capability Catalog** is code-versioned reference data. The **platform** catalog (Facebook,
+   Instagram, TikTok through real adapters) has **no entries**: everything is `UNKNOWN_NOT_VALIDATED` until
+   real-provider API validation produces evidence-backed entries (PD OQ-18, OQ-19, OQ-27 stay VALIDATE). The
+   **simulator** catalog is simulator contract behavior only. It is selected only for the simulator provider and
+   refused outside development/test.
+2. **Account Capability Profile** is computed by a pure function: catalog + normalized `describeAccount` facts +
+   explicit observations → profile. It is stored per Connected Account with the integer catalog revision, the
+   inputs, the reasons and the as-of time. Freshness: a higher catalog revision wins; within a revision, newer
+   inputs win; same revision and same time with different content is a **conflict** and is rejected. The digest
+   is used only for equality, never for ordering.
+3. **Runtime overlay**: connection health turns a usable capability into `TEMPORARILY_UNAVAILABLE` without
+   rewriting the stored profile.
+
+The evaluation never reads data volume. Only `PermissionMissing` and `TargetNotEligible(unsupported_for_target)` are
+observations; transient and rate-limited outcomes never change a profile. Linking accounts is Step 5F, which will
+call `refreshAccountCapabilities` after activation.
+
 ## Known tooling limitation
 
 Next.js-specific lint rules (`eslint-config-next` / `@next/eslint-plugin-next`) are temporarily not used: their dependency chain carries an unresolved high-severity advisory (GHSA-vfj7-8cjw-p6xm, `braces`) with no patched version, and `npm audit` is not suppressed. Linting currently covers TypeScript (strict, type-checked) and React. Revisit when an audit-clean official option exists.

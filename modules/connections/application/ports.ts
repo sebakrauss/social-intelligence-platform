@@ -15,6 +15,7 @@ import type {
   AttemptStatus,
   AuthorizableProvider,
   ConnectAttempt,
+  ConnectedAccount,
   Connection,
   ConnectionEvent,
   DiscoveredAsset,
@@ -50,6 +51,7 @@ export interface ConnectionStore {
     delete(credentialId: string): Promise<boolean>;
   };
   readonly connectedAccounts: {
+    get(id: string): Promise<ConnectedAccount | undefined>;
     /** Deactivates every ACTIVE connected account of a connection (with history). Returns how many. */
     deactivateForConnection(connectionId: string, reason: "DISCONNECTED" | "REMOVED", now: Date, actor: UserId, newId: () => string): Promise<number>;
   };
@@ -66,6 +68,7 @@ export interface ConnectionWorkerStore {
   readonly credentials: {
     load(credentialId: string): Promise<{ readonly connectionId: string; readonly envelope: Uint8Array } | undefined>;
   };
+  readonly connectedAccounts: { get(id: string): Promise<ConnectedAccount | undefined> };
   readonly discoveredAssets: {
     /** Insert, or refresh display name and last-seen of the same (connection, provider asset id). Idempotent. */
     upsert(asset: DiscoveredAsset): Promise<void>;

@@ -20,6 +20,7 @@ import {
   CONNECTION_PROVIDERS,
   EXCHANGE_FAILURE_CODES,
   type ConnectAttempt,
+  type ConnectedAccount,
   type Connection,
   type ConnectionEvent,
   type DiscoveredAsset,
@@ -107,6 +108,37 @@ function eventRow(event: ConnectionEvent): typeof connectionEvents.$inferInsert 
     actorType: event.actor.type,
     actorUserId: event.actor.type === "user" ? event.actor.userId : null,
     occurredAt: event.occurredAt,
+  };
+}
+
+async function getConnectedAccount(tx: DatabaseTransaction, id: string): Promise<ConnectedAccount | undefined> {
+  const table = "connected_accounts";
+  const rows = await tx
+    .select({
+      id: connectedAccounts.id,
+      organizationId: connectedAccounts.organizationId,
+      workspaceId: connectedAccounts.workspaceId,
+      connectionId: connectedAccounts.connectionId,
+      platform: connectedAccounts.platform,
+      providerAssetId: connectedAccounts.providerAssetId,
+      assetClass: connectedAccounts.assetClass,
+      status: connectedAccounts.status,
+    })
+    .from(connectedAccounts)
+    .where(eq(connectedAccounts.id, id))
+    .limit(2);
+  if (rows.length > 1) corrupt(table);
+  const row = rows[0];
+  if (row === undefined) return undefined;
+  return {
+    id: row.id,
+    organizationId: ids(parseOrganizationId(row.organizationId), table),
+    workspaceId: ids(parseWorkspaceId(row.workspaceId), table),
+    connectionId: row.connectionId,
+    platform: closed(ASSET_PLATFORMS, row.platform, table),
+    providerAssetId: row.providerAssetId,
+    assetClass: closed(ASSET_CLASSES, row.assetClass, table),
+    status: closed(["ACTIVE", "INACTIVE"] as const, row.status, table),
   };
 }
 
@@ -238,6 +270,7 @@ export function createPostgresConnectionStore(tx: DatabaseTransaction): Connecti
       },
     },
     connectedAccounts: {
+      get: (id) => getConnectedAccount(tx, id),
       async deactivateForConnection(connectionId, reason, now, actor, newId) {
         const rows = await tx
           .update(connectedAccounts)
@@ -314,6 +347,7 @@ export function createPostgresConnectionWorkerStore(
         return row === undefined ? undefined : { connectionId: row.connection_id, envelope: new Uint8Array(row.envelope) };
       },
     },
+    connectedAccounts: { get: (id) => getConnectedAccount(tx, id) },
     discoveredAssets: {
       async upsert(asset) {
         await tx

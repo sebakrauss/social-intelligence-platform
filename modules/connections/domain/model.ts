@@ -130,6 +130,18 @@ export interface DiscoveredAsset {
   readonly lastSeenAt: Date;
 }
 
+/** A Connected Account as other steps need it (identity, asset dimensions, status). Linking itself is Step 5F. */
+export interface ConnectedAccount {
+  readonly id: string;
+  readonly organizationId: OrganizationId;
+  readonly workspaceId: WorkspaceId;
+  readonly connectionId: string;
+  readonly platform: AssetPlatform;
+  readonly providerAssetId: string;
+  readonly assetClass: AssetClass;
+  readonly status: "ACTIVE" | "INACTIVE";
+}
+
 // ── State routing (decision B3) ─────────────────────────────────────────────────────────────────────────
 
 const STATE_FORMAT = /^v1\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.[A-Za-z0-9_-]{43}$/;

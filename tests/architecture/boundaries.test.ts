@@ -123,6 +123,9 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["credential-local-keyring-composed-only", "modules/connections/application/uses-local-keyring.ts", "platform/crypto/credentials/local-sealer.ts"],
   ["integrations-no-credential-crypto", "integrations/providers/meta/uses-credential-crypto.ts", "platform/crypto/credentials/seal.ts"],
   // OAuth secrets (Step 5D, B1): the stateless PKCE derivation key is web-only, composed by server/
+  // Capability (Step 5E): evaluated on the server only; the UI renders the result
+  ["capability-evaluated-server-side-only", "app/evaluates-capability.ts", "modules/capability/index.ts"],
+  ["capability-evaluated-server-side-only", "ui/evaluates-capability.ts", "modules/capability/index.ts"],
   ["oauth-secrets-web-composition-only", "jobs/derives-pkce.ts", "platform/crypto/oauth.ts"],
   ["oauth-secrets-web-composition-only", "modules/connections/application/derives-pkce.ts", "platform/crypto/oauth.ts"],
   ["oauth-secrets-web-composition-only", "integrations/providers/simulator/derives-pkce.ts", "platform/crypto/oauth.ts"],

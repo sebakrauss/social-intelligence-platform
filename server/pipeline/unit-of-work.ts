@@ -7,6 +7,7 @@
  */
 import type { UserId, WorkspaceId } from "@/domain/ids";
 import type { AuditLog } from "@/modules/audit";
+import type { CapabilityReadStore } from "@/modules/capability";
 import type { ConnectionStore } from "@/modules/connections";
 import type { TenancyStore } from "@/modules/tenancy";
 import type { OutboxWriter } from "@/platform/outbox";
@@ -16,6 +17,8 @@ export interface Transaction {
   readonly audit: AuditLog;
   readonly outbox: OutboxWriter;
   readonly connections: ConnectionStore;
+  /** Read only: capability profiles are written by the job runtime (no web write grant exists). */
+  readonly capability: CapabilityReadStore;
 }
 
 /**

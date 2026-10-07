@@ -11,6 +11,7 @@ export {
   type AttemptStatus,
   type AuthorizableProvider,
   type ConnectAttempt,
+  type ConnectedAccount,
   type Connection,
   type ConnectionProblemCode,
   type ConnectionProvider,
@@ -49,3 +50,4 @@ export {
   type DiscoveryProblem,
 } from "./application/discovery";
 export { CredentialCodecError, decodeProviderCredential, encodeProviderCredential } from "./application/credential-codec";
+export { refreshAccountCapabilities, type CapabilityRefreshDependencies, type CapabilityRefreshOutcome } from "./application/capability-refresh";
