@@ -121,3 +121,12 @@ export function createRuntimeDatabaseFromEnv<K extends RuntimeKind>(
     sslRootCert: resolveSslRootCert(env),
   });
 }
+
+/**
+ * Connectivity probe for health checks (TA-11A): one round trip on the runtime's own pool, as its login role,
+ * through the same pooler and TLS settings as every query. `select 1` reads no table; the login roles hold no
+ * table privileges of their own, so the probe can't see tenant data and doesn't need (or bypass) RLS.
+ */
+export async function pingDatabase(database: RuntimeDatabase): Promise<void> {
+  await database.pool.query("select 1");
+}

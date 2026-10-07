@@ -38,7 +38,7 @@ import { createPostgresUnitOfWork } from "@/server/persistence/postgres-unit-of-
 import { createActionPipeline, type UserCommand, type WorkspaceCommand } from "@/server/pipeline";
 import { clearSwitch, setSwitch } from "../../../tools/ops/switches";
 import { FakeJobRuntime, type FakeHandler } from "../../support/fake-job-runtime";
-import { findReferences, sourceFiles } from "../../support/source-scan";
+import { WEB_ENVIRONMENT_GUARD, codeWithoutForbiddenList, findReferences, sourceFiles } from "../../support/source-scan";
 import { FakeIdentity, verifiedUser } from "../../support/in-memory";
 import { errorCode, expectOk } from "../../support/harness";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
@@ -824,13 +824,20 @@ export function defineT27Suite(getTarget: () => DbTarget): void {
       expect(seen.map((entry) => entry?.["login"])).toEqual(["web_login", "worker_login", "system_login"]);
       for (const entry of seen) expect(entry).toMatchObject({ superuser: false, bypass_rls: false, create_role: false });
 
-      const runtimeFiles = sourceFiles(["app", "ui", "server", "domain", "modules", "platform", "integrations", "ai", "mutations", "jobs", "trigger.config.ts"]);
+      // The hosted-web guard (TA-11A) must NAME these credentials to refuse them: it is scanned separately below, with
+      // only its closed refusal list removed, so it can never read or connect with them either.
+      const runtimeFiles = sourceFiles(["app", "ui", "server", "domain", "modules", "platform", "integrations", "ai", "mutations", "jobs", "trigger.config.ts"])
+        .filter((file) => file !== WEB_ENVIRONMENT_GUARD);
       expect(runtimeFiles.length).toBeGreaterThan(0);
       // (platform/db/connection.ts names forbidden roles in its deny list; credentials are what must never be read.)
       expect(findReferences(runtimeFiles, [/DATABASE_MIGRATION_URL/, /SERVICE_ROLE_KEY/i, /SUPABASE_SECRET_KEY/i, /postgres(ql)?:\/\/(postgres|supabase_admin|service_role)[.:@]/])).toEqual([]);
       // The job deployment never reads the web credential; the web never reads worker/system credentials.
       expect(findReferences(sourceFiles(["jobs", "trigger.config.ts"]), [/DATABASE_WEB_URL/, /createRuntimeDatabaseFromEnv\(\s*"web"/])).toEqual([]);
-      expect(findReferences(sourceFiles(["app", "ui", "server"]), [/DATABASE_(WORKER|SYSTEM)_URL/, /createRuntimeDatabaseFromEnv\(\s*"(worker|system)"/])).toEqual([]);
+      expect(findReferences(sourceFiles(["app", "ui", "server"]).filter((file) => file !== WEB_ENVIRONMENT_GUARD), [/DATABASE_(WORKER|SYSTEM)_URL/, /createRuntimeDatabaseFromEnv\(\s*"(worker|system)"/])).toEqual([]);
+      const guard = codeWithoutForbiddenList(WEB_ENVIRONMENT_GUARD);
+      for (const pattern of [/DATABASE_(MIGRATION|WORKER|SYSTEM)_URL/, /SERVICE_ROLE_KEY/i, /SUPABASE_SECRET_KEY/i, /createRuntimeDatabaseFromEnv/, /postgres(ql)?:\/\//]) {
+        expect(pattern.test(guard), `${WEB_ENVIRONMENT_GUARD}: ${pattern.source}`).toBe(false);
+      }
     });
   });
 }

@@ -57,6 +57,8 @@ function linkOutcomeFor(code: string | undefined): LinkRequestOutcome {
 /** Return type inferred from the current (non-deprecated) getAll/setAll overload. */
 function createSupabaseClient(config: SupabaseAuthConfig, cookies: CookieJar) {
   return createServerClient(config.url, config.publishableKey, {
+    // Only the Secure attribute is set explicitly; every other cookie default of the library is kept.
+    ...(config.secureCookies ? { cookieOptions: { secure: true } } : {}),
     cookies: {
       getAll: () => cookies.getAll().map(({ name, value }) => ({ name, value })),
       setAll: (toSet) => {

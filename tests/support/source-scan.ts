@@ -44,3 +44,17 @@ export function findReferences(files: readonly string[], patterns: readonly RegE
   }
   return hits;
 }
+
+/**
+ * The hosted-web environment guard must NAME the credentials it refuses (TA-11A). Guard tests that forbid those names
+ * in runtime code exempt exactly this file, and only after removing its single closed `FORBIDDEN_WEB_VARIABLES` list
+ * (and comments): the names may occur nowhere else in it, so it can refuse them but never use them.
+ */
+export const WEB_ENVIRONMENT_GUARD = "server/http/web-environment.ts";
+
+export function codeWithoutForbiddenList(relative: string): string {
+  const code = codeOf(relative);
+  const stripped = code.replace(/export const FORBIDDEN_WEB_VARIABLES = \[[^\]]*\] as const;/, "");
+  if (stripped === code) throw new Error(`${relative}: the FORBIDDEN_WEB_VARIABLES list was not found`);
+  return stripped;
+}

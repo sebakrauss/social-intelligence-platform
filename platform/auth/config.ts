@@ -6,7 +6,14 @@
 export interface SupabaseAuthConfig {
   readonly url: string;
   readonly publishableKey: string;
+  /**
+   * Session cookies carry the Secure attribute (TA-11A): always, except in local development/test runtimes, where
+   * the app is served over plain http://localhost. SameSite and the other cookie defaults are unchanged.
+   */
+  readonly secureCookies: boolean;
 }
+
+const LOCAL_NODE_ENVS: readonly string[] = ["development", "test"];
 
 export const AUTH_ENV = {
   url: "NEXT_PUBLIC_SUPABASE_URL",
@@ -24,7 +31,7 @@ export function readSupabaseAuthConfig(env: Readonly<Record<string, string | und
     const parsed = new URL(url);
     const local = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
     if (parsed.protocol !== "https:" && !(local && parsed.protocol === "http:")) return undefined;
-    return { url: parsed.origin, publishableKey };
+    return { url: parsed.origin, publishableKey, secureCookies: !LOCAL_NODE_ENVS.includes(env["NODE_ENV"] ?? "") };
   } catch {
     return undefined;
   }

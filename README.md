@@ -208,6 +208,44 @@ it is allowed in Monitor-only. No provider is called in these transactions.
 - `connections.account.list` (read-only, `workspace.read_operational`) lists the workspace's Connected Accounts:
   identifiers, dimensions and status only.
 
+## Hosted web (TA-11A)
+
+The web runtime is prepared for hosting (Vercel recommended, TA-11) without changing the architecture.
+
+- **Environment contract.**
+  - Required secret: `DATABASE_WEB_URL` (`web_login` through the transaction pooler).
+  - Required config: `DATABASE_SSL_ROOT_CERT_PEM`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
+    `APP_BASE_URL` (the deployment's stable HTTPS origin; its `/auth/callback` must be in Supabase Auth's redirect
+    allowlist exactly, never as a wildcard).
+  - Not needed for TA-11A: `TRIGGER_SECRET_KEY` / `TRIGGER_PREVIEW_BRANCH` (only the post-commit wake-up uses them;
+    it stays best effort), `OAUTH_PKCE_DERIVATION_KEY`, `LOCAL_KEYRING_KEY`, any provider or AWS/KMS credential.
+  - **Refused**: a production-built web instance answers 503 to every request if any of `DATABASE_WORKER_URL`,
+    `DATABASE_SYSTEM_URL`, `DATABASE_MIGRATION_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SECRET_KEY`,
+    `TRIGGER_PREVIEW_SECRET_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+    `SUPABASE_PROJECT_REF`, `TRIGGER_PROJECT_REF`, `APP_DEPLOYMENT_ENV` or `CAPABILITY_PROVIDER_MODE` is set (even
+    empty). The log names the variable, never its value. Development and test runtimes are exempt.
+- **Security headers** on every response: `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`,
+  `object-src 'none'`, `X-Frame-Options`, `nosniff`, `Referrer-Policy: no-referrer`, a deny-all
+  `Permissions-Policy`, and HSTS. A full script/style CSP needs per-request nonces and is **not** claimed yet.
+- **Cookies**: Supabase session cookies carry `Secure` outside development/test; `SameSite=Lax` is unchanged.
+- **Pool**: one connection per hosted web instance; local development keeps 4.
+- **Health**: `GET /api/health` answers `200 {"status":"ok"}` after one round trip through the real web pool
+  (guards, `web_login`, pooler, verified TLS), or a generic `503 {"status":"unavailable"}`. It is never cached.
+- **Provider connections** stay unavailable in any hosted runtime: the simulator and the local keyring are refused
+  outside development/test. They arrive with real OAuth adapters and KMS (5I).
+
+**TA-11A will validate** the hosted Next.js build and runtime, HTTPS, Supabase Auth sign-in and session, Secure
+cookies, `web_login` over verified TLS through the transaction pooler, tenant/workspace RLS with the read operations
+the product has today, the refusal of privileged credentials, the headers, the health endpoint, and the absence of
+provider and production credentials. It does **not** claim a hosted domain-command commit, the hosted web → Trigger.dev
+post-commit wake-up, provider OAuth or API calls, or KMS. Those are **TA-11B** (the first real product surface that
+runs a domain command through the pipeline) and later gates. **TA-11 stays OPEN until TA-11B is done.**
+
+**Deferred: schema-version marker (TA §63.2).** Web and jobs don't yet check that the database schema matches the
+code they were built from. Until they do, deploying web or jobs against a database at a different migration level
+isn't refused up front: it fails later, at the first query that touches a missing or changed object. The mitigation
+until then: expand-only migrations, apply migrations before deploying, and deploy web and jobs from the same commit.
+
 ## Deployed non-production validation (TA-Q-31)
 
 A deployed job worker is a production build (`NODE_ENV=production`), so the explicit tier `APP_DEPLOYMENT_ENV`

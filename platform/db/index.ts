@@ -12,7 +12,7 @@ export {
   type RuntimeKind,
 } from "./connection";
 export { classifyDatabaseError, postgresError, type DatabaseFailure } from "./errors";
-export { createRuntimeDatabase, createRuntimeDatabaseFromEnv, type RuntimeDatabase, type RuntimePoolOptions } from "./pool";
+export { createRuntimeDatabase, createRuntimeDatabaseFromEnv, pingDatabase, type RuntimeDatabase, type RuntimePoolOptions } from "./pool";
 export {
   ALLOWED_CLAIM_ROLES,
   ScopeError,

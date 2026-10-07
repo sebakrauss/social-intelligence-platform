@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { codeOf, findReferences, sourceFiles } from "../support/source-scan";
+import { WEB_ENVIRONMENT_GUARD, codeOf, codeWithoutForbiddenList, findReferences, sourceFiles } from "../support/source-scan";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const json = (file: string): Record<string, unknown> => JSON.parse(readFileSync(path.join(root, file), "utf8")) as Record<string, unknown>;
@@ -57,7 +57,11 @@ describe("job runtime credentials", () => {
   });
 
   it("the web never reads the worker or system credential", () => {
-    expect(findReferences(sourceFiles(["app", "ui", "server", "proxy.ts"]), [/DATABASE_(WORKER|SYSTEM)_URL/, /createRuntimeDatabaseFromEnv\(\s*"(worker|system)"/])).toEqual([]);
+    const patterns = [/DATABASE_(WORKER|SYSTEM)_URL/, /createRuntimeDatabaseFromEnv\(\s*"(worker|system)"/];
+    const web = sourceFiles(["app", "ui", "server", "proxy.ts"]).filter((file) => file !== WEB_ENVIRONMENT_GUARD);
+    expect(findReferences(web, patterns)).toEqual([]);
+    // The hosted-web guard names them only in its closed refusal list (TA-11A), never anywhere else.
+    expect(patterns.filter((pattern) => pattern.test(codeWithoutForbiddenList(WEB_ENVIRONMENT_GUARD)))).toEqual([]);
   });
 
   it("Trigger.dev configuration comes from the environment, never from literals", () => {

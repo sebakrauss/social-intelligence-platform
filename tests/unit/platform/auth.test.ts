@@ -64,7 +64,7 @@ describe("auth adapter isolation", () => {
 
   it("builds an AuthPort that exposes only the port's methods (no network on construction)", () => {
     const port = createSupabaseAuth(
-      { url: "https://project.example.test", publishableKey: "public-test-key" },
+      { url: "https://project.example.test", publishableKey: "public-test-key", secureCookies: true },
       { getAll: () => [], setAll: () => undefined },
     );
     expect(Object.keys(port).sort()).toEqual(["completeEmailLink", "getVerifiedUser", "requestSignInLink", "signInWithPassword", "signOut", "signUpWithPassword"]);
@@ -72,10 +72,11 @@ describe("auth adapter isolation", () => {
 });
 
 describe("auth configuration", () => {
-  it("uses only the public URL and publishable key", () => {
+  it("uses only the public URL and publishable key (Secure session cookies unless development/test)", () => {
     expect(readSupabaseAuthConfig({ NEXT_PUBLIC_SUPABASE_URL: "https://abc.supabase.co/rest/v1", NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "pk" })).toEqual({
       url: "https://abc.supabase.co",
       publishableKey: "pk",
+      secureCookies: true,
     });
   });
 

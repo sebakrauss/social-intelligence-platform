@@ -14,6 +14,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { TABLE_CLASSIFICATION } from "@/db/schema/classification";
 import { readMigrations } from "@/tools/db/migrations";
+import { WEB_ENVIRONMENT_GUARD, codeWithoutForbiddenList } from "../support/source-scan";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const FIXTURE = "tests/db/support/t26-fixture.sql";
@@ -543,17 +544,21 @@ describe("privileged credentials stay out of runtime", () => {
   it("no service-role key is configured or referenced anywhere outside guards and docs", () => {
     const serviceKey = ["SUPABASE", "SERVICE", "ROLE", "KEY"].join("_");
     for (const file of [...runtime, ".env.example", ...files.filter((name) => name.startsWith(".github/") || name.startsWith("tools/"))]) {
-      expect(read(file).includes(serviceKey), file).toBe(false);
+      // The hosted-web guard may name it only in its closed refusal list (TA-11A; see codeWithoutForbiddenList).
+      const text = file === WEB_ENVIRONMENT_GUARD ? codeWithoutForbiddenList(file) : read(file);
+      expect(text.includes(serviceKey), file).toBe(false);
     }
   });
 
   it("the migration URL is read only by migration/provisioning tooling and database tests", () => {
     const variable = ["DATABASE", "MIGRATION", "URL"].join("_");
-    const readers = files.filter((file) => /\.(ts|tsx|js|mjs|cjs)$/.test(file) && read(file).includes(variable));
+    const text = (file: string): string => (file === WEB_ENVIRONMENT_GUARD ? codeWithoutForbiddenList(file) : read(file));
+    const readers = files.filter((file) => /\.(ts|tsx|js|mjs|cjs)$/.test(file) && text(file).includes(variable));
     for (const file of readers) {
       expect(/^(tools\/db|tests)\//.test(file), file).toBe(true);
     }
-    for (const file of runtime) expect(read(file).includes(variable), file).toBe(false);
+    // The hosted-web guard (TA-11A) names it only in its closed refusal list, never to read or connect.
+    for (const file of runtime) expect(text(file).includes(variable), file).toBe(false);
   });
 
   it("runtime code never connects as a privileged role and creates pools only in platform/db", () => {

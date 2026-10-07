@@ -1,9 +1,13 @@
 import type { NextRequest, NextResponse } from "next/server";
 import { refreshSessionCookies } from "@/server/auth/proxy";
+import { rejectForbiddenWebEnvironment } from "@/server/http/web-environment";
 
-/** Keeps Supabase Auth session cookies fresh. Never an authorization decision (see server/auth/proxy.ts). */
+/**
+ * Refuses every request when a hosted web runtime carries forbidden configuration (TA-11A), then keeps Supabase
+ * Auth session cookies fresh. Never an authorization decision (see server/auth/proxy.ts).
+ */
 export async function proxy(request: NextRequest): Promise<NextResponse> {
-  return refreshSessionCookies(request);
+  return rejectForbiddenWebEnvironment() ?? refreshSessionCookies(request);
 }
 
 export const config = {
