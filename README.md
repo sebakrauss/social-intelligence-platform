@@ -52,6 +52,11 @@ SQL migrations (`db/migrations/`); Drizzle mappings only type queries. Every tab
 | `npm run db:provision-roles [-- --apply [--rotate]]` | Creates the three login roles if absent (passwords taken from the runtime URLs, sent as SCRAM verifiers) or validates them; `--rotate` changes passwords in place. Never drops or recreates a role (R8). |
 | `npm run test:db:managed` | The same isolation, concurrency, persistence and introspection suites against the managed development project. Reports **NOT RUN** (exit 2) when its configuration is absent. |
 
+**Database CA.** TLS to a managed endpoint always verifies the server certificate and host name. A runtime gets
+the CA either as a path (`DATABASE_SSL_ROOT_CERT`, local development) or as PEM content
+(`DATABASE_SSL_ROOT_CERT_PEM`, deployed workers; `\n` escapes accepted). PEM content wins when both are set. With
+neither, managed connections are refused. The content is never logged, written to disk or put in an error.
+
 Configuration names are listed in `.env.example`; values go only in `.env.local`. Runtime login roles are
 long-lived: no script, test or migration may drop, rename or recreate them (enforced by a repository guard).
 
@@ -202,6 +207,38 @@ it is allowed in Monitor-only. No provider is called in these transactions.
   (`moved_in`). No second account, `MOVED_IN` event or capability evaluation is created.
 - `connections.account.list` (read-only, `workspace.read_operational`) lists the workspace's Connected Accounts:
   identifiers, dimensions and status only.
+
+## Deployed non-production validation (TA-Q-31)
+
+A deployed job worker is a production build (`NODE_ENV=production`), so the explicit tier `APP_DEPLOYMENT_ENV`
+(`preview` or `staging`) decides what may run in it, never `NODE_ENV`.
+
+- **Providers**: `CAPABILITY_PROVIDER_MODE=staging_stub` composes a synthetic, I/O-free adapter
+  (`integrations/providers/staging-stub`). It makes no provider call and needs no provider credential. It never
+  opens a credential envelope. It describes accounts with no permissions, so every capability stays
+  `UNKNOWN_NOT_VALIDATED`. The task handlers are the production ones; only the adapter composition differs. It is
+  refused for any other tier, including `production` and unset. The simulator stays development/test only.
+- **Database CA**: supplied as `DATABASE_SSL_ROOT_CERT_PEM`. The worker gets only the worker and system database
+  URLs, never the web or migration URL.
+
+**Validation-window rules** (TA-Q-31). The deployed validation uses an **ephemeral Trigger.dev Preview branch** that
+points temporarily at `social-intelligence-dev-v2`, with `APP_DEPLOYMENT_ENV=preview` and
+`CAPABILITY_PROVIDER_MODE=staging_stub`. While it is live:
+
+- no `test:db:managed` suite runs, and nothing else seeds pending outbox work into dev-v2 (the Preview worker's real
+  schedules, including the sweepers, would deliver it);
+- only synthetic validation entities are used and no provider credential is configured;
+- the branch is archived after validation and cleanup.
+
+These are operating rules for a short window, not a product feature: there is no lock or schema support for them.
+
+**CLI** (pinned `trigger.dev@4.7.2`, operator login profile, never a repository dependency):
+- deploy: `deploy --env preview --branch <name>` (build from the local checkout; no git push);
+- variables: `env list --env preview --branch <name>` lists names only unless `--show-values` is passed;
+- archive: `preview archive --branch <name>`.
+
+Every `env` and `deploy` command defaults to **prod**, so pass `--env` and `--branch` explicitly. Set secret values
+in the dashboard, not as CLI arguments.
 
 ## Known tooling limitation
 

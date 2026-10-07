@@ -98,6 +98,8 @@ describe("auth configuration", () => {
       "DATABASE_WORKER_URL=",
       "DATABASE_SYSTEM_URL=",
       "DATABASE_SSL_ROOT_CERT=",
+      // Step 5K: the CA as PEM content (deployed workers), the alternative to the path above.
+      "DATABASE_SSL_ROOT_CERT_PEM=",
       "DATABASE_MIGRATION_URL=",
       "SUPABASE_PROJECT_REF=",
       // Step 3 job runtime (Trigger.dev): the environment's API key and project reference, names only.
@@ -107,6 +109,9 @@ describe("auth configuration", () => {
       "LOCAL_KEYRING_KEY=",
       // Step 5D OAuth: web-only stateless PKCE derivation key, name only.
       "OAUTH_PKCE_DERIVATION_KEY=",
+      // Step 5K: explicit deployment tier and job-runtime provider mode (staging_stub only for preview/staging).
+      "APP_DEPLOYMENT_ENV=",
+      "CAPABILITY_PROVIDER_MODE=",
     ]);
     expect(lines.join("\n")).not.toMatch(/SERVICE_ROLE|SUPABASE_SECRET|POSTGRES|DATABASE_URL=/);
   });

@@ -129,6 +129,9 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["oauth-secrets-web-composition-only", "jobs/derives-pkce.ts", "platform/crypto/oauth.ts"],
   ["oauth-secrets-web-composition-only", "modules/connections/application/derives-pkce.ts", "platform/crypto/oauth.ts"],
   ["oauth-secrets-web-composition-only", "integrations/providers/simulator/derives-pkce.ts", "platform/crypto/oauth.ts"],
+  // Staging stub (Step 5K): I/O-free, composed only by the job runtime
+  ["staging-stub-no-io", "integrations/providers/staging-stub/uses-network.ts", "http"],
+  ["staging-stub-jobs-composition-only", "server/composes-staging-stub.ts", "integrations/providers/staging-stub/index.ts"],
 ];
 
 describe("architecture boundaries", () => {

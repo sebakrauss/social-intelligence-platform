@@ -279,6 +279,20 @@ module.exports = {
     },
     ...providerSdkRules,
     {
+      name: "staging-stub-no-io",
+      severity: "error",
+      comment: "Step 5K: the synthetic staging adapter imports only the provider contract — no package and no Node built-in, so it can't reach a network, file or provider.",
+      from: { path: "^integrations/providers/staging-stub/" },
+      to: { dependencyTypes: [...NPM, "core"] },
+    },
+    {
+      name: "staging-stub-jobs-composition-only",
+      severity: "error",
+      comment: "Step 5K: only the job runtime's composition (behind the explicit preview/staging guard) may obtain the synthetic staging adapter.",
+      from: { pathNot: "^(jobs|tests|integrations/providers/staging-stub)/" },
+      to: { path: "^integrations/providers/staging-stub/" },
+    },
+    {
       name: "provider-contract-pure",
       severity: "error",
       comment: "The provider contract is pure TypeScript: no packages, no Node built-ins (no SDK, HTTP or I/O types can leak through it).",

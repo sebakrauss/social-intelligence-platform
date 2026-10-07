@@ -11,9 +11,11 @@
  *   overlay      connection health changes availability, never the stored profile
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import http from "node:http";
+import https from "node:https";
 import { sql } from "drizzle-orm";
 import type pg from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseUserId, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
 import { SimulatorWorld, simulateConsent, type SimulatedConsent } from "@/integrations/providers/simulator";
 import type { CallbackQuery } from "@/integrations/providers/contract";
@@ -37,7 +39,7 @@ import { capabilityRefreshStores } from "@/server/persistence/connections";
 import { createPostgresUnitOfWork } from "@/server/persistence/postgres-unit-of-work";
 import { createActionPipeline } from "@/server/pipeline";
 import { createConnectedAccountCommands } from "@/server/commands/connected-accounts";
-import { createCredentialAccess, runDiscoverAssets, runEvaluateAccountCapabilities } from "@/jobs/connections";
+import { composeJobProviders, createCredentialAccess, runDiscoverAssets, runEvaluateAccountCapabilities } from "@/jobs/connections";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { FakeIdentity, verifiedUser } from "../../support/in-memory";
 import { errorCode, expectOk } from "../../support/harness";
@@ -430,6 +432,56 @@ export function defineCapabilitySuite(getTarget: () => DbTarget): void {
       );
       expect(outcome).toMatchObject({ kind: "evaluated", factsAvailable: true, write: { kind: "applied", revision: 1 } });
       expect(await header(linked.connectedAccountId)).toMatchObject({ workspace_id: world.B1, catalog_id: "simulator" });
+    });
+  });
+
+  describe("Step 5K: the real capability.evaluate_account handler with the synthetic staging stub (provider-free)", () => {
+    it("NODE_ENV=production + APP_DEPLOYMENT_ENV=preview + staging_stub: completes through the production task wrapper, opens no envelope, touches no network, claims nothing", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network forbidden"));
+      const httpSpy = vi.spyOn(http, "request").mockImplementation(() => {
+        throw new Error("network forbidden");
+      });
+      const httpsSpy = vi.spyOn(https, "request").mockImplementation(() => {
+        throw new Error("network forbidden");
+      });
+      try {
+        // Synthetic bootstrap (privileged): a Meta-provider connection whose stored envelope is unopenable junk.
+        const [connection, credential, asset, account] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+        const providerAssetId = `stub_page_${randomUUID().slice(0, 8)}`;
+        await privileged.query(
+          `insert into connections.connections (id, organization_id, workspace_id, provider, status, authorized_by, authorized_at, version, created_at, updated_at)
+           values ($1, $2, $3, 'meta', 'ACTIVE', $4, now(), 1, now(), now())`, [connection, world.orgA, world.A2, world.users.ownerA]);
+        await privileged.query(
+          `insert into credentials.provider_credentials (id, organization_id, workspace_id, connection_id, credential_version, envelope, created_at)
+           values ($1, $2, $3, $4, 1, $5, now())`, [credential, world.orgA, world.A2, connection, Buffer.concat([Buffer.from("5349504501", "hex"), randomBytes(64)])]);
+        await privileged.query("update connections.connections set active_credential_id = $1 where id = $2", [credential, connection]);
+        await privileged.query(
+          `insert into connections.discovered_assets (id, organization_id, workspace_id, connection_id, platform, provider_asset_id, asset_class, display_name, last_seen_at, created_at, updated_at)
+           values ($1, $2, $3, $4, 'facebook', $5, 'content_bearing', 'Synthetic asset', now(), now(), now())`, [asset, world.orgA, world.A2, connection, providerAssetId]);
+        await privileged.query(
+          `insert into connections.connected_accounts (id, organization_id, workspace_id, connection_id, platform, provider_asset_id, asset_class, status, activated_at, created_at, updated_at)
+           values ($1, $2, $3, $4, 'facebook', $5, 'content_bearing', 'ACTIVE', now(), now(), now())`, [account, world.orgA, world.A2, connection, providerAssetId]);
+
+        const staging = composeJobProviders({ NODE_ENV: "production", APP_DEPLOYMENT_ENV: "preview", CAPABILITY_PROVIDER_MODE: "staging_stub" });
+        const outcome = await runTenantStepJob(
+          { registry: PRODUCTION_TASKS, worker, logger },
+          "capability.evaluate_account",
+          { v: 1, scope: "workspace", task: "capability.evaluate_account", workspaceId: world.A2, outboxId: randomUUID(), subjectIds: { connected_account_id: account }, correlationId: "corr-5k-staging-stub", initiator: { type: "system" } },
+          { runId: `run_${randomUUID()}`, attempt: 1 },
+          (context) => runEvaluateAccountCapabilities(context, staging),
+        );
+        expect(outcome).toMatchObject({ kind: "evaluated", factsAvailable: true, write: { kind: "applied", revision: 1 } });
+        const stored = await header(account);
+        expect(stored).toMatchObject({ workspace_id: world.A2, catalog_id: "platform", facts_available: true, facts_granted_permissions: [] });
+        const rows = await entries(account);
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.every((row) => row.state === "UNKNOWN_NOT_VALIDATED")).toBe(true); // the stub never makes anything supported
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(httpSpy).not.toHaveBeenCalled();
+        expect(httpsSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
   });
 }

@@ -37,7 +37,10 @@ import type { CredentialOpener } from "@/platform/crypto/credentials/open";
 import { parseCorrelationId } from "@/domain/correlation";
 import { parseUserId, parseWorkspaceId } from "@/domain/ids";
 import { NonRetryableJobError, type TenantJobContext, type TenantStepJobContext } from "@/platform/jobs";
+import { providerCredential } from "@/integrations/providers/contract";
+import { createStagingStubReadPort } from "@/integrations/providers/staging-stub";
 import { credentialEnvironmentLabel } from "@/server/connections/environment";
+import { providerComposition } from "@/server/connections/provider-mode";
 import { localSimulator } from "@/server/connections/simulator";
 import { capabilityRefreshStores, connectionWorkerStore } from "@/server/persistence/connections";
 
@@ -79,8 +82,28 @@ interface JobComposition {
 
 let composition: JobComposition | undefined;
 
-function compose(environment: Environment): JobComposition {
+/**
+ * staging_stub only (Step 5K): lends ONE fixed synthetic, valueless credential to the synthetic staging adapter.
+ * It never opens, decodes or even reads the stored envelope, and no real or simulator adapter exists in this mode,
+ * so nothing it lends can reach a provider.
+ */
+export function createStagingStubCredentialAccess(): ProviderCredentialAccess {
+  const synthetic = providerCredential("staging-stub", "synthetic-staging-stub-credential");
+  return { withCredential: (_input, use) => use(synthetic) };
+}
+
+/**
+ * The job runtime's provider adapters, chosen ONLY at this composition boundary (server/connections/provider-mode.ts).
+ * The application services and task handlers are identical in every mode. The local-keyring guard runs first in
+ * every mode (LOCAL_KEYRING_KEY outside development/test aborts).
+ */
+export function composeJobProviders(environment: Environment): JobComposition {
   assertNoLocalKeyringOutsideLocal(environment);
+  const selected = providerComposition(environment);
+  if (selected.kind === "staging_stub") {
+    const clock = (): Date => new Date();
+    return { access: createStagingStubCredentialAccess(), providers: { read: (provider) => createStagingStubReadPort(provider, clock) } };
+  }
   const read = localSimulator(environment).read;
   return {
     access: createCredentialAccess(localCredentialOpenerFromEnvironment(environment), credentialEnvironmentLabel(environment)),
@@ -105,7 +128,7 @@ export async function runDiscoverAssets(context: TenantStepJobContext, base?: Jo
   const connectionId = context.payload.subjectIds["connection_id"];
   const correlationId = parseCorrelationId(context.payload.correlationId);
   if (workspaceId === undefined || connectionId === undefined || correlationId === undefined) throw new NonRetryableJobError("invalid_payload");
-  const resolved = base ?? (composition ??= compose(process.env));
+  const resolved = base ?? (composition ??= composeJobProviders(process.env));
   return discoverConnectionAssets(discoveryDependencies(context, resolved), {
     workspaceId,
     connectionId,
@@ -148,7 +171,7 @@ export async function runEvaluateAccountCapabilities(context: TenantStepJobConte
   const workspaceId = parseWorkspaceId(context.payload.workspaceId);
   const connectedAccountId = context.payload.subjectIds["connected_account_id"];
   if (workspaceId === undefined || connectedAccountId === undefined) throw new NonRetryableJobError("invalid_payload");
-  const resolved = base ?? (composition ??= compose(process.env));
+  const resolved = base ?? (composition ??= composeJobProviders(process.env));
   return refreshAccountCapabilities(
     {
       inScope: (work) => context.inScope((scope) => work(capabilityRefreshStores(scope))),
