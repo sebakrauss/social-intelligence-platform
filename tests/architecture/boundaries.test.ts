@@ -127,6 +127,8 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   // AWS KMS keyring (Step 7C): the SDK only in the two capabilities; the unwrapper is integration-runtime only
   ["credential-opening-integration-composition-only", "jobs/sweeper-opens-credentials.ts", "platform/crypto/credentials/aws-kms-unwrapper.ts"],
   ["credential-opening-job-runtime-only", "server/opens-kms-unwrapper.ts", "platform/crypto/credentials/aws-kms-unwrapper.ts"],
+  ["credential-opening-job-runtime-only", "server/opens-kms-opener.ts", "platform/crypto/credentials/aws-kms-opener.ts"],
+  ["credential-opening-integration-composition-only", "jobs/sweeper-opens-credentials.ts", "platform/crypto/credentials/aws-kms-opener.ts"],
   ["aws-kms-sdk-only-in-credential-adapter", "platform/crypto/credentials/envelope-uses-kms-sdk.ts", "../../../../node_modules/@aws-sdk/client-kms/dist-es/index.js"],
   ["aws-sdk-only-client-kms", "server/uses-aws-credential-chain.ts", "../../../../node_modules/@aws-sdk/credential-provider-node/dist-es/index.js"],
   ["no-undeclared-package", "server/uses-aws-credential-chain.ts", "../../../../node_modules/@aws-sdk/credential-provider-node/dist-es/index.js"],

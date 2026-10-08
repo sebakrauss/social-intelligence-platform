@@ -6,7 +6,10 @@
  *   - the credential-access function opens one envelope under its exact (env, workspace, credential) context,
  *     decodes it into a normalized ProviderCredential for one provider call, and lets the opener zero the
  *     plaintext afterwards. Tampered, foreign or malformed envelopes become CredentialUnreadableError; a keyring
- *     outage propagates (retryable). Nothing is cached.
+ *     outage propagates (retryable); a denied or misconfigured keyring is a non-retryable operational failure,
+ *     never "credential unreadable" (Step 7D). Nothing is cached.
+ *   - the opener is the local keyring's in development/test, the KMS Decrypt opener where KMS is configured
+ *     (Step 7D; it needs the worker's AWS identity supplied explicitly — until 7E it fails closed).
  */
 import { randomUUID } from "node:crypto";
 import {
@@ -30,7 +33,10 @@ import {
 } from "@/modules/connections";
 import { credentialContext } from "@/platform/crypto/credentials/context";
 import { decodeEnvelope } from "@/platform/crypto/credentials/envelope";
-import { isCredentialCryptoError } from "@/platform/crypto/credentials/errors";
+import { createKmsClient, type KmsCredentialSource } from "@/platform/crypto/credentials/aws-kms-client";
+import { kmsCredentialOpener } from "@/platform/crypto/credentials/aws-kms-opener";
+import type { CredentialContextEnv } from "@/platform/crypto/credentials/context";
+import { isCredentialCryptoError, isRetryableCredentialCryptoError, type CredentialCryptoErrorCode } from "@/platform/crypto/credentials/errors";
 import { assertNoLocalKeyringOutsideLocal } from "@/platform/crypto/credentials/local-keyring";
 import { localCredentialOpenerFromEnvironment } from "@/platform/crypto/credentials/local-opener";
 import type { CredentialOpener } from "@/platform/crypto/credentials/open";
@@ -39,12 +45,30 @@ import { parseUserId, parseWorkspaceId } from "@/domain/ids";
 import { NonRetryableJobError, type TenantJobContext, type TenantStepJobContext } from "@/platform/jobs";
 import { providerCredential } from "@/integrations/providers/contract";
 import { createStagingStubReadPort } from "@/integrations/providers/staging-stub";
-import { credentialEnvironmentLabel } from "@/server/connections/environment";
+import { selectCredentialCrypto } from "@/server/connections/environment";
 import { providerComposition } from "@/server/connections/provider-mode";
 import { localSimulator } from "@/server/connections/simulator";
 import { capabilityRefreshStores, connectionWorkerStore } from "@/server/persistence/connections";
 
 type Environment = Readonly<Record<string, string | undefined>>;
+
+/** Envelope-level failures: this credential can't be read (tampered, foreign, wrong keyring, malformed). */
+const UNREADABLE_CODES: readonly CredentialCryptoErrorCode[] = ["INTEGRITY_FAILURE", "KEYRING_MISMATCH", "MALFORMED_ENVELOPE", "UNSUPPORTED_ENVELOPE_VERSION", "INVALID_CONTEXT"];
+
+/**
+ * A credential-access failure BEFORE the provider call, as the job sees it (Step 7D). Retryability comes only from
+ * the credential-crypto table (errors.ts): a keyring outage is rethrown unchanged and the job retries. Envelope-level
+ * failures are CredentialUnreadableError. Every other crypto failure — access denied, misconfigured keyring, or any
+ * code not listed — is a non-retryable OPERATIONAL failure with a fixed class: it says nothing about the credential
+ * and carries no key-service detail.
+ */
+export function credentialAccessFailure(error: unknown): unknown {
+  if (error instanceof CredentialCodecError) return new CredentialUnreadableError();
+  if (!isCredentialCryptoError(error)) return error;
+  if (isRetryableCredentialCryptoError(error)) return error;
+  if (UNREADABLE_CODES.includes(error.code)) return new CredentialUnreadableError();
+  return new NonRetryableJobError(error.code === "KEYRING_ACCESS_DENIED" ? "credential_keyring_access_denied" : "credential_keyring_misconfigured");
+}
 
 export function createCredentialAccess(opener: CredentialOpener, env: string): ProviderCredentialAccess {
   return {
@@ -67,9 +91,7 @@ export function createCredentialAccess(opener: CredentialOpener, env: string): P
       } catch (error) {
         // Only failures BEFORE the provider call are about the envelope; provider errors pass through untouched.
         if (progress.decoded) throw error;
-        if (isCredentialCryptoError(error) && error.code === "KEYRING_UNAVAILABLE") throw error;
-        if (isCredentialCryptoError(error) || error instanceof CredentialCodecError) throw new CredentialUnreadableError();
-        throw error;
+        throw credentialAccessFailure(error);
       }
     },
   };
@@ -105,10 +127,27 @@ export function composeJobProviders(environment: Environment): JobComposition {
     return { access: createStagingStubCredentialAccess(), providers: { read: (provider) => createStagingStubReadPort(provider, clock) } };
   }
   const read = localSimulator(environment).read;
+  const opening = composeCredentialOpener(environment);
   return {
-    access: createCredentialAccess(localCredentialOpenerFromEnvironment(environment), credentialEnvironmentLabel(environment)),
+    access: createCredentialAccess(opening.opener, opening.contextEnv),
     providers: { read: (provider) => (provider === "simulator" ? read : undefined) },
   };
+}
+
+export interface ComposedCredentialOpener {
+  readonly opener: CredentialOpener;
+  readonly contextEnv: CredentialContextEnv;
+}
+
+/**
+ * The integration worker's opener (Step 7D): the local keyring's in development/test; where KMS is configured,
+ * KMSClient → Decrypt unwrapper → opener, which needs the worker's AWS identity supplied explicitly (7E). Never a
+ * fallback from KMS to the local keyring. Selection rules: server/connections/environment.ts.
+ */
+export function composeCredentialOpener(environment: Environment, awsCredentials?: KmsCredentialSource): ComposedCredentialOpener {
+  const selection = selectCredentialCrypto(environment);
+  if (selection.kind === "local") return { opener: localCredentialOpenerFromEnvironment(environment), contextEnv: selection.contextEnv };
+  return { opener: kmsCredentialOpener(createKmsClient(selection.config, awsCredentials), selection.config), contextEnv: selection.config.contextEnv };
 }
 
 /** Discovery dependencies for one run: the composed access/providers and this run's scoped steps. */

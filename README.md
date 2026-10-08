@@ -222,8 +222,10 @@ The web runtime is prepared for hosting (Vercel recommended, TA-11) without chan
   - **Refused**: a production-built web instance answers 503 to every request if any of `DATABASE_WORKER_URL`,
     `DATABASE_SYSTEM_URL`, `DATABASE_MIGRATION_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SECRET_KEY`,
     `TRIGGER_PREVIEW_SECRET_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
-    `SUPABASE_PROJECT_REF`, `TRIGGER_PROJECT_REF`, `APP_DEPLOYMENT_ENV` or `CAPABILITY_PROVIDER_MODE` is set (even
-    empty). The log names the variable, never its value. Development and test runtimes are exempt.
+    `SUPABASE_PROJECT_REF`, `TRIGGER_PROJECT_REF`, `APP_DEPLOYMENT_ENV`, `CAPABILITY_PROVIDER_MODE` or
+    `LOCAL_KEYRING_KEY` is set (even empty). The log names the variable, never its value. Development and test
+    runtimes are exempt. `OAUTH_PKCE_DERIVATION_KEY` and the non-secret `CREDENTIAL_CONTEXT_ENV` /
+    `CREDENTIAL_KMS_*` configuration are allowed.
 - **Security headers** on every response: `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`,
   `object-src 'none'`, `X-Frame-Options`, `nosniff`, `Referrer-Policy: no-referrer`, a deny-all
   `Permissions-Policy`, and HSTS. A full script/style CSP needs per-request nonces and is **not** claimed yet.
@@ -245,6 +247,22 @@ runs a domain command through the pipeline) and later gates. **TA-11 stays OPEN 
 code they were built from. Until they do, deploying web or jobs against a database at a different migration level
 isn't refused up front: it fails later, at the first query that touches a missing or changed object. The mitigation
 until then: expand-only migrations, apply migrations before deploying, and deploy web and jobs from the same commit.
+
+## Credential key management (Step 7D)
+
+Provider credentials are sealed with the local keyring in development/test and with AWS KMS everywhere else
+(TA §39, ADR-64). The deployed configuration is three non-secret values:
+
+- `CREDENTIAL_CONTEXT_ENV`: the cryptographic environment, the `env` of every envelope's context. Its own concept
+  (not `APP_DEPLOYMENT_ENV`, `NODE_ENV` or a hosting target). Only `dev` has a KMS key policy today.
+- `CREDENTIAL_KMS_KEY_ARN`: the full key ARN new data keys are generated under. The KMS region is derived from it.
+- `CREDENTIAL_KMS_ALLOWED_KEY_ARNS`: comma-separated full key ARNs accepted after Decrypt (the current key plus
+  keys not yet migrated), all in the same region.
+
+All three or none: none means the local keyring (development/test only), and a deployed runtime without them is
+refused, never given the local keyring. The envelope's logical key reference is the constant
+`kms-provider-credentials-v1`, not configuration. The AWS identity is supplied explicitly by each runtime and is
+not configured yet (7E): until then KMS composition fails closed. No `AWS_*` variable is read.
 
 ## Deployed non-production validation (TA-Q-31)
 

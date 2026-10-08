@@ -116,9 +116,31 @@ describe("6B.4 · forbidden configuration in the hosted web runtime", () => {
       "TRIGGER_PROJECT_REF",
       "APP_DEPLOYMENT_ENV",
       "CAPABILITY_PROVIDER_MODE",
+      "LOCAL_KEYRING_KEY",
     ]);
     expect(FORBIDDEN_WEB_VARIABLES).not.toContain("TRIGGER_SECRET_KEY");
     expect(FORBIDDEN_WEB_VARIABLES).not.toContain("TRIGGER_PREVIEW_BRANCH");
+  });
+
+  // Step 7D: the local keyring's KEK never reaches a hosted web; the web's own PKCE secret and the non-secret KMS
+  // keyring configuration remain allowed.
+  it("LOCAL_KEYRING_KEY is refused (even empty); OAUTH_PKCE_DERIVATION_KEY and the CREDENTIAL_* configuration are allowed", () => {
+    for (const value of [SECRET_MARKER, ""]) {
+      expect(forbiddenWebVariables({ NODE_ENV: "production", LOCAL_KEYRING_KEY: value })).toEqual(["LOCAL_KEYRING_KEY"]);
+    }
+    for (const name of ["OAUTH_PKCE_DERIVATION_KEY", "CREDENTIAL_CONTEXT_ENV", "CREDENTIAL_KMS_KEY_ARN", "CREDENTIAL_KMS_ALLOWED_KEY_ARNS"]) {
+      expect(FORBIDDEN_WEB_VARIABLES as readonly string[]).not.toContain(name);
+    }
+    expect(() => {
+      assertWebEnvironment({
+        NODE_ENV: "production",
+        DATABASE_WEB_URL: "x",
+        OAUTH_PKCE_DERIVATION_KEY: "x",
+        CREDENTIAL_CONTEXT_ENV: "dev",
+        CREDENTIAL_KMS_KEY_ARN: "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa",
+        CREDENTIAL_KMS_ALLOWED_KEY_ARNS: "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa",
+      });
+    }).not.toThrow();
   });
 
   // 6B.1: tooling and job-composition configuration never reaches the deployed web, each name on its own.

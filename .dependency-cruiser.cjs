@@ -419,14 +419,14 @@ module.exports = {
       severity: "error",
       comment: "Opening credentials (opener, local opener, keyring internals, the KMS unwrapper) happens only in the job runtime: the web deployment (app/, ui/, server/) seals but never decrypts (TA §39).",
       from: { pathNot: "^(jobs|tests|platform/crypto/credentials)/" },
-      to: { path: "^platform/crypto/credentials/(open|local-opener|local-keyring|aead|aws-kms-unwrapper)\\.ts$" },
+      to: { path: "^platform/crypto/credentials/(open|local-opener|local-keyring|aead|aws-kms-unwrapper|aws-kms-opener)\\.ts$" },
     },
     {
       name: "credential-opening-integration-composition-only",
       severity: "error",
       comment: "Step 7B: inside the job runtime, only the integration composition (jobs/connections.ts) obtains an opener; system jobs (relay, sweepers, routing) never open credentials.",
       from: { path: "^jobs/", pathNot: "^jobs/connections\\.ts$" },
-      to: { path: "^platform/crypto/credentials/(open|local-opener|aws-kms-unwrapper)\\.ts$" },
+      to: { path: "^platform/crypto/credentials/(open|local-opener|aws-kms-unwrapper|aws-kms-opener)\\.ts$" },
     },
     {
       name: "credential-local-keyring-composed-only",
@@ -459,8 +459,8 @@ module.exports = {
     {
       name: "aws-kms-sdk-only-in-credential-adapter",
       severity: "error",
-      comment: "Step 7C: the AWS KMS SDK is imported only by the two keyring capabilities (generator: GenerateDataKey; unwrapper: Decrypt) and their own unit test. The shared KMS module and every other crypto, domain or application module stay SDK-free.",
-      from: { pathNot: "^(platform/crypto/credentials/aws-kms-(generator|unwrapper)\\.ts|tests/unit/platform/aws-kms-keyring\\.test\\.ts)$" },
+      comment: "Steps 7C/7D: the AWS KMS SDK is imported only by the two keyring capabilities (generator: GenerateDataKey; unwrapper: Decrypt), the single client factory (aws-kms-client.ts) and their unit tests. The shared KMS module, the config parser and every other crypto, domain or application module stay SDK-free.",
+      from: { pathNot: "^(platform/crypto/credentials/aws-kms-(generator|unwrapper|client)\\.ts|tests/unit/platform/aws-kms-(keyring|composition)\\.test\\.ts)$" },
       to: { path: npmPackage(["@aws-sdk/client-kms"]) },
     },
     {

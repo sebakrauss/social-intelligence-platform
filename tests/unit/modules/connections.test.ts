@@ -130,7 +130,9 @@ describe("composition guards", () => {
     const web = codeOf("server/connections/runtime.ts");
     const jobs = codeOf("jobs/connections.ts");
     expect(web.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeGreaterThan(-1);
-    expect(web.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeLessThan(web.indexOf("localCredentialSealerFromEnvironment(environment)"));
+    // Step 7D: the web's sealer (local keyring or KMS) is composed through composeCredentialSealer, after the guard.
+    expect(web.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeLessThan(web.indexOf("composeCredentialSealer(environment)"));
+    expect(web.indexOf("composeCredentialSealer(environment)")).toBeGreaterThan(-1);
     expect(web).not.toMatch(/opener|Opener|unwrap|local-keyring"|\/open"/);
     expect(jobs.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeGreaterThan(-1);
     expect(jobs.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeLessThan(jobs.indexOf("localCredentialOpenerFromEnvironment(environment)"));

@@ -2,14 +2,15 @@
  * Web composition of the connection authorization flow (Step 5D). Built lazily on first use, never at import or
  * build time. Fail closed, no fallback:
  *   - the local-keyring startup guard runs first: LOCAL_KEYRING_KEY present outside development/test aborts;
- *   - the web receives a SEALER only (TA §39, ADR-64): no opener, no unwrap capability exists here;
+ *   - the web receives a SEALER only (TA §39, ADR-64): no opener, no unwrap capability exists here — the local
+ *     keyring's sealer in development/test, the KMS GenerateDataKey sealer where KMS is configured (Step 7D);
  *   - OAUTH_PKCE_DERIVATION_KEY must be a canonical 32-byte key (no generated or default key);
  *   - providers: the local simulator only (development/test); real providers stay VALIDATE.
  */
 import { randomUUID } from "node:crypto";
 import { credentialContext } from "@/platform/crypto/credentials/context";
 import { encodeEnvelope } from "@/platform/crypto/credentials/envelope";
-import { assertNoLocalKeyringOutsideLocal, localCredentialSealerFromEnvironment } from "@/platform/crypto/credentials/local-sealer";
+import { assertNoLocalKeyringOutsideLocal } from "@/platform/crypto/credentials/local-sealer";
 import type { CredentialSealer } from "@/platform/crypto/credentials/seal";
 import { newOAuthState, oauthStateDigest, pkceDeriverFromEnvironment, type PkceDeriver } from "@/platform/crypto/oauth";
 import type { ProviderAuthorizationPort } from "@/integrations/providers/contract";
@@ -21,7 +22,7 @@ import { createOutboxNotifier, webJobRuntime } from "@/server/jobs/outbox-notifi
 import { webUnitOfWork } from "@/server/persistence/runtime";
 import { createActionPipeline } from "@/server/pipeline";
 import type { ConnectionAuthorizationDependencies } from "./authorization";
-import { credentialEnvironmentLabel } from "./environment";
+import { composeCredentialSealer } from "./credential-crypto";
 import { localSimulator } from "./simulator";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -69,7 +70,9 @@ function compose(environment: Environment): Composition {
   if (appBaseUrl === undefined || appBaseUrl === "") throw new Error("APP_BASE_URL is not set");
   const secrets = createOAuthSecrets(pkceDeriverFromEnvironment(environment));
   const providers = authorizationProviders({ simulator: localSimulator(environment).authorization }, appBaseUrl);
-  const sealing = createCredentialSealing(localCredentialSealerFromEnvironment(environment), credentialEnvironmentLabel(environment));
+  // Local keyring in development/test; KMS where configured (fails closed until 7E supplies the AWS identity).
+  const crypto = composeCredentialSealer(environment);
+  const sealing = createCredentialSealing(crypto.sealer, crypto.contextEnv);
   return { commands: createConnectionCommands({ secrets, providers }), providers, secrets, sealing };
 }
 

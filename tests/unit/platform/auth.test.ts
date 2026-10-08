@@ -108,6 +108,10 @@ describe("auth configuration", () => {
       "TRIGGER_PROJECT_REF=",
       // Step 5A credential crypto: local/test-only keyring KEK (refused outside NODE_ENV development/test), name only.
       "LOCAL_KEYRING_KEY=",
+      // Step 7D: deployed KMS credential keyring configuration (non-secret), names only.
+      "CREDENTIAL_CONTEXT_ENV=",
+      "CREDENTIAL_KMS_KEY_ARN=",
+      "CREDENTIAL_KMS_ALLOWED_KEY_ARNS=",
       // Step 5D OAuth: web-only stateless PKCE derivation key, name only.
       "OAUTH_PKCE_DERIVATION_KEY=",
       // Step 5K: explicit deployment tier and job-runtime provider mode (staging_stub only for preview/staging).

@@ -8,17 +8,18 @@
  *   DATABASE_MIGRATION_URL                         tooling-only privileged credential
  *   SUPABASE_SERVICE_ROLE_KEY, SUPABASE_SECRET_KEY never used by the application at all
  *   TRIGGER_PREVIEW_SECRET_KEY                     the TA-Q-31 validation-only key name
- *   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,      AWS/KMS credentials; the current web surface needs none
- *   AWS_SESSION_TOKEN                              (credential sealing in a deployed web arrives with KMS, 5I)
+ *   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,      static AWS credentials; the web's KMS identity is supplied
+ *   AWS_SESSION_TOKEN                              explicitly by federation (7E), never by static keys
  *   SUPABASE_PROJECT_REF                           tooling/CLI configuration; never part of the web contract
  *   TRIGGER_PROJECT_REF                            Trigger.dev deploy/CLI configuration (trigger.config.ts)
  *   APP_DEPLOYMENT_ENV, CAPABILITY_PROVIDER_MODE   job-runtime provider composition (server/connections/provider-mode)
+ *   LOCAL_KEYRING_KEY                              the local/test keyring KEK (Step 7D); deployed runtimes use KMS
  *
  * The repository's contract holds no provider (Meta/Instagram/TikTok) credential variable: none exists to forbid.
  * Development and test runtimes are exempt (local .env.local legitimately holds tooling credentials). The mere
  * presence of a forbidden variable makes the hosted web refuse every request; the error names it, never its value.
- * LOCAL_KEYRING_KEY and OAUTH_PKCE_DERIVATION_KEY keep their existing rules (refused outside development/test where
- * they are used).
+ * Deliberately NOT forbidden: OAUTH_PKCE_DERIVATION_KEY (the web's own PKCE secret) and the non-secret KMS keyring
+ * configuration CREDENTIAL_CONTEXT_ENV, CREDENTIAL_KMS_KEY_ARN, CREDENTIAL_KMS_ALLOWED_KEY_ARNS (Step 7D).
  */
 import { NextResponse } from "next/server";
 import { createLogger, stdoutSink } from "@/platform/observability";
@@ -37,6 +38,7 @@ export const FORBIDDEN_WEB_VARIABLES = [
   "TRIGGER_PROJECT_REF",
   "APP_DEPLOYMENT_ENV",
   "CAPABILITY_PROVIDER_MODE",
+  "LOCAL_KEYRING_KEY",
 ] as const;
 
 const LOCAL_NODE_ENVS: readonly string[] = ["development", "test"];
