@@ -1,0 +1,28 @@
+# Vercel upload boundary for the hosted web (TA-11A). The CLI does NOT apply .gitignore: only this file plus its
+# built-in defaults (.git, .next, .vercel, node_modules, .env.local, .env.*.local, .DS_Store, ...). Paths are
+# root-anchored and exact; application source (app, server, platform, domain, modules, integrations) and the rest of
+# the TypeScript program `next build` type-checks (db, jobs, tools, fixtures) stay included.
+
+# Local environment files and metadata: deployed configuration comes from Vercel env vars only.
+.env*
+/.vercel
+
+# Local certificates: the hosted CA is DATABASE_SSL_ROOT_CERT_PEM.
+/.local-certs
+
+# Local build cache and review artifacts.
+/tsconfig.tsbuildinfo
+/step-1-final-review.zip
+
+# Tests, test-only configuration, disposable spikes and documentation.
+/tests
+/vitest.config.ts
+/vitest.db.config.ts
+/vitest.db-managed.config.ts
+/vitest.jobs-managed.config.ts
+/trigger.managed-test.config.ts
+/spikes
+/docs
+/CLAUDE.md
+/README.md
+/.github
