@@ -58,3 +58,21 @@ export function codeWithoutForbiddenList(relative: string): string {
   if (stripped === code) throw new Error(`${relative}: the FORBIDDEN_WEB_VARIABLES list was not found`);
   return stripped;
 }
+
+/**
+ * The jobs per-plane environment contract (Step 7E.4B.3/7E.4C) must also NAME what it refuses: the integration worker's
+ * bootstrap variables (as name constants) and the standard AWS credential-chain variables (one closed list). Guards that
+ * forbid those names exempt this file only after removing exactly those declarations, so it can refuse them but never
+ * read them as an identity source.
+ */
+export const PLANE_ENVIRONMENT_GUARD = "jobs/plane-environment.ts";
+
+export function codeWithoutPlaneRefusals(relative: string): string {
+  const code = codeOf(relative);
+  const stripped = code
+    .replace(/const AWS_CREDENTIAL_CHAIN_VARIABLES = \[[^\]]*\];/, "")
+    .replace(/export const INTEGRATION_AWS_[A-Z_]+_ENV = "INTEGRATION_AWS_[A-Z_]+";/g, "")
+    .replace(/export const PLANE_FORBIDDEN_VARIABLES[^\n]*\n[\s\S]*?\n\}\);/, "");
+  if (stripped === code) throw new Error(`${relative}: the plane refusal declarations were not found`);
+  return stripped;
+}

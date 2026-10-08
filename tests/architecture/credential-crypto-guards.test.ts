@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { WEB_ENVIRONMENT_GUARD, codeOf, codeWithoutForbiddenList, findReferences, sourceFiles } from "../support/source-scan";
+import { PLANE_ENVIRONMENT_GUARD, WEB_ENVIRONMENT_GUARD, codeOf, codeWithoutForbiddenList, codeWithoutPlaneRefusals, findReferences, sourceFiles } from "../support/source-scan";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const dir = path.join(root, "platform/crypto/credentials");
@@ -23,6 +23,7 @@ const KMS_CAPABILITIES = ["aws-kms-generator.ts", "aws-kms-unwrapper.ts"];
 /** Files that may import the KMS SDK: the two capabilities and the single client factory (Step 7D). */
 const KMS_SDK_FILES = [...KMS_CAPABILITIES, "aws-kms-client.ts"];
 const VERCEL_WEB_IDENTITY_ADAPTER = "server/connections/vercel-aws-identity.ts";
+const WORKER_IDENTITY_ADAPTER = "jobs/integration-aws-identity.ts";
 const RUNTIME_ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts", "trigger.config.ts", "trigger.integration.config.ts"];
 
 describe("credential crypto boundary", () => {
@@ -68,17 +69,22 @@ describe("credential crypto boundary", () => {
 
   it("the AWS KMS SDK is confined to the two keyring capabilities (Step 7C), pinned, and the only AWS package", () => {
     const rule = ruleNamed("aws-kms-sdk-only-in-credential-adapter");
-    expect(rule?.from.pathNot).toBe("^(platform/crypto/credentials/aws-kms-(generator|unwrapper|client)\\.ts|tests/unit/platform/aws-kms-(keyring|composition)\\.test\\.ts)$");
+    // Step 7E.4C adds one test (the worker identity's end-to-end signing proof), never production code.
+    expect(rule?.from.pathNot).toBe("^(platform/crypto/credentials/aws-kms-(generator|unwrapper|client)\\.ts|tests/unit/platform/aws-kms-(keyring|composition)\\.test\\.ts|tests/unit/jobs/integration-aws-identity\\.test\\.ts)$");
     expect(new RegExp(rule?.to.path ?? "^$").test("node_modules/@aws-sdk/client-kms/dist-cjs/index.js")).toBe(true);
     const others = new RegExp(ruleNamed("aws-sdk-only-client-kms")?.to.path ?? "^$");
-    for (const pkg of ["@aws-sdk/credential-provider-node", "@aws-sdk/credential-providers", "@aws-sdk/client-sts", "@aws-sdk/core", "@smithy/core"]) {
+    for (const pkg of ["@aws-sdk/credential-provider-node", "@aws-sdk/credential-providers", "@aws-sdk/core", "@smithy/core"]) {
       expect(others.test(`node_modules/${pkg}/dist-cjs/index.js`), pkg).toBe(true);
     }
     expect(others.test("node_modules/@aws-sdk/client-kms/dist-cjs/index.js")).toBe(false);
     const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
     const all = { ...manifest.dependencies, ...manifest.devDependencies };
-    expect(Object.keys(all).filter((name) => name.startsWith("@aws-sdk/") || name.startsWith("@smithy/"))).toEqual(["@aws-sdk/client-kms"]);
+    expect(Object.keys(all).filter((name) => name.startsWith("@aws-sdk/") || name.startsWith("@smithy/"))).toEqual(["@aws-sdk/client-kms", "@aws-sdk/client-sts"]);
     expect(manifest.dependencies?.["@aws-sdk/client-kms"]).toBe("3.1146.0");
+    // Step 7E.4C: STS is a separate, exactly pinned client confined to the integration worker identity adapter.
+    expect(manifest.dependencies?.["@aws-sdk/client-sts"]).toBe("3.1146.0");
+    expect(others.test("node_modules/@aws-sdk/client-sts/dist-cjs/index.js")).toBe(false);
+    expect(ruleNamed("aws-sts-sdk-only-in-integration-worker-identity")?.from.pathNot).toBe("^(jobs/integration-aws-identity\\.ts|tests/unit/jobs/integration-aws-identity\\.test\\.ts)$");
     expect(sources).not.toContain("aws-kms.ts");
     for (const file of ["aws-kms-common.ts", "aws-kms-config.ts", "aws-kms-sealer.ts", "aws-kms-opener.ts", ...KMS_SDK_FILES]) expect(sources).toContain(file);
   });
@@ -116,7 +122,17 @@ describe("credential crypto boundary", () => {
       /\b(fromNodeProviderChain|defaultProvider|fromTemporaryCredentials|fromWebToken|fromEnv|fromIni|fromContainerMetadata|fromInstanceMetadata|AssumeRole\w*)\b/,
       /WebIdentity|\bOIDC\b/i,
     ];
-    expect(findReferences(sourceFiles(RUNTIME_ROOTS).filter((file) => file !== VERCEL_WEB_IDENTITY_ADAPTER), patterns)).toEqual([]);
+    const exempt = [VERCEL_WEB_IDENTITY_ADAPTER, WORKER_IDENTITY_ADAPTER, PLANE_ENVIRONMENT_GUARD, WEB_ENVIRONMENT_GUARD];
+    expect(findReferences(sourceFiles(RUNTIME_ROOTS).filter((file) => !exempt.includes(file)), patterns)).toEqual([]);
+    // The refusal lists may NAME the worker's bootstrap variables, nothing else of these patterns.
+    for (const pattern of patterns) {
+      expect(pattern.test(codeWithoutForbiddenList(WEB_ENVIRONMENT_GUARD)), pattern.source).toBe(false);
+      expect(pattern.test(codeWithoutPlaneRefusals(PLANE_ENVIRONMENT_GUARD)), pattern.source).toBe(false);
+    }
+    // The worker adapter (Step 7E.4C) uses exactly STS (client-sts), its bootstrap names and AssumeRole — never a
+    // credential provider package, the default chain or another federation.
+    expect(findReferences([WORKER_IDENTITY_ADAPTER], patterns).map(([, pattern]) => pattern)).toEqual([patterns[0]?.source, patterns[2]?.source, patterns[3]?.source]);
+    expect(codeOf(WORKER_IDENTITY_ADAPTER)).not.toMatch(/credential-provider|fromNodeProviderChain|defaultProvider|fromTemporaryCredentials|fromWebToken|fromEnv|fromIni|fromContainerMetadata|fromInstanceMetadata|AssumeRoleWith/);
     // The adapter's exemption is exactly the Vercel OIDC packages and its request-token header — no AWS provider, chain,
     // STS, worker bootstrap or role assumption (aws-identity-guards.test.ts pins the rest of its shape).
     expect(findReferences([VERCEL_WEB_IDENTITY_ADAPTER], patterns).map(([, pattern]) => pattern)).toEqual([patterns[1]?.source, patterns[4]?.source]);
@@ -142,8 +158,9 @@ describe("credential crypto boundary", () => {
 
   it("no static AWS credential or region variable is read by runtime code (only named in the hosted-web refusal list)", () => {
     const pattern = /\bAWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|REGION|DEFAULT_REGION|PROFILE|ROLE_ARN|WEB_IDENTITY_TOKEN_FILE)\b/;
-    expect(findReferences(sourceFiles(RUNTIME_ROOTS).filter((file) => file !== WEB_ENVIRONMENT_GUARD), [pattern])).toEqual([]);
+    expect(findReferences(sourceFiles(RUNTIME_ROOTS).filter((file) => file !== WEB_ENVIRONMENT_GUARD && file !== PLANE_ENVIRONMENT_GUARD), [pattern])).toEqual([]);
     expect(pattern.test(codeWithoutForbiddenList(WEB_ENVIRONMENT_GUARD))).toBe(false);
+    expect(pattern.test(codeWithoutPlaneRefusals(PLANE_ENVIRONMENT_GUARD))).toBe(false);
   });
 
   // ── Step 7B ──────────────────────────────────────────────────────────────────────────────────

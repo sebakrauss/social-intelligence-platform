@@ -16,7 +16,7 @@ import extractTSConfig from "dependency-cruiser/config-utl/extract-ts-config";
 import { describe, expect, it } from "vitest";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { outboxRuns } from "@/platform/db";
-import { codeOf, codeWithoutForbiddenList, findReferences, sourceFiles, WEB_ENVIRONMENT_GUARD } from "../support/source-scan";
+import { PLANE_ENVIRONMENT_GUARD, codeOf, codeWithoutForbiddenList, codeWithoutPlaneRefusals, findReferences, sourceFiles, WEB_ENVIRONMENT_GUARD } from "../support/source-scan";
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(import.meta.dirname, "../..");
@@ -149,9 +149,32 @@ describe("cross-project credentials", () => {
     }
   });
 
-  it("no worker AWS identity yet: no STS client, no AssumeRole, no bootstrap credential names in the jobs planes", () => {
-    const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
-    expect({ ...manifest.dependencies, ...manifest.devDependencies }["@aws-sdk/client-sts"]).toBeUndefined();
-    expect(findReferences(sourceFiles(["jobs", "trigger.config.ts", "trigger.integration.config.ts"]), [/AssumeRole|client-sts|STSClient/, /BOOTSTRAP_|CREDENTIAL_KMS_WORKER/i, /\bAWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)\b/])).toEqual([]);
+  it("the worker AWS identity (Step 7E.4C) lives only in the integration adapter; the jobs planes name its bootstrap only to refuse it", () => {
+    const jobs = sourceFiles(["jobs", "trigger.config.ts", "trigger.integration.config.ts"]);
+    const users = (pattern: RegExp) => findReferences(jobs, [pattern]).map(([file]) => file);
+    expect(users(/AssumeRole|client-sts|STSClient/)).toEqual(["jobs/integration-aws-identity.ts"]);
+    // The names exist once, as constants of the per-plane contract; the adapter reads them only through those constants.
+    expect(users(/\bINTEGRATION_AWS_(BOOTSTRAP_ACCESS_KEY_ID|BOOTSTRAP_SECRET_ACCESS_KEY|WORKER_ROLE_ARN)\b/)).toEqual([PLANE_ENVIRONMENT_GUARD]);
+    expect(users(/\bINTEGRATION_AWS_[A-Z_]+_ENV\b/).sort()).toEqual(["jobs/integration-aws-identity.ts", PLANE_ENVIRONMENT_GUARD].sort());
+    expect(users(/CREDENTIAL_KMS_WORKER|WORKER_BOOTSTRAP/i)).toEqual([]);
+    expect(users(/\bAWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|WEB_IDENTITY_TOKEN_FILE)\b/)).toEqual([PLANE_ENVIRONMENT_GUARD]);
+    expect(/\bAWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|WEB_IDENTITY_TOKEN_FILE)\b|INTEGRATION_AWS_/.test(codeWithoutPlaneRefusals(PLANE_ENVIRONMENT_GUARD))).toBe(false);
   });
+
+  it("the worker identity is reachable only from the integration plane's task graph", async () => {
+    expect(await reachable(PLANE_DIRS.integration)).toContain("jobs/integration-aws-identity.ts");
+    expect(await reachable(PLANE_DIRS.main)).not.toContain("jobs/integration-aws-identity.ts");
+  }, 60_000);
+
+  it("the integration worker never seals: no KMS data-key generation or sealing composition, and no sealer is built or called", async () => {
+    const modules = await reachable(PLANE_DIRS.integration);
+    expect(modules.filter((source) => /^platform\/crypto\/credentials\/(aws-kms-generator|aws-kms-sealer)\.ts$|^server\/connections\/(credential-crypto|runtime)\.ts$/.test(source))).toEqual([]);
+    const code = modules.filter((source) => /^(jobs|server|modules)\//.test(source)).map((source) => codeOf(source)).join("\n");
+    expect(code).not.toMatch(/GenerateDataKey|kmsCredentialSealer|composeCredentialSealer|localCredentialSealerFromEnvironment\(|\.seal\(/);
+    // The local sealer module is reachable only for its re-exported LOCAL_KEYRING_KEY_ENV constant (Step 7D environment
+    // selection); the integration graph imports nothing else from it.
+    const importers = modules.filter((source) => /^(jobs|server|modules|platform)\//.test(source) && /credentials\/local-sealer"/.test(codeOf(source)));
+    expect(importers).toEqual(["server/connections/environment.ts"]);
+    expect(codeOf("server/connections/environment.ts")).toMatch(/import \{ LOCAL_KEYRING_KEY_ENV \} from "@\/platform\/crypto\/credentials\/local-sealer";/);
+  }, 60_000);
 });

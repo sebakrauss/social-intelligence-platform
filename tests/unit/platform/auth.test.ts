@@ -110,6 +110,10 @@ describe("auth configuration", () => {
       "TRIGGER_INTEGRATION_PROJECT_REF=",
       "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY=",
       "TRIGGER_MAIN_RELAY_TRIGGER_KEY=",
+      // Step 7E.4C integration worker AWS identity (DEV/non-prod): bootstrap IAM user → AssumeRole into the worker role.
+      "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID=",
+      "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY=",
+      "INTEGRATION_AWS_WORKER_ROLE_ARN=",
       // Step 5A credential crypto: local/test-only keyring KEK (refused outside NODE_ENV development/test), name only.
       "LOCAL_KEYRING_KEY=",
       // Step 7D: deployed KMS credential keyring configuration (non-secret), names only.

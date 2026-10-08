@@ -11,6 +11,7 @@ import { codeOf, findReferences, sourceFiles } from "../support/source-scan";
 const root = path.resolve(import.meta.dirname, "../..");
 const identityFiles = readdirSync(path.join(root, "platform/aws")).filter((file) => file.endsWith(".ts")).map((file) => `platform/aws/${file}`);
 const VERCEL_ADAPTER = "server/connections/vercel-aws-identity.ts";
+const WORKER_ADAPTER = "jobs/integration-aws-identity.ts";
 const RUNTIME_ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts", "trigger.config.ts", "trigger.integration.config.ts"];
 
 describe("AWS runtime-identity contract", () => {
@@ -30,8 +31,17 @@ describe("AWS runtime-identity contract", () => {
     expect(literals).toEqual(["platform/aws/identity.ts"]);
   });
 
-  it("STS is never called directly: no AssumeRole(WithWebIdentity), STS client or web-identity provider package", () => {
-    expect(findReferences(sourceFiles(RUNTIME_ROOTS), [/AssumeRole/, /client-sts/, /credential-provider-web-identity/, /\bfromWebToken\b|\bfromTokenFile\b/])).toEqual([]);
+  it("STS is called only by the integration worker identity adapter (Step 7E.4C), and only AssumeRole", () => {
+    expect(findReferences(sourceFiles(RUNTIME_ROOTS).filter((file) => file !== WORKER_ADAPTER), [/AssumeRole/, /client-sts/, /STSClient/])).toEqual([]);
+    expect(findReferences(sourceFiles(RUNTIME_ROOTS), [/credential-provider-web-identity/, /\bfromWebToken\b|\bfromTokenFile\b/, /AssumeRoleWith(WebIdentity|SAML)/, /GetCallerIdentity|GetSessionToken|GetFederationToken|GetAccessKeyInfo/])).toEqual([]);
+    const adapter = codeOf(WORKER_ADAPTER);
+    expect([...new Set([...adapter.matchAll(/\b([A-Z][A-Za-z]+)Command\b/g)].map((match) => match[1]))]).toEqual(["AssumeRole"]);
+    // The request carries exactly the role, the session name and the duration: no ExternalId, SourceIdentity, tags,
+    // session policies or MFA fields.
+    expect(adapter).toMatch(/new AssumeRoleCommand\(\{ RoleArn: identity\.roleArn, RoleSessionName: INTEGRATION_WORKER_ROLE_SESSION_NAME, DurationSeconds: INTEGRATION_WORKER_SESSION_SECONDS \}\)/);
+    expect(adapter).not.toMatch(/\b(ExternalId|SourceIdentity|Tags|TransitiveTagKeys|Policy|PolicyArns|SerialNumber|TokenCode|ProvidedContexts)\s*:/);
+    expect(adapter).not.toMatch(/process\.env\.|AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|REGION|DEFAULT_REGION|ROLE_ARN)\b/);
+    expect(adapter).toMatch(/ignoreConfiguredEndpointUrls: true/);
   });
 
   it("the audience exchange, the official provider and the request-token header live only in the Vercel identity adapter", () => {
@@ -104,7 +114,9 @@ describe("Vercel OIDC web identity adapter (Step 7E.3B)", () => {
     expect(manifest.dependencies?.["@vercel/oidc"]).toBe("3.8.10");
     expect(manifest.dependencies?.["@vercel/oidc-aws-credentials-provider"]).toBe("3.3.10");
     const all = { ...manifest.dependencies, ...manifest.devDependencies };
-    for (const pkg of ["@aws-sdk/client-sts", "@aws-sdk/credential-provider-web-identity", "@aws-sdk/credential-providers", "@vercel/cli-exec", "@vercel/cli-config", "execa"]) expect(all[pkg], pkg).toBeUndefined();
+    for (const pkg of ["@aws-sdk/credential-provider-web-identity", "@aws-sdk/credential-providers", "@vercel/cli-exec", "@vercel/cli-config", "execa"]) expect(all[pkg], pkg).toBeUndefined();
+    // Step 7E.4C: the one other AWS client, pinned exactly to the KMS client's version.
+    expect(manifest.dependencies?.["@aws-sdk/client-sts"]).toBe(manifest.dependencies?.["@aws-sdk/client-kms"]);
   });
 
   it("the Vercel upload boundary still excludes local .vercel metadata", () => {

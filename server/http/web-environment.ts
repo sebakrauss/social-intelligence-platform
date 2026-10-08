@@ -17,6 +17,9 @@
  *   TRIGGER_INTEGRATION_TASK_OPERATOR_KEY,         cross-project Trigger.dev orchestration keys of the jobs planes
  *   TRIGGER_MAIN_RELAY_TRIGGER_KEY                 (Step 7E.4B.3): the web knows only the MAIN project's key
  *   TRIGGER_INTEGRATION_PROJECT_REF                the integration plane's deploy/CLI configuration
+ *   INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID,       the integration worker's AWS bootstrap identity (Step 7E.4C):
+ *   INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY,   the web never holds the worker's decrypt path
+ *   INTEGRATION_AWS_WORKER_ROLE_ARN
  *
  * The repository's contract holds no provider (Meta/Instagram/TikTok) credential variable: none exists to forbid.
  * Development and test runtimes are exempt (local .env.local legitimately holds tooling credentials). The mere
@@ -46,6 +49,9 @@ export const FORBIDDEN_WEB_VARIABLES = [
   "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY",
   "TRIGGER_MAIN_RELAY_TRIGGER_KEY",
   "TRIGGER_INTEGRATION_PROJECT_REF",
+  "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID",
+  "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY",
+  "INTEGRATION_AWS_WORKER_ROLE_ARN",
 ] as const;
 
 const LOCAL_NODE_ENVS: readonly string[] = ["development", "test"];

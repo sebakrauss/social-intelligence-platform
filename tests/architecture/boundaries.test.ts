@@ -140,6 +140,9 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["plane-main-runtime-main-only", "jobs/trigger/integration/uses-main-plane.ts", "jobs/main-runtime.ts"],
   ["plane-integration-no-delivery", "jobs/trigger/integration/uses-main-plane.ts", "jobs/trigger/main/delivery.ts"],
   ["plane-task-directories-disjoint", "jobs/trigger/integration/uses-main-plane.ts", "jobs/trigger/main/delivery.ts"],
+  // Integration worker AWS identity (Step 7E.4C): STS only in the adapter; the adapter only in the integration composition
+  ["aws-sts-sdk-only-in-integration-worker-identity", "server/assumes-role.ts", "../../../../node_modules/@aws-sdk/client-sts/dist-es/index.js"],
+  ["integration-worker-identity-composition-only", "jobs/trigger/main/uses-worker-identity.ts", "jobs/integration-aws-identity.ts"],
   // Vercel OIDC web identity (Step 7E.3B): packages only in the adapter, no refresh helpers, composed by the web only
   ["vercel-oidc-only-in-web-identity-adapter", "server/reads-vercel-oidc.ts", "../../../../node_modules/@vercel/oidc/dist/index.js"],
   ["vercel-oidc-only-in-web-identity-adapter", "app/uses-vercel-identity.ts", "../../../../node_modules/@vercel/oidc-aws-credentials-provider/dist/index.js"],

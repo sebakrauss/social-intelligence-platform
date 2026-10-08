@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-kms": "3.1146.0",
+    "@aws-sdk/client-sts": "3.1146.0",
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.117.2",
     "@trigger.dev/sdk": "4.7.2",

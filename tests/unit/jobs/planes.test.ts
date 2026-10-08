@@ -121,15 +121,24 @@ describe("plane runtimes: explicit credentials, no fallback, no inherited branch
 });
 
 describe("per-plane environment contract (deployed runs)", () => {
-  it("the integration plane refuses the system DB credential and the integration task-operator key", () => {
-    expect(PLANE_FORBIDDEN_VARIABLES.integration).toEqual(["DATABASE_SYSTEM_URL", "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY"]);
+  it("the integration plane refuses the system DB credential, the integration task-operator key and the standard AWS credential chain", () => {
+    expect(PLANE_FORBIDDEN_VARIABLES.integration).toEqual([
+      "DATABASE_SYSTEM_URL", "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY",
+      "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
+    ]);
+    expect(planeEnvironmentProblems("integration", PINNED, { AWS_ACCESS_KEY_ID: "synthetic", INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID: "synthetic" })).toEqual(["AWS_ACCESS_KEY_ID"]);
     expect(planeEnvironmentProblems("integration", PINNED, { DATABASE_SYSTEM_URL: "postgres://synthetic", DATABASE_WORKER_URL: "postgres://synthetic" })).toEqual(["DATABASE_SYSTEM_URL"]);
     expect(() => { assertPlaneEnvironment("integration", PINNED, { TRIGGER_INTEGRATION_TASK_OPERATOR_KEY: OPERATOR }); }).toThrow(NonRetryableJobError);
     expect(() => { assertPlaneEnvironment("integration", PINNED, { DATABASE_WORKER_URL: "postgres://synthetic", TRIGGER_MAIN_RELAY_TRIGGER_KEY: RELAY }); }).not.toThrow();
   });
 
-  it("the main plane refuses the integration→main relay key, and still legitimately holds the worker DB credential (Move saga)", () => {
-    expect(PLANE_FORBIDDEN_VARIABLES.main).toEqual(["TRIGGER_MAIN_RELAY_TRIGGER_KEY"]);
+  it("the main plane refuses the integration→main relay key and the integration worker's AWS bootstrap identity, and still holds the worker DB credential (Move saga)", () => {
+    expect(PLANE_FORBIDDEN_VARIABLES.main).toEqual([
+      "TRIGGER_MAIN_RELAY_TRIGGER_KEY", "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN",
+    ]);
+    for (const name of ["INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN"]) {
+      expect(() => { assertPlaneEnvironment("main", PINNED, { [name]: "synthetic" }); }, name).toThrow(NonRetryableJobError);
+    }
     expect(() => { assertPlaneEnvironment("main", UNIDENTIFIED, { TRIGGER_MAIN_RELAY_TRIGGER_KEY: RELAY }); }).toThrow(NonRetryableJobError);
     expect(() => { assertPlaneEnvironment("main", PINNED, { DATABASE_SYSTEM_URL: "x", DATABASE_WORKER_URL: "x", TRIGGER_INTEGRATION_TASK_OPERATOR_KEY: OPERATOR }); }).not.toThrow();
   });

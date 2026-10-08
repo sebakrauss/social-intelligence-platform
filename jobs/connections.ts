@@ -12,7 +12,8 @@
  *     outage propagates (retryable); a denied or misconfigured keyring is a non-retryable operational failure,
  *     never "credential unreadable" (Step 7D). Nothing is cached.
  *   - the opener is the local keyring's in development/test, the KMS Decrypt opener where KMS is configured
- *     (Step 7D; it needs the worker's AWS identity supplied explicitly — until 7E it fails closed).
+ *     (Step 7D), whose AWS identity is the integration worker's assumed role (Step 7E.4C: bootstrap IAM user →
+ *     STS AssumeRole → temporary credentials, jobs/integration-aws-identity.ts) — Decrypt only, never sealing.
  */
 import { randomUUID } from "node:crypto";
 import {
@@ -41,7 +42,8 @@ import { parseWorkspaceId } from "@/domain/ids";
 import { NonRetryableJobError, type TenantStepJobContext } from "@/platform/jobs";
 import { providerCredential } from "@/integrations/providers/contract";
 import { createStagingStubReadPort } from "@/integrations/providers/staging-stub";
-import { selectCredentialCrypto } from "@/server/connections/environment";
+import { readKmsKeyringConfig, selectCredentialCrypto } from "@/server/connections/environment";
+import { createIntegrationWorkerAwsCredentials } from "./integration-aws-identity";
 import { providerComposition } from "@/server/connections/provider-mode";
 import { localSimulator } from "@/server/connections/simulator";
 import { capabilityRefreshStores, connectionWorkerStore } from "@/server/persistence/connections";
@@ -123,11 +125,21 @@ export function composeJobProviders(environment: Environment): JobComposition {
     return { access: createStagingStubCredentialAccess(), providers: { read: (provider) => createStagingStubReadPort(provider, clock) } };
   }
   const read = localSimulator(environment).read;
-  const opening = composeCredentialOpener(environment);
+  const opening = composeCredentialOpener(environment, integrationWorkerAwsCredentials(environment));
   return {
     access: createCredentialAccess(opening.opener, opening.contextEnv),
     providers: { read: (provider) => (provider === "simulator" ? read : undefined) },
   };
+}
+
+/**
+ * The integration worker's AWS credential provider where KMS is configured; undefined in local/test (the local keyring
+ * needs none). Lazy: building it reads nothing and calls nothing — STS is first asked when the KMS opener needs
+ * credentials. Missing bootstrap configuration then fails closed (KEYRING_MISCONFIGURED), never falling back.
+ */
+export function integrationWorkerAwsCredentials(environment: Environment): KmsCredentialSource | undefined {
+  const kms = readKmsKeyringConfig(environment);
+  return kms === undefined ? undefined : createIntegrationWorkerAwsCredentials(kms);
 }
 
 export interface ComposedCredentialOpener {

@@ -4,3 +4,5 @@ import { kms_unwrapper } from "../platform/crypto/credentials/aws-kms-unwrapper"
 import { local_opener } from "../platform/crypto/credentials/local-opener";
 import { open } from "../platform/crypto/credentials/open";
 export const composed = [kms_opener, kms_unwrapper, local_opener, open];
+import { workerIdentity } from "./integration-aws-identity";
+export const composedIdentity = workerIdentity;

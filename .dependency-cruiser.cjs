@@ -490,7 +490,7 @@ module.exports = {
       name: "aws-kms-sdk-only-in-credential-adapter",
       severity: "error",
       comment: "Steps 7C/7D: the AWS KMS SDK is imported only by the two keyring capabilities (generator: GenerateDataKey; unwrapper: Decrypt), the single client factory (aws-kms-client.ts) and their unit tests. The shared KMS module, the config parser and every other crypto, domain or application module stay SDK-free.",
-      from: { pathNot: "^(platform/crypto/credentials/aws-kms-(generator|unwrapper|client)\\.ts|tests/unit/platform/aws-kms-(keyring|composition)\\.test\\.ts)$" },
+      from: { pathNot: "^(platform/crypto/credentials/aws-kms-(generator|unwrapper|client)\\.ts|tests/unit/platform/aws-kms-(keyring|composition)\\.test\\.ts|tests/unit/jobs/integration-aws-identity\\.test\\.ts)$" },
       to: { path: npmPackage(["@aws-sdk/client-kms"]) },
     },
     {
@@ -503,9 +503,23 @@ module.exports = {
     {
       name: "aws-sdk-only-client-kms",
       severity: "error",
-      comment: "Step 7C: no other AWS SDK package is adopted — no credential providers, default provider chain, STS or Smithy internals. Credential composition and OIDC are later, reviewed steps (7D/7E).",
+      comment: "Step 7C: no other AWS SDK package is adopted — no credential providers, default provider chain or Smithy internals. STS (client-sts) is confined separately to the integration worker identity adapter (Step 7E.4C).",
       from: {},
-      to: { path: "(^|/)node_modules/(@aws-sdk/(?!client-kms/)[^/]+|@smithy/[^/]+)/" },
+      to: { path: "(^|/)node_modules/(@aws-sdk/(?!client-kms/|client-sts/)[^/]+|@smithy/[^/]+)/" },
+    },
+    {
+      name: "aws-sts-sdk-only-in-integration-worker-identity",
+      severity: "error",
+      comment: "Step 7E.4C: the STS client is imported only by the integration worker's AWS identity adapter (jobs/integration-aws-identity.ts: bootstrap IAM user → AssumeRole) and its unit test. No other module talks to STS.",
+      from: { pathNot: "^(jobs/integration-aws-identity\\.ts|tests/unit/jobs/integration-aws-identity\\.test\\.ts)$" },
+      to: { path: npmPackage(["@aws-sdk/client-sts"]) },
+    },
+    {
+      name: "integration-worker-identity-composition-only",
+      severity: "error",
+      comment: "Step 7E.4C: the integration worker's AWS identity is composed only by the integration plane's credential-opening composition (jobs/connections.ts) — never by the main plane, the web, shared jobs modules or the delivery service.",
+      from: { pathNot: "^(jobs/connections\\.ts|tests/unit/jobs/integration-aws-identity\\.test\\.ts)$" },
+      to: { path: "^jobs/integration-aws-identity\\.ts$" },
     },
     {
       name: "vercel-oidc-only-in-web-identity-adapter",

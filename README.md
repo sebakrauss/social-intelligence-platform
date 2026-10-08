@@ -282,8 +282,15 @@ not configured yet (7E): until then KMS composition fails closed. No `AWS_*` var
 The hosted web's identity (Step 7E.2 contract; adapter in 7E.3): its Vercel OIDC token (Team issuer, audience exactly
 `sts.amazonaws.com`) is exchanged for temporary credentials of one role, `CREDENTIAL_KMS_WEB_ROLE_ARN` (a full IAM
 role ARN, non-secret), which may only GenerateDataKey. Credentials are resolved lazily, inside the request that
-needs them; no long-lived AWS credential is stored in Vercel. The worker's identity mechanism is still open
-(`KMS_WORKER_AUTH`).
+needs them; no long-lived AWS credential is stored in Vercel.
+
+The integration worker's identity (Step 7E.4C; **DEV/non-prod candidate only**, production open under TA-Q-05,
+`KMS_WORKER_AUTH` still open): a bootstrap IAM user, given only to the INTEGRATION Trigger.dev project as
+`INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID` / `INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY`, assumes exactly
+`INTEGRATION_AWS_WORKER_ROLE_ARN` (same account and partition as the KMS key) through STS in the KMS key's region:
+`jobs/integration-aws-identity.ts`, 900-second sessions named `integration-worker`, refreshed 120 s before expiry,
+one request for concurrent callers, re-read on every resolution so a rotated key takes effect without a redeploy.
+KMS only ever receives the temporary role credentials (Decrypt only); the main plane and the web refuse all three names.
 
 ## Deployed non-production validation (TA-Q-31)
 
