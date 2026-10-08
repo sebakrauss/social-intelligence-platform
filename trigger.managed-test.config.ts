@@ -6,6 +6,8 @@
 import { defineConfig } from "@trigger.dev/sdk";
 
 export default defineConfig({
+  // Node 22 like .nvmrc and package.json engines; never the CLI's implicit "current LTS" default.
+  runtime: "node-22",
   project: process.env["TRIGGER_PROJECT_REF"] ?? "",
   dirs: ["./tests/jobs/managed/tasks"],
   maxDuration: 120,

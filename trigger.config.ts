@@ -7,6 +7,8 @@ import { defineConfig } from "@trigger.dev/sdk";
 import { RETRY_POLICIES } from "./platform/jobs/registry";
 
 export default defineConfig({
+  // Node 22 like .nvmrc and package.json engines; never the CLI's implicit "current LTS" default.
+  runtime: "node-22",
   project: process.env["TRIGGER_PROJECT_REF"] ?? "",
   dirs: ["./jobs/trigger"],
   maxDuration: 300,
