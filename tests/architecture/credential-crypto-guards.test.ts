@@ -23,7 +23,7 @@ const KMS_CAPABILITIES = ["aws-kms-generator.ts", "aws-kms-unwrapper.ts"];
 /** Files that may import the KMS SDK: the two capabilities and the single client factory (Step 7D). */
 const KMS_SDK_FILES = [...KMS_CAPABILITIES, "aws-kms-client.ts"];
 const VERCEL_WEB_IDENTITY_ADAPTER = "server/connections/vercel-aws-identity.ts";
-const RUNTIME_ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts", "trigger.config.ts"];
+const RUNTIME_ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts", "trigger.config.ts", "trigger.integration.config.ts"];
 
 describe("credential crypto boundary", () => {
   it("the sealing side never imports the opening side or decryption", () => {

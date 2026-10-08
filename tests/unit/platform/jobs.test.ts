@@ -30,6 +30,7 @@ const OUTBOX = "9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f";
 const tenant = (overrides: Partial<TenantTaskDefinition> = {}): TenantTaskDefinition => ({
   name: "workflow.example_task",
   scope: "workspace",
+  executionPlane: "main",
   lane: 2,
   retry: RETRY_POLICIES.transient,
   concurrency: { by: "workspace" },
@@ -68,7 +69,7 @@ describe("lanes", () => {
 
 describe("task registry", () => {
   it("routes tasks to their lane queue, and system tasks to the system queue", () => {
-    const registry = defineTaskRegistry([tenant({ lane: 5 }), { name: "outbox.relay", scope: "system", retry: RETRY_POLICIES.transient }]);
+    const registry = defineTaskRegistry([tenant({ lane: 5 }), { name: "outbox.relay", scope: "system", executionPlane: "main", retry: RETRY_POLICIES.transient }]);
     expect(queueFor(registry.get("workflow.example_task") as TenantTaskDefinition)).toBe(LANE_DEFINITIONS[5].queue);
     expect(queueFor(registry.get("outbox.relay") ?? registry.tasks[0] as never)).toBe(SYSTEM_QUEUE.queue);
     expect(registry.tenant("outbox.relay")).toBeUndefined();
@@ -85,9 +86,13 @@ describe("task registry", () => {
     ["a backoff below the floor", [tenant({ retry: { ...RETRY_POLICIES.transient, minDelayMs: 1 } })]],
     ["an undeclared concurrency subject", [tenant({ concurrency: { by: "subject", subject: "account_id" } })]],
     ["duplicate subjects", [tenant({ subjects: ["item_id", "item_id"] })]],
-    ["an unnamed system task", [{ name: "workflow.sneaky", scope: "system", retry: RETRY_POLICIES.singleAttempt } as never]],
+    ["an unnamed system task", [{ name: "workflow.sneaky", scope: "system", executionPlane: "main", retry: RETRY_POLICIES.singleAttempt } as never]],
     ["a system task declared as tenant", [tenant({ name: "outbox.relay" })]],
-    ["an invalid cron", [{ name: "outbox.dispatch_sweep", scope: "system", retry: RETRY_POLICIES.singleAttempt, schedule: { cron: "every minute" } }]],
+    ["an invalid cron", [{ name: "outbox.dispatch_sweep", scope: "system", executionPlane: "main", retry: RETRY_POLICIES.singleAttempt, schedule: { cron: "every minute" } }]],
+    ["a task without an execution plane", [tenant({ executionPlane: undefined as never })]],
+    ["an unknown execution plane", [tenant({ executionPlane: "worker" as never })]],
+    ["a vendor project ref as execution plane", [tenant({ executionPlane: "proj_synthetic" as never })]],
+    ["a system task outside the main plane", [{ name: "outbox.relay", scope: "system", executionPlane: "integration" as never, retry: RETRY_POLICIES.transient }]],
   ] as const)("refuses %s", (_label, definitions) => {
     expect(() => defineTaskRegistry(definitions)).toThrow(TaskRegistryError);
   });

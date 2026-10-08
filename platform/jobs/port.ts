@@ -7,6 +7,7 @@
  */
 import type { Lane } from "./lanes";
 import type { JobPayload } from "./payload";
+import type { ExecutionPlane } from "./planes";
 
 /** Normalized run status. Vendor statuses map onto these; anything unrecognized is UNKNOWN. */
 export const RUN_STATUSES = [
@@ -55,6 +56,12 @@ export interface JobRuntime {
   /** Current status of a run; status UNKNOWN when the vendor doesn't know the run. */
   getRun(runId: string): Promise<RunSnapshot>;
 }
+
+/**
+ * One job runtime per execution plane (Step 7E.4B.3): the client that owns that plane's runs. The persisted plane of a
+ * delivery selects it BEFORE any enqueue or run lookup — never by trial, never by falling back to the other plane.
+ */
+export type ExecutionPlaneRuntimes = Readonly<Record<ExecutionPlane, JobRuntime>>;
 
 /** The job runtime couldn't be reached or refused for a transient reason: retry later with backoff. */
 export class JobRuntimeUnavailableError extends Error {

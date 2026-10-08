@@ -8,7 +8,7 @@
  * delivery state.
  */
 import { sql } from "drizzle-orm";
-import type { RunStatus } from "@/platform/jobs";
+import { isExecutionPlane, type ExecutionPlane, type RunStatus } from "@/platform/jobs";
 import type { DatabaseTransaction } from "./scopes";
 
 export const DELIVERY_FAILURE_CLASSES = [
@@ -49,6 +49,8 @@ export interface ClaimedOutboxRow {
   readonly createdAt: Date;
   readonly dispatchAttempts: number;
   readonly recoveryCount: number;
+  /** The plane this delivery is bound to, as PERSISTED by the claim (0011): the only plane it may be dispatched on. */
+  readonly executionPlane: ExecutionPlane;
 }
 
 interface ClaimedRowRecord extends Record<string, unknown> {
@@ -64,19 +66,41 @@ interface ClaimedRowRecord extends Record<string, unknown> {
   created_at: Date | string;
   dispatch_attempts: number;
   recovery_count: number;
+  execution_plane: string | null;
 }
 
 const date = (value: Date | string): Date => (value instanceof Date ? value : new Date(value));
 
-/** Leases due PENDING rows (oldest first) so this relay alone dispatches them until the lease ends. */
+/** A claimed or dispatched row is always bound (0011 constraints); anything else aborts the pass (fail closed). */
+function boundPlane(value: unknown, outboxId: string): ExecutionPlane {
+  if (!isExecutionPlane(value)) throw new Error(`outbox ${outboxId}: delivery is not bound to an execution plane`);
+  return value;
+}
+
+/**
+ * Leases due PENDING rows (oldest first) so this relay alone dispatches them until the lease ends, and binds every
+ * still-unbound row to its execution plane IN THE SAME UPDATE (B2, migration 0011): `unboundRoutes` is the task
+ * registry's topic → plane map, passed as one parameter (the registry stays the only routing authority; nothing is
+ * hard-coded here). A row already bound keeps its persisted plane whatever the registry says now. An unbound row whose
+ * topic has no route is never claimed: it stays PENDING and unbound (surfaced by the SLO sweep), never given a guessed
+ * plane. The returned rows carry the plane as persisted, so dispatch never re-derives it.
+ */
 export async function claimDueRows(
   tx: DatabaseTransaction,
-  options: { readonly now: Date; readonly minAgeSeconds: number; readonly leaseSeconds: number; readonly limit: number },
+  options: {
+    readonly now: Date;
+    readonly minAgeSeconds: number;
+    readonly leaseSeconds: number;
+    readonly limit: number;
+    readonly unboundRoutes: Readonly<Record<string, ExecutionPlane>>;
+  },
 ): Promise<readonly ClaimedOutboxRow[]> {
+  const routes = JSON.stringify(options.unboundRoutes);
   const result = await tx.execute<ClaimedRowRecord>(sql`
     with due as (
       select o.id from system.outbox o
        where o.status = 'PENDING' and o.run_outcome is null
+         and (o.execution_plane is not null or (${routes}::jsonb ->> o.topic) is not null)
          and (o.next_dispatch_at is null or o.next_dispatch_at <= ${options.now})
          and (o.claimed_until is null or o.claimed_until <= ${options.now})
          and o.created_at <= ${options.now}::timestamptz - make_interval(secs => ${options.minAgeSeconds})
@@ -84,10 +108,11 @@ export async function claimDueRows(
        limit ${options.limit}
        for update skip locked)
     update system.outbox o
-       set claimed_until = ${options.now}::timestamptz + make_interval(secs => ${options.leaseSeconds})
+       set claimed_until = ${options.now}::timestamptz + make_interval(secs => ${options.leaseSeconds}),
+           execution_plane = coalesce(o.execution_plane, ${routes}::jsonb ->> o.topic)
       from due where o.id = due.id
     returning o.id, o.topic, o.organization_id, o.workspace_id, o.subject_ids, o.correlation_id, o.initiator_type,
-              o.initiator_user_id, o.dispatch_key, o.created_at, o.dispatch_attempts, o.recovery_count`);
+              o.initiator_user_id, o.dispatch_key, o.created_at, o.dispatch_attempts, o.recovery_count, o.execution_plane`);
   return result.rows.map((row) => ({
     id: row.id,
     topic: row.topic,
@@ -101,6 +126,7 @@ export async function claimDueRows(
     createdAt: date(row.created_at),
     dispatchAttempts: row.dispatch_attempts,
     recoveryCount: row.recovery_count,
+    executionPlane: boundPlane(row.execution_plane, row.id),
   }));
 }
 
@@ -144,14 +170,17 @@ export interface AwaitingOutcomeRow {
   readonly recoveryCount: number;
   readonly dispatchedAt: Date;
   readonly runId: string;
+  /** The persisted plane of the delivery (0011): the only project its runs may be looked up in. */
+  readonly executionPlane: ExecutionPlane;
 }
 
 /** DISPATCHED rows without a terminal outcome or a diagnostic, each with its current (latest) run. */
 export async function listAwaitingOutcome(tx: DatabaseTransaction, options: { readonly limit: number }): Promise<readonly AwaitingOutcomeRow[]> {
   const result = await tx.execute<{
     id: string; topic: string; workspace_id: string | null; correlation_id: string; recovery_count: number; dispatched_at: Date | string; run_id: string;
+    execution_plane: string | null;
   }>(sql`
-    select o.id, o.topic, o.workspace_id, o.correlation_id, o.recovery_count, o.dispatched_at, r.run_id
+    select o.id, o.topic, o.workspace_id, o.correlation_id, o.recovery_count, o.dispatched_at, r.run_id, o.execution_plane
       from system.outbox o
       join lateral (
         select run_id from system.outbox_runs r where r.outbox_id = o.id order by r.dispatched_at desc, r.dispatch_attempt desc limit 1
@@ -167,6 +196,7 @@ export async function listAwaitingOutcome(tx: DatabaseTransaction, options: { re
     recoveryCount: row.recovery_count,
     dispatchedAt: date(row.dispatched_at),
     runId: row.run_id,
+    executionPlane: boundPlane(row.execution_plane, row.id),
   }));
 }
 
@@ -265,4 +295,27 @@ export async function oldestPendingAgeSeconds(tx: DatabaseTransaction, now: Date
       from system.outbox where status = 'PENDING' and run_outcome is null`);
   const age = result.rows[0]?.age;
   return age === null || age === undefined ? null : Math.max(0, age);
+}
+
+/**
+ * Retirement readiness (Step 7E.4B.3): deliveries of `topic` bound to `plane` that can still cause a run of that topic
+ * in that plane under the normal runtime — exactly the union of the two states the delivery service acts on:
+ *
+ *   status = 'PENDING' and run_outcome IS NULL                          claimable (claimDueRows): never dispatched,
+ *                                                                        leased, backing off after a failed attempt, or
+ *                                                                        re-queued for R7 recovery (CRASHED/SYSTEM_FAILURE)
+ *   status = 'DISPATCHED' and run_outcome IS NULL and run_diagnostic IS NULL   awaiting an outcome (listAwaitingOutcome):
+ *                                                                        its run may be queued/executing, or end CRASHED
+ *                                                                        and be recovered in the same plane
+ *
+ * Everything else is terminal for execution: a recorded run_outcome (COMPLETED, FAILED, CANCELED, RECOVERY_EXHAUSTED) is
+ * final, and OBSERVATION_EXHAUSTED (run_diagnostic) is never claimed, polled, recovered or re-dispatched again by any
+ * runtime path. A task's implementation may be removed from a plane only when this count is zero.
+ */
+export async function countExecutionCapableBound(tx: DatabaseTransaction, options: { readonly topic: string; readonly plane: ExecutionPlane }): Promise<number> {
+  const result = await tx.execute<{ n: number }>(sql`
+    select count(*)::int as n from system.outbox
+     where topic = ${options.topic} and execution_plane = ${options.plane} and run_outcome is null
+       and (status = 'PENDING' or (status = 'DISPATCHED' and run_diagnostic is null))`);
+  return result.rows[0]?.n ?? 0;
 }

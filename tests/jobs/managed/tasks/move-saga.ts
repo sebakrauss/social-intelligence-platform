@@ -12,9 +12,10 @@
  *                                under test here
  */
 import { task } from "@trigger.dev/sdk";
-import { runActivateDestination, runRejectDestination, runReleaseSource } from "@/jobs/connections";
+import { systemDatabase } from "@/jobs/main-runtime";
+import { runActivateDestination, runRejectDestination, runReleaseSource } from "@/jobs/moves";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
-import { jobLogger, jobRuntime, systemDatabase } from "@/jobs/runtime";
+import { jobLogger, mainSelfRuntime } from "@/jobs/runtime";
 import { defineTenantTask, toVendorError, triggerRetry } from "@/jobs/trigger/define";
 import { SYSTEM_DELIVERY_QUEUE } from "@/jobs/trigger/queues";
 import { runSystemJob } from "@/platform/jobs";
@@ -30,7 +31,8 @@ export const managedRelay = task({
   run: async (payload: unknown, { ctx }) => {
     try {
       return await runSystemJob({ registry: PRODUCTION_TASKS, system: systemDatabase(), logger: jobLogger }, relayDefinition.name, payload, { runId: ctx.run.id, attempt: ctx.attempt.number }, (context) =>
-        relayPass({ system: context.system, runtime: jobRuntime(), registry: PRODUCTION_TASKS, logger: jobLogger, clock: () => new Date() }),
+        // Historical single-project DEVELOPMENT leg (TA-Q-31): both planes are this one dev project and its own key.
+        relayPass({ system: context.system, runtimes: { main: mainSelfRuntime({ kind: "development" }), integration: mainSelfRuntime({ kind: "development" }) }, registry: PRODUCTION_TASKS, logger: jobLogger, clock: () => new Date() }),
       );
     } catch (error) {
       throw toVendorError(error);

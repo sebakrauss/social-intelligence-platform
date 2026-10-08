@@ -18,7 +18,7 @@ import { WEB_ENVIRONMENT_GUARD, codeOf, codeWithoutForbiddenList, findReferences
 const root = path.resolve(import.meta.dirname, "../..");
 const json = (file: string): Record<string, unknown> => JSON.parse(readFileSync(path.join(root, file), "utf8")) as Record<string, unknown>;
 
-const PRODUCTION_ROOTS = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "ai", "mutations", "jobs", "trigger.config.ts"];
+const PRODUCTION_ROOTS = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "ai", "mutations", "jobs", "trigger.config.ts", "trigger.integration.config.ts"];
 const WS_MINIMUM = [8, 21, 0] as const;
 
 function atLeast(version: string, minimum: readonly [number, number, number]): boolean {
@@ -53,7 +53,7 @@ describe("job runtime supply chain", () => {
 
 describe("job runtime credentials", () => {
   it("the jobs deployment never reads the web or migration credential", () => {
-    expect(findReferences(sourceFiles(["jobs", "trigger.config.ts"]), [/DATABASE_WEB_URL/, /DATABASE_MIGRATION_URL/, /createRuntimeDatabaseFromEnv\(\s*"web"/])).toEqual([]);
+    expect(findReferences(sourceFiles(["jobs", "trigger.config.ts", "trigger.integration.config.ts"]), [/DATABASE_WEB_URL/, /DATABASE_MIGRATION_URL/, /createRuntimeDatabaseFromEnv\(\s*"web"/])).toEqual([]);
   });
 
   it("the web never reads the worker or system credential", () => {
@@ -64,15 +64,19 @@ describe("job runtime credentials", () => {
     expect(patterns.filter((pattern) => pattern.test(codeWithoutForbiddenList(WEB_ENVIRONMENT_GUARD)))).toEqual([]);
   });
 
-  it("Trigger.dev configuration comes from the environment, never from literals", () => {
-    const config = codeOf("trigger.config.ts");
-    expect(config).toMatch(/process\.env\["TRIGGER_PROJECT_REF"\]/);
-    expect(config).not.toMatch(/proj_[A-Za-z0-9]/);
-    expect(config).toMatch(/dirs:\s*\["\.\/jobs\/trigger"\]/);
-    expect(findReferences(sourceFiles(PRODUCTION_ROOTS), [/tr_(dev|prod|stg)_[A-Za-z0-9]/])).toEqual([]);
+  it("Trigger.dev configuration comes from the environment, never from literals (one config per execution plane)", () => {
+    const main = codeOf("trigger.config.ts");
+    expect(main).toMatch(/process\.env\["TRIGGER_PROJECT_REF"\]/);
+    expect(main).toMatch(/dirs:\s*\["\.\/jobs\/trigger\/main"\]/);
+    const integration = codeOf("trigger.integration.config.ts");
+    expect(integration).toMatch(/process\.env\["TRIGGER_INTEGRATION_PROJECT_REF"\]/);
+    expect(integration).toMatch(/dirs:\s*\["\.\/jobs\/trigger\/integration"\]/);
+    for (const config of [main, integration]) expect(config).not.toMatch(/proj_[A-Za-z0-9]/);
+    expect(findReferences(sourceFiles(PRODUCTION_ROOTS), [/tr_(dev|prod|stg|preview)_[A-Za-z0-9]/])).toEqual([]);
     const example = readFileSync(path.join(root, ".env.example"), "utf8");
-    expect(example).toMatch(/^TRIGGER_SECRET_KEY=$/m);
-    expect(example).toMatch(/^TRIGGER_PROJECT_REF=$/m);
+    for (const name of ["TRIGGER_SECRET_KEY", "TRIGGER_PROJECT_REF", "TRIGGER_INTEGRATION_PROJECT_REF", "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY", "TRIGGER_MAIN_RELAY_TRIGGER_KEY"]) {
+      expect(example, name).toMatch(new RegExp(`^${name}=$`, "m"));
+    }
   });
 });
 
@@ -89,13 +93,13 @@ describe("dispatch path", () => {
   });
 
   it("system jobs run only from the named delivery tasks; tenant tasks only through the tenant wrapper", () => {
-    expect(users(/\brunSystemJob\(/).filter((file) => !file.startsWith("platform/jobs/"))).toEqual(["jobs/trigger/delivery.ts"]);
-    expect(users(/\btask\(\{/)).toEqual(["jobs/trigger/define.ts", "jobs/trigger/delivery.ts"]);
-    expect(users(/\bschedules\.task\(/)).toEqual(["jobs/trigger/delivery.ts"]);
+    expect(users(/\brunSystemJob\(/).filter((file) => !file.startsWith("platform/jobs/"))).toEqual(["jobs/trigger/main/delivery.ts"]);
+    expect(users(/\btask\(\{/)).toEqual(["jobs/trigger/define.ts", "jobs/trigger/main/delivery.ts"]);
+    expect(users(/\bschedules\.task\(/)).toEqual(["jobs/trigger/main/delivery.ts"]);
     expect(codeOf("jobs/trigger/define.ts")).toMatch(/runTenantJob\(/);
     expect(codeOf("jobs/trigger/define.ts")).toMatch(/runTenantStepJob\(/);
     // Tenant tasks are declared only through the wrappers (Step 5D: connections.discover_assets).
-    expect(codeOf("jobs/trigger/connections.ts")).toMatch(/defineTenantStepTask\(PRODUCTION_TASKS, "connections\.discover_assets"/);
+    expect(codeOf("jobs/trigger/integration/connections.ts")).toMatch(/defineTenantStepTask\(PRODUCTION_TASKS, "connections\.discover_assets"/);
   });
 
   it("run tags carry the outbox identifier only, and relay payloads pass the IDs-only validator", () => {

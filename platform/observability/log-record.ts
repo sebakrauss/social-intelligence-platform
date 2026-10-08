@@ -20,6 +20,7 @@ import {
 } from "@/domain/correlation";
 import { isErrorCode, type ErrorCode } from "@/domain/errors";
 import { looksLikeSecret } from "@/domain/secret-patterns";
+import { EXECUTION_PLANES, type ExecutionPlane } from "@/platform/jobs/planes";
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -74,6 +75,10 @@ export interface LogFields {
   readonly dispatchKeyFingerprint?: string;
   /** Counts in a sweep or relay pass. */
   readonly count?: number;
+  /** The semantic execution plane a delivery is bound to (closed vocabulary; never a vendor project identifier). */
+  readonly executionPlane?: ExecutionPlane;
+  /** The plane the registry would route NEW work to, when it differs from a bound delivery's plane. */
+  readonly routedPlane?: ExecutionPlane;
 }
 
 export interface LogRecord extends LogFields {
@@ -144,6 +149,8 @@ const FIELD_VALIDATORS: FieldValidators = {
   failureClass: oneOf(LOG_FAILURE_CLASSES),
   dispatchKeyFingerprint: fingerprint,
   count: counter,
+  executionPlane: oneOf(EXECUTION_PLANES),
+  routedPlane: oneOf(EXECUTION_PLANES),
 };
 
 const DECLARED_FIELDS = Object.keys(FIELD_VALIDATORS) as (keyof LogFields)[];

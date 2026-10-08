@@ -4,17 +4,19 @@
  * read; only the system role reads delivery metadata (Step 3 relay).
  */
 import { integer, jsonb, pgSchema, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { EXECUTION_PLANES, type ExecutionPlane } from "@/platform/jobs/planes";
 import { createOutboxMessage, type OutboxMessage, type OutboxWriter } from "@/platform/outbox/message";
 import type { DatabaseTransaction } from "./scopes";
 
 const system = pgSchema("system");
 
 /**
- * The semantic execution plane a delivery is bound to (0011) — never a vendor project identifier. Bound only by the
- * delivery claim; producers always insert NULL (unbound).
+ * The semantic execution plane a delivery is bound to (0011) — the canonical ExecutionPlane of the job foundation
+ * (platform/jobs/planes.ts), never a vendor project identifier. Bound only by the delivery claim; producers always
+ * insert NULL (unbound).
  */
-export const OUTBOX_EXECUTION_PLANES = ["main", "integration"] as const;
-export type OutboxExecutionPlane = (typeof OUTBOX_EXECUTION_PLANES)[number];
+export const OUTBOX_EXECUTION_PLANES = EXECUTION_PLANES;
+export type OutboxExecutionPlane = ExecutionPlane;
 
 export const outbox = system.table("outbox", {
   id: uuid("id").primaryKey(),

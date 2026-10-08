@@ -54,8 +54,9 @@ describe("T-27 managed · Trigger.dev crash recovery (R6 + R7)", () => {
   });
 
   it("CRASHED → R7 detects → re-dispatch → new run → domain effect exactly once", async () => {
-    const runtime = createTriggerDevRuntime({ secretKey: process.env["TRIGGER_SECRET_KEY"] ?? "" });
-    const deps: DeliveryDependencies = { system, runtime, registry: MANAGED_TEST_TASKS, logger, clock: () => new Date() };
+    const runtime = createTriggerDevRuntime({ accessToken: process.env["TRIGGER_SECRET_KEY"] ?? "", branch: "inherit" });
+    // Historical single-project DEVELOPMENT leg: both execution planes are the one dev project.
+    const deps: DeliveryDependencies = { system, runtimes: { main: runtime, integration: runtime }, registry: MANAGED_TEST_TASKS, logger, clock: () => new Date() };
     const command: WorkspaceCommand<{ readonly itemId: string }, string, string> = {
       scope: "workspace",
       name: "test.managed_crash_enqueue",

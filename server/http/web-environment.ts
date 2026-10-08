@@ -14,6 +14,9 @@
  *   TRIGGER_PROJECT_REF                            Trigger.dev deploy/CLI configuration (trigger.config.ts)
  *   APP_DEPLOYMENT_ENV, CAPABILITY_PROVIDER_MODE   job-runtime provider composition (server/connections/provider-mode)
  *   LOCAL_KEYRING_KEY                              the local/test keyring KEK (Step 7D); deployed runtimes use KMS
+ *   TRIGGER_INTEGRATION_TASK_OPERATOR_KEY,         cross-project Trigger.dev orchestration keys of the jobs planes
+ *   TRIGGER_MAIN_RELAY_TRIGGER_KEY                 (Step 7E.4B.3): the web knows only the MAIN project's key
+ *   TRIGGER_INTEGRATION_PROJECT_REF                the integration plane's deploy/CLI configuration
  *
  * The repository's contract holds no provider (Meta/Instagram/TikTok) credential variable: none exists to forbid.
  * Development and test runtimes are exempt (local .env.local legitimately holds tooling credentials). The mere
@@ -40,6 +43,9 @@ export const FORBIDDEN_WEB_VARIABLES = [
   "APP_DEPLOYMENT_ENV",
   "CAPABILITY_PROVIDER_MODE",
   "LOCAL_KEYRING_KEY",
+  "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY",
+  "TRIGGER_MAIN_RELAY_TRIGGER_KEY",
+  "TRIGGER_INTEGRATION_PROJECT_REF",
 ] as const;
 
 const LOCAL_NODE_ENVS: readonly string[] = ["development", "test"];

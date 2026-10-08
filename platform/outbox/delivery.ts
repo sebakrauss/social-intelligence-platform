@@ -11,6 +11,11 @@
  *                        UNKNOWN is never re-dispatched or classified: re-checked within unknownObservation,
  *                        then OBSERVATION_EXHAUSTED (diagnostic state, alerted once, no longer polled)
  *
+ * Execution planes (Step 7E.4B.3; migration 0011): the claim binds every unbound row to the plane the task registry
+ * declares for its topic, atomically with the lease; from then on the PERSISTED plane — never the current registry —
+ * selects the job runtime for every dispatch attempt, every R7 recovery and every run lookup of that delivery. A run
+ * is looked up only in the plane that owns it: a NOT FOUND there is UNKNOWN, never a reason to ask the other plane.
+ *
  * Crash windows: dying before enqueue leaves the row PENDING (lease expires, re-claimed); dying after
  * enqueue but before recording leaves it leased PENDING — the next pass enqueues the same dispatch key and
  * gets the same run back. Concurrent relays skip leased rows. Domain idempotency (R6) keeps any duplicate
@@ -21,6 +26,7 @@ import { parseCorrelationId } from "@/domain/correlation";
 import type { RuntimeDatabase } from "@/platform/db";
 import {
   claimDueRows,
+  countExecutionCapableBound,
   flagSloBreaches,
   listAwaitingOutcome,
   markDispatched,
@@ -42,7 +48,8 @@ import {
   laneLabel,
   parseTenantJobPayload,
   payloadMatchesTask,
-  type JobRuntime,
+  type ExecutionPlane,
+  type ExecutionPlaneRuntimes,
   type TaskRegistry,
   type TenantJobPayload,
 } from "@/platform/jobs";
@@ -85,7 +92,8 @@ export const DEFAULT_DELIVERY_CONFIG: DeliveryConfig = {
 
 export interface DeliveryDependencies {
   readonly system: RuntimeDatabase<"system">;
-  readonly runtime: JobRuntime;
+  /** The job runtime of each execution plane; a delivery's persisted plane picks one. */
+  readonly runtimes: ExecutionPlaneRuntimes;
   readonly registry: TaskRegistry;
   readonly logger: Logger;
   readonly clock: () => Date;
@@ -139,6 +147,7 @@ async function dispatchRow(deps: DeliveryDependencies, config: DeliveryConfig, r
     outboxId: row.id,
     task: row.topic,
     dispatchKeyFingerprint: dispatchKeyFingerprint(row.dispatchKey),
+    executionPlane: row.executionPlane,
     ...(correlationId === undefined ? {} : { correlationId }),
     ...(row.workspaceId === null ? {} : { workspaceId: row.workspaceId }),
   });
@@ -158,11 +167,14 @@ async function dispatchRow(deps: DeliveryDependencies, config: DeliveryConfig, r
     return fail("invalid_payload");
   }
   if (!payloadMatchesTask(definition, payload)) return fail("invalid_payload");
+  // A bound delivery stays on its persisted plane even when the registry now routes new work elsewhere (a moved task):
+  // its implementation must stay deployed there until no bound delivery can still run it (retirementReadiness).
+  if (definition.executionPlane !== row.executionPlane) log.info("outbox.dispatch.bound_plane_kept", { routedPlane: definition.executionPlane });
 
   let runId: string;
   try {
     const concurrencyKey = concurrencyKeyFor(definition, payload);
-    ({ runId } = await deps.runtime.enqueue({
+    ({ runId } = await deps.runtimes[row.executionPlane].enqueue({
       task: definition.name,
       payload,
       dispatchKey: row.dispatchKey,
@@ -192,7 +204,7 @@ export async function relayPass(deps: DeliveryDependencies, options: { readonly 
   const config = deps.config ?? DEFAULT_DELIVERY_CONFIG;
   const now = deps.clock();
   const rows = await withSystemScope(deps.system, (tx) =>
-    claimDueRows(tx, { now, minAgeSeconds: options.minAgeSeconds ?? 0, leaseSeconds: config.leaseSeconds, limit: config.batchSize }),
+    claimDueRows(tx, { now, minAgeSeconds: options.minAgeSeconds ?? 0, leaseSeconds: config.leaseSeconds, limit: config.batchSize, unboundRoutes: deps.registry.unboundRoutes }),
   );
   let dispatched = 0;
   let failed = 0;
@@ -235,10 +247,11 @@ export async function sweepRunOutcomes(deps: DeliveryDependencies): Promise<Outc
   const rows = await withSystemScope(deps.system, (tx) => listAwaitingOutcome(tx, { limit: config.outcomeBatchSize }));
   const tally = { checked: 0, completed: 0, failed: 0, canceled: 0, recovered: 0, exhausted: 0, unobservable: 0, pending: 0 };
   for (const row of rows) {
-    const log = deps.logger.child({ module: "platform.outbox", outboxId: row.id, task: row.topic, runId: row.runId, recoveryCount: row.recoveryCount });
+    const log = deps.logger.child({ module: "platform.outbox", outboxId: row.id, task: row.topic, runId: row.runId, recoveryCount: row.recoveryCount, executionPlane: row.executionPlane });
     let snapshot;
     try {
-      snapshot = await deps.runtime.getRun(row.runId);
+      // The plane that owns the run, chosen BEFORE the lookup; a NOT FOUND there is UNKNOWN — no other plane is asked.
+      snapshot = await deps.runtimes[row.executionPlane].getRun(row.runId);
     } catch (error) {
       if (error instanceof JobRuntimeUnavailableError) {
         log.warn("outbox.run.status_unavailable", { failureClass: "enqueue_unavailable" });
@@ -309,4 +322,20 @@ export async function sweepRunOutcomes(deps: DeliveryDependencies): Promise<Outc
   // Recovered rows are re-dispatched right away rather than waiting for the next dispatch sweep.
   if (tally.recovered > 0) await relayPass(deps);
   return tally;
+}
+
+export interface RetirementReadiness {
+  /** Deliveries bound to the plane that can still cause a run of the topic there (claimable or awaiting an outcome). */
+  readonly executionCapable: number;
+  readonly ready: boolean;
+}
+
+/**
+ * Whether `topic`'s implementation may be removed from `plane` (Step 7E.4B.3): only when no delivery bound to that plane
+ * can still require a run of it. Bound work never follows a later route change, so the old plane must keep serving it
+ * until then; terminal deliveries (an outcome, or OBSERVATION_EXHAUSTED) never run again and do not block.
+ */
+export async function retirementReadiness(system: RuntimeDatabase<"system">, options: { readonly topic: string; readonly plane: ExecutionPlane }): Promise<RetirementReadiness> {
+  const executionCapable = await withSystemScope(system, (tx) => countExecutionCapableBound(tx, options));
+  return { executionCapable, ready: executionCapable === 0 };
 }

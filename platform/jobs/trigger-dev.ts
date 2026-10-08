@@ -9,10 +9,10 @@
  *   - lane → its own queue plus a priority offset; keyed concurrency through `concurrencyKey`
  *   - vendor statuses → the port's normalized RunStatus; anything unrecognized → UNKNOWN
  *
- * Payloads and tags are identifiers only (validated before they get here). Secrets come from the
- * environment of the deployment and are never logged.
+ * Payloads and tags are identifiers only (validated before they get here). Credentials are passed in explicitly by the
+ * composition roots (never read here) and are never logged.
  */
-import { ApiError, configure, idempotencyKeys, runs, tasks } from "@trigger.dev/sdk";
+import { ApiError, TriggerClient, idempotencyKeys } from "@trigger.dev/sdk";
 import { LANE_DEFINITIONS, SYSTEM_QUEUE } from "./lanes";
 import {
   JobRuntimeRejectedError,
@@ -60,19 +60,44 @@ function classifyError(error: unknown): Error {
 }
 
 export interface TriggerDevRuntimeOptions {
-  /** Development/production secret key of the target environment (from the deployment's environment). */
-  readonly secretKey: string;
+  /**
+   * API key of the target project environment. Always explicit: this adapter never reads TRIGGER_SECRET_KEY (or any
+   * other variable) itself, so a missing cross-project key can never silently become this project's own key.
+   */
+  readonly accessToken: string;
   readonly baseURL?: string | undefined;
+  /**
+   * Preview-branch policy. "inherit": the target is this runtime's own project, so the SDK's documented branch
+   * discovery applies (TRIGGER_PREVIEW_BRANCH, then VERCEL_GIT_COMMIT_REF). "none": the target is another project, whose
+   * branches are unrelated: no branch is sent (an explicit empty branch disables the SDK's environment fallback).
+   */
+  readonly branch: "inherit" | "none";
+  /**
+   * Version-skew protection: every run this client triggers is pinned to the target deployment built with this
+   * external deployment id (Trigger.dev waits for it while it builds and expires the run if it never arrives).
+   */
+  readonly externalDeploymentId?: string | undefined;
 }
 
+/**
+ * A job runtime bound to ONE Trigger.dev project environment, through an explicit TriggerClient instance (the SDK's
+ * multi-project API): no global configure(), no ambient task context (parent run, version lock, TRIGGER_VERSION or
+ * TRIGGER_EXTERNAL_DEPLOYMENT_ID are not inherited), so two runtimes in one process never share credentials or state.
+ */
 export function createTriggerDevRuntime(options: TriggerDevRuntimeOptions): JobRuntime {
-  configure({ secretKey: options.secretKey, ...(options.baseURL === undefined ? {} : { baseURL: options.baseURL }) });
+  if (typeof options.accessToken !== "string" || options.accessToken.trim() === "") throw new JobRuntimeRejectedError("job runtime credential missing");
+  const client = new TriggerClient({
+    accessToken: options.accessToken,
+    ...(options.baseURL === undefined ? {} : { baseURL: options.baseURL }),
+    ...(options.branch === "none" ? { previewBranch: "" } : {}),
+    ...(options.externalDeploymentId === undefined ? {} : { externalDeploymentId: options.externalDeploymentId }),
+  });
   return {
     async enqueue(request: EnqueueRequest): Promise<EnqueueResult> {
       const { queue, priority } = queueAndPriority(request.lane);
       try {
         const idempotencyKey = await idempotencyKeys.create(request.dispatchKey, { scope: "global" });
-        const handle = await tasks.trigger(request.task, request.payload, {
+        const handle = await client.tasks.trigger(request.task, request.payload, {
           idempotencyKey,
           queue,
           priority,
@@ -86,12 +111,24 @@ export function createTriggerDevRuntime(options: TriggerDevRuntimeOptions): JobR
     },
     async getRun(runId: string): Promise<RunSnapshot> {
       try {
-        const run = await runs.retrieve(runId);
+        const run = await client.runs.retrieve(runId);
         return { runId: run.id, status: normalizeTriggerStatus(run.status), attemptCount: run.attemptCount };
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) return { runId, status: "UNKNOWN", attemptCount: 0 };
         throw classifyError(error);
       }
     },
+  };
+}
+
+/**
+ * A runtime that refuses everything (fail closed): the plane it stands for can't be reached from here — its credential
+ * is not configured, or the running release can't be identified for a version-pinned cross-project trigger. Enqueue is
+ * a permanent rejection (backoff, SLO alert); a run lookup is "unavailable" (re-checked later, never UNKNOWN).
+ */
+export function unreachableJobRuntime(): JobRuntime {
+  return {
+    enqueue: () => Promise.reject(new JobRuntimeRejectedError("execution plane not reachable from this runtime")),
+    getRun: () => Promise.reject(new JobRuntimeUnavailableError("execution plane not reachable from this runtime")),
   };
 }

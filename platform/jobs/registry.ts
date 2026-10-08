@@ -6,8 +6,13 @@
  *
  * System scope is a short, named allowlist (TA §9.3): only the tasks listed in SYSTEM_TASKS may be
  * system-scoped. Every other task is a tenant task bound to exactly one workspace.
+ *
+ * Every task also declares its execution plane explicitly (Step 7E.4B.3; planes.ts): never inferred from its name,
+ * directory or scope. System tasks run in the main plane. The declared plane routes only UNBOUND outbox work (the claim
+ * binds it, migration 0011); a bound delivery keeps its persisted plane even if this declaration later changes.
  */
 import { LANE_DEFINITIONS, SYSTEM_QUEUE, isLane, type Lane } from "./lanes";
+import { isExecutionPlane, type ExecutionPlane } from "./planes";
 import type { JobPayload, TenantJobPayload } from "./payload";
 
 export interface RetryPolicy {
@@ -35,6 +40,8 @@ export type ConcurrencyRule = { readonly by: "none" } | { readonly by: "workspac
 export interface TenantTaskDefinition {
   readonly name: string;
   readonly scope: "workspace";
+  /** The plane NEW (unbound) work for this task is bound to. */
+  readonly executionPlane: ExecutionPlane;
   readonly lane: Lane;
   readonly retry: RetryPolicy;
   readonly concurrency: ConcurrencyRule;
@@ -45,6 +52,8 @@ export interface TenantTaskDefinition {
 export interface SystemTaskDefinition {
   readonly name: SystemTaskName;
   readonly scope: "system";
+  /** System tasks deliver the outbox from the main plane only. */
+  readonly executionPlane: "main";
   readonly retry: RetryPolicy;
   /** Cron schedule for sweepers (declared here, materialized by the runtime deployment). */
   readonly schedule?: { readonly cron: string };
@@ -71,6 +80,11 @@ export interface TaskRegistry {
   get(name: string): TaskDefinition | undefined;
   tenant(name: string): TenantTaskDefinition | undefined;
   system(name: string): SystemTaskDefinition | undefined;
+  /**
+   * Outbox topic → execution plane for UNBOUND work: every registered tenant task, nothing else. The claim binds a
+   * row to this plane; it never overrides a plane already persisted on the row.
+   */
+  readonly unboundRoutes: Readonly<Record<string, ExecutionPlane>>;
 }
 
 /** Builds and validates a registry. Throws TaskRegistryError on any unsafe or ambiguous declaration. */
@@ -80,7 +94,11 @@ export function defineTaskRegistry(definitions: readonly TaskDefinition[]): Task
     if (!TASK_NAME.test(definition.name)) throw new TaskRegistryError(`invalid task name: ${definition.name}`);
     if (byName.has(definition.name)) throw new TaskRegistryError(`duplicate task: ${definition.name}`);
     validateRetry(definition.name, definition.retry);
+    // Checked at runtime too: a declaration built outside the type system must not slip through without a plane.
+    const plane: unknown = definition.executionPlane;
+    if (!isExecutionPlane(plane)) throw new TaskRegistryError(`${definition.name}: missing or unknown execution plane`);
     if (definition.scope === "system") {
+      if (plane !== "main") throw new TaskRegistryError(`${definition.name}: system tasks run in the main plane`);
       if (!(SYSTEM_TASKS as readonly string[]).includes(definition.name)) {
         throw new TaskRegistryError(`${definition.name}: only named system tasks may be system-scoped`);
       }
@@ -98,8 +116,11 @@ export function defineTaskRegistry(definitions: readonly TaskDefinition[]): Task
     byName.set(definition.name, definition);
   }
   const frozen = Object.freeze([...definitions]);
+  const unboundRoutes: Record<string, ExecutionPlane> = {};
+  for (const definition of frozen) if (definition.scope === "workspace") unboundRoutes[definition.name] = definition.executionPlane;
   return {
     tasks: frozen,
+    unboundRoutes: Object.freeze(unboundRoutes),
     get: (name) => byName.get(name),
     tenant: (name) => {
       const definition = byName.get(name);

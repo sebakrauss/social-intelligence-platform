@@ -413,6 +413,36 @@ module.exports = {
       to: { path: "^platform/outbox/delivery\\.ts$" },
     },
 
+    // ── Execution planes (Step 7E.4B.3): two Trigger.dev projects, split by credential-opening capability ──────
+    {
+      name: "plane-opener-integration-only",
+      severity: "error",
+      comment: "Only the integration plane's task directory reaches the CredentialOpener composition (jobs/connections.ts): the main plane — outbox relay and sweepers, the Move saga, every shared jobs module — never does.",
+      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|trigger/integration/)" },
+      to: { path: "^jobs/connections\\.ts$" },
+    },
+    {
+      name: "plane-main-runtime-main-only",
+      severity: "error",
+      comment: "The system database and the delivery runtimes (jobs/main-runtime.ts) belong to the main plane's task directory only: the integration plane never needs DATABASE_SYSTEM_URL or the integration task-operator key.",
+      from: { path: "^jobs/", pathNot: "^jobs/(main-runtime\\.ts$|trigger/main/)" },
+      to: { path: "^jobs/main-runtime\\.ts$" },
+    },
+    {
+      name: "plane-integration-no-delivery",
+      severity: "error",
+      comment: "The integration plane never runs outbox delivery, system scope or the Move saga: it only executes its two tasks and wakes MAIN's relay.",
+      from: { path: "^jobs/(trigger/integration/|connections\\.ts$)" },
+      to: { path: "^(platform/outbox/delivery\\.ts|platform/db/(system-scope|outbox-delivery)\\.ts|jobs/moves\\.ts|jobs/trigger/main/)" },
+    },
+    {
+      name: "plane-task-directories-disjoint",
+      severity: "error",
+      comment: "Each Trigger.dev config discovers exactly one plane's task directory; task files never import the other plane's task files.",
+      from: { path: "^jobs/trigger/(main|integration)/" },
+      to: { path: "^jobs/trigger/(main|integration)/", pathNot: "^jobs/trigger/$1/" },
+    },
+
     // ── Credential crypto boundary (Step 5A; TA §39, ADR-64) ─────────────────────────────────
     {
       name: "credential-opening-job-runtime-only",

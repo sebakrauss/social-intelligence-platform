@@ -134,6 +134,12 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["no-undeclared-package", "server/uses-aws-credential-chain.ts", "../../../../node_modules/@aws-sdk/credential-provider-node/dist-es/index.js"],
   // AWS runtime identity (Step 7E.2): a pure, vendor-neutral contract
   ["aws-identity-contract-pure", "platform/aws/uses-credential-crypto.ts", "platform/crypto/credentials/seal.ts"],
+  // Execution planes (Step 7E.4B.3): opener only in the integration plane; main runtime only in the main plane
+  ["plane-opener-integration-only", "jobs/moves.ts", "jobs/connections.ts"],
+  ["plane-opener-integration-only", "jobs/trigger/main/opens-credentials.ts", "jobs/connections.ts"],
+  ["plane-main-runtime-main-only", "jobs/trigger/integration/uses-main-plane.ts", "jobs/main-runtime.ts"],
+  ["plane-integration-no-delivery", "jobs/trigger/integration/uses-main-plane.ts", "jobs/trigger/main/delivery.ts"],
+  ["plane-task-directories-disjoint", "jobs/trigger/integration/uses-main-plane.ts", "jobs/trigger/main/delivery.ts"],
   // Vercel OIDC web identity (Step 7E.3B): packages only in the adapter, no refresh helpers, composed by the web only
   ["vercel-oidc-only-in-web-identity-adapter", "server/reads-vercel-oidc.ts", "../../../../node_modules/@vercel/oidc/dist/index.js"],
   ["vercel-oidc-only-in-web-identity-adapter", "app/uses-vercel-identity.ts", "../../../../node_modules/@vercel/oidc-aws-credentials-provider/dist/index.js"],

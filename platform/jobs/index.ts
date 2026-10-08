@@ -1,4 +1,6 @@
 /** Vendor-neutral job foundation. The Trigger.dev adapter is imported separately (platform/jobs/trigger-dev). */
+export { EXECUTION_PLANES, isExecutionPlane, type ExecutionPlane } from "./planes";
+export { crossPlanePin, jobRelease, samePlanePin, type JobRelease } from "./release";
 export { LANES, LANE_DEFINITIONS, SYSTEM_QUEUE, isLane, laneLabel, type Lane, type LaneDefinition } from "./lanes";
 export {
   InvalidJobPayloadError,
@@ -18,6 +20,7 @@ export {
   TERMINAL_RUN_STATUSES,
   type EnqueueRequest,
   type EnqueueResult,
+  type ExecutionPlaneRuntimes,
   type JobRuntime,
   type RunSnapshot,
   type RunStatus,

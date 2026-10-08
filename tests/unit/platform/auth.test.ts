@@ -106,6 +106,10 @@ describe("auth configuration", () => {
       // Step 3 job runtime (Trigger.dev): the environment's API key and project reference, names only.
       "TRIGGER_SECRET_KEY=",
       "TRIGGER_PROJECT_REF=",
+      // Step 7E.4B.3 execution planes: the integration project's reference and the two restricted cross-project keys.
+      "TRIGGER_INTEGRATION_PROJECT_REF=",
+      "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY=",
+      "TRIGGER_MAIN_RELAY_TRIGGER_KEY=",
       // Step 5A credential crypto: local/test-only keyring KEK (refused outside NODE_ENV development/test), name only.
       "LOCAL_KEYRING_KEY=",
       // Step 7D: deployed KMS credential keyring configuration (non-secret), names only.

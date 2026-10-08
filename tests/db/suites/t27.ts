@@ -49,11 +49,11 @@ const RETRY = { maxAttempts: 3, factor: 2, minDelayMs: 100, maxDelayMs: 1_000, r
 
 /** Test tasks covering the lanes; real workloads arrive in later steps. */
 const TASKS = defineTaskRegistry([
-  { name: "testjobs.record_effect", scope: "workspace", lane: 2, retry: RETRY, concurrency: { by: "workspace" }, subjects: ["item_id"] },
-  { name: "testjobs.unguarded_effect", scope: "workspace", lane: 4, retry: RETRY, concurrency: { by: "none" }, subjects: ["item_id"] },
-  { name: "testjobs.permanent_failure", scope: "workspace", lane: 1, retry: RETRY, concurrency: { by: "subject", subject: "item_id" }, subjects: ["item_id"] },
-  { name: "testjobs.cross_tenant_probe", scope: "workspace", lane: 3, retry: { ...RETRY, maxAttempts: 1 }, concurrency: { by: "none" }, subjects: ["item_id"] },
-  { name: "testjobs.backfill_probe", scope: "workspace", lane: 5, retry: RETRY, concurrency: { by: "workspace" }, subjects: ["item_id"] },
+  { name: "testjobs.record_effect", scope: "workspace", executionPlane: "main", lane: 2, retry: RETRY, concurrency: { by: "workspace" }, subjects: ["item_id"] },
+  { name: "testjobs.unguarded_effect", scope: "workspace", executionPlane: "main", lane: 4, retry: RETRY, concurrency: { by: "none" }, subjects: ["item_id"] },
+  { name: "testjobs.permanent_failure", scope: "workspace", executionPlane: "main", lane: 1, retry: RETRY, concurrency: { by: "subject", subject: "item_id" }, subjects: ["item_id"] },
+  { name: "testjobs.cross_tenant_probe", scope: "workspace", executionPlane: "main", lane: 3, retry: { ...RETRY, maxAttempts: 1 }, concurrency: { by: "none" }, subjects: ["item_id"] },
+  { name: "testjobs.backfill_probe", scope: "workspace", executionPlane: "main", lane: 5, retry: RETRY, concurrency: { by: "workspace" }, subjects: ["item_id"] },
 ]);
 type TestTask = "testjobs.record_effect" | "testjobs.unguarded_effect" | "testjobs.permanent_failure" | "testjobs.cross_tenant_probe" | "testjobs.backfill_probe";
 const TEST_TASK_NAMES: readonly TestTask[] = ["testjobs.record_effect", "testjobs.unguarded_effect", "testjobs.permanent_failure", "testjobs.cross_tenant_probe", "testjobs.backfill_probe"];
@@ -114,7 +114,7 @@ export function defineT27Suite(getTarget: () => DbTarget): void {
   const handlers = (): ReadonlyMap<string, FakeHandler> =>
     new Map(TEST_TASK_NAMES.map((name) => [name, (payload: unknown, run) => runTenantJob({ registry: TASKS, worker, logger }, name, payload, run, effectHandlers[name])]));
 
-  const deliveryDeps = (): DeliveryDependencies => ({ system, runtime, registry: TASKS, logger, clock: () => now, config: CONFIG });
+  const deliveryDeps = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime }, registry: TASKS, logger, clock: () => now, config: CONFIG });
 
   /** A workspace command that appends one outbox row (and optionally fails after appending). */
   const enqueueCommand: WorkspaceCommand<{ readonly task: TestTask; readonly itemId: string; readonly fail: "yes" | "no" }, string, string> = {
@@ -248,7 +248,7 @@ export function defineT27Suite(getTarget: () => DbTarget): void {
           throw new Error("relay process crashed after enqueue");
         },
       });
-      await expect(relayPass({ ...deliveryDeps(), runtime: crashing })).rejects.toThrow("relay process crashed");
+      await expect(relayPass({ ...deliveryDeps(), runtimes: { main: crashing, integration: crashing } })).rejects.toThrow("relay process crashed");
       expect(await row(work.outboxId)).toMatchObject({ status: "PENDING" });
       expect((await row(work.outboxId))?.claimed_until).not.toBeNull();
       // Leased: another relay right now skips it; after the lease the same dispatch key returns the same run.
@@ -587,7 +587,7 @@ export function defineT27Suite(getTarget: () => DbTarget): void {
         expect((await sqlState(denied)).code).toBe("42501");
       }
       expect(() => defineTaskRegistry([{ name: "testjobs.sneaky", scope: "system", retry: RETRY } as never])).toThrow(TaskRegistryError);
-      expect(() => defineTaskRegistry([{ name: "outbox.relay", scope: "workspace", lane: 1, retry: RETRY, concurrency: { by: "none" }, subjects: [] }])).toThrow(TaskRegistryError);
+      expect(() => defineTaskRegistry([{ name: "outbox.relay", scope: "workspace", executionPlane: "main", lane: 1, retry: RETRY, concurrency: { by: "none" }, subjects: [] }])).toThrow(TaskRegistryError);
     });
 
     it("18 · lanes route to their own bounded queues with the declared keyed concurrency", async () => {

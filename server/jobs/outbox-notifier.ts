@@ -17,10 +17,20 @@ export function createOutboxNotifier(runtime: JobRuntime): (notices: readonly Ou
 
 let runtime: JobRuntime | undefined;
 
-/** The web runtime's job runtime, or undefined when jobs aren't configured (the sweeper still delivers). */
+/**
+ * The web runtime's job runtime, or undefined when jobs aren't configured (the sweeper still delivers). It targets the
+ * MAIN plane only (Step 7E.4B.3): TRIGGER_SECRET_KEY is the main project's key (to be a named Trigger-only key restricted
+ * to outbox.relay); the web never knows the integration project. Preview branch and version-skew pin follow the SDK's
+ * documented variables (TRIGGER_PREVIEW_BRANCH, TRIGGER_EXTERNAL_DEPLOYMENT_ID), exactly as before.
+ */
 export function webJobRuntime(env: Readonly<Record<string, string | undefined>> = process.env): JobRuntime | undefined {
-  const secretKey = env["TRIGGER_SECRET_KEY"];
-  if (secretKey === undefined || secretKey === "") return undefined;
-  runtime ??= createTriggerDevRuntime({ secretKey });
+  const accessToken = env["TRIGGER_SECRET_KEY"];
+  if (accessToken === undefined || accessToken === "") return undefined;
+  const externalDeploymentId = env["TRIGGER_EXTERNAL_DEPLOYMENT_ID"];
+  runtime ??= createTriggerDevRuntime({
+    accessToken,
+    branch: "inherit",
+    externalDeploymentId: externalDeploymentId === undefined || externalDeploymentId === "" ? undefined : externalDeploymentId,
+  });
   return runtime;
 }

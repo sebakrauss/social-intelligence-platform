@@ -1,6 +1,9 @@
 /**
- * Job-runtime composition of the connections tasks: discovery (Step 5D; TA §39), the Move saga steps and capability
- * evaluation after an activation (Step 5F). Thin handlers: resolve the run's identifiers, call the application service.
+ * Job-runtime composition of the INTEGRATION-plane connections tasks (Step 7E.4B.3): discovery (Step 5D; TA §39) and
+ * capability evaluation after an activation (Step 5F) — the only tasks that open a provider credential. The Move saga
+ * steps open nothing and run in the main plane (jobs/moves.ts). Thin handlers: resolve the run's identifiers, call the
+ * application service; the services re-read every authority (connection, account, active credential) from the
+ * database under the run's single bound workspace, so a trigger's identifiers can never redirect decryption.
  * This is the ONLY place the provider-credential opener meets the connections module:
  *   - the local-keyring startup guard runs first (LOCAL_KEYRING_KEY outside development/test aborts);
  *   - the credential-access function opens one envelope under its exact (env, workspace, credential) context,
@@ -15,21 +18,14 @@ import { randomUUID } from "node:crypto";
 import {
   CredentialCodecError,
   CredentialUnreadableError,
-  activateDestination,
   decodeProviderCredential,
   discoverConnectionAssets,
   refreshAccountCapabilities,
-  rejectDestination,
-  releaseSource,
-  type ActivationResult,
   type CapabilityRefreshOutcome,
   type DiscoveryDependencies,
   type DiscoveryOutcome,
   type DiscoveryProviders,
   type ProviderCredentialAccess,
-  type RejectionResult,
-  type ReleaseOutcome,
-  type SagaStepInput,
 } from "@/modules/connections";
 import { credentialContext } from "@/platform/crypto/credentials/context";
 import { decodeEnvelope } from "@/platform/crypto/credentials/envelope";
@@ -41,8 +37,8 @@ import { assertNoLocalKeyringOutsideLocal } from "@/platform/crypto/credentials/
 import { localCredentialOpenerFromEnvironment } from "@/platform/crypto/credentials/local-opener";
 import type { CredentialOpener } from "@/platform/crypto/credentials/open";
 import { parseCorrelationId } from "@/domain/correlation";
-import { parseUserId, parseWorkspaceId } from "@/domain/ids";
-import { NonRetryableJobError, type TenantJobContext, type TenantStepJobContext } from "@/platform/jobs";
+import { parseWorkspaceId } from "@/domain/ids";
+import { NonRetryableJobError, type TenantStepJobContext } from "@/platform/jobs";
 import { providerCredential } from "@/integrations/providers/contract";
 import { createStagingStubReadPort } from "@/integrations/providers/staging-stub";
 import { selectCredentialCrypto } from "@/server/connections/environment";
@@ -174,35 +170,6 @@ export async function runDiscoverAssets(context: TenantStepJobContext, base?: Jo
     outboxId: context.payload.outboxId,
     correlationId,
   });
-}
-
-/** The common identifiers of a Move saga step (one workspace; IDs only; the move id is the subject). */
-function sagaInput(context: TenantJobContext): SagaStepInput {
-  const workspaceId = parseWorkspaceId(context.payload.workspaceId);
-  const moveId = context.payload.subjectIds["move_id"];
-  const correlationId = parseCorrelationId(context.payload.correlationId);
-  if (workspaceId === undefined || moveId === undefined || correlationId === undefined) throw new NonRetryableJobError("invalid_payload");
-  return { workspaceId, moveId, outboxId: context.payload.outboxId, correlationId, now: new Date(), newId: randomUUID };
-}
-
-/** connections.move.release_source (source workspace). Routed only by connections.route_move_step, for a human initiator. */
-export async function runReleaseSource(context: TenantJobContext): Promise<ReleaseOutcome> {
-  const input = sagaInput(context);
-  const connectedAccountId = context.payload.subjectIds["connected_account_id"];
-  const destinationWorkspaceId = parseWorkspaceId(context.payload.subjectIds["counterpart_workspace_id"]);
-  const initiator = context.payload.initiator.type === "user" ? parseUserId(context.payload.initiator.userId) : undefined;
-  if (connectedAccountId === undefined || destinationWorkspaceId === undefined || initiator === undefined) throw new NonRetryableJobError("invalid_payload");
-  return releaseSource(connectionWorkerStore(context), { ...input, connectedAccountId, destinationWorkspaceId, initiator });
-}
-
-/** connections.move.activate_destination (destination workspace): after a release, or a human retry. */
-export async function runActivateDestination(context: TenantJobContext): Promise<ActivationResult> {
-  return activateDestination(connectionWorkerStore(context), sagaInput(context));
-}
-
-/** connections.move.reject_destination (destination workspace): after the source refused. */
-export async function runRejectDestination(context: TenantJobContext): Promise<RejectionResult> {
-  return rejectDestination(connectionWorkerStore(context), sagaInput(context));
 }
 
 /** capability.evaluate_account: refreshAccountCapabilities for one activated account (provider call between steps). */

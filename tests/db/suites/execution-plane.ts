@@ -14,7 +14,8 @@ import { sql } from "drizzle-orm";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { withUserScope, withWorkspaceJobScope, type DatabaseTransaction, type RuntimeDatabase } from "@/platform/db";
-import { claimDueRows, markDispatched, markDispatchFailed } from "@/platform/db/outbox-delivery";
+import { claimDueRows, countExecutionCapableBound, markDispatched, markDispatchFailed, markObservationExhausted, recordOutcome, requeueForRecovery } from "@/platform/db/outbox-delivery";
+import { retirementReadiness } from "@/platform/outbox/delivery";
 import { withSystemScope } from "@/platform/db/system-scope";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld, seedWorld, type World } from "../support/world";
@@ -23,6 +24,20 @@ import { sqlState } from "./helpers";
 const MIGRATION = readFileSync(path.resolve(import.meta.dirname, "../../../db/migrations/0011_outbox_execution_plane.sql"), "utf8");
 const BACKFILL = /-- backfill:begin\n([\s\S]*?)-- backfill:end/.exec(MIGRATION)?.[1] ?? "";
 const TOPIC = "test.execution_plane";
+const INTEGRATION_TOPIC = "test.execution_plane_integration";
+const UNROUTED_TOPIC = "test.execution_plane_unrouted";
+const OTHER_TOPIC = "test.execution_plane_other"; // used only by the retirement test of another topic
+const OLDEST = "2000-01-01T00:00:00Z"; // first in any claimed batch
+/** The claim statement of a relay that predates execution planes (before Step 7E.4B.3): it knows nothing about planes. */
+const LEGACY_CLAIM = `
+  with due as (
+    select o.id from system.outbox o
+     where o.status = 'PENDING' and o.run_outcome is null
+       and (o.next_dispatch_at is null or o.next_dispatch_at <= now())
+       and (o.claimed_until is null or o.claimed_until <= now())
+     order by o.created_at limit 1 for update skip locked)
+  update system.outbox o set claimed_until = now() + make_interval(secs => 60) from due where o.id = due.id
+  returning o.id`;
 const FUTURE = "2999-01-01T00:00:00Z"; // never due: no relay pass in any suite claims these rows
 const ROLLBACK = new Error("rollback");
 
@@ -38,12 +53,12 @@ export function defineExecutionPlaneSuite(getTarget: () => DbTarget): void {
     (await q<{ execution_plane: string | null }>("select execution_plane from system.outbox where id = $1", [id]))[0]?.execution_plane;
 
   /** An unbound PENDING row (as a producer would leave it), seeded by the bootstrap connection. */
-  const pending = async (createdAt = FUTURE): Promise<string> => {
+  const pending = async (createdAt = FUTURE, topic = TOPIC): Promise<string> => {
     const id = randomUUID();
     await q(
       `insert into system.outbox (id, topic, organization_id, workspace_id, subject_ids, correlation_id, initiator_type, dispatch_key, created_at)
        values ($1, $2, $3, $4, '{}', 'corr-execution-plane', 'system', $5, $6)`,
-      [id, TOPIC, world.orgA, world.A1, `${TOPIC}:${id}`, createdAt]);
+      [id, topic, world.orgA, world.A1, `${topic}:${id}`, createdAt]);
     return id;
   };
 
@@ -177,11 +192,11 @@ export function defineExecutionPlaneSuite(getTarget: () => DbTarget): void {
   });
 
   describe("compatibility with relays that predate the column (0011 only)", () => {
-    it("the repository's own claim (which knows nothing about planes) binds the claimed row to 'main'", async () => {
-      const id = await pending("2000-01-01T00:00:00Z"); // oldest: always inside the claimed batch
+    it("the claim of a relay that predates planes (it knows nothing about them) binds the claimed row to 'main'", async () => {
+      const id = await pending(OLDEST);
       await asSystemRolledBack(async (tx) => {
-        const claimed = await claimDueRows(tx, { now: new Date(), minAgeSeconds: 0, leaseSeconds: 60, limit: 1 });
-        expect(claimed.map((row) => row.id)).toEqual([id]);
+        const claimed = await tx.execute<{ id: string }>(sql.raw(LEGACY_CLAIM));
+        expect(claimed.rows.map((row) => row.id)).toEqual([id]);
         expect(await planeIn(tx, id)).toBe("main");
         // The rest of the legacy cycle works unchanged: dispatched rows are bound.
         expect(await markDispatched(tx, { outboxId: id, runId: "run_legacy", now: new Date() })).toBe(true);
@@ -205,6 +220,129 @@ export function defineExecutionPlaneSuite(getTarget: () => DbTarget): void {
       const dispatched = withSystemScope(system, (tx) => markDispatched(tx, { outboxId: id, runId: "run_unclaimed", now: new Date() }));
       expect((await sqlState(dispatched)).code).toBe("23514");
       expect(await plane(id)).toBeNull();
+    });
+  });
+
+  describe("the plane-aware claim (claimDueRows, Step 7E.4B.3)", () => {
+    const routes = { [TOPIC]: "main", [INTEGRATION_TOPIC]: "integration" } as const;
+    const claim = (tx: DatabaseTransaction, unboundRoutes: Readonly<Record<string, "main" | "integration">> = routes) =>
+      claimDueRows(tx, { now: new Date(), minAgeSeconds: 0, leaseSeconds: 60, limit: 500, unboundRoutes });
+
+    it("binds each unbound row to its registry route in the claim itself, and returns the persisted plane", async () => {
+      const main = await pending(OLDEST, TOPIC);
+      const integration = await pending(OLDEST, INTEGRATION_TOPIC);
+      await asSystemRolledBack(async (tx) => {
+        const claimed = await claim(tx);
+        const mine = claimed.filter((row) => row.id === main || row.id === integration).map((row): [string, string] => [row.id, row.executionPlane]);
+        expect(new Map(mine)).toEqual(new Map([[main, "main"], [integration, "integration"]]));
+        expect(await planeIn(tx, main)).toBe("main");
+        expect(await planeIn(tx, integration)).toBe("integration");
+      });
+    });
+
+    it("a bound row keeps its persisted plane even when the current registry routes its topic elsewhere", async () => {
+      const boundMain = await pending(OLDEST, TOPIC);
+      const boundIntegration = await pending(OLDEST, INTEGRATION_TOPIC);
+      await asSystemRolledBack(async (tx) => {
+        await claimWith(tx, boundMain, "main");
+        await claimWith(tx, boundIntegration, "integration");
+        // Leases expire; a later relay runs with a registry that moved both tasks to the other plane.
+        await tx.execute(sql`update system.outbox set claimed_until = null, dispatch_attempts = dispatch_attempts + 1 where id in (${boundMain}, ${boundIntegration})`);
+        const claimed = await claim(tx, { [TOPIC]: "integration", [INTEGRATION_TOPIC]: "main" });
+        const planes = new Map(claimed.filter((row) => row.id === boundMain || row.id === boundIntegration).map((row): [string, string] => [row.id, row.executionPlane]));
+        expect(planes).toEqual(new Map([[boundMain, "main"], [boundIntegration, "integration"]]));
+        expect(await planeIn(tx, boundMain)).toBe("main");
+        expect(await planeIn(tx, boundIntegration)).toBe("integration");
+      });
+    });
+
+    it("an unbound row whose topic has no route is never claimed and never given a guessed plane", async () => {
+      const id = await pending(OLDEST, UNROUTED_TOPIC);
+      await asSystemRolledBack(async (tx) => {
+        const claimed = await claim(tx);
+        expect(claimed.map((row) => row.id)).not.toContain(id);
+        const row = (await tx.execute<{ execution_plane: string | null; claimed_until: Date | null }>(sql`select execution_plane, claimed_until from system.outbox where id = ${id}`)).rows[0];
+        expect(row).toEqual({ execution_plane: null, claimed_until: null });
+      });
+    });
+  });
+
+  describe("retirement readiness: only deliveries that can still run the topic in that plane block its removal", () => {
+    type Step = (tx: DatabaseTransaction, id: string) => Promise<unknown>;
+    const now = () => new Date();
+    const bind: Step = (tx, id) => claimWith(tx, id, "integration");
+    const dispatch: Step = async (tx, id) => {
+      await bind(tx, id);
+      return markDispatched(tx, { outboxId: id, runId: `run_${id.slice(0, 8)}`, now: now() });
+    };
+    const outcome = (value: "COMPLETED" | "FAILED" | "CANCELED" | "RECOVERY_EXHAUSTED"): Step => async (tx, id) => {
+      await dispatch(tx, id);
+      return recordOutcome(tx, { outboxId: id, outcome: value, failureClass: value === "COMPLETED" ? null : "run_failed", now: now() });
+    };
+    const recovered: Step = async (tx, id) => {
+      await dispatch(tx, id);
+      return requeueForRecovery(tx, { outboxId: id, expectedRecoveryCount: 0, failureClass: "run_crashed" });
+    };
+    /** Each shape in its own rolled-back transaction; the count is for (INTEGRATION_TOPIC, integration). */
+    const capableAfter = async (step: Step | undefined): Promise<{ integration: number; main: number }> => {
+      const id = await pending(FUTURE, INTEGRATION_TOPIC);
+      let counts = { integration: -1, main: -1 };
+      await asSystemRolledBack(async (tx) => {
+        if (step !== undefined) await step(tx, id);
+        counts = {
+          integration: await countExecutionCapableBound(tx, { topic: INTEGRATION_TOPIC, plane: "integration" }),
+          main: await countExecutionCapableBound(tx, { topic: INTEGRATION_TOPIC, plane: "main" }),
+        };
+      });
+      return counts;
+    };
+
+    const backingOff: Step = async (tx, id) => {
+      await bind(tx, id);
+      await markDispatchFailed(tx, { outboxId: id, failureClass: "enqueue_unavailable", retryAt: new Date(Date.now() + 600_000) });
+    };
+    const recoveryDispatched: Step = async (tx, id) => {
+      await recovered(tx, id);
+      await claimWith(tx, id, "integration");
+      return markDispatched(tx, { outboxId: id, runId: `run_${id.slice(0, 8)}_g1`, now: now() });
+    };
+    const observationExhausted: Step = async (tx, id) => {
+      await dispatch(tx, id);
+      return markObservationExhausted(tx, { outboxId: id, now: now() });
+    };
+
+    it.each([
+      { label: "an unbound, never-claimed delivery (it follows the CURRENT route, so it never pins an old plane)", step: undefined, blocks: false },
+      { label: "a bound delivery whose lease is held (claimed, maybe enqueueing)", step: bind, blocks: true },
+      { label: "a bound delivery backing off after a failed enqueue", step: backingOff, blocks: true },
+      { label: "a dispatched delivery awaiting its outcome (its run may be queued or executing)", step: dispatch, blocks: true },
+      { label: "a delivery re-queued for R7 recovery after a CRASHED / SYSTEM_FAILURE run", step: recovered, blocks: true },
+      { label: "a recovery generation dispatched again", step: recoveryDispatched, blocks: true },
+      { label: "COMPLETED", step: outcome("COMPLETED"), blocks: false },
+      { label: "FAILED (failed, expired or timed out: surfaced, never re-dispatched)", step: outcome("FAILED"), blocks: false },
+      { label: "CANCELED", step: outcome("CANCELED"), blocks: false },
+      { label: "RECOVERY_EXHAUSTED (crash recoveries used up)", step: outcome("RECOVERY_EXHAUSTED"), blocks: false },
+      { label: "OBSERVATION_EXHAUSTED (never claimed, polled, recovered or re-dispatched again)", step: observationExhausted, blocks: false },
+    ] as const)("$label → blocks retirement: $blocks", async ({ step, blocks }) => {
+      const counts = await capableAfter(step);
+      expect(counts.integration).toBe(blocks ? 1 : 0);
+      expect(counts.main).toBe(0); // bound to integration: never blocks retiring the topic from main
+    });
+
+    it("a delivery bound to the other plane, or of another topic, does not block", async () => {
+      const otherPlane = await pending(FUTURE, INTEGRATION_TOPIC);
+      const otherTopic = await pending(FUTURE, OTHER_TOPIC);
+      await asSystemRolledBack(async (tx) => {
+        await claimWith(tx, otherPlane, "main");
+        await claimWith(tx, otherTopic, "integration");
+        expect(await countExecutionCapableBound(tx, { topic: INTEGRATION_TOPIC, plane: "integration" })).toBe(0);
+        expect(await countExecutionCapableBound(tx, { topic: INTEGRATION_TOPIC, plane: "main" })).toBe(1);
+        expect(await countExecutionCapableBound(tx, { topic: OTHER_TOPIC, plane: "integration" })).toBe(1);
+      });
+    });
+
+    it("retirementReadiness reports ready only when nothing bound can still run the topic in the plane", async () => {
+      expect(await retirementReadiness(system, { topic: "test.never_routed_topic", plane: "integration" })).toEqual({ executionCapable: 0, ready: true });
     });
   });
 

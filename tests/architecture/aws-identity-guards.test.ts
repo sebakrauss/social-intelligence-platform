@@ -11,7 +11,7 @@ import { codeOf, findReferences, sourceFiles } from "../support/source-scan";
 const root = path.resolve(import.meta.dirname, "../..");
 const identityFiles = readdirSync(path.join(root, "platform/aws")).filter((file) => file.endsWith(".ts")).map((file) => `platform/aws/${file}`);
 const VERCEL_ADAPTER = "server/connections/vercel-aws-identity.ts";
-const RUNTIME_ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts", "trigger.config.ts"];
+const RUNTIME_ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts", "trigger.config.ts", "trigger.integration.config.ts"];
 
 describe("AWS runtime-identity contract", () => {
   it("is self-contained: no import at all (no Vercel, STS, KMS, crypto or any package)", () => {

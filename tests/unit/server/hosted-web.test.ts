@@ -117,6 +117,9 @@ describe("6B.4 · forbidden configuration in the hosted web runtime", () => {
       "APP_DEPLOYMENT_ENV",
       "CAPABILITY_PROVIDER_MODE",
       "LOCAL_KEYRING_KEY",
+      "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY",
+      "TRIGGER_MAIN_RELAY_TRIGGER_KEY",
+      "TRIGGER_INTEGRATION_PROJECT_REF",
     ]);
     expect(FORBIDDEN_WEB_VARIABLES).not.toContain("TRIGGER_SECRET_KEY");
     expect(FORBIDDEN_WEB_VARIABLES).not.toContain("TRIGGER_PREVIEW_BRANCH");

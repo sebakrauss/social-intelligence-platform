@@ -71,6 +71,21 @@ recorded and surfaced, never blindly re-dispatched). Effects are protected by do
 (`idempotency.effect_keys`, R6), claimed in the same transaction as the effect.
 
 - Tenant jobs run as `worker_login` bound to exactly one workspace; the named system jobs run as `system_login`.
+- **Two execution planes, two Trigger.dev projects** (Step 7E.4B.3), split by credential-opening capability:
+  **main** (`trigger.config.ts` → `jobs/trigger/main`: relay, sweepers, Move saga) and **integration**
+  (`trigger.integration.config.ts` → `jobs/trigger/integration`: `connections.discover_assets`,
+  `capability.evaluate_account`, the only tasks that open provider credentials). Each task declares its plane in
+  the registry; the relay binds an outbox row to that plane in its first claim (`system.outbox.execution_plane`,
+  migration 0011), and from then on the persisted plane — never the registry — picks the project for every
+  dispatch, recovery and run lookup. Main reaches integration only with `TRIGGER_INTEGRATION_TASK_OPERATOR_KEY`
+  (Task operator, the two integration tasks); integration wakes main's relay only with
+  `TRIGGER_MAIN_RELAY_TRIGGER_KEY` (Trigger only, `outbox.relay`). The web knows only the main project.
+- Both planes deploy **from the same commit with the same external id**:
+  `deploy --config trigger.config.ts --external-id <sha>` and
+  `deploy --config trigger.integration.config.ts --external-id <sha>`. Cross-plane triggers are pinned to the
+  running release, so they never reach another version (they wait while it builds and expire if it never lands).
+  Before removing a task from a plane, `retirementReadiness` must report no delivery bound to it that can still run
+  it there (claimable, or dispatched and awaiting an outcome); outcomes and `OBSERVATION_EXHAUSTED` are terminal.
 - Five priority lanes, each its own bounded queue (`platform/jobs/lanes.ts`), plus a system delivery queue.
 - Operational switches and kill switches (TA §66) live in `system.operational_switches`; runtimes only read
   them. Changes go through `npm run ops:switch` (dry run unless `--apply`), which records who and why.
