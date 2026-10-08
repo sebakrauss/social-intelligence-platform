@@ -124,6 +124,12 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["integrations-no-credential-crypto", "integrations/providers/meta/uses-credential-crypto.ts", "platform/crypto/credentials/seal.ts"],
   ["credential-opening-integration-composition-only", "jobs/sweeper-opens-credentials.ts", "platform/crypto/credentials/local-opener.ts"],
   ["credential-opening-integration-composition-only", "jobs/sweeper-opens-credentials.ts", "platform/crypto/credentials/open.ts"],
+  // AWS KMS keyring (Step 7C): the SDK only in the two capabilities; the unwrapper is integration-runtime only
+  ["credential-opening-integration-composition-only", "jobs/sweeper-opens-credentials.ts", "platform/crypto/credentials/aws-kms-unwrapper.ts"],
+  ["credential-opening-job-runtime-only", "server/opens-kms-unwrapper.ts", "platform/crypto/credentials/aws-kms-unwrapper.ts"],
+  ["aws-kms-sdk-only-in-credential-adapter", "platform/crypto/credentials/envelope-uses-kms-sdk.ts", "../../../../node_modules/@aws-sdk/client-kms/dist-es/index.js"],
+  ["aws-sdk-only-client-kms", "server/uses-aws-credential-chain.ts", "../../../../node_modules/@aws-sdk/credential-provider-node/dist-es/index.js"],
+  ["no-undeclared-package", "server/uses-aws-credential-chain.ts", "../../../../node_modules/@aws-sdk/credential-provider-node/dist-es/index.js"],
   // OAuth secrets (Step 5D, B1): the stateless PKCE derivation key is web-only, composed by server/
   // Capability (Step 5E): evaluated on the server only; the UI renders the result
   ["capability-evaluated-server-side-only", "app/evaluates-capability.ts", "modules/capability/index.ts"],

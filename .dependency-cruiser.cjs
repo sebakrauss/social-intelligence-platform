@@ -417,16 +417,16 @@ module.exports = {
     {
       name: "credential-opening-job-runtime-only",
       severity: "error",
-      comment: "Opening credentials (opener, local opener, keyring internals) happens only in the job runtime: the web deployment (app/, ui/, server/) seals but never decrypts (TA §39).",
+      comment: "Opening credentials (opener, local opener, keyring internals, the KMS unwrapper) happens only in the job runtime: the web deployment (app/, ui/, server/) seals but never decrypts (TA §39).",
       from: { pathNot: "^(jobs|tests|platform/crypto/credentials)/" },
-      to: { path: "^platform/crypto/credentials/(open|local-opener|local-keyring|aead)\\.ts$" },
+      to: { path: "^platform/crypto/credentials/(open|local-opener|local-keyring|aead|aws-kms-unwrapper)\\.ts$" },
     },
     {
       name: "credential-opening-integration-composition-only",
       severity: "error",
       comment: "Step 7B: inside the job runtime, only the integration composition (jobs/connections.ts) obtains an opener; system jobs (relay, sweepers, routing) never open credentials.",
       from: { path: "^jobs/", pathNot: "^jobs/connections\\.ts$" },
-      to: { path: "^platform/crypto/credentials/(open|local-opener)\\.ts$" },
+      to: { path: "^platform/crypto/credentials/(open|local-opener|aws-kms-unwrapper)\\.ts$" },
     },
     {
       name: "credential-local-keyring-composed-only",
@@ -459,9 +459,16 @@ module.exports = {
     {
       name: "aws-kms-sdk-only-in-credential-adapter",
       severity: "error",
-      comment: "The AWS KMS SDK (slice 5I, not adopted yet) may be imported only by its credential keyring adapter.",
-      from: { pathNot: "^platform/crypto/credentials/aws-kms\\.ts$" },
+      comment: "Step 7C: the AWS KMS SDK is imported only by the two keyring capabilities (generator: GenerateDataKey; unwrapper: Decrypt) and their own unit test. The shared KMS module and every other crypto, domain or application module stay SDK-free.",
+      from: { pathNot: "^(platform/crypto/credentials/aws-kms-(generator|unwrapper)\\.ts|tests/unit/platform/aws-kms-keyring\\.test\\.ts)$" },
       to: { path: npmPackage(["@aws-sdk/client-kms"]) },
+    },
+    {
+      name: "aws-sdk-only-client-kms",
+      severity: "error",
+      comment: "Step 7C: no other AWS SDK package is adopted — no credential providers, default provider chain, STS or Smithy internals. Credential composition and OIDC are later, reviewed steps (7D/7E).",
+      from: {},
+      to: { path: "(^|/)node_modules/(@aws-sdk/(?!client-kms/)[^/]+|@smithy/[^/]+)/" },
     },
 
     // ── Hygiene ──────────────────────────────────────────────────────────────────────────────
