@@ -4,11 +4,12 @@
  * tampering (each field), local-keyring configuration and environment guard, the sealer/opener split,
  * zeroization of owned buffers, and absence of secret material from outputs, errors and logs.
  */
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { decrypt, dekWrapAad, payloadAad } from "@/platform/crypto/credentials/aead";
+import { decrypt, dekWrapAad, encrypt, payloadAad } from "@/platform/crypto/credentials/aead";
 import {
+  CREDENTIAL_CONTEXT_ENVS,
   CREDENTIAL_CONTEXT_FIELDS,
   canonicalContextBytes,
   credentialContext,
@@ -16,8 +17,15 @@ import {
   type CredentialContext,
 } from "@/platform/crypto/credentials/context";
 import { assertEnvelopeV1, decodeEnvelope, encodeEnvelope, type EnvelopeV1 } from "@/platform/crypto/credentials/envelope";
-import { CredentialCryptoError, type CredentialCryptoErrorCode } from "@/platform/crypto/credentials/errors";
-import type { DataKeyGenerator, DataKeyUnwrapper } from "@/platform/crypto/credentials/keyring";
+import {
+  CREDENTIAL_CRYPTO_ERROR_CODES,
+  CREDENTIAL_CRYPTO_RETRYABLE,
+  CredentialCryptoError,
+  isRetryableCredentialCryptoError,
+  type CredentialCryptoErrorCode,
+} from "@/platform/crypto/credentials/errors";
+import { isLogicalKeyRef, looksLikePhysicalKeyIdentifier } from "@/platform/crypto/credentials/key-ref";
+import type { DataKeyBinding, DataKeyGenerator, DataKeyUnwrapRequest, DataKeyUnwrapper } from "@/platform/crypto/credentials/keyring";
 import {
   LOCAL_KEYRING_KEY_ENV,
   assertNoLocalKeyringOutsideLocal,
@@ -111,8 +119,8 @@ describe("A. happy path", () => {
     const deks: Buffer[] = [];
     const spy: DataKeyGenerator = {
       ...keyring.generator,
-      async generateDataKey(aad) {
-        const generated = await keyring.generator.generateDataKey(aad);
+      async generateDataKey(binding) {
+        const generated = await keyring.generator.generateDataKey(binding);
         deks.push(Buffer.from(generated.dek));
         return generated;
       },
@@ -197,8 +205,8 @@ describe("B. authenticated context", () => {
     const header = { kekProvider: envelope.kekProvider, keyRef: envelope.keyRef };
     const other = ctx({ credentialId: randomUUID() });
     // Wrapped key: the right context unwraps, another context does not.
-    await failsWith(keyring.unwrapper.unwrapDataKey({ keyRef: envelope.keyRef, wrappedDek: envelope.wrappedDek, additionalData: dekWrapAad(header, other) }), "INTEGRITY_FAILURE");
-    const dek = await keyring.unwrapper.unwrapDataKey({ keyRef: envelope.keyRef, wrappedDek: envelope.wrappedDek, additionalData: dekWrapAad(header, ctx()) });
+    await failsWith(keyring.unwrapper.unwrapDataKey({ header, context: other, wrappedDek: envelope.wrappedDek }), "INTEGRITY_FAILURE");
+    const dek = await keyring.unwrapper.unwrapDataKey({ header, context: ctx(), wrappedDek: envelope.wrappedDek });
     try {
       // Payload: even with the correct data key, another context's AAD fails.
       throwsCode(() => decrypt(dek, envelope, payloadAad(header, other)), "INTEGRITY_FAILURE");
@@ -249,7 +257,7 @@ describe("C. envelope tampering fails closed", () => {
   });
 
   it("the header is authenticated: a keyring that ignores keyRef still fails on a changed header", async () => {
-    const lenient: DataKeyUnwrapper = { kekProvider: "local", unwrapDataKey: (input) => keyring.unwrapper.unwrapDataKey({ ...input, keyRef: "local-v1" }) };
+    const lenient: DataKeyUnwrapper = { kekProvider: "local", unwrapDataKey: (request) => keyring.unwrapper.unwrapDataKey({ ...request, header: { ...request.header, keyRef: "local-v1" } }) };
     await failsWith(createCredentialOpener(lenient).open(tampered({ keyRef: "local-v9" }), ctx(), () => 0), "INTEGRITY_FAILURE");
   });
 
@@ -372,8 +380,8 @@ describe("F. zeroization and secret leakage", () => {
     const seen: Buffer[] = [];
     const recording: DataKeyGenerator = {
       ...keyring.generator,
-      async generateDataKey(aad) {
-        const generated = await keyring.generator.generateDataKey(aad);
+      async generateDataKey(binding) {
+        const generated = await keyring.generator.generateDataKey(binding);
         seen.push(generated.dek);
         return generated;
       },
@@ -387,7 +395,8 @@ describe("F. zeroization and secret leakage", () => {
         return Promise.resolve({ dek, wrappedDek: new Uint8Array(60) });
       },
     };
-    await failsWith(createCredentialSealer(shortKey).seal(markerBytes(), ctx()), "KEYRING_UNAVAILABLE");
+    // A keyring that hands out a malformed data key is wired wrongly: not retryable (Step 7B).
+    await failsWith(createCredentialSealer(shortKey).seal(markerBytes(), ctx()), "KEYRING_MISCONFIGURED");
     expect(seen).toHaveLength(2);
     for (const dek of seen) expect(dek.every((byte) => byte === 0)).toBe(true);
   });
@@ -397,8 +406,8 @@ describe("F. zeroization and secret leakage", () => {
     const deks: Buffer[] = [];
     const recording: DataKeyUnwrapper = {
       kekProvider: "local",
-      async unwrapDataKey(input) {
-        const dek = await keyring.unwrapper.unwrapDataKey(input);
+      async unwrapDataKey(request) {
+        const dek = await keyring.unwrapper.unwrapDataKey(request);
         deks.push(dek);
         return dek;
       },
@@ -466,5 +475,271 @@ describe("F. zeroization and secret leakage", () => {
     expect(haystack.includes(Buffer.from(MARKER).toString("base64"))).toBe(false);
     expect(haystack.includes(kekText)).toBe(false);
     expect(haystack.includes(Buffer.from(kekText, "base64url").toString("hex"))).toBe(false);
+  });
+});
+
+/**
+ * A KMS-shaped test double (Step 7B, D6) — NOT an AWS adapter. It models what the future adapter must do with the
+ * structured ports: the six context fields become the encryption context (exactly, nothing added); the wrapped blob
+ * names its physical key, so unwrapping never derives a key from the logical keyRef; the returned physical key must
+ * be in the configured allowlist; and an operator re-wrap moves a data key to another physical key under the same
+ * context without touching the header or the payload.
+ */
+function fakeKms(options: { readonly physical: ReadonlyMap<string, Buffer>; readonly current: string; readonly allowed: readonly string[]; readonly keyRef: string }) {
+  const contexts: Record<string, string>[] = [];
+  const encryptionContext = (binding: DataKeyBinding): Record<string, string> => {
+    const c = binding.context;
+    const map = { app: c.app, purpose: c.purpose, env: c.env, v: c.v, workspace_id: c.workspace_id, credential_id: c.credential_id };
+    contexts.push(map);
+    return map;
+  };
+  const contextAad = (map: Record<string, string>): Buffer => Buffer.from(JSON.stringify(Object.entries(map).sort()), "utf8");
+  const wrapWith = (physicalId: string, dek: Uint8Array, map: Record<string, string>): Uint8Array => {
+    const key = options.physical.get(physicalId);
+    if (key === undefined) throw new CredentialCryptoError("KEYRING_MISCONFIGURED");
+    const sealed = encrypt(key, dek, contextAad(map));
+    const id = Buffer.from(physicalId, "ascii");
+    return new Uint8Array(Buffer.concat([Buffer.from([id.length]), id, sealed.iv, sealed.ciphertext, sealed.authTag]));
+  };
+  const unwrapBlob = (blob: Uint8Array, map: Record<string, string>, allowed: readonly string[]): Buffer => {
+    const bytes = Buffer.from(blob);
+    const physicalId = bytes.toString("ascii", 1, 1 + (bytes[0] ?? 0));
+    const body = bytes.subarray(1 + (bytes[0] ?? 0));
+    if (!allowed.includes(physicalId)) throw new CredentialCryptoError("KEYRING_MISCONFIGURED");
+    const key = options.physical.get(physicalId);
+    if (key === undefined || body.byteLength !== 12 + 32 + 16) throw new CredentialCryptoError("INTEGRITY_FAILURE");
+    return decrypt(key, { iv: body.subarray(0, 12), ciphertext: body.subarray(12, 44), authTag: body.subarray(44) }, contextAad(map));
+  };
+  const generator: DataKeyGenerator = {
+    kekProvider: "aws-kms",
+    keyRef: options.keyRef,
+    generateDataKey(binding) {
+      const dek = randomBytes(32);
+      return Promise.resolve({ dek, wrappedDek: wrapWith(options.current, dek, encryptionContext(binding)) });
+    },
+  };
+  const unwrapperFor = (allowed: readonly string[]): DataKeyUnwrapper => ({
+    kekProvider: "aws-kms",
+    unwrapDataKey: (request: DataKeyUnwrapRequest) => Promise.resolve().then(() => unwrapBlob(request.wrappedDek, encryptionContext(request), allowed)),
+  });
+  /** Operator re-wrap (ReEncrypt-like): the data key never leaves this function; the context is the same on both sides. */
+  const reWrap = (blob: Uint8Array, binding: DataKeyBinding, to: string): Uint8Array => {
+    const map = encryptionContext(binding);
+    const dek = unwrapBlob(blob, map, [...options.physical.keys()]);
+    try {
+      return wrapWith(to, dek, map);
+    } finally {
+      dek.fill(0);
+    }
+  };
+  return { generator, unwrapper: unwrapperFor(options.allowed), unwrapperFor, reWrap, contexts };
+}
+
+const LOGICAL_KMS_REF = "kms-provider-credentials-v1";
+const PHYSICAL_OLD = "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa";
+const PHYSICAL_NEW = "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000bb";
+const physicalKeys = (): Map<string, Buffer> => new Map([[PHYSICAL_OLD, randomBytes(32)], [PHYSICAL_NEW, randomBytes(32)]]);
+
+describe("G. structured keyring ports (Step 7B, D2/D3)", () => {
+  it("the generator receives the header and the validated six-field context, not serialized bytes", async () => {
+    const bindings: DataKeyBinding[] = [];
+    const spy: DataKeyGenerator = { ...keyring.generator, generateDataKey: (binding) => (bindings.push(binding), keyring.generator.generateDataKey(binding)) };
+    await createCredentialSealer(spy).seal(markerBytes(), ctx());
+    expect(bindings).toHaveLength(1);
+    const binding = bindings[0] as DataKeyBinding;
+    expect(Object.keys(binding).sort()).toEqual(["context", "header"]);
+    expect(binding.header).toEqual({ kekProvider: "local", keyRef: "local-v1" });
+    expect(Object.keys(binding.context)).toEqual([...CREDENTIAL_CONTEXT_FIELDS]);
+    expect({ ...binding.context }).toEqual({ ...ctx() });
+  });
+
+  it("the unwrapper receives the envelope's header, the CALLER's context and the wrapped key", async () => {
+    const envelope = await sealer.seal(markerBytes(), ctx());
+    const requests: DataKeyUnwrapRequest[] = [];
+    const spy: DataKeyUnwrapper = { kekProvider: "local", unwrapDataKey: (request) => (requests.push(request), keyring.unwrapper.unwrapDataKey(request)) };
+    const other = ctx({ workspaceId: randomUUID() });
+    await failsWith(createCredentialOpener(spy).open(envelope, other, () => 0), "INTEGRITY_FAILURE");
+    expect(await createCredentialOpener(spy).open(envelope, ctx(), (p) => Buffer.from(p).toString("utf8"))).toBe(MARKER);
+    expect(requests.map((r) => r.context.workspace_id)).toEqual([other.workspace_id, WORKSPACE]);
+    for (const request of requests) {
+      expect(Object.keys(request).sort()).toEqual(["context", "header", "wrappedDek"]);
+      expect(request.header).toEqual({ kekProvider: envelope.kekProvider, keyRef: envelope.keyRef });
+      expect(Buffer.from(request.wrappedDek).equals(Buffer.from(envelope.wrappedDek))).toBe(true);
+    }
+  });
+
+  it("an invalid context never reaches the keyring", async () => {
+    let calls = 0;
+    const spy: DataKeyGenerator = { ...keyring.generator, generateDataKey: (binding) => (calls++, keyring.generator.generateDataKey(binding)) };
+    await failsWith(createCredentialSealer(spy).seal(markerBytes(), { ...ctx(), env: "prod" } as unknown as CredentialContext), "INVALID_CONTEXT");
+    await failsWith(createCredentialSealer(spy).seal(markerBytes(), { ...ctx(), kms_key: PHYSICAL_OLD } as unknown as CredentialContext), "INVALID_CONTEXT");
+    expect(calls).toBe(0);
+  });
+
+  it.each([
+    ["workspace", () => ctx({ workspaceId: randomUUID() })],
+    ["credential", () => ctx({ credentialId: randomUUID() })],
+    ["environment", () => ctx({ env: "dev" })],
+  ])("a %s mismatch fails for the local keyring and for a KMS-shaped keyring", async (_label, wrong) => {
+    await failsWith(openToBuffer(await sealer.seal(markerBytes(), ctx()), wrong()), "INTEGRITY_FAILURE");
+    const kms = fakeKms({ physical: physicalKeys(), current: PHYSICAL_OLD, allowed: [PHYSICAL_OLD], keyRef: LOGICAL_KMS_REF });
+    const envelope = await createCredentialSealer(kms.generator).seal(markerBytes(), ctx());
+    await failsWith(createCredentialOpener(kms.unwrapper).open(envelope, wrong(), () => 0), "INTEGRITY_FAILURE");
+  });
+
+  it("purpose and context version are closed: anything else is refused before any key operation", () => {
+    throwsCode(() => parseCredentialContext({ ...ctx(), purpose: "provider-token" }), "INVALID_CONTEXT");
+    throwsCode(() => parseCredentialContext({ ...ctx(), v: "2" }), "INVALID_CONTEXT");
+  });
+
+  it("a KMS-shaped keyring gets exactly the six context fields as its encryption context — no seventh field", async () => {
+    const kms = fakeKms({ physical: physicalKeys(), current: PHYSICAL_OLD, allowed: [PHYSICAL_OLD], keyRef: LOGICAL_KMS_REF });
+    const envelope = await createCredentialSealer(kms.generator).seal(markerBytes(), ctx({ env: "dev" }));
+    expect(await createCredentialOpener(kms.unwrapper).open(envelope, ctx({ env: "dev" }), (p) => Buffer.from(p).toString("utf8"))).toBe(MARKER);
+    expect(kms.contexts).toHaveLength(2);
+    for (const map of kms.contexts) {
+      expect(Object.keys(map)).toEqual([...CREDENTIAL_CONTEXT_FIELDS]);
+      expect(map).toEqual({ app: "social-intelligence-platform", purpose: "provider-credential", env: "dev", v: "1", workspace_id: WORKSPACE, credential_id: CREDENTIAL });
+    }
+  });
+});
+
+describe("H. logical keyRef (Step 7B, D5/D6)", () => {
+  it("a logical reference is a stable label; physical key identifiers are refused", () => {
+    for (const ref of ["local-v1", LOGICAL_KMS_REF, "kek-2027"]) expect(isLogicalKeyRef(ref), ref).toBe(true);
+    for (const ref of [PHYSICAL_OLD, "alias/social-intelligence-platform-dev-provider-credentials", "00000000-0000-4000-8000-0000000000aa", "abcdef01-2345-4678-9abc-def012345678", `mrk-${"a".repeat(32)}`]) {
+      expect(looksLikePhysicalKeyIdentifier(ref), ref).toBe(true);
+      expect(isLogicalKeyRef(ref), ref).toBe(false);
+    }
+    for (const ref of ["", "Local-v1", "local_v1", "local--v1", "-local", "local-", "x".repeat(65), 42, undefined]) expect(isLogicalKeyRef(ref), String(ref)).toBe(false);
+  });
+
+  it("a physical identifier can't become an envelope keyRef: refused by the sealer, the envelope check and the decoder", async () => {
+    throwsCode(() => createCredentialSealer({ ...keyring.generator, keyRef: PHYSICAL_OLD }), "KEYRING_MISCONFIGURED");
+    const envelope = await sealer.seal(markerBytes(), ctx());
+    throwsCode(() => assertEnvelopeV1({ ...envelope, keyRef: PHYSICAL_OLD }), "MALFORMED_ENVELOPE");
+    const encoded = Buffer.from(encodeEnvelope(envelope));
+    const at = encoded.indexOf(Buffer.from("local-v1", "ascii"));
+    expect(at).toBeGreaterThan(0);
+    Buffer.from("alias/k1", "ascii").copy(encoded, at);
+    throwsCode(() => decodeEnvelope(new Uint8Array(encoded)), "MALFORMED_ENVELOPE");
+  });
+
+  it("the keyRef stays authenticated even for a keyring that ignores it when unwrapping", async () => {
+    const kms = fakeKms({ physical: physicalKeys(), current: PHYSICAL_OLD, allowed: [PHYSICAL_OLD], keyRef: LOGICAL_KMS_REF });
+    const envelope = await createCredentialSealer(kms.generator).seal(markerBytes(), ctx());
+    await failsWith(createCredentialOpener(kms.unwrapper).open({ ...envelope, keyRef: "kms-provider-credentials-v2" }, ctx(), () => 0), "INTEGRITY_FAILURE");
+  });
+
+  it("a re-wrap moves the data key to another physical key: header and payload unchanged, old and new both open while allowed", async () => {
+    const kms = fakeKms({ physical: physicalKeys(), current: PHYSICAL_OLD, allowed: [PHYSICAL_OLD, PHYSICAL_NEW], keyRef: LOGICAL_KMS_REF });
+    const original = await createCredentialSealer(kms.generator).seal(markerBytes(), ctx());
+    const header = { kekProvider: original.kekProvider, keyRef: original.keyRef };
+    const migrated = { ...original, wrappedDek: kms.reWrap(original.wrappedDek, { header, context: ctx() }, PHYSICAL_NEW) };
+    expect(migrated.keyRef).toBe(LOGICAL_KMS_REF);
+    expect(Buffer.from(migrated.ciphertext).equals(Buffer.from(original.ciphertext))).toBe(true);
+    expect(Buffer.from(migrated.wrappedDek).equals(Buffer.from(original.wrappedDek))).toBe(false);
+    for (const envelope of [original, migrated]) {
+      expect(await createCredentialOpener(kms.unwrapper).open(envelope, ctx(), (p) => Buffer.from(p).toString("utf8"))).toBe(MARKER);
+    }
+    // After the migration completes, the old physical key leaves the allowlist: un-migrated envelopes are refused.
+    const newOnly = createCredentialOpener(kms.unwrapperFor([PHYSICAL_NEW]));
+    await failsWith(newOnly.open(original, ctx(), () => 0), "KEYRING_MISCONFIGURED");
+    expect(await newOnly.open(migrated, ctx(), (p) => Buffer.from(p).toString("utf8"))).toBe(MARKER);
+  });
+});
+
+describe("I. error taxonomy and retryability (Step 7B, D7)", () => {
+  it("one table covers every code; only a transient keyring outage is retryable", () => {
+    expect(Object.keys(CREDENTIAL_CRYPTO_RETRYABLE).sort()).toEqual([...CREDENTIAL_CRYPTO_ERROR_CODES].sort());
+    expect(Object.isFrozen(CREDENTIAL_CRYPTO_RETRYABLE)).toBe(true);
+    expect(CREDENTIAL_CRYPTO_ERROR_CODES.filter((code) => CREDENTIAL_CRYPTO_RETRYABLE[code])).toEqual(["KEYRING_UNAVAILABLE"]);
+    expect(isRetryableCredentialCryptoError(new CredentialCryptoError("KEYRING_UNAVAILABLE"))).toBe(true);
+    for (const code of ["KEYRING_ACCESS_DENIED", "KEYRING_MISCONFIGURED", "INTEGRITY_FAILURE", "KEYRING_MISMATCH", "MALFORMED_ENVELOPE"] as const) {
+      expect(isRetryableCredentialCryptoError(new CredentialCryptoError(code)), code).toBe(false);
+    }
+    for (const value of [new Error("KEYRING_UNAVAILABLE"), { code: "KEYRING_UNAVAILABLE" }, "KEYRING_UNAVAILABLE", undefined]) {
+      expect(isRetryableCredentialCryptoError(value)).toBe(false);
+    }
+  });
+
+  it("new keyring codes are fixed, non-secret and carry nothing underneath", () => {
+    for (const code of ["KEYRING_ACCESS_DENIED", "KEYRING_MISCONFIGURED"] as const) {
+      const error = new CredentialCryptoError(code);
+      expect(error.message).toBe(`credential_crypto_${code.toLowerCase()}`);
+      expect(JSON.stringify(error)).toBe(JSON.stringify({ code }));
+      expect(error.cause).toBeUndefined();
+    }
+  });
+
+  it("a keyring's normalized code passes through the sealer and the opener unchanged; raw failures are normalized without their message", async () => {
+    const secret = `raw-key-service-detail-${randomUUID()}`;
+    for (const [failure, expected] of [
+      [new CredentialCryptoError("KEYRING_ACCESS_DENIED"), "KEYRING_ACCESS_DENIED"],
+      [new CredentialCryptoError("KEYRING_MISCONFIGURED"), "KEYRING_MISCONFIGURED"],
+      [new Error(secret), "KEYRING_UNAVAILABLE"],
+    ] as const) {
+      const failingGenerator: DataKeyGenerator = { ...keyring.generator, generateDataKey: () => Promise.reject(failure) };
+      const failingUnwrapper: DataKeyUnwrapper = { kekProvider: "local", unwrapDataKey: () => Promise.reject(failure) };
+      const envelope = await sealer.seal(markerBytes(), ctx());
+      for (const attempt of [createCredentialSealer(failingGenerator).seal(markerBytes(), ctx()), createCredentialOpener(failingUnwrapper).open(envelope, ctx(), () => 0)]) {
+        const error = await attempt.then(() => undefined, (e: unknown) => e);
+        expect((error as CredentialCryptoError).code).toBe(expected);
+        expect(`${String(error)} ${JSON.stringify(error)} ${inspect(error)}`.includes(secret)).toBe(false);
+        expect((error as Error).cause).toBeUndefined();
+      }
+    }
+  });
+
+  it("integrity and tamper failures stay non-retryable", async () => {
+    const envelope = await sealer.seal(markerBytes(), ctx());
+    const error = await openToBuffer({ ...envelope, ciphertext: flip(envelope.ciphertext, 0) }, ctx()).then(() => undefined, (e: unknown) => e);
+    expect((error as CredentialCryptoError).code).toBe("INTEGRITY_FAILURE");
+    expect(isRetryableCredentialCryptoError(error)).toBe(false);
+  });
+});
+
+describe("J. cryptographic environment authority (Step 7B, D4)", () => {
+  it("the closed set: local and test (local keyring) and dev (pinned by the TA-Q-07b key policy)", () => {
+    expect([...CREDENTIAL_CONTEXT_ENVS]).toEqual(["local", "test", "dev"]);
+    expect(ctx({ env: "dev" }).env).toBe("dev");
+    expect(canonicalContextBytes(ctx({ env: "dev" })).toString("utf8")).toContain('["env","dev"]');
+  });
+
+  it("no other label is accepted, however plausible", () => {
+    for (const env of ["staging", "prod", "production", "preview", "development", "Dev", "dev ", "local-dev"]) throwsCode(() => ctx({ env }), "INVALID_CONTEXT");
+  });
+});
+
+describe("K. envelope compatibility (Step 7B)", () => {
+  // Sealed by the Step 5A code at a4e4e79 (before the port refinement): synthetic KEK and plaintext, fixed context.
+  const GOLDEN_V1 = "5349504501010101086c6f63616c2d7631003c23bf63056bd233b1dfa2b9b6cda93ba03be505928762f42ab3b534cf4e0ba93fdddddeaf9d2092aca2366283b8a4228f50ffd7a66a9e7d2e13d721953ffa5f0e35dd476551ad1a39be6a59e9e77c6fd97155c1caf895ec4f00000022663baccde6f7e1f2fb64c9dd366fad5472f0a265cbca5c1158a3217776163477decb";
+  const goldenKek = (): Buffer => createHash("sha256").update("sip-7b-golden-vector:synthetic-local-kek").digest();
+  const goldenContext = (): CredentialContext =>
+    credentialContext({ purpose: "provider-credential", env: "test", workspaceId: "7b000000-0000-4000-8000-000000000001", credentialId: "7b000000-0000-4000-8000-000000000002" });
+
+  it("an envelope sealed before the refinement still opens, and re-encodes to the identical bytes", async () => {
+    const bytes = new Uint8Array(Buffer.from(GOLDEN_V1, "hex"));
+    const decoded = decodeEnvelope(bytes);
+    expect(decoded).toMatchObject({ formatVersion: 1, algorithm: "AES-256-GCM", kekProvider: "local", keyRef: "local-v1", contextVersion: 1 });
+    expect(Buffer.from(encodeEnvelope(decoded)).toString("hex")).toBe(GOLDEN_V1);
+    const kek = goldenKek();
+    const golden = createLocalKeyring(kek, TEST_ENV);
+    kek.fill(0);
+    try {
+      const goldenOpener = createCredentialOpener(golden.unwrapper);
+      expect(await goldenOpener.open(decoded, goldenContext(), (p) => Buffer.from(p).toString("utf8"))).toBe("SIP-7B-GOLDEN-SYNTHETIC-CREDENTIAL");
+      await failsWith(goldenOpener.open(decoded, credentialContext({ purpose: "provider-credential", env: "test", workspaceId: randomUUID(), credentialId: "7b000000-0000-4000-8000-000000000002" }), () => 0), "INTEGRITY_FAILURE");
+    } finally {
+      golden.destroy();
+    }
+  });
+
+  it("a fresh local envelope keeps the v1 layout: same header bytes and lengths as before", async () => {
+    const fresh = Buffer.from(encodeEnvelope(await sealer.seal(new Uint8Array(Buffer.from("SIP-7B-GOLDEN-SYNTHETIC-CREDENTIAL", "utf8")), ctx())));
+    const golden = Buffer.from(GOLDEN_V1, "hex");
+    expect(fresh.length).toBe(golden.length);
+    const fixedHeader = 4 + 5 + "local-v1".length + 2;
+    expect(fresh.subarray(0, fixedHeader).equals(golden.subarray(0, fixedHeader))).toBe(true);
   });
 });

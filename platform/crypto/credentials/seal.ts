@@ -4,11 +4,11 @@
  *
  * seal(plaintext, context):
  *   1. validate the context (workspace_id + credential_id binding) and the plaintext bounds;
- *   2. obtain a FRESH 256-bit data key and its KEK-wrapped form, bound to header + context (AAD);
+ *   2. obtain a FRESH 256-bit data key and its KEK-wrapped form, bound to the header + context binding;
  *   3. AES-256-GCM-encrypt the plaintext with a random 96-bit IV, AAD = header + context;
  *   4. zero the data key (success or failure). The caller owns `plaintext` and should zero it afterwards.
  */
-import { dekWrapAad, encrypt, payloadAad, zero } from "./aead";
+import { encrypt, payloadAad, zero } from "./aead";
 import { parseCredentialContext, type CredentialContext } from "./context";
 import {
   DEK_BYTES,
@@ -27,8 +27,8 @@ export interface CredentialSealer {
 }
 
 export function createCredentialSealer(generator: DataKeyGenerator): CredentialSealer {
-  if (!isKeyRef(generator.keyRef)) throw new CredentialCryptoError("KEYRING_UNAVAILABLE");
-  const header = { kekProvider: generator.kekProvider, keyRef: generator.keyRef };
+  if (!isKeyRef(generator.keyRef)) throw new CredentialCryptoError("KEYRING_MISCONFIGURED");
+  const header = Object.freeze({ kekProvider: generator.kekProvider, keyRef: generator.keyRef });
 
   async function seal(plaintext: Uint8Array, context: CredentialContext): Promise<EnvelopeV1> {
     const checked = parseCredentialContext(context);
@@ -39,12 +39,12 @@ export function createCredentialSealer(generator: DataKeyGenerator): CredentialS
     try {
       let generated;
       try {
-        generated = await generator.generateDataKey(dekWrapAad(header, checked));
+        generated = await generator.generateDataKey({ header, context: checked });
       } catch (error) {
         throw isCredentialCryptoError(error) ? error : new CredentialCryptoError("KEYRING_UNAVAILABLE");
       }
       dek = generated.dek;
-      if (dek.byteLength !== DEK_BYTES) throw new CredentialCryptoError("KEYRING_UNAVAILABLE");
+      if (dek.byteLength !== DEK_BYTES) throw new CredentialCryptoError("KEYRING_MISCONFIGURED");
       const sealed = encrypt(dek, plaintext, payloadAad(header, checked));
       return Object.freeze({
         formatVersion: ENVELOPE_FORMAT_VERSION,

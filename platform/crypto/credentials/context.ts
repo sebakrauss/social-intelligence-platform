@@ -17,15 +17,21 @@ export const CREDENTIAL_CONTEXT_VERSION = "1";
 /** Canonical field order; also the exact set of allowed fields. */
 export const CREDENTIAL_CONTEXT_FIELDS = ["app", "purpose", "env", "v", "workspace_id", "credential_id"] as const;
 
-/** Environment label supplied by the composition root (e.g. "test", "local", "dev"); never a free-form string. */
-const ENVIRONMENT_LABEL = /^[a-z][a-z0-9-]{0,31}$/;
+/**
+ * The closed set of cryptographic environment labels (`env`). This is its own concept, not the deployment tier
+ * (APP_DEPLOYMENT_ENV): it names the key environment an envelope belongs to, so an envelope opens only where it was
+ * sealed. "local" and "test" are the local-keyring environments; "dev" is the label the TA-Q-07b key policy pins
+ * (`kms:EncryptionContext:env` = "dev"). Further deployed labels are added only together with their key policy.
+ */
+export const CREDENTIAL_CONTEXT_ENVS = ["local", "test", "dev"] as const;
+export type CredentialContextEnv = (typeof CREDENTIAL_CONTEXT_ENVS)[number];
 
 declare const contextBrand: unique symbol;
 
 export interface CredentialContext {
   readonly app: typeof CREDENTIAL_CONTEXT_APP;
   readonly purpose: CredentialPurpose;
-  readonly env: string;
+  readonly env: CredentialContextEnv;
   readonly v: typeof CREDENTIAL_CONTEXT_VERSION;
   readonly workspace_id: string;
   readonly credential_id: string;
@@ -46,13 +52,13 @@ const invalid = (): never => {
 function build(app: unknown, purpose: unknown, env: unknown, v: unknown, workspaceId: unknown, credentialId: unknown): CredentialContext {
   if (app !== CREDENTIAL_CONTEXT_APP) invalid();
   if (!(CREDENTIAL_PURPOSES as readonly unknown[]).includes(purpose)) invalid();
-  if (typeof env !== "string" || !ENVIRONMENT_LABEL.test(env)) invalid();
+  if (!(CREDENTIAL_CONTEXT_ENVS as readonly unknown[]).includes(env)) invalid();
   if (v !== CREDENTIAL_CONTEXT_VERSION) invalid();
   if (!isUuid(workspaceId) || !isUuid(credentialId)) invalid();
   return Object.freeze({
     app: CREDENTIAL_CONTEXT_APP,
     purpose: purpose as CredentialPurpose,
-    env: env as string,
+    env: env as CredentialContextEnv,
     v: CREDENTIAL_CONTEXT_VERSION,
     workspace_id: workspaceId as string,
     credential_id: credentialId as string,

@@ -1,17 +1,18 @@
 /**
  * LocalKeyring — local development and tests only (Step 5A; D12). It keeps the security semantics of the
  * KMS adapter without reproducing AWS APIs: a fresh per-record data key, wrapped by a local 256-bit KEK
- * with AES-256-GCM under the same AAD (header + credential context), never persisted in plaintext.
+ * with AES-256-GCM under the wrap AAD it derives from the structured binding (dekWrapAad(header, context)), never
+ * persisted in plaintext.
  *
  * Key material: exactly 32 bytes. Configuration form: unpadded base64url, exactly 43 characters
  * (`LOCAL_KEYRING_KEY`). No passphrase derivation, no generated default, no fallback: anything else fails
  * closed. Allowed only when NODE_ENV is "development" or "test" (the repository's environment convention);
  * every factory takes the environment explicitly and refuses otherwise. The key is never printed or logged.
  */
-import { decrypt, encrypt, newDataKey, zero } from "./aead";
-import { DEK_BYTES, IV_BYTES, TAG_BYTES } from "./envelope";
+import { decrypt, dekWrapAad, encrypt, newDataKey, zero } from "./aead";
+import { DEK_BYTES, IV_BYTES, TAG_BYTES, type EnvelopeHeader } from "./envelope";
 import { CredentialCryptoError } from "./errors";
-import type { DataKeyGenerator, DataKeyUnwrapper } from "./keyring";
+import type { DataKeyBinding, DataKeyGenerator, DataKeyUnwrapRequest, DataKeyUnwrapper } from "./keyring";
 
 export const LOCAL_KEYRING_KEY_ENV = "LOCAL_KEYRING_KEY";
 export const LOCAL_KEYRING_ALLOWED_NODE_ENVS: readonly string[] = ["development", "test"];
@@ -62,14 +63,21 @@ export function createLocalKeyring(key: Uint8Array, environment: RuntimeEnvironm
     if (destroyed) throw new CredentialCryptoError("KEYRING_UNAVAILABLE");
     return kek;
   };
+  // Only this keyring's own header: another KEK provider or logical key reference is not ours to wrap or unwrap.
+  const ownHeader = (header: EnvelopeHeader): void => {
+    if (header.kekProvider !== "local" || header.keyRef !== LOCAL_KEY_REF) throw new CredentialCryptoError("KEYRING_MISMATCH");
+  };
 
   const generator: DataKeyGenerator = Object.freeze({
     kekProvider: "local" as const,
     keyRef: LOCAL_KEY_REF,
-    generateDataKey(additionalData: Uint8Array) {
-      const wrappingKey = usable();
-      const dek = newDataKey();
+    generateDataKey(binding: DataKeyBinding) {
+      let dek: Buffer | undefined;
       try {
+        const wrappingKey = usable();
+        ownHeader(binding.header);
+        const additionalData = dekWrapAad(binding.header, binding.context);
+        dek = newDataKey();
         const sealed = encrypt(wrappingKey, dek, additionalData);
         return Promise.resolve({ dek, wrappedDek: new Uint8Array(Buffer.concat([sealed.iv, sealed.ciphertext, sealed.authTag])) });
       } catch (error) {
@@ -81,18 +89,18 @@ export function createLocalKeyring(key: Uint8Array, environment: RuntimeEnvironm
 
   const unwrapper: DataKeyUnwrapper = Object.freeze({
     kekProvider: "local" as const,
-    unwrapDataKey(input: { readonly keyRef: string; readonly wrappedDek: Uint8Array; readonly additionalData: Uint8Array }) {
+    unwrapDataKey(request: DataKeyUnwrapRequest) {
       try {
         const wrappingKey = usable();
-        if (input.keyRef !== LOCAL_KEY_REF) throw new CredentialCryptoError("KEYRING_MISMATCH");
-        if (input.wrappedDek.byteLength !== WRAPPED_BYTES) throw new CredentialCryptoError("INTEGRITY_FAILURE");
-        const wrapped = Buffer.from(input.wrappedDek);
+        ownHeader(request.header);
+        if (request.wrappedDek.byteLength !== WRAPPED_BYTES) throw new CredentialCryptoError("INTEGRITY_FAILURE");
+        const wrapped = Buffer.from(request.wrappedDek);
         const sealed = {
           iv: wrapped.subarray(0, IV_BYTES),
           ciphertext: wrapped.subarray(IV_BYTES, IV_BYTES + DEK_BYTES),
           authTag: wrapped.subarray(IV_BYTES + DEK_BYTES),
         };
-        return Promise.resolve(decrypt(wrappingKey, sealed, input.additionalData));
+        return Promise.resolve(decrypt(wrappingKey, sealed, dekWrapAad(request.header, request.context)));
       } catch (error) {
         return Promise.reject(error instanceof CredentialCryptoError ? error : new CredentialCryptoError("KEYRING_UNAVAILABLE"));
       }

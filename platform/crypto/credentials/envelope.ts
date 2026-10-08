@@ -12,6 +12,7 @@
  *   | wrappedDek len u16 | wrappedDek | iv (12) | tag (16) | ciphertext len u32 | ciphertext
  */
 import { CredentialCryptoError } from "./errors";
+import { isLogicalKeyRef } from "./key-ref";
 
 export const ENVELOPE_FORMAT_VERSION = 1;
 export const ENVELOPE_CONTEXT_VERSION = 1;
@@ -24,7 +25,6 @@ export const IV_BYTES = 12;
 export const TAG_BYTES = 16;
 const MAX_WRAPPED_DEK_BYTES = 1024;
 export const MAX_PLAINTEXT_BYTES = 64 * 1024;
-const KEY_REF = /^[A-Za-z0-9][A-Za-z0-9:/._-]{0,127}$/;
 
 export interface EnvelopeV1 {
   readonly formatVersion: typeof ENVELOPE_FORMAT_VERSION;
@@ -50,8 +50,9 @@ const malformed = (): never => {
   throw new CredentialCryptoError("MALFORMED_ENVELOPE");
 };
 
+/** An envelope's key reference is a LOGICAL KEK label, never a physical key identifier (see key-ref.ts). */
 export function isKeyRef(value: unknown): value is string {
-  return typeof value === "string" && KEY_REF.test(value);
+  return isLogicalKeyRef(value);
 }
 
 function bytes(value: unknown, min: number, max: number): Uint8Array {

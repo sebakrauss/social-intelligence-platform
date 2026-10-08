@@ -5,12 +5,12 @@
  * open(envelope, context, use):
  *   1. validate the envelope (version, algorithm, lengths; fail closed) and the context;
  *   2. refuse envelopes from another KEK provider;
- *   3. unwrap the data key under AAD = header + context — a wrong workspace_id or credential_id fails here;
+ *   3. unwrap the data key under the header + context binding — a wrong workspace_id or credential_id fails here;
  *   4. decrypt and authenticate the payload under AAD = header + context;
  *   5. hand the plaintext to `use` for the duration of the call, then zero it and the data key.
  * The plaintext never outlives `use` unless the callback copies it. Nothing is cached.
  */
-import { decrypt, dekWrapAad, payloadAad, zero } from "./aead";
+import { decrypt, payloadAad, zero } from "./aead";
 import { parseCredentialContext, type CredentialContext } from "./context";
 import { DEK_BYTES, assertEnvelopeV1, type EnvelopeV1 } from "./envelope";
 import { CredentialCryptoError, isCredentialCryptoError } from "./errors";
@@ -25,12 +25,12 @@ export function createCredentialOpener(unwrapper: DataKeyUnwrapper): CredentialO
     const e = assertEnvelopeV1(envelope);
     const checked = parseCredentialContext(context);
     if (e.kekProvider !== unwrapper.kekProvider) throw new CredentialCryptoError("KEYRING_MISMATCH");
-    const header = { kekProvider: e.kekProvider, keyRef: e.keyRef };
+    const header = Object.freeze({ kekProvider: e.kekProvider, keyRef: e.keyRef });
     let dek: Buffer | undefined;
     let plaintext: Buffer | undefined;
     try {
       try {
-        dek = await unwrapper.unwrapDataKey({ keyRef: e.keyRef, wrappedDek: e.wrappedDek, additionalData: dekWrapAad(header, checked) });
+        dek = await unwrapper.unwrapDataKey({ header, context: checked, wrappedDek: e.wrappedDek });
       } catch (error) {
         throw isCredentialCryptoError(error) ? error : new CredentialCryptoError("KEYRING_UNAVAILABLE");
       }

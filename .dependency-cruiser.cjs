@@ -422,6 +422,13 @@ module.exports = {
       to: { path: "^platform/crypto/credentials/(open|local-opener|local-keyring|aead)\\.ts$" },
     },
     {
+      name: "credential-opening-integration-composition-only",
+      severity: "error",
+      comment: "Step 7B: inside the job runtime, only the integration composition (jobs/connections.ts) obtains an opener; system jobs (relay, sweepers, routing) never open credentials.",
+      from: { path: "^jobs/", pathNot: "^jobs/connections\\.ts$" },
+      to: { path: "^platform/crypto/credentials/(open|local-opener)\\.ts$" },
+    },
+    {
       name: "credential-local-keyring-composed-only",
       severity: "error",
       comment: "The local/test keyring is selected only by composition roots (server/ seals, jobs/ opens) and tests.",

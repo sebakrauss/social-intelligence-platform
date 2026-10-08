@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { codeOf } from "../support/source-scan";
+import { codeOf, findReferences, sourceFiles } from "../support/source-scan";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const dir = path.join(root, "platform/crypto/credentials");
@@ -14,6 +14,11 @@ const dir = path.join(root, "platform/crypto/credentials");
 const read = (file: string): string => codeOf(`platform/crypto/credentials/${file}`);
 const sources = readdirSync(dir).filter((f) => f.endsWith(".ts"));
 const importsOf = (source: string): string[] => [...source.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1] ?? "");
+const require = createRequire(import.meta.url);
+const depcruise = require(path.join(root, ".dependency-cruiser.cjs")) as { forbidden: { name: string; from: { path?: string; pathNot?: string }; to: { path?: string } }[] };
+const ruleNamed = (name: string) => depcruise.forbidden.find((rule) => rule.name === name);
+/** Any reference to the opening half (opener, local opener, keyring internals). */
+const OPENING = /platform\/crypto\/credentials\/(open|local-opener|local-keyring|aead)\b|\bCredentialOpener\b|\bDataKeyUnwrapper\b/;
 
 describe("credential crypto boundary", () => {
   it("the sealing side never imports the opening side or decryption", () => {
@@ -55,14 +60,35 @@ describe("credential crypto boundary", () => {
   });
 
   it("the future AWS KMS SDK is confined to its adapter file, and not adopted yet", () => {
-    const require = createRequire(import.meta.url);
-    const config = require(path.join(root, ".dependency-cruiser.cjs")) as { forbidden: { name: string; from: { pathNot?: string }; to: { path?: string } }[] };
-    const rule = config.forbidden.find((r) => r.name === "aws-kms-sdk-only-in-credential-adapter");
+    const rule = ruleNamed("aws-kms-sdk-only-in-credential-adapter");
     expect(rule?.from.pathNot).toBe("^platform/crypto/credentials/aws-kms\\.ts$");
     expect(new RegExp(rule?.to.path ?? "^$").test("node_modules/@aws-sdk/client-kms/dist-cjs/index.js")).toBe(true);
     const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { dependencies?: object; devDependencies?: object };
     const names = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies });
     expect(names.filter((name) => name.startsWith("@aws-sdk/"))).toEqual([]);
     expect(sources).not.toContain("aws-kms.ts");
+  });
+
+  // ── Step 7B ──────────────────────────────────────────────────────────────────────────────────
+  it("the logical keyRef domain imports nothing (no AWS or provider dependency)", () => {
+    expect(importsOf(read("key-ref.ts"))).toEqual([]);
+    expect(read("key-ref.ts")).not.toMatch(/@aws-sdk|require\(/);
+  });
+
+  it("the opening rules keep their exact shape: web never opens; within jobs only the integration composition does", () => {
+    expect(ruleNamed("credential-opening-job-runtime-only")?.from.pathNot).toBe("^(jobs|tests|platform/crypto/credentials)/");
+    expect(ruleNamed("credential-opening-job-runtime-only")?.to.path).toBe("^platform/crypto/credentials/(open|local-opener|local-keyring|aead)\\.ts$");
+    const narrow = ruleNamed("credential-opening-integration-composition-only");
+    expect(narrow?.from).toEqual({ path: "^jobs/", pathNot: "^jobs/connections\\.ts$" });
+    expect(narrow?.to.path).toBe("^platform/crypto/credentials/(open|local-opener)\\.ts$");
+  });
+
+  it("no web code references the opening half, not even its types", () => {
+    expect(findReferences(sourceFiles(["app", "ui", "server", "proxy.ts"]), [OPENING])).toEqual([]);
+  });
+
+  it("system, migration and database tooling never reference the opening half; in jobs/ only the integration composition does", () => {
+    expect(findReferences(sourceFiles(["tools", "db", "platform/db", "platform/outbox", "platform/jobs", "jobs/trigger"]), [OPENING])).toEqual([]);
+    expect(findReferences(sourceFiles(["jobs"]), [OPENING]).map(([file]) => file).filter((file, i, all) => all.indexOf(file) === i)).toEqual(["jobs/connections.ts"]);
   });
 });
