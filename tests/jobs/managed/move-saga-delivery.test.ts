@@ -73,7 +73,11 @@ describe("Step 5H managed · Move saga post-commit relay wake-up (G5, TA-Q-31)",
   const sweeperDeps = (): DeliveryDependencies => ({ system, runtime, registry: PRODUCTION_TASKS, logger, clock: () => new Date(), config: DEFAULT_DELIVERY_CONFIG });
 
   /** Only this world's rows may ever be pending while this leg runs. */
-  const quiet = () => q("update system.outbox set status = 'DISPATCHED', dispatched_at = now() where status = 'PENDING' and organization_id = any($1::uuid[])", [[world.orgA, world.orgB]]);
+  // A claim binds the execution plane (0011); then the rows are marked DISPATCHED, as the relay would.
+  const quiet = async () => {
+    await q("update system.outbox set claimed_until = now() + interval '1 hour', execution_plane = coalesce(execution_plane, 'main') where status = 'PENDING' and organization_id = any($1::uuid[])", [[world.orgA, world.orgB]]);
+    await q("update system.outbox set status = 'DISPATCHED', dispatched_at = now(), claimed_until = null where status = 'PENDING' and organization_id = any($1::uuid[])", [[world.orgA, world.orgB]]);
+  };
   const discover = async (workspace: string, name: string): Promise<string> => {
     const id = randomUUID();
     await q(

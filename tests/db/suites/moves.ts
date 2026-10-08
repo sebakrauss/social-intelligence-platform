@@ -39,7 +39,7 @@ import { FakeIdentity, verifiedUser } from "../../support/in-memory";
 import { errorCode, expectOk } from "../../support/harness";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld, seedWorld, type World } from "../support/world";
-import { sqlState } from "./helpers";
+import { quietPendingOutbox, sqlState } from "./helpers";
 
 const RELEASE = "connections.move.release_source";
 const ACTIVATE = "connections.move.activate_destination";
@@ -849,9 +849,9 @@ export function defineMovesSuite(getTarget: () => DbTarget): void {
   describe("R7: crash after the source release, before the activation is dispatched", () => {
     it("the outcome sweeper recovers the crashed release run, the dispatch sweeper delivers the activation, and it applies exactly once", async () => {
       // Only this test's rows may be delivered by this runtime.
-      await privileged.query("update system.outbox set status = 'DISPATCHED', dispatched_at = now() where status = 'PENDING' and organization_id = any($1::uuid[])", [[world.orgA, world.orgB]]);
+      await quietPendingOutbox((text, values) => privileged.query(text, values), "organization_id = any($1::uuid[])", [[world.orgA, world.orgB]]);
       const { name, sourceAccount, discovered } = await activeIn(world.A1, [world.A2]);
-      await privileged.query("update system.outbox set status = 'DISPATCHED', dispatched_at = now() where status = 'PENDING' and topic = $1 and organization_id = $2", [EVALUATE, world.orgA]);
+      await quietPendingOutbox((text, values) => privileged.query(text, values), "topic = $1 and organization_id = $2", [EVALUATE, world.orgA]);
       const moveId = await requested(world.A2, discovered[world.A2] ?? "");
 
       let now = new Date();
@@ -1025,7 +1025,7 @@ export function defineMovesSuite(getTarget: () => DbTarget): void {
 
   describe("G5 · routed rows are delivered by the post-commit wake-up; the sweeper only recovers", () => {
     const quiet = async (): Promise<void> => {
-      await privileged.query("update system.outbox set status = 'DISPATCHED', dispatched_at = now() where status = 'PENDING' and organization_id = any($1::uuid[])", [[world.orgA, world.orgB]]);
+      await quietPendingOutbox((text, values) => privileged.query(text, values), "organization_id = any($1::uuid[])", [[world.orgA, world.orgB]]);
     };
     /** A delivery world: kicks recorded from the web pipeline and from committed job transactions. */
     const deliveryWorld = (options: { readonly jobKick: "deliver" | "lost" }) => {

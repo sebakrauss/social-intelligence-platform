@@ -144,6 +144,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
         "UPDATE(claimed_until)",
         "UPDATE(dispatch_attempts)",
         "UPDATE(dispatched_at)",
+        // 0011: bound only inside a delivery claim and immutable afterwards (system.outbox_execution_plane_guard).
+        "UPDATE(execution_plane)",
         "UPDATE(last_failure_class)",
         "UPDATE(next_dispatch_at)",
         "UPDATE(recovery_count)",
@@ -354,6 +356,7 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "audit.is_organization_membership_state(jsonb)": ["app_worker", "authenticated"],
   "system.is_identifier_map(jsonb)": ["app_system", "app_worker", "authenticated"],
   "system.record_switch_change()": [],
+  "system.outbox_execution_plane_guard()": [],
   "app.current_workspace_organization()": ["app_worker"],
   "credentials.store_envelope(uuid,uuid,integer,bytea,timestamp with time zone)": ["app_worker", "authenticated"],
   "credentials.load_envelope(uuid)": ["app_worker"],

@@ -36,3 +36,12 @@ export async function leftoverContext(tx: DatabaseTransaction): Promise<{ worksp
   if (row === undefined) throw new Error("no row");
   return row;
 }
+
+/**
+ * Takes pending outbox rows out of delivery the way the relay does (0011): a claim binds the execution plane, then the
+ * rows are marked DISPATCHED. A direct PENDING → DISPATCHED update can no longer leave a row unbound.
+ */
+export async function quietPendingOutbox(run: (text: string, values: unknown[]) => Promise<unknown>, where: string, values: readonly unknown[]): Promise<void> {
+  await run(`update system.outbox set claimed_until = now() + interval '1 hour', execution_plane = coalesce(execution_plane, 'main') where status = 'PENDING' and (${where})`, [...values]);
+  await run(`update system.outbox set status = 'DISPATCHED', dispatched_at = now(), claimed_until = null where status = 'PENDING' and (${where})`, [...values]);
+}

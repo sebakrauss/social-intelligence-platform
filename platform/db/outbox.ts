@@ -9,6 +9,13 @@ import type { DatabaseTransaction } from "./scopes";
 
 const system = pgSchema("system");
 
+/**
+ * The semantic execution plane a delivery is bound to (0011) — never a vendor project identifier. Bound only by the
+ * delivery claim; producers always insert NULL (unbound).
+ */
+export const OUTBOX_EXECUTION_PLANES = ["main", "integration"] as const;
+export type OutboxExecutionPlane = (typeof OUTBOX_EXECUTION_PLANES)[number];
+
 export const outbox = system.table("outbox", {
   id: uuid("id").primaryKey(),
   topic: text("topic").notNull(),
@@ -33,6 +40,8 @@ export const outbox = system.table("outbox", {
   sloBreachedAt: timestamp("slo_breached_at", { withTimezone: true }),
   runDiagnostic: text("run_diagnostic"),
   runDiagnosticAt: timestamp("run_diagnostic_at", { withTimezone: true }),
+  // Execution plane (0011): NULL until the delivery claim binds it, then immutable (DB guard). Never written here.
+  executionPlane: text("execution_plane").$type<OutboxExecutionPlane | null>(),
 });
 
 /** Every vendor run dispatched for an outbox row; the latest is current (R7 diagnosability). */
