@@ -22,6 +22,7 @@ const OPENING = /platform\/crypto\/credentials\/(open|local-opener|local-keyring
 const KMS_CAPABILITIES = ["aws-kms-generator.ts", "aws-kms-unwrapper.ts"];
 /** Files that may import the KMS SDK: the two capabilities and the single client factory (Step 7D). */
 const KMS_SDK_FILES = [...KMS_CAPABILITIES, "aws-kms-client.ts"];
+const VERCEL_WEB_IDENTITY_ADAPTER = "server/connections/vercel-aws-identity.ts";
 const RUNTIME_ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts", "trigger.config.ts"];
 
 describe("credential crypto boundary", () => {
@@ -107,14 +108,18 @@ describe("credential crypto boundary", () => {
     expect(read("aws-kms-client.ts").match(/new KMSClient\(/g)).toHaveLength(1);
   });
 
-  it("no credential provider, default chain, STS, OIDC or role assumption is used anywhere (7E decides identity)", () => {
-    expect(findReferences(sourceFiles(RUNTIME_ROOTS), [
+  it("no credential provider, default chain, STS, OIDC or role assumption is used anywhere — except the web's Vercel OIDC adapter (7E.3B)", () => {
+    const patterns = [
       /@aws-sdk\/(credential-provider|client-sts)/,
       /@vercel\//,
       /\bCREDENTIAL_KMS_WORKER\w*|BOOTSTRAP_(ACCESS_KEY|SECRET|CREDENTIAL)|WORKER_BOOTSTRAP/i,
       /\b(fromNodeProviderChain|defaultProvider|fromTemporaryCredentials|fromWebToken|fromEnv|fromIni|fromContainerMetadata|fromInstanceMetadata|AssumeRole\w*)\b/,
       /WebIdentity|\bOIDC\b/i,
-    ])).toEqual([]);
+    ];
+    expect(findReferences(sourceFiles(RUNTIME_ROOTS).filter((file) => file !== VERCEL_WEB_IDENTITY_ADAPTER), patterns)).toEqual([]);
+    // The adapter's exemption is exactly the Vercel OIDC packages and its request-token header — no AWS provider, chain,
+    // STS, worker bootstrap or role assumption (aws-identity-guards.test.ts pins the rest of its shape).
+    expect(findReferences([VERCEL_WEB_IDENTITY_ADAPTER], patterns).map(([, pattern]) => pattern)).toEqual([patterns[1]?.source, patterns[4]?.source]);
   });
 
   it("only the credential-crypto composition boundary reads the KMS keyring configuration", () => {

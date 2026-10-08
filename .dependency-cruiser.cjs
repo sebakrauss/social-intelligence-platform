@@ -477,6 +477,27 @@ module.exports = {
       from: {},
       to: { path: "(^|/)node_modules/(@aws-sdk/(?!client-kms/)[^/]+|@smithy/[^/]+)/" },
     },
+    {
+      name: "vercel-oidc-only-in-web-identity-adapter",
+      severity: "error",
+      comment: "Step 7E.3B: the Vercel OIDC packages are imported only by the hosted web's identity adapter (server/connections/vercel-aws-identity.ts) and its unit test. Nothing else reads Vercel OIDC tokens or builds a federated AWS provider.",
+      from: { pathNot: "^(server/connections/vercel-aws-identity\\.ts|tests/unit/server/vercel-aws-identity\\.test\\.ts)$" },
+      to: { path: npmPackage(["@vercel/oidc", "@vercel/oidc-aws-credentials-provider"]) },
+    },
+    {
+      name: "vercel-oidc-refresh-helpers-never",
+      severity: "error",
+      comment: "Step 7E.3B: the Vercel CLI helpers behind @vercel/oidc's development-only token refresh (CLI auth/config files, subprocess) are never imported by first-party code.",
+      from: {},
+      to: { path: npmPackage(["@vercel/cli-exec", "@vercel/cli-config", "execa"]) },
+    },
+    {
+      name: "vercel-identity-web-composition-only",
+      severity: "error",
+      comment: "Step 7E.3B: the Vercel identity adapter is composed only by the web's connection runtime (server/connections/runtime.ts). The job runtime, app/, ui/ and every other module never reach it; the worker's identity (KMS_WORKER_AUTH) is still open.",
+      from: { pathNot: "^(server/connections/runtime\\.ts|tests/unit/server/vercel-aws-identity\\.test\\.ts)$" },
+      to: { path: "^server/connections/vercel-aws-identity\\.ts$" },
+    },
 
     // ── Hygiene ──────────────────────────────────────────────────────────────────────────────
     {

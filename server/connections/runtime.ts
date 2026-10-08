@@ -23,6 +23,7 @@ import { webUnitOfWork } from "@/server/persistence/runtime";
 import { createActionPipeline } from "@/server/pipeline";
 import type { ConnectionAuthorizationDependencies } from "./authorization";
 import { composeCredentialSealer } from "./credential-crypto";
+import { vercelAwsIdentity } from "./vercel-aws-identity";
 import { composeWebAwsCredentials, type WebAwsIdentityFactory } from "./web-identity";
 import { localSimulator } from "./simulator";
 
@@ -65,8 +66,11 @@ interface Composition {
 
 let composition: Composition | undefined;
 
-/** The web's AWS identity adapter (7E.3: Vercel OIDC). None exists yet, so KMS-configured sealing fails closed. */
-const WEB_AWS_IDENTITY: WebAwsIdentityFactory | undefined = undefined;
+/**
+ * The web's AWS identity adapter (7E.3B): Vercel OIDC → AssumeRoleWithWebIdentity, preflighted. It resolves nothing
+ * until a KMS operation needs credentials, and without the KMS configuration and web role it isn't used at all.
+ */
+const WEB_AWS_IDENTITY: WebAwsIdentityFactory = vercelAwsIdentity;
 
 function compose(environment: Environment): Composition {
   assertNoLocalKeyringOutsideLocal(environment);
@@ -74,8 +78,7 @@ function compose(environment: Environment): Composition {
   if (appBaseUrl === undefined || appBaseUrl === "") throw new Error("APP_BASE_URL is not set");
   const secrets = createOAuthSecrets(pkceDeriverFromEnvironment(environment));
   const providers = authorizationProviders({ simulator: localSimulator(environment).authorization }, appBaseUrl);
-  // Local keyring in development/test; KMS where configured, with the web's lazy AWS identity (fails closed until
-  // the Vercel OIDC adapter exists, 7E.3).
+  // Local keyring in development/test; KMS where configured, with the web's lazy Vercel OIDC identity.
   const crypto = composeCredentialSealer(environment, composeWebAwsCredentials(environment, WEB_AWS_IDENTITY));
   const sealing = createCredentialSealing(crypto.sealer, crypto.contextEnv);
   return { commands: createConnectionCommands({ secrets, providers }), providers, secrets, sealing };

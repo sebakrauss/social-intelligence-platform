@@ -134,6 +134,13 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["no-undeclared-package", "server/uses-aws-credential-chain.ts", "../../../../node_modules/@aws-sdk/credential-provider-node/dist-es/index.js"],
   // AWS runtime identity (Step 7E.2): a pure, vendor-neutral contract
   ["aws-identity-contract-pure", "platform/aws/uses-credential-crypto.ts", "platform/crypto/credentials/seal.ts"],
+  // Vercel OIDC web identity (Step 7E.3B): packages only in the adapter, no refresh helpers, composed by the web only
+  ["vercel-oidc-only-in-web-identity-adapter", "server/reads-vercel-oidc.ts", "../../../../node_modules/@vercel/oidc/dist/index.js"],
+  ["vercel-oidc-only-in-web-identity-adapter", "app/uses-vercel-identity.ts", "../../../../node_modules/@vercel/oidc-aws-credentials-provider/dist/index.js"],
+  ["vercel-oidc-refresh-helpers-never", "server/reads-vercel-oidc.ts", "../../../../node_modules/execa/index.d.ts"],
+  ["no-undeclared-package", "server/reads-vercel-oidc.ts", "../../../../node_modules/execa/index.d.ts"],
+  ["vercel-identity-web-composition-only", "jobs/uses-vercel-identity.ts", "server/connections/vercel-aws-identity.ts"],
+  ["vercel-identity-web-composition-only", "app/uses-vercel-identity.ts", "server/connections/vercel-aws-identity.ts"],
   // OAuth secrets (Step 5D, B1): the stateless PKCE derivation key is web-only, composed by server/
   // Capability (Step 5E): evaluated on the server only; the UI renders the result
   ["capability-evaluated-server-side-only", "app/evaluates-capability.ts", "modules/capability/index.ts"],

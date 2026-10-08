@@ -141,11 +141,11 @@ describe("7E.2.3/7E.2.6 · web identity seam", () => {
     expect(`${String(caught)} ${JSON.stringify(caught)}`.includes(bad)).toBe(false);
   });
 
-  it("the factory receives the configuration and returns a provider; nothing is resolved", () => {
+  it("the factory receives the configuration (STS region = the KMS key's region) and returns a provider; nothing is resolved", () => {
     const provider = syntheticProvider();
     const factory = vi.fn<WebAwsIdentityFactory>(() => provider);
     expect(composeWebAwsCredentials(kmsWebEnvironment(), factory)).toBe(provider);
-    expect(factory).toHaveBeenCalledWith({ roleArn: ROLE, audience: "sts.amazonaws.com" });
+    expect(factory).toHaveBeenCalledWith({ roleArn: ROLE, audience: "sts.amazonaws.com", stsRegion: "sa-east-1" });
     expect(provider).not.toHaveBeenCalled();
     expect(composeWebAwsCredentials(kmsWebEnvironment(), undefined)).toBeUndefined();
     expect(composeWebAwsCredentials(kmsWebEnvironment({ CREDENTIAL_KMS_WEB_ROLE_ARN: undefined }), factory)).toBeUndefined();
