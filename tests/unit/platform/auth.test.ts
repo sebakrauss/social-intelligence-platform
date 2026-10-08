@@ -112,6 +112,8 @@ describe("auth configuration", () => {
       "CREDENTIAL_CONTEXT_ENV=",
       "CREDENTIAL_KMS_KEY_ARN=",
       "CREDENTIAL_KMS_ALLOWED_KEY_ARNS=",
+      // Step 7E.2: the hosted web's role ARN for KMS sealing (non-secret), name only.
+      "CREDENTIAL_KMS_WEB_ROLE_ARN=",
       // Step 5D OAuth: web-only stateless PKCE derivation key, name only.
       "OAUTH_PKCE_DERIVATION_KEY=",
       // Step 5K: explicit deployment tier and job-runtime provider mode (staging_stub only for preview/staging).

@@ -35,7 +35,8 @@ describe("credential crypto boundary", () => {
 
   it("uses node:crypto only, except the KMS capabilities and the client factory, which import only the KMS client", () => {
     for (const file of sources) {
-      const external = importsOf(read(file)).filter((spec) => !spec.startsWith("./") && !spec.startsWith("@/domain/"));
+      // @/platform/aws/ is the pure AWS identity contract (Step 7E.2), not a package.
+      const external = importsOf(read(file)).filter((spec) => !spec.startsWith("./") && !spec.startsWith("@/domain/") && !spec.startsWith("@/platform/aws/"));
       const allowed = KMS_SDK_FILES.includes(file) ? ["@aws-sdk/client-kms"] : ["node:crypto"];
       expect(external.every((spec) => allowed.includes(spec)), `${file}: ${external.join(", ")}`).toBe(true);
     }
@@ -96,7 +97,7 @@ describe("credential crypto boundary", () => {
 
   it("core envelope, context, key-ref and the shared KMS mapping import no package at all", () => {
     for (const file of ["envelope.ts", "context.ts", "key-ref.ts", "aws-kms-common.ts", "aws-kms-config.ts", "aws-kms-sealer.ts", "aws-kms-opener.ts"]) {
-      expect(importsOf(read(file)).filter((spec) => !spec.startsWith("./") && !spec.startsWith("@/domain/")), file).toEqual([]);
+      expect(importsOf(read(file)).filter((spec) => !spec.startsWith("./") && !spec.startsWith("@/domain/") && spec !== "@/platform/aws/identity"), file).toEqual([]);
     }
   });
 
@@ -109,15 +110,29 @@ describe("credential crypto boundary", () => {
   it("no credential provider, default chain, STS, OIDC or role assumption is used anywhere (7E decides identity)", () => {
     expect(findReferences(sourceFiles(RUNTIME_ROOTS), [
       /@aws-sdk\/(credential-provider|client-sts)/,
+      /@vercel\//,
+      /\bCREDENTIAL_KMS_WORKER\w*|BOOTSTRAP_(ACCESS_KEY|SECRET|CREDENTIAL)|WORKER_BOOTSTRAP/i,
       /\b(fromNodeProviderChain|defaultProvider|fromTemporaryCredentials|fromWebToken|fromEnv|fromIni|fromContainerMetadata|fromInstanceMetadata|AssumeRole\w*)\b/,
       /WebIdentity|\bOIDC\b/i,
     ])).toEqual([]);
   });
 
   it("only the credential-crypto composition boundary reads the KMS keyring configuration", () => {
-    const readers = findReferences(sourceFiles(RUNTIME_ROOTS), [/\bCREDENTIAL_(CONTEXT_ENV|KMS_[A-Z_]+)\b/]).map(([file]) => file);
+    const readers = findReferences(sourceFiles(RUNTIME_ROOTS), [/\bCREDENTIAL_(CONTEXT_ENV|KMS_KEY_ARN|KMS_ALLOWED_KEY_ARNS)\b/]).map(([file]) => file);
     expect(readers).toEqual(["server/connections/environment.ts"]);
     expect(codeOf("server/connections/environment.ts")).not.toMatch(/process\.env/);
+  });
+
+  it("the web role ARN is read only at the web identity seam, never by the job runtime (Step 7E.2)", () => {
+    const readers = findReferences(sourceFiles(RUNTIME_ROOTS), [/\bCREDENTIAL_KMS_WEB_ROLE_ARN\b/]).map(([file]) => file);
+    expect(readers).toEqual(["server/connections/web-identity.ts"]);
+    expect(codeOf("server/connections/web-identity.ts")).not.toMatch(/process\.env/);
+    expect(findReferences(sourceFiles(["jobs"]), [/web-identity|WebAwsIdentity|composeWebAwsCredentials/])).toEqual([]);
+    expect(findReferences(sourceFiles(RUNTIME_ROOTS), [/\bCREDENTIAL_KMS_[A-Z_]+\b/]).map(([, p]) => p).length).toBeGreaterThan(0);
+    // The only CREDENTIAL_KMS_* names in runtime code are the three keyring values and the web role ARN.
+    for (const [file] of findReferences(sourceFiles(RUNTIME_ROOTS), [/\bCREDENTIAL_KMS_(?!KEY_ARN\b|ALLOWED_KEY_ARNS\b|WEB_ROLE_ARN\b)[A-Z_]+\b/])) {
+      throw new Error(`${file}: unexpected CREDENTIAL_KMS_* name`);
+    }
   });
 
   it("no static AWS credential or region variable is read by runtime code (only named in the hosted-web refusal list)", () => {

@@ -128,7 +128,7 @@ describe("6B.4 · forbidden configuration in the hosted web runtime", () => {
     for (const value of [SECRET_MARKER, ""]) {
       expect(forbiddenWebVariables({ NODE_ENV: "production", LOCAL_KEYRING_KEY: value })).toEqual(["LOCAL_KEYRING_KEY"]);
     }
-    for (const name of ["OAUTH_PKCE_DERIVATION_KEY", "CREDENTIAL_CONTEXT_ENV", "CREDENTIAL_KMS_KEY_ARN", "CREDENTIAL_KMS_ALLOWED_KEY_ARNS"]) {
+    for (const name of ["OAUTH_PKCE_DERIVATION_KEY", "CREDENTIAL_CONTEXT_ENV", "CREDENTIAL_KMS_KEY_ARN", "CREDENTIAL_KMS_ALLOWED_KEY_ARNS", "CREDENTIAL_KMS_WEB_ROLE_ARN"]) {
       expect(FORBIDDEN_WEB_VARIABLES as readonly string[]).not.toContain(name);
     }
     expect(() => {
@@ -139,6 +139,7 @@ describe("6B.4 · forbidden configuration in the hosted web runtime", () => {
         CREDENTIAL_CONTEXT_ENV: "dev",
         CREDENTIAL_KMS_KEY_ARN: "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa",
         CREDENTIAL_KMS_ALLOWED_KEY_ARNS: "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa",
+        CREDENTIAL_KMS_WEB_ROLE_ARN: "arn:aws:iam::000000000000:role/social-intelligence-platform-dev-web-encrypt",
       });
     }).not.toThrow();
   });

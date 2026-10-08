@@ -131,8 +131,9 @@ describe("composition guards", () => {
     const jobs = codeOf("jobs/connections.ts");
     expect(web.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeGreaterThan(-1);
     // Step 7D: the web's sealer (local keyring or KMS) is composed through composeCredentialSealer, after the guard.
-    expect(web.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeLessThan(web.indexOf("composeCredentialSealer(environment)"));
-    expect(web.indexOf("composeCredentialSealer(environment)")).toBeGreaterThan(-1);
+    // Step 7E.2: the call also passes the web's (lazy) AWS identity, composed from the same environment.
+    expect(web.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeLessThan(web.indexOf("composeCredentialSealer(environment, composeWebAwsCredentials(environment,"));
+    expect(web.indexOf("composeCredentialSealer(environment, composeWebAwsCredentials(environment,")).toBeGreaterThan(-1);
     expect(web).not.toMatch(/opener|Opener|unwrap|local-keyring"|\/open"/);
     expect(jobs.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeGreaterThan(-1);
     expect(jobs.indexOf("assertNoLocalKeyringOutsideLocal(environment)")).toBeLessThan(jobs.indexOf("localCredentialOpenerFromEnvironment(environment)"));

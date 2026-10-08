@@ -19,7 +19,8 @@
  * Development and test runtimes are exempt (local .env.local legitimately holds tooling credentials). The mere
  * presence of a forbidden variable makes the hosted web refuse every request; the error names it, never its value.
  * Deliberately NOT forbidden: OAUTH_PKCE_DERIVATION_KEY (the web's own PKCE secret) and the non-secret KMS keyring
- * configuration CREDENTIAL_CONTEXT_ENV, CREDENTIAL_KMS_KEY_ARN, CREDENTIAL_KMS_ALLOWED_KEY_ARNS (Step 7D).
+ * configuration CREDENTIAL_CONTEXT_ENV, CREDENTIAL_KMS_KEY_ARN, CREDENTIAL_KMS_ALLOWED_KEY_ARNS (Step 7D) and
+ * CREDENTIAL_KMS_WEB_ROLE_ARN (Step 7E.2).
  */
 import { NextResponse } from "next/server";
 import { createLogger, stdoutSink } from "@/platform/observability";

@@ -13,6 +13,7 @@ import { parseCredentialContext, type CREDENTIAL_CONTEXT_FIELDS, type Credential
 import { DEK_BYTES, type EnvelopeHeader } from "./envelope";
 import { CredentialCryptoError, type CredentialCryptoErrorCode } from "./errors";
 import { isLogicalKeyRef } from "./key-ref";
+import { AwsIdentityError, type AwsIdentityFailure } from "@/platform/aws/identity";
 
 export const KMS_KEK_PROVIDER = "aws-kms" as const;
 
@@ -126,6 +127,16 @@ const KMS_ERROR_CODES: Readonly<Record<string, CredentialCryptoErrorCode>> = Obj
   TimeoutError: "KEYRING_UNAVAILABLE",
 });
 
+/**
+ * A runtime-identity failure (platform/aws/identity.ts) surfacing through a KMS call — the SDK resolves credentials
+ * inside `send` — maps to the keyring outcome of the same meaning (Step 7E.2). Retryability then follows errors.ts.
+ */
+const IDENTITY_FAILURE_CODES: { readonly [Failure in AwsIdentityFailure]: CredentialCryptoErrorCode } = Object.freeze({
+  IDENTITY_UNAVAILABLE: "KEYRING_UNAVAILABLE",
+  IDENTITY_ACCESS_DENIED: "KEYRING_ACCESS_DENIED",
+  IDENTITY_MISCONFIGURED: "KEYRING_MISCONFIGURED",
+});
+
 /** Node network failures that never reached KMS or lost the answer. */
 const TRANSIENT_NETWORK_CODES: readonly string[] = ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH"];
 
@@ -133,6 +144,7 @@ const own = (value: object, key: string): unknown => (Object.hasOwn(value, key) 
 
 export function kmsErrorCode(error: unknown): CredentialCryptoErrorCode {
   if (typeof error !== "object" || error === null) return "KEYRING_MISCONFIGURED";
+  if (error instanceof AwsIdentityError) return IDENTITY_FAILURE_CODES[error.failure];
   const name = (error as { name?: unknown }).name;
   if (typeof name === "string" && Object.hasOwn(KMS_ERROR_CODES, name)) return KMS_ERROR_CODES[name] ?? "KEYRING_MISCONFIGURED";
   const code = own(error, "code");

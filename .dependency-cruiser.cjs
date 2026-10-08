@@ -464,6 +464,13 @@ module.exports = {
       to: { path: npmPackage(["@aws-sdk/client-kms"]) },
     },
     {
+      name: "aws-identity-contract-pure",
+      severity: "error",
+      comment: "Step 7E.2: the AWS runtime-identity contract (platform/aws/) is vendor-neutral and pure: no package, no Node built-in and no other repository module — it knows nothing about KMS, crypto, Vercel, Trigger.dev or STS.",
+      from: { path: "^platform/aws/" },
+      to: { pathNot: "^(platform/aws|domain)/" },
+    },
+    {
       name: "aws-sdk-only-client-kms",
       severity: "error",
       comment: "Step 7C: no other AWS SDK package is adopted — no credential providers, default provider chain, STS or Smithy internals. Credential composition and OIDC are later, reviewed steps (7D/7E).",

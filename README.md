@@ -225,7 +225,7 @@ The web runtime is prepared for hosting (Vercel recommended, TA-11) without chan
     `SUPABASE_PROJECT_REF`, `TRIGGER_PROJECT_REF`, `APP_DEPLOYMENT_ENV`, `CAPABILITY_PROVIDER_MODE` or
     `LOCAL_KEYRING_KEY` is set (even empty). The log names the variable, never its value. Development and test
     runtimes are exempt. `OAUTH_PKCE_DERIVATION_KEY` and the non-secret `CREDENTIAL_CONTEXT_ENV` /
-    `CREDENTIAL_KMS_*` configuration are allowed.
+    `CREDENTIAL_KMS_*` configuration (including `CREDENTIAL_KMS_WEB_ROLE_ARN`) are allowed.
 - **Security headers** on every response: `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`,
   `object-src 'none'`, `X-Frame-Options`, `nosniff`, `Referrer-Policy: no-referrer`, a deny-all
   `Permissions-Policy`, and HSTS. A full script/style CSP needs per-request nonces and is **not** claimed yet.
@@ -263,6 +263,12 @@ All three or none: none means the local keyring (development/test only), and a d
 refused, never given the local keyring. The envelope's logical key reference is the constant
 `kms-provider-credentials-v1`, not configuration. The AWS identity is supplied explicitly by each runtime and is
 not configured yet (7E): until then KMS composition fails closed. No `AWS_*` variable is read.
+
+The hosted web's identity (Step 7E.2 contract; adapter in 7E.3): its Vercel OIDC token (Team issuer, audience exactly
+`sts.amazonaws.com`) is exchanged for temporary credentials of one role, `CREDENTIAL_KMS_WEB_ROLE_ARN` (a full IAM
+role ARN, non-secret), which may only GenerateDataKey. Credentials are resolved lazily, inside the request that
+needs them; no long-lived AWS credential is stored in Vercel. The worker's identity mechanism is still open
+(`KMS_WORKER_AUTH`).
 
 ## Deployed non-production validation (TA-Q-31)
 

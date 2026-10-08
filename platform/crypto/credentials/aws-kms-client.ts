@@ -5,18 +5,23 @@
  *   credentials  supplied EXPLICITLY by the runtime's composition (7E: the web's federated identity, the worker's
  *                decrypt-scoped identity) and REQUIRED: without them nothing is built. With explicit credentials the
  *                SDK never consults its default chain (environment variables, shared files, SSO, instance or container
- *                metadata), so there is no ambient discovery.
+ *                metadata), so there is no ambient discovery. The provider stays lazy: constructing the client does
+ *                not resolve it.
  *   endpoint     endpoint URLs from environment variables and shared config are ignored (public SDK option); the
  *                regional KMS endpoint is used
  *
  * Construction makes no network call. The client is handed to the generator/unwrapper as their narrow sender.
  */
-import { KMSClient, type KMSClientConfig } from "@aws-sdk/client-kms";
+import { KMSClient } from "@aws-sdk/client-kms";
+import type { AwsCredentialProvider } from "@/platform/aws/identity";
 import { kmsKeyArnRegion, type KmsKeyringConfig } from "./aws-kms-config";
 import { CredentialCryptoError } from "./errors";
 
-/** The AWS identity a runtime supplies explicitly (a static identity or a provider). Never discovered ambiently. */
-export type KmsCredentialSource = NonNullable<KMSClientConfig["credentials"]>;
+/**
+ * The AWS identity a runtime supplies explicitly: a lazy credential provider (platform/aws/identity.ts), never a
+ * static identity and never discovered ambiently. It is first invoked when a KMS operation needs credentials.
+ */
+export type KmsCredentialSource = AwsCredentialProvider;
 
 export function createKmsClient(config: KmsKeyringConfig, credentials: KmsCredentialSource | undefined): KMSClient {
   if (credentials === undefined) throw new CredentialCryptoError("KEYRING_MISCONFIGURED");
