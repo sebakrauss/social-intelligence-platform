@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowBootstrapAssumeWorkerRole",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "<DEV_WORKER_ROLE_ARN>"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowExactWorkerRole",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "<DEV_WORKER_ROLE_ARN>"
+    },
+    {
+      "Sid": "DenyEverythingExceptAssumeRole",
+      "Effect": "Deny",
+      "NotAction": "sts:AssumeRole",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyAssumeRoleExceptWorkerRole",
+      "Effect": "Deny",
+      "Action": "sts:AssumeRole",
+      "NotResource": "<DEV_WORKER_ROLE_ARN>"
+    },
+    {
+      "Sid": "DenyAllTemporaryUserCredentials",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "aws:TokenIssueTime": "false"
+        }
+      }
+    }
+  ]
+}

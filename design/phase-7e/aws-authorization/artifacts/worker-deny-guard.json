@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyEverythingButDecrypt",
+      "Effect": "Deny",
+      "NotAction": "kms:Decrypt",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyDecryptOutsideCredentialKey",
+      "Effect": "Deny",
+      "Action": "kms:Decrypt",
+      "NotResource": "<DEV_KMS_KEY_ARN>"
+    }
+  ]
+}

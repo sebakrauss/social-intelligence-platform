@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BootstrapUserAssumesWorkerRole",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "<DEV_BOOTSTRAP_USER_ARN>"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:RoleSessionName": "integration-worker"
+        },
+        "Null": {
+          "aws:TokenIssueTime": "true"
+        }
+      }
+    }
+  ]
+}

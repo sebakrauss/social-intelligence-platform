@@ -1,0 +1,15 @@
+{
+  "Sid": "DenyDataKeysExceptWeb",
+  "Effect": "Deny",
+  "Principal": "*",
+  "Action": [
+    "kms:GenerateDataKey*",
+    "kms:Encrypt"
+  ],
+  "Resource": "*",
+  "Condition": {
+    "StringNotEquals": {
+      "aws:PrincipalArn": "<DEV_WEB_ROLE_ARN>"
+    }
+  }
+}

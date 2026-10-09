@@ -1,0 +1,31 @@
+{
+  "Sid": "WorkerDecryptOnly",
+  "Effect": "Allow",
+  "Principal": {
+    "AWS": "<DEV_WORKER_ROLE_ARN>"
+  },
+  "Action": "kms:Decrypt",
+  "Resource": "*",
+  "Condition": {
+    "StringEquals": {
+      "kms:EncryptionContext:app": "social-intelligence-platform",
+      "kms:EncryptionContext:purpose": "provider-credential",
+      "kms:EncryptionContext:env": "dev",
+      "kms:EncryptionContext:v": "1"
+    },
+    "StringLike": {
+      "kms:EncryptionContext:workspace_id": "????????-????-????-????-????????????",
+      "kms:EncryptionContext:credential_id": "????????-????-????-????-????????????"
+    },
+    "ForAllValues:StringEquals": {
+      "kms:EncryptionContextKeys": [
+        "app",
+        "purpose",
+        "env",
+        "v",
+        "workspace_id",
+        "credential_id"
+      ]
+    }
+  }
+}

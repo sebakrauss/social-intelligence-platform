@@ -14,7 +14,7 @@
 /tsconfig.tsbuildinfo
 /step-1-final-review.zip
 
-# Tests, test-only configuration, disposable spikes and documentation.
+# Tests, test-only configuration, disposable spikes, documentation and design artifacts.
 /tests
 /vitest.config.ts
 /vitest.db.config.ts
@@ -23,6 +23,7 @@
 /trigger.managed-test.config.ts
 /spikes
 /docs
+/design
 /CLAUDE.md
 /README.md
 /.github
