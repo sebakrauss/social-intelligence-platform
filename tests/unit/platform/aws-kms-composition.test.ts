@@ -7,7 +7,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import { inspect } from "node:util";
-import type { DecryptCommand, DecryptCommandOutput, GenerateDataKeyCommand, GenerateDataKeyCommandOutput } from "@aws-sdk/client-kms";
+import { KMSClient, type DecryptCommand, type DecryptCommandOutput, type GenerateDataKeyCommand, type GenerateDataKeyCommandOutput } from "@aws-sdk/client-kms";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialCodecError, CredentialUnreadableError } from "@/modules/connections";
 import { NonRetryableJobError } from "@/platform/jobs";
@@ -276,5 +276,81 @@ describe("7D.8 · job credential-access failures", () => {
     expect(credentialAccessFailure(new CredentialCodecError())).toBeInstanceOf(CredentialUnreadableError);
     const other = new Error(SECRET);
     expect(credentialAccessFailure(other)).toBe(other);
+  });
+});
+
+/** The resolved retry mode (the SDK types it as a value or a provider). */
+const retryModeOf = async (mode: string | (() => Promise<string>)): Promise<string> => (typeof mode === "function" ? mode() : mode);
+
+describe("KMS client attempts (Step 7E.7-B-R1): optional, explicit, single-attempt only; absent = the SDK default, unchanged", () => {
+  const cfg = () => parseKmsKeyringConfig({ contextEnv: "dev", currentKeyArn: KEY_A, allowedKeyArns: KEY_A });
+  /** No developer file or variable may shape the comparison. */
+  const pristine = (overrides: Record<string, string | undefined> = {}) => {
+    vi.stubEnv("AWS_CONFIG_FILE", "/nonexistent/synthetic-aws-config-for-tests");
+    vi.stubEnv("AWS_SHARED_CREDENTIALS_FILE", "/nonexistent/synthetic-aws-config-for-tests");
+    vi.stubEnv("AWS_MAX_ATTEMPTS", undefined);
+    vi.stubEnv("AWS_RETRY_MODE", undefined);
+    for (const [name, value] of Object.entries(overrides)) vi.stubEnv(name, value);
+  };
+  /** What an untouched pinned SDK client resolves in the same environment (the pre-existing default). */
+  const sdkDefault = async (): Promise<[number, string]> => {
+    const client = new KMSClient({ region: "sa-east-1", credentials: syntheticIdentity() });
+    try {
+      return [await client.config.maxAttempts(), await retryModeOf(client.config.retryMode)];
+    } finally {
+      client.destroy();
+    }
+  };
+  const resolved = async (client: KMSClient): Promise<[number, string]> => {
+    try {
+      return [await client.config.maxAttempts(), await retryModeOf(client.config.retryMode)];
+    } finally {
+      client.destroy();
+    }
+  };
+
+  it("without the option the client resolves exactly what an untouched SDK client resolves", async () => {
+    pristine();
+    expect(await resolved(createKmsClient(cfg(), syntheticIdentity()))).toEqual(await sdkDefault());
+  });
+
+  it("without the option the SDK's own configuration semantics still apply (pre-existing behavior, not widened, not narrowed)", async () => {
+    pristine({ AWS_MAX_ATTEMPTS: "7" });
+    const [defaultAttempts] = await resolved(createKmsClient(cfg(), syntheticIdentity()));
+    expect(defaultAttempts).toBe((await sdkDefault())[0]);
+  });
+
+  it("with the option: exactly one attempt — and no environment variable can widen it", async () => {
+    pristine({ AWS_MAX_ATTEMPTS: "7", AWS_RETRY_MODE: "adaptive" });
+    const [attempts] = await resolved(createKmsClient(cfg(), syntheticIdentity(), { maxAttempts: 1 }));
+    expect(attempts).toBe(1);
+  });
+
+  it("order A (R3): a default client first never stops a later single-attempt client from being bounded to 1", async () => {
+    pristine();
+    const before = await sdkDefault();
+    expect(await resolved(createKmsClient(cfg(), syntheticIdentity()))).toEqual(before);
+    expect((await resolved(createKmsClient(cfg(), syntheticIdentity(), { maxAttempts: 1 })))[0]).toBe(1);
+    expect(await sdkDefault()).toEqual(before);
+  });
+
+  it("no leakage between clients: a single-attempt client never changes a later default client", async () => {
+    pristine();
+    const before = await sdkDefault();
+    expect((await resolved(createKmsClient(cfg(), syntheticIdentity(), { maxAttempts: 1 })))[0]).toBe(1);
+    expect(await resolved(createKmsClient(cfg(), syntheticIdentity()))).toEqual(before);
+  });
+
+  it("the option bounds attempts only: same region, explicit credentials and endpoint policy as without it", async () => {
+    pristine();
+    const identity = syntheticIdentity();
+    const client = createKmsClient(cfg(), identity, { maxAttempts: 1 });
+    try {
+      expect(await client.config.region()).toBe("sa-east-1");
+      expect(client.config.ignoreConfiguredEndpointUrls).toBe(true);
+      expect((await client.config.credentials()).accessKeyId).toBe("SYNTHETICACCESSKEY");
+    } finally {
+      client.destroy();
+    }
   });
 });

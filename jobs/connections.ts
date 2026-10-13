@@ -14,6 +14,8 @@
  *   - the opener is the local keyring's in development/test, the KMS Decrypt opener where KMS is configured
  *     (Step 7D), whose AWS identity is the integration worker's assumed role (Step 7E.4C: bootstrap IAM user →
  *     STS AssumeRole → temporary credentials, jobs/integration-aws-identity.ts) — Decrypt only, never sealing.
+ *   - AWS retries (Step 7E.7-B-R1): the product tasks pass no attempt bound, so both clients keep the SDK's default
+ *     retry behavior; only the KMS worker-auth diagnostic passes AwsSingleAttempt (one STS and one KMS attempt).
  */
 import { randomUUID } from "node:crypto";
 import {
@@ -30,7 +32,7 @@ import {
 } from "@/modules/connections";
 import { credentialContext } from "@/platform/crypto/credentials/context";
 import { decodeEnvelope } from "@/platform/crypto/credentials/envelope";
-import { createKmsClient, type KmsCredentialSource } from "@/platform/crypto/credentials/aws-kms-client";
+import { createKmsClient, type AwsSingleAttempt, type KmsCredentialSource } from "@/platform/crypto/credentials/aws-kms-client";
 import { kmsCredentialOpener } from "@/platform/crypto/credentials/aws-kms-opener";
 import type { CredentialContextEnv } from "@/platform/crypto/credentials/context";
 import { isCredentialCryptoError, isRetryableCredentialCryptoError, type CredentialCryptoErrorCode } from "@/platform/crypto/credentials/errors";
@@ -136,10 +138,11 @@ export function composeJobProviders(environment: Environment): JobComposition {
  * The integration worker's AWS credential provider where KMS is configured; undefined in local/test (the local keyring
  * needs none). Lazy: building it reads nothing and calls nothing — STS is first asked when the KMS opener needs
  * credentials. Missing bootstrap configuration then fails closed (KEYRING_MISCONFIGURED), never falling back.
+ * `attempts` (optional, explicit): one STS attempt per AssumeRole; absent, the SDK default.
  */
-export function integrationWorkerAwsCredentials(environment: Environment): KmsCredentialSource | undefined {
+export function integrationWorkerAwsCredentials(environment: Environment, attempts?: AwsSingleAttempt): KmsCredentialSource | undefined {
   const kms = readKmsKeyringConfig(environment);
-  return kms === undefined ? undefined : createIntegrationWorkerAwsCredentials(kms);
+  return kms === undefined ? undefined : createIntegrationWorkerAwsCredentials(kms, {}, attempts);
 }
 
 export interface ComposedCredentialOpener {
@@ -150,12 +153,13 @@ export interface ComposedCredentialOpener {
 /**
  * The integration worker's opener (Step 7D): the local keyring's in development/test; where KMS is configured,
  * KMSClient → Decrypt unwrapper → opener, which needs the worker's AWS identity supplied explicitly (7E). Never a
- * fallback from KMS to the local keyring. Selection rules: server/connections/environment.ts.
+ * fallback from KMS to the local keyring. Selection rules: server/connections/environment.ts. `attempts` (optional,
+ * explicit): one KMS attempt per Decrypt; absent, the SDK default. The local keyring makes no AWS call.
  */
-export function composeCredentialOpener(environment: Environment, awsCredentials?: KmsCredentialSource): ComposedCredentialOpener {
+export function composeCredentialOpener(environment: Environment, awsCredentials?: KmsCredentialSource, attempts?: AwsSingleAttempt): ComposedCredentialOpener {
   const selection = selectCredentialCrypto(environment);
   if (selection.kind === "local") return { opener: localCredentialOpenerFromEnvironment(environment), contextEnv: selection.contextEnv };
-  return { opener: kmsCredentialOpener(createKmsClient(selection.config, awsCredentials), selection.config), contextEnv: selection.config.contextEnv };
+  return { opener: kmsCredentialOpener(createKmsClient(selection.config, awsCredentials, attempts), selection.config), contextEnv: selection.config.contextEnv };
 }
 
 /** Discovery dependencies for one run: the composed access/providers and this run's scoped steps. */

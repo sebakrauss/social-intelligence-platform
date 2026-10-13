@@ -24,6 +24,8 @@ const depcruise = require(path.join(root, ".dependency-cruiser.cjs")) as { optio
 
 const MAIN_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_sweep", "connections.move.release_source", "connections.move.activate_destination", "connections.move.reject_destination"];
 const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account"];
+/** Step 7E.7-B: integration-only, operator-triggered diagnostics — discovered by the integration config, never registered. */
+const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic"];
 const PLANE_DIRS = { main: "jobs/trigger/main", integration: "jobs/trigger/integration" } as const;
 const OPENER = /^(jobs\/connections\.ts|platform\/crypto\/credentials\/(open|local-opener|local-keyring|aead|aws-kms-unwrapper|aws-kms-opener)\.ts)$/;
 const MAIN_ONLY = /^(jobs\/main-runtime\.ts|jobs\/moves\.ts|platform\/outbox\/delivery\.ts|platform\/db\/(system-scope|outbox-delivery)\.ts)$/;
@@ -74,10 +76,17 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     const main = discoveredTasks(PLANE_DIRS.main);
     const integration = discoveredTasks(PLANE_DIRS.integration);
     expect(main).toEqual([...MAIN_TASKS].sort());
-    expect(integration).toEqual([...INTEGRATION_TASKS].sort());
+    expect(integration).toEqual([...INTEGRATION_TASKS, ...INTEGRATION_DIAGNOSTIC_TASKS].sort());
     expect(main.filter((task) => integration.includes(task))).toEqual([]);
     for (const task of main) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("main");
-    for (const task of integration) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("integration");
+    for (const task of INTEGRATION_TASKS) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("integration");
+    // NOT_IN_NORMAL_PRODUCT_REGISTRY: the diagnostic is no registry task and no outbox route (its guards, not this, are
+    // what stop a direct trigger — tests/unit/jobs/integration-kms-diagnostic.test.ts).
+    for (const task of INTEGRATION_DIAGNOSTIC_TASKS) {
+      expect(PRODUCTION_TASKS.get(task), task).toBeUndefined();
+      expect(Object.keys(PRODUCTION_TASKS.unboundRoutes), task).not.toContain(task);
+      expect(PRODUCTION_TASKS.tasks.map((definition) => definition.name), task).not.toContain(task);
+    }
     // Shared helpers (define.ts, queues.ts) sit outside both discovered directories and declare no task.
     expect(readdirSync(path.join(root, "jobs/trigger")).filter((entry) => entry.endsWith(".ts")).sort()).toEqual(["define.ts", "queues.ts"]);
   });

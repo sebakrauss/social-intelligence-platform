@@ -140,6 +140,24 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["plane-main-runtime-main-only", "jobs/trigger/integration/uses-main-plane.ts", "jobs/main-runtime.ts"],
   ["plane-integration-no-delivery", "jobs/trigger/integration/uses-main-plane.ts", "jobs/trigger/main/delivery.ts"],
   ["plane-task-directories-disjoint", "jobs/trigger/integration/uses-main-plane.ts", "jobs/trigger/main/delivery.ts"],
+  // KMS worker-auth diagnostic (Step 7E.7-B): reached only by its own task file; thin task; no provider/DB/outbox path
+  ["kms-diagnostic-module-task-only", "jobs/trigger/integration/connections-uses-kms-diagnostic.ts", "jobs/integration-kms-diagnostic.ts"],
+  ["kms-diagnostic-module-task-only", "jobs/trigger/main/uses-kms-diagnostic.ts", "jobs/integration-kms-diagnostic.ts"],
+  ["kms-diagnostic-module-task-only", "server/uses-kms-diagnostic.ts", "jobs/integration-kms-diagnostic.ts"],
+  ["jobs-are-entry-points", "server/uses-kms-diagnostic.ts", "jobs/integration-kms-diagnostic.ts"],
+  ["kms-diagnostic-task-thin", "jobs/trigger/integration/kms-worker-auth-diagnostic.ts", "jobs/connections.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "integrations/providers/meta/adapter.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "jobs/moves.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "platform/db/client.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "platform/outbox/delivery.ts"],
+  // Step 7E.7-B-R4: every server/ subtree is denied by prefix (files added later stay denied), except the two readers
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/commands/kms-diagnostic-target.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/pipeline/kms-diagnostic-target.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/jobs/kms-diagnostic-target.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/http/kms-diagnostic-target.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/auth/kms-diagnostic-target.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/persistence/kms-diagnostic-target.ts"],
+  ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/connections/kms-diagnostic-target.ts"],
   // Integration worker AWS identity (Step 7E.4C): STS only in the adapter; the adapter only in the integration composition
   ["aws-sts-sdk-only-in-integration-worker-identity", "server/assumes-role.ts", "../../../../node_modules/@aws-sdk/client-sts/dist-es/index.js"],
   ["integration-worker-identity-composition-only", "jobs/trigger/main/uses-worker-identity.ts", "jobs/integration-aws-identity.ts"],
@@ -161,6 +179,65 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["staging-stub-no-io", "integrations/providers/staging-stub/uses-network.ts", "http"],
   ["staging-stub-jobs-composition-only", "server/composes-staging-stub.ts", "integrations/providers/staging-stub/index.ts"],
 ];
+
+describe("KMS diagnostic dependency depth (Step 7E.7-B-R4): denied by subtree, so later files stay denied", () => {
+  const rule = config.forbidden.find((candidate) => candidate.name === "kms-diagnostic-no-provider-db-outbox") as { readonly from?: { readonly path?: string }; readonly to?: { readonly path?: string } } | undefined;
+  const denied = new RegExp(rule?.to?.path ?? "^$");
+
+  it("applies to the diagnostic module only", () => {
+    expect(rule?.from?.path).toBe("^jobs/integration-kms-diagnostic\\.ts$");
+  });
+
+  it.each([
+    "server/commands/any-future-command.ts",
+    "server/pipeline/command.ts",
+    "server/jobs/outbox-notifier.ts",
+    "server/http/web-environment.ts",
+    "server/auth/request-auth.ts",
+    "server/persistence/connections.ts",
+    "server/connections/runtime.ts",
+    "server/connections/simulator.ts",
+    "server/connections/credential-crypto.ts",
+    "server/connections/environment.ts.bak",
+    "server/connections/nested/environment.ts",
+    "server/any-new-subtree/file.ts",
+    "server/i18n.ts",
+    "integrations/providers/meta/adapter.ts",
+    "integrations/providers/staging-stub/index.ts",
+    "platform/outbox/delivery.ts",
+    "platform/db/index.ts",
+    "platform/jobs/registry.ts",
+    "platform/jobs/trigger-dev.ts",
+    "jobs/registry.ts",
+    "jobs/runtime.ts",
+    "jobs/main-runtime.ts",
+    "jobs/trigger/define.ts",
+    "jobs/integration-aws-identity.ts",
+    "modules/connections/application/discovery.ts",
+    "modules/capability/index.ts",
+    "db/schema/index.ts",
+    "mutations/executor.ts",
+    "ai/gateway/index.ts",
+    "node_modules/@trigger.dev/sdk/dist/esm/index.js",
+    "node_modules/@aws-sdk/client-kms/dist-cjs/index.js",
+    "node_modules/pg/lib/index.js",
+  ])("denies %s", (target) => {
+    expect(denied.test(target)).toBe(true);
+  });
+
+  it.each([
+    "server/connections/environment.ts",
+    "server/connections/provider-mode.ts",
+    "jobs/connections.ts",
+    "jobs/plane-environment.ts",
+    "modules/connections/index.ts",
+    "platform/jobs/index.ts",
+    "platform/crypto/credentials/envelope.ts",
+    "domain/ids.ts",
+  ])("allows exactly the required %s", (target) => {
+    expect(denied.test(target)).toBe(false);
+  });
+});
 
 describe("architecture boundaries", () => {
   it.each(EXPECTED_VIOLATIONS)("rejects %s: %s → %s", async (rule, from, to) => {

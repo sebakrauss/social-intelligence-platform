@@ -20,6 +20,8 @@
  *   INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID,       the integration worker's AWS bootstrap identity (Step 7E.4C):
  *   INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY,   the web never holds the worker's decrypt path
  *   INTEGRATION_AWS_WORKER_ROLE_ARN
+ *   INTEGRATION_KMS_DIAGNOSTIC_FIXTURE             the integration-only KMS worker-auth diagnostic's synthetic
+ *                                                  envelope (Step 7E.7-B)
  *
  * The repository's contract holds no provider (Meta/Instagram/TikTok) credential variable: none exists to forbid.
  * Development and test runtimes are exempt (local .env.local legitimately holds tooling credentials). The mere
@@ -52,6 +54,7 @@ export const FORBIDDEN_WEB_VARIABLES = [
   "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID",
   "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY",
   "INTEGRATION_AWS_WORKER_ROLE_ARN",
+  "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
 ] as const;
 
 const LOCAL_NODE_ENVS: readonly string[] = ["development", "test"];

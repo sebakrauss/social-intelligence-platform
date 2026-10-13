@@ -418,7 +418,7 @@ module.exports = {
       name: "plane-opener-integration-only",
       severity: "error",
       comment: "Only the integration plane's task directory reaches the CredentialOpener composition (jobs/connections.ts): the main plane — outbox relay and sweepers, the Move saga, every shared jobs module — never does.",
-      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|trigger/integration/)" },
+      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|integration-kms-diagnostic\\.ts$|trigger/integration/)" },
       to: { path: "^jobs/connections\\.ts$" },
     },
     {
@@ -434,6 +434,29 @@ module.exports = {
       comment: "The integration plane never runs outbox delivery, system scope or the Move saga: it only executes its two tasks and wakes MAIN's relay.",
       from: { path: "^jobs/(trigger/integration/|connections\\.ts$)" },
       to: { path: "^(platform/outbox/delivery\\.ts|platform/db/(system-scope|outbox-delivery)\\.ts|jobs/moves\\.ts|jobs/trigger/main/)" },
+    },
+    {
+      name: "kms-diagnostic-module-task-only",
+      severity: "error",
+      comment: "Step 7E.7-B: the KMS worker-auth diagnostic module is reached only by its own integration task file (and its unit test) — never by the product tasks, the main plane, the web or any shared module.",
+      from: { pathNot: "^(jobs/trigger/integration/kms-worker-auth-diagnostic\\.ts|tests/unit/jobs/integration-kms-diagnostic\\.test\\.ts)$" },
+      to: { path: "^jobs/integration-kms-diagnostic\\.ts$" },
+    },
+    {
+      name: "kms-diagnostic-task-thin",
+      severity: "error",
+      comment: "Step 7E.7-B: the diagnostic task file depends only on the Trigger.dev SDK, the job release (platform/jobs) and the diagnostic module: never directly on the opener composition, providers, persistence or other planes.",
+      from: { path: "^jobs/trigger/integration/kms-worker-auth-diagnostic\\.ts$" },
+      to: { path: "^(jobs/(?!integration-kms-diagnostic\\.ts$)|platform/(?!jobs/index\\.ts$)|server/|modules/|integrations/|domain/|db/|app/|ui/)" },
+    },
+    {
+      name: "kms-diagnostic-no-provider-db-outbox",
+      severity: "error",
+      comment: "Step 7E.7-B(-R4): the diagnostic module opens one synthetic envelope through the production credential access and nothing else. DENY by subtree, so files added later stay denied: every server/ path (commands, pipeline, jobs, http, auth, persistence, connections, ...) except exactly the two pure configuration readers it needs (server/connections/environment.ts: keyring selection; server/connections/provider-mode.ts: the tier variable name); every jobs/ path except the opener composition and the per-plane contract; providers, databases, outbox, task registry/scheduler/runtime, other modules, AI, mutations, UI; and the Trigger.dev, AWS, database and Supabase packages.",
+      from: { path: "^jobs/integration-kms-diagnostic\\.ts$" },
+      to: {
+        path: "^(server/(?!connections/(environment|provider-mode)\\.ts$)|jobs/(?!(connections|plane-environment)\\.ts$)|integrations/|modules/(?!connections/index\\.ts$)|platform/(db|outbox)/|platform/jobs/(?!index\\.ts$)|db/|ai/|mutations/|app/|ui/)|(^|/)node_modules/(@trigger\\.dev|trigger\\.dev|@aws-sdk|@smithy|pg|drizzle-orm|@supabase)/",
+      },
     },
     {
       name: "plane-task-directories-disjoint",

@@ -132,3 +132,63 @@ describe("AWS runtime-identity seam", () => {
     expect(seam).not.toMatch(/factory\(config\)\(\)|await\s+factory/);
   });
 });
+
+describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argument, diagnostic only, never environment or global", () => {
+  const KMS_CLIENT = "platform/crypto/credentials/aws-kms-client.ts";
+  const COMPOSITION = "jobs/connections.ts";
+  const DIAGNOSTIC = "jobs/integration-kms-diagnostic.ts";
+  const DIAGNOSTIC_TASK = "jobs/trigger/integration/kms-worker-auth-diagnostic.ts";
+  const SEAL_COMPOSITION = "server/connections/credential-crypto.ts";
+  const runtime = sourceFiles(RUNTIME_ROOTS);
+  const users = (pattern: RegExp): string[] => findReferences(runtime, [pattern]).map(([file]) => file).sort();
+  const count = (file: string, pattern: RegExp): number => codeOf(file).match(new RegExp(pattern.source, "g"))?.length ?? 0;
+
+  it("one option type, one field, only the literal 1 — it can remove SDK retries, never add capability", () => {
+    expect(users(/\binterface AwsSingleAttempt\b/)).toEqual([KMS_CLIENT]);
+    expect(codeOf(KMS_CLIENT)).toMatch(/export interface AwsSingleAttempt \{\n {2}readonly maxAttempts: 1;\n\}/);
+    // Each factory adds exactly `maxAttempts: 1`, and only when the option is present; nothing else is configurable.
+    for (const file of [KMS_CLIENT, WORKER_ADAPTER]) {
+      expect(count(file, /\.\.\.\(attempts === undefined \? \{\} : \{ maxAttempts: 1 \}\),/), file).toBe(1);
+      expect(codeOf(file), file).not.toMatch(/attempts\.maxAttempts|\.\.\.attempts\b|\.\.\.options\b|retryStrategy|retryMode|requestHandler/);
+    }
+    expect(codeOf(KMS_CLIENT)).toMatch(/new KMSClient\(\{\n {4}region,\n {4}credentials,\n {4}ignoreConfiguredEndpointUrls: true,\n {4}\.\.\.\(attempts === undefined \? \{\} : \{ maxAttempts: 1 \}\),\n {2}\}\);/);
+  });
+
+  it("only the diagnostic opts in; the product compositions (open and seal) never pass the option", () => {
+    expect(users(/\bKMS_DIAGNOSTIC_AWS_ATTEMPTS\b/)).toEqual([DIAGNOSTIC]);
+    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([WORKER_ADAPTER, DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT].sort());
+    expect(codeOf(DIAGNOSTIC_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/); // the Trigger.dev task retry: a separate control
+    expect(codeOf(DIAGNOSTIC)).toMatch(/export const KMS_DIAGNOSTIC_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
+    expect(count(DIAGNOSTIC, /composeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment, KMS_DIAGNOSTIC_AWS_ATTEMPTS\), KMS_DIAGNOSTIC_AWS_ATTEMPTS\)/)).toBe(1);
+
+    // Exact call sites of every factory on the path.
+    expect(users(/\bcreateKmsClient\(/)).toEqual([KMS_CLIENT, SEAL_COMPOSITION, COMPOSITION].sort());
+    expect(count(SEAL_COMPOSITION, /createKmsClient\(selection\.config, awsCredentials\)/)).toBe(1);
+    expect(count(COMPOSITION, /createKmsClient\(/)).toBe(1);
+    expect(count(COMPOSITION, /createKmsClient\(selection\.config, awsCredentials, attempts\)/)).toBe(1);
+    expect(users(/\bintegrationWorkerAwsCredentials\(/)).toEqual([COMPOSITION, DIAGNOSTIC].sort());
+    expect(users(/\bcomposeCredentialOpener\(/)).toEqual([COMPOSITION, DIAGNOSTIC].sort());
+    expect(users(/\bcreateIntegrationWorkerAwsCredentials\(/)).toEqual([COMPOSITION, WORKER_ADAPTER].sort());
+    expect(count(COMPOSITION, /createIntegrationWorkerAwsCredentials\(kms, \{\}, attempts\)/)).toBe(1);
+    expect(count(WORKER_ADAPTER, /deps\.stsClient\(kms\.region, identity, attempts\)/)).toBe(1);
+    // The product task composition: no bound at all.
+    const product = codeOf(COMPOSITION).split("export function composeJobProviders(")[1]?.split(/\nexport /)[0] ?? "";
+    expect(product).toMatch(/composeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment\)\);/);
+    expect(product).not.toMatch(/attempts|maxAttempts|KMS_DIAGNOSTIC/);
+    // The composition only forwards the option; it never constructs one.
+    expect(codeOf(COMPOSITION)).not.toMatch(/maxAttempts/);
+  });
+
+  it("no environment variable, shared configuration or global mutable state drives AWS retries", () => {
+    expect(findReferences(runtime, [/AWS_MAX_ATTEMPTS|AWS_RETRY_MODE|\bmax_attempts\b|\bretry_mode\b|\bretryMode\b|\bretryStrategy\b|\bStandardRetryStrategy\b|\bConfiguredRetryStrategy\b/])).toEqual([]);
+    // Module-level mutable state: none, except the pre-existing lazy product composition cache in jobs/connections.ts.
+    expect(codeOf(COMPOSITION).match(/^(?:export\s+)?(?:let|var)\s.*$/gm)).toEqual(["let composition: JobComposition | undefined;"]);
+    for (const file of [KMS_CLIENT, WORKER_ADAPTER, COMPOSITION, DIAGNOSTIC]) {
+      if (file !== COMPOSITION) expect(codeOf(file), file).not.toMatch(/^(?:export\s+)?(?:let|var)\s/m);
+      expect(codeOf(file), file).not.toMatch(/process\.env(\.\w+|\[[^\]]+\])\s*(=(?!=)|\?\?=|\|\|=)|delete\s+process\.env|Object\.assign\(\s*process\.env/);
+    }
+    expect(codeOf(KMS_CLIENT)).not.toMatch(/process\.env/);
+    expect(codeOf(DIAGNOSTIC)).not.toMatch(/process\.env/);
+  });
+});
+

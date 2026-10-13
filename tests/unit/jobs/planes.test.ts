@@ -134,7 +134,7 @@ describe("per-plane environment contract (deployed runs)", () => {
 
   it("the main plane refuses the integration→main relay key and the integration worker's AWS bootstrap identity, and still holds the worker DB credential (Move saga)", () => {
     expect(PLANE_FORBIDDEN_VARIABLES.main).toEqual([
-      "TRIGGER_MAIN_RELAY_TRIGGER_KEY", "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN",
+      "TRIGGER_MAIN_RELAY_TRIGGER_KEY", "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN", "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
     ]);
     for (const name of ["INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN"]) {
       expect(() => { assertPlaneEnvironment("main", PINNED, { [name]: "synthetic" }); }, name).toThrow(NonRetryableJobError);

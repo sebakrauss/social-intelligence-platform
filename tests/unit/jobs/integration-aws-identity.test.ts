@@ -8,7 +8,7 @@ import http from "node:http";
 import { EventEmitter } from "node:events";
 import { inspect } from "node:util";
 import { DecryptCommand } from "@aws-sdk/client-kms";
-import type { AssumeRoleCommand, AssumeRoleCommandOutput } from "@aws-sdk/client-sts";
+import { STSClient, type AssumeRoleCommand, type AssumeRoleCommandOutput } from "@aws-sdk/client-sts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { integrationWorkerAwsCredentials } from "@/jobs/connections";
 import {
@@ -17,6 +17,7 @@ import {
   INTEGRATION_WORKER_SESSION_SECONDS,
   createIntegrationWorkerAwsCredentials,
   readBootstrapIdentity,
+  stsClientFor,
   stsIdentityFailure,
   type AssumeRoleSender,
   type IntegrationAwsIdentityDependencies,
@@ -457,5 +458,78 @@ describe("the REAL pinned SDK clients, offline (every HTTPS request trapped)", (
       expect(request.authorization).not.toContain(KEY_A);
       expect(request.authorization).not.toContain("SYNTHETICAMBIENTPOISON0");
     }
+  });
+});
+
+/** The resolved retry mode (the SDK types it as a value or a provider). */
+const retryModeOf = async (mode: string | (() => Promise<string>)): Promise<string> => (typeof mode === "function" ? mode() : mode);
+
+describe("STS client attempts (Step 7E.7-B-R1): optional, explicit, single-attempt only; absent = the SDK default, unchanged", () => {
+  const BOOT = { accessKeyId: KEY_A, secretAccessKey: SECRET_A };
+  const pristine = (overrides: Record<string, string | undefined> = {}) => {
+    vi.stubEnv("AWS_CONFIG_FILE", "/nonexistent/synthetic-aws-config-for-tests");
+    vi.stubEnv("AWS_SHARED_CREDENTIALS_FILE", "/nonexistent/synthetic-aws-config-for-tests");
+    vi.stubEnv("AWS_MAX_ATTEMPTS", undefined);
+    vi.stubEnv("AWS_RETRY_MODE", undefined);
+    for (const [name, value] of Object.entries(overrides)) vi.stubEnv(name, value);
+  };
+  const resolved = async (client: STSClient): Promise<[number, string]> => {
+    try {
+      return [await client.config.maxAttempts(), await retryModeOf(client.config.retryMode)];
+    } finally {
+      client.destroy();
+    }
+  };
+  const sdkDefault = () => resolved(new STSClient({ region: "sa-east-1", credentials: BOOT }));
+
+  it("stsClientFor without the option resolves exactly what an untouched SDK client resolves", async () => {
+    pristine();
+    expect(await resolved(stsClientFor("sa-east-1", BOOT) as STSClient)).toEqual(await sdkDefault());
+    pristine({ AWS_MAX_ATTEMPTS: "7" });
+    expect(await resolved(stsClientFor("sa-east-1", BOOT) as STSClient)).toEqual(await sdkDefault());
+  });
+
+  it("with the option: exactly one attempt, whatever the environment says; a later default client is unaffected", async () => {
+    pristine({ AWS_MAX_ATTEMPTS: "7", AWS_RETRY_MODE: "adaptive" });
+    expect((await resolved(stsClientFor("sa-east-1", BOOT, { maxAttempts: 1 }) as STSClient))[0]).toBe(1);
+    expect(await resolved(stsClientFor("sa-east-1", BOOT) as STSClient)).toEqual(await sdkDefault());
+  });
+
+  it("order A (R3): a default client first never stops a later single-attempt client from being bounded to 1", async () => {
+    pristine();
+    const before = await sdkDefault();
+    expect(await resolved(stsClientFor("sa-east-1", BOOT) as STSClient)).toEqual(before);
+    expect((await resolved(stsClientFor("sa-east-1", BOOT, { maxAttempts: 1 }) as STSClient))[0]).toBe(1);
+    expect(await sdkDefault()).toEqual(before);
+  });
+
+  it("order B (R3): a single-attempt client first never changes a later default client", async () => {
+    pristine();
+    const before = await sdkDefault();
+    expect((await resolved(stsClientFor("sa-east-1", BOOT, { maxAttempts: 1 }) as STSClient))[0]).toBe(1);
+    expect(await resolved(stsClientFor("sa-east-1", BOOT) as STSClient)).toEqual(before);
+  });
+
+  it("the provider forwards the option to every STS client it builds, and only when given", async () => {
+    const seen: unknown[] = [];
+    const recording = (withAttempts?: { readonly maxAttempts: 1 }) =>
+      createIntegrationWorkerAwsCredentials(KMS, {
+        readEnvironment: () => bootstrap(),
+        nowMs: () => NOW,
+        stsClient: (_region, _credentials, attempts) => {
+          seen.push(attempts);
+          return { send: () => Promise.resolve(sessionFor(KEY_A, 900)) };
+        },
+      }, withAttempts);
+    await recording()();
+    await recording({ maxAttempts: 1 })();
+    expect(seen).toEqual([undefined, { maxAttempts: 1 }]);
+  });
+
+  it("integrationWorkerAwsCredentials(env) without the option still composes lazily (product call sites: tests/architecture/aws-identity-guards.test.ts)", () => {
+    pristine();
+    const env = { CREDENTIAL_CONTEXT_ENV: "dev", CREDENTIAL_KMS_KEY_ARN: KEY, CREDENTIAL_KMS_ALLOWED_KEY_ARNS: KEY };
+    expect(integrationWorkerAwsCredentials(env)).toBeTypeOf("function");
+    expect(integrationWorkerAwsCredentials({})).toBeUndefined();
   });
 });

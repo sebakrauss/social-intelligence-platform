@@ -183,6 +183,10 @@ describe("credential crypto boundary", () => {
 
   it("system, migration and database tooling never reference the opening half; in jobs/ only the integration composition does", () => {
     expect(findReferences(sourceFiles(["tools", "db", "platform/db", "platform/outbox", "platform/jobs", "jobs/trigger"]), [OPENING])).toEqual([]);
-    expect(findReferences(sourceFiles(["jobs"]), [OPENING]).map(([file]) => file).filter((file, i, all) => all.indexOf(file) === i)).toEqual(["jobs/connections.ts"]);
+    expect(findReferences(sourceFiles(["jobs"]), [OPENING]).map(([file]) => file).filter((file, i, all) => all.indexOf(file) === i)).toEqual(["jobs/connections.ts", "jobs/integration-kms-diagnostic.ts"]);
+    // Step 7E.7-B: the KMS worker-auth diagnostic names exactly the composition (to reuse it), never an opening primitive.
+    const diagnostic = codeOf("jobs/integration-kms-diagnostic.ts");
+    expect([...new Set([...diagnostic.matchAll(new RegExp(OPENING.source, "g"))].map((match) => match[0]))]).toEqual(["composeCredentialOpener"]);
+    expect(diagnostic.match(/\bcomposeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment, KMS_DIAGNOSTIC_AWS_ATTEMPTS\), KMS_DIAGNOSTIC_AWS_ATTEMPTS\)/g)).toHaveLength(1);
   });
 });

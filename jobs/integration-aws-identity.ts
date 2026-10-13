@@ -16,9 +16,13 @@
  * configured identity changes — bootstrap access key id or worker role ARN (a rotated Trigger secret or a re-targeted
  * role takes effect without a redeploy). Every failure becomes an
  * AwsIdentityError carrying only its category: no message, key, role, response or cause.
+ *
+ * Retries (Step 7E.7-B-R1): by default the STS client keeps the SDK's default retry behavior, unchanged. A caller may
+ * pass AwsSingleAttempt explicitly to bound it to ONE AssumeRole attempt — only the KMS worker-auth diagnostic does.
  */
 import { AssumeRoleCommand, STSClient, type AssumeRoleCommandOutput } from "@aws-sdk/client-sts";
 import { AwsIdentityError, isIamRoleArn, type AwsCredentialProvider, type AwsIdentityFailure, type AwsTemporaryCredentials } from "@/platform/aws/identity";
+import type { AwsSingleAttempt } from "@/platform/crypto/credentials/aws-kms-client";
 import type { KmsKeyringConfig } from "@/platform/crypto/credentials/aws-kms-config";
 import { INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID_ENV, INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY_ENV, INTEGRATION_AWS_WORKER_ROLE_ARN_ENV } from "./plane-environment";
 
@@ -85,15 +89,17 @@ export interface AssumeRoleSender {
 /**
  * The real STS client for one bootstrap credential: explicit region (the KMS key's) and explicit static credentials
  * (no default chain, profile, IMDS/ECS, web identity or credential process), configured endpoint URLs ignored, no
- * FIPS/dual-stack variant picked up from the environment.
+ * FIPS/dual-stack variant picked up from the environment. With `attempts`, exactly one attempt (no SDK retry);
+ * without it, the client is built exactly as before.
  */
-export function stsClientFor(region: string, credentials: { readonly accessKeyId: string; readonly secretAccessKey: string }): AssumeRoleSender {
+export function stsClientFor(region: string, credentials: { readonly accessKeyId: string; readonly secretAccessKey: string }, attempts?: AwsSingleAttempt): AssumeRoleSender {
   return new STSClient({
     region,
     credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey },
     ignoreConfiguredEndpointUrls: true,
     useFipsEndpoint: false,
     useDualstackEndpoint: false,
+    ...(attempts === undefined ? {} : { maxAttempts: 1 }),
   });
 }
 
@@ -162,7 +168,7 @@ function temporaryCredentials(output: AssumeRoleCommandOutput, nowMs: number): A
 /** Injection seam for offline tests; production re-reads process.env on every resolution and uses the real STS client. */
 export interface IntegrationAwsIdentityDependencies {
   readonly readEnvironment: () => Environment;
-  readonly stsClient: (region: string, credentials: { readonly accessKeyId: string; readonly secretAccessKey: string }) => AssumeRoleSender;
+  readonly stsClient: (region: string, credentials: { readonly accessKeyId: string; readonly secretAccessKey: string }, attempts?: AwsSingleAttempt) => AssumeRoleSender;
   readonly nowMs: () => number;
 }
 
@@ -174,9 +180,14 @@ const PRODUCTION: IntegrationAwsIdentityDependencies = Object.freeze({
 
 /**
  * The integration worker's AwsCredentialProvider for the given (validated) KMS keyring configuration. Lazy: nothing is
- * read or requested until the KMS opener asks for credentials.
+ * read or requested until the KMS opener asks for credentials. `attempts` (optional, explicit) bounds every STS client
+ * it builds to one attempt; absent, the SDK default applies.
  */
-export function createIntegrationWorkerAwsCredentials(kms: Pick<KmsKeyringConfig, "currentKeyArn" | "region">, overrides: Partial<IntegrationAwsIdentityDependencies> = {}): AwsCredentialProvider {
+export function createIntegrationWorkerAwsCredentials(
+  kms: Pick<KmsKeyringConfig, "currentKeyArn" | "region">,
+  overrides: Partial<IntegrationAwsIdentityDependencies> = {},
+  attempts?: AwsSingleAttempt,
+): AwsCredentialProvider {
   const deps: IntegrationAwsIdentityDependencies = { ...PRODUCTION, ...overrides };
   // Every session and every refresh carries the identity that produced it: the bootstrap principal's key id and the
   // role it assumed (never the secret: AWS rotates a key by issuing a new key id, not by mutating its secret).
@@ -185,7 +196,7 @@ export function createIntegrationWorkerAwsCredentials(kms: Pick<KmsKeyringConfig
 
   const assume = async (identity: BootstrapIdentity): Promise<AwsTemporaryCredentials> => {
     try {
-      const output = await deps.stsClient(kms.region, identity).send(
+      const output = await deps.stsClient(kms.region, identity, attempts).send(
         new AssumeRoleCommand({ RoleArn: identity.roleArn, RoleSessionName: INTEGRATION_WORKER_ROLE_SESSION_NAME, DurationSeconds: INTEGRATION_WORKER_SESSION_SECONDS }),
       );
       return temporaryCredentials(output, deps.nowMs());
