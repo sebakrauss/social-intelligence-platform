@@ -1,0 +1,15 @@
+{
+  "Sid": "VercelProductionWebIdentity",
+  "Effect": "Allow",
+  "Principal": {
+    "Federated": "arn:<DEV_AWS_PARTITION>:iam::<DEV_AWS_ACCOUNT_ID>:oidc-provider/oidc.vercel.com/social-intelligence"
+  },
+  "Action": "sts:AssumeRoleWithWebIdentity",
+  "Condition": {
+    "StringEquals": {
+      "oidc.vercel.com/social-intelligence:aud": "sts.amazonaws.com",
+      "oidc.vercel.com/social-intelligence:sub": "owner:social-intelligence:project:social-intelligence-platform:environment:production",
+      "sts:RoleSessionName": "wrenkind-vercel-web"
+    }
+  }
+}

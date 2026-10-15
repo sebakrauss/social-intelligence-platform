@@ -7,6 +7,8 @@
  *                                fails closed (never echoed). Read only here — the job runtime never reads it.
  *   stsRegion                    the region of the validated KMS key (CREDENTIAL_KMS_KEY_ARN): the same deployment
  *                                configuration decides where the web federates; no AWS_REGION, no second variable.
+ *   roleSessionName              WEB_AWS_ROLE_SESSION_NAME (Step 7E.10-B): fixed, source-defined and non-secret, so every
+ *                                federated web session is attributable in CloudTrail and the role trust can pin it.
  *   WebAwsIdentityFactory        the adapter (7E.3B: vercel-aws-identity.ts) that turns that configuration into a LAZY
  *                                credential provider.
  *                                It must not resolve anything when called: the OIDC token exists only inside a request,
@@ -22,10 +24,13 @@ import { readKmsKeyringConfig } from "./environment";
 type Environment = Readonly<Record<string, string | undefined>>;
 
 export const CREDENTIAL_KMS_WEB_ROLE_ARN = "CREDENTIAL_KMS_WEB_ROLE_ARN";
+/** The web's STS role session name: no user, workspace or request data — the same value for every session. */
+export const WEB_AWS_ROLE_SESSION_NAME = "wrenkind-vercel-web";
 
 export interface WebAwsRoleConfig {
   readonly roleArn: string;
   readonly audience: typeof AWS_STS_OIDC_AUDIENCE;
+  readonly roleSessionName: typeof WEB_AWS_ROLE_SESSION_NAME;
 }
 
 export interface WebAwsIdentityConfig extends WebAwsRoleConfig {
@@ -41,7 +46,7 @@ export function readWebAwsIdentityConfig(environment: Environment): WebAwsRoleCo
   const value = environment[CREDENTIAL_KMS_WEB_ROLE_ARN];
   if (value === undefined || value === "") return undefined;
   try {
-    return Object.freeze({ roleArn: parseIamRoleArn(value), audience: AWS_STS_OIDC_AUDIENCE });
+    return Object.freeze({ roleArn: parseIamRoleArn(value), audience: AWS_STS_OIDC_AUDIENCE, roleSessionName: WEB_AWS_ROLE_SESSION_NAME });
   } catch (error) {
     throw error instanceof AwsIdentityError ? new CredentialCryptoError("KEYRING_MISCONFIGURED") : error;
   }

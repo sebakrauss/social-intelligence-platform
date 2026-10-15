@@ -9,6 +9,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const createServerClient = vi.fn((...args: unknown[]) => ({ auth: {}, argumentCount: args.length }));
 vi.mock("@supabase/ssr", () => ({ createServerClient: (...args: unknown[]) => createServerClient(...args) }));
+// Step 7E.10-B: count simulator constructions (the original still runs, and still refuses outside development/test).
+const simulatorCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/server/connections/simulator", async (importOriginal) => {
+  const original = await importOriginal<typeof SimulatorModule>();
+  return { ...original, localSimulator: (...args: Parameters<typeof original.localSimulator>) => { simulatorCalls.count += 1; return original.localSimulator(...args); } };
+});
 
 import nextConfig from "@/next.config";
 import { createSupabaseAuth, readSupabaseAuthConfig } from "@/platform/auth";
@@ -18,6 +24,7 @@ import { FORBIDDEN_WEB_VARIABLES, WebEnvironmentError, assertWebEnvironment, for
 import { HEALTHY, UNHEALTHY, webHealth } from "@/server/http/health";
 import { createWebDatabase, webPoolMax } from "@/server/persistence/runtime";
 import { connectionAuthorizationRuntime } from "@/server/connections/runtime";
+import type * as SimulatorModule from "@/server/connections/simulator";
 
 const LOCAL_WEB_URL = ["postgresql://web_login:", "local-test", "@127.0.0.1:5432/postgres"].join("");
 const SECRET_MARKER = "synthetic-secret-value-never-echoed";
@@ -269,12 +276,14 @@ describe("6B.6 · provider connections stay fail-closed in a production-built we
     OAUTH_PKCE_DERIVATION_KEY: randomBytes(32).toString("base64url"),
   };
 
-  it("the simulated provider flow can't be composed: the simulator is development/test only", () => {
-    expect(() => connectionAuthorizationRuntime(identity, hosted)).toThrow(/simulator is local\/test only/);
+  it("the simulator is never constructed in a hosted runtime, and without its KMS configuration the flow refuses to compose at all", () => {
+    expect(() => connectionAuthorizationRuntime(identity, hosted)).toThrow(/credential_crypto_keyring_misconfigured/);
+    expect(simulatorCalls.count).toBe(0);
   });
 
   it("the staging stub never applies to the web flow, and a local keyring is refused, not adopted", () => {
-    expect(() => connectionAuthorizationRuntime(identity, { ...hosted, APP_DEPLOYMENT_ENV: "preview", CAPABILITY_PROVIDER_MODE: "staging_stub" })).toThrow(/simulator is local\/test only/);
+    expect(() => connectionAuthorizationRuntime(identity, { ...hosted, APP_DEPLOYMENT_ENV: "preview", CAPABILITY_PROVIDER_MODE: "staging_stub" })).toThrow(/credential_crypto_keyring_misconfigured/);
     expect(() => connectionAuthorizationRuntime(identity, { ...hosted, LOCAL_KEYRING_KEY: randomBytes(32).toString("base64url") })).toThrow(/local_keyring_forbidden/);
+    expect(simulatorCalls.count).toBe(0);
   });
 });

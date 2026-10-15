@@ -6,8 +6,11 @@
  * Local/test: the local keyring. KMS-configured runtimes: KMSClient → GenerateDataKey generator → sealer, which needs
  * the runtime's AWS identity supplied explicitly; without it (no identity mechanism before 7E) composition fails
  * closed. Selection rules: ./environment.ts.
+ *
+ * AWS retries (Step 7E.10-B): the product web composition passes no attempt bound, so the KMS client keeps the SDK's
+ * default retry behavior; only the web KMS identity diagnostic passes AwsSingleAttempt (one GenerateDataKey attempt).
  */
-import { createKmsClient, type KmsCredentialSource } from "@/platform/crypto/credentials/aws-kms-client";
+import { createKmsClient, type AwsSingleAttempt, type KmsCredentialSource } from "@/platform/crypto/credentials/aws-kms-client";
 import { kmsCredentialSealer } from "@/platform/crypto/credentials/aws-kms-sealer";
 import type { CredentialContextEnv } from "@/platform/crypto/credentials/context";
 import { localCredentialSealerFromEnvironment } from "@/platform/crypto/credentials/local-sealer";
@@ -21,8 +24,8 @@ export interface ComposedCredentialSealer {
   readonly contextEnv: CredentialContextEnv;
 }
 
-export function composeCredentialSealer(environment: Environment, awsCredentials?: KmsCredentialSource): ComposedCredentialSealer {
+export function composeCredentialSealer(environment: Environment, awsCredentials?: KmsCredentialSource, attempts?: AwsSingleAttempt): ComposedCredentialSealer {
   const selection = selectCredentialCrypto(environment);
   if (selection.kind === "local") return { sealer: localCredentialSealerFromEnvironment(environment), contextEnv: selection.contextEnv };
-  return { sealer: kmsCredentialSealer(createKmsClient(selection.config, awsCredentials), selection.config), contextEnv: selection.config.contextEnv };
+  return { sealer: kmsCredentialSealer(createKmsClient(selection.config, awsCredentials, attempts), selection.config), contextEnv: selection.config.contextEnv };
 }

@@ -565,6 +565,13 @@ module.exports = {
       from: { pathNot: "^(server/connections/runtime\\.ts|tests/unit/server/vercel-aws-identity\\.test\\.ts)$" },
       to: { path: "^server/connections/vercel-aws-identity\\.ts$" },
     },
+    {
+      name: "web-kms-diagnostic-composition-only",
+      severity: "error",
+      comment: "Step 7E.10-B: the hosted web KMS identity diagnostic is composed only by the web's connection runtime (server/connections/runtime.ts) and reached by tests. No app/ route, ui/ module, job or other server module imports it: its invocation stays BLOCKED_PENDING_SAFE_ROUTE_PROTECTION.",
+      from: { pathNot: "^(server/connections/runtime\\.ts|tests/)" },
+      to: { path: "^server/connections/web-kms-diagnostic\\.ts$" },
+    },
 
     // ── Hygiene ──────────────────────────────────────────────────────────────────────────────
     {

@@ -5,7 +5,9 @@
  *   - the web receives a SEALER only (TA §39, ADR-64): no opener, no unwrap capability exists here — the local
  *     keyring's sealer in development/test, the KMS GenerateDataKey sealer where KMS is configured (Step 7D);
  *   - OAUTH_PKCE_DERIVATION_KEY must be a canonical 32-byte key (no generated or default key);
- *   - providers: the local simulator only (development/test); real providers stay VALIDATE.
+ *   - providers: the local simulator only (development/test); real providers stay VALIDATE. A hosted runtime
+ *     composes NO provider adapter (Step 7E.10-B): it never constructs the simulator, every provider is unavailable,
+ *     and the flow fails closed before any database work — while the sealer is still the real KMS one.
  */
 import { randomUUID } from "node:crypto";
 import { credentialContext } from "@/platform/crypto/credentials/context";
@@ -23,9 +25,10 @@ import { webUnitOfWork } from "@/server/persistence/runtime";
 import { createActionPipeline } from "@/server/pipeline";
 import type { ConnectionAuthorizationDependencies } from "./authorization";
 import { composeCredentialSealer } from "./credential-crypto";
-import { vercelAwsIdentity } from "./vercel-aws-identity";
+import { VERCEL_OIDC_TEAM_ISSUER, VERCEL_PRODUCTION_SUBJECT, createVercelAwsIdentity, unverifiedVercelOidcClaims, vercelAwsIdentity } from "./vercel-aws-identity";
+import { WEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS, runWebKmsIdentityDiagnostic, type WebKmsDiagnosticOutcome } from "./web-kms-diagnostic";
 import { composeWebAwsCredentials, type WebAwsIdentityFactory } from "./web-identity";
-import { localSimulator } from "./simulator";
+import { isLocalSimulatorRuntime, localSimulator } from "./simulator";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -48,8 +51,8 @@ export function createCredentialSealing(sealer: CredentialSealer, env: string): 
   };
 }
 
-/** The app's fixed, query-free callback URL per provider (0007 persists exactly that shape). */
-export function authorizationProviders(ports: { readonly simulator: ProviderAuthorizationPort }, appBaseUrl: string): AuthorizationProviders {
+/** The app's fixed, query-free callback URL per provider (0007 persists exactly that shape). An absent port is unavailable. */
+export function authorizationProviders(ports: { readonly simulator?: ProviderAuthorizationPort }, appBaseUrl: string): AuthorizationProviders {
   const base = new URL(appBaseUrl);
   return {
     authorization: (provider) => ({ simulator: ports.simulator })[provider],
@@ -77,11 +80,28 @@ function compose(environment: Environment): Composition {
   const appBaseUrl = environment["APP_BASE_URL"];
   if (appBaseUrl === undefined || appBaseUrl === "") throw new Error("APP_BASE_URL is not set");
   const secrets = createOAuthSecrets(pkceDeriverFromEnvironment(environment));
-  const providers = authorizationProviders({ simulator: localSimulator(environment).authorization }, appBaseUrl);
+  // Local-only adapters exist only where their own rule allows them; a hosted runtime has none (real providers VALIDATE).
+  const ports = isLocalSimulatorRuntime(environment) ? { simulator: localSimulator(environment).authorization } : {};
+  const providers = authorizationProviders(ports, appBaseUrl);
   // Local keyring in development/test; KMS where configured, with the web's lazy Vercel OIDC identity.
   const crypto = composeCredentialSealer(environment, composeWebAwsCredentials(environment, WEB_AWS_IDENTITY));
   const sealing = createCredentialSealing(crypto.sealer, crypto.contextEnv);
   return { commands: createConnectionCommands({ secrets, providers }), providers, secrets, sealing };
+}
+
+/**
+ * The web KMS identity diagnostic's production composition (Step 7E.10-B; ./web-kms-diagnostic.ts): the product
+ * sealer composition and the product Vercel identity, each bounded to ONE AWS attempt. No route invokes it
+ * (BLOCKED_PENDING_SAFE_ROUTE_PROTECTION); nothing is composed until every diagnostic guard passed.
+ */
+export function webKmsIdentityDiagnostic(payload: unknown, environment: Environment = process.env): Promise<WebKmsDiagnosticOutcome> {
+  return runWebKmsIdentityDiagnostic(payload, environment, {
+    nodeVersion: process.version,
+    readClaims: () => unverifiedVercelOidcClaims(),
+    expected: { issuer: VERCEL_OIDC_TEAM_ISSUER, subject: VERCEL_PRODUCTION_SUBJECT },
+    composeSealer: (env) =>
+      composeCredentialSealer(env, composeWebAwsCredentials(env, createVercelAwsIdentity({}, WEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS)), WEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS),
+  });
 }
 
 /** Per-request dependencies: the shared composition plus a pipeline bound to this request's identity. */

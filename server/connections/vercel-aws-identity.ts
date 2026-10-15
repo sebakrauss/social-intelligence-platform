@@ -12,12 +12,17 @@
  *      guarantees the official provider is never entered with an absent, malformed, expired or nearly expired
  *      token, so @vercel/oidc's development-only refresh branch stays unreachable from our call graph;
  *   3. only then build and resolve the official awsCredentialsProvider: audience AWS_STS_OIDC_AUDIENCE, the
- *      validated web role, a one-hour session, and an STS client pinned to the KMS key's region with configured
- *      endpoint URLs ignored (no AWS_REGION, no AWS_ENDPOINT_URL_*, no shared config);
+ *      validated web role, the fixed role session name (Step 7E.10-B), a one-hour session, and an STS client pinned
+ *      to the KMS key's region with configured endpoint URLs ignored (no AWS_REGION, no AWS_ENDPOINT_URL_*, no
+ *      shared config);
  *   4. normalize every failure to AwsIdentityError — no message, token, role, response body or cause is kept.
  *
  * Nothing is cached here and no module-level state holds a token: each resolution reads the current request's
  * token again. AWS credentials are cached only by the AWS SDK client that consumes this provider.
+ *
+ * Retries (Step 7E.10-B): by default the STS client keeps the SDK's default retry behavior, unchanged. A caller may pass
+ * `{ maxAttempts: 1 }` explicitly to bound it to ONE AssumeRoleWithWebIdentity attempt — only the web KMS identity
+ * diagnostic does.
  */
 import { getContext } from "@vercel/oidc";
 import { awsCredentialsProvider } from "@vercel/oidc-aws-credentials-provider";
@@ -75,6 +80,38 @@ export function preflightVercelOidcToken(token: unknown, nowSeconds: number): vo
   if (typeof exp !== "number" || !Number.isSafeInteger(exp) || exp <= 0) return refuse("IDENTITY_ACCESS_DENIED");
   if (exp <= nowSeconds) return refuse("IDENTITY_ACCESS_DENIED");
   if (exp - nowSeconds < VERCEL_OIDC_PREFLIGHT_MIN_TTL_SECONDS) return refuse("IDENTITY_UNAVAILABLE");
+}
+
+/**
+ * The Vercel Team issuer and the exact Production subject the web role trust admits (Step 7E.10-B;
+ * design/phase-7e/web-identity). Non-secret. AWS enforces them; locally they only serve a pre-AWS guard.
+ */
+export const VERCEL_OIDC_TEAM_ISSUER = "https://oidc.vercel.com/social-intelligence";
+export const VERCEL_PRODUCTION_SUBJECT = "owner:social-intelligence:project:social-intelligence-platform:environment:production";
+
+/** Issuer and subject claims as the token states them: unauthenticated, never the token itself. */
+export interface UnverifiedVercelOidcClaims {
+  readonly issuer: string | undefined;
+  readonly subject: string | undefined;
+}
+
+/**
+ * The current request token's `iss` and `sub`, after the same preflight, for a local pre-AWS guard only. Decoding
+ * proves nothing (no signature check): AWS STS authenticates the token against the role trust. Failures are the
+ * preflight's AwsIdentityError categories; the token and the rest of its payload are never returned or kept.
+ */
+export function unverifiedVercelOidcClaims(readToken: () => string | undefined = readVercelOidcTokenNoRefresh, nowSeconds: number = Math.floor(Date.now() / 1000)): UnverifiedVercelOidcClaims {
+  let token: string | undefined;
+  try {
+    token = readToken();
+  } catch {
+    return refuse("IDENTITY_MISCONFIGURED");
+  }
+  preflightVercelOidcToken(token, nowSeconds);
+  const payload = JSON.parse(Buffer.from((token ?? "").split(".")[1] ?? "", "base64url").toString("utf8")) as Record<string, unknown>;
+  token = undefined;
+  const text = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
+  return Object.freeze({ issuer: text(payload["iss"]), subject: text(payload["sub"]) });
 }
 
 /** STS / web-identity / exchange failures by meaning. Anything not listed fails closed as IDENTITY_MISCONFIGURED. */
@@ -142,8 +179,11 @@ const OFFICIAL: VercelAwsIdentityDependencies = Object.freeze({
   nowSeconds: () => Math.floor(Date.now() / 1000),
 });
 
-/** Production uses the official functions; tests may override any of them (the real token reader stays testable). */
-export function createVercelAwsIdentity(overrides: Partial<VercelAwsIdentityDependencies> = {}): WebAwsIdentityFactory {
+/**
+ * Production uses the official functions; tests may override any of them (the real token reader stays testable).
+ * With `attempts`, the STS client makes exactly one attempt (no SDK retry); without it, it is built exactly as before.
+ */
+export function createVercelAwsIdentity(overrides: Partial<VercelAwsIdentityDependencies> = {}, attempts?: { readonly maxAttempts: 1 }): WebAwsIdentityFactory {
   const dependencies: VercelAwsIdentityDependencies = { ...OFFICIAL, ...overrides };
   return (config): AwsCredentialProvider =>
     async () => {
@@ -159,8 +199,9 @@ export function createVercelAwsIdentity(overrides: Partial<VercelAwsIdentityDepe
         const provider = dependencies.officialProvider({
           roleArn: config.roleArn,
           audience: AWS_STS_OIDC_AUDIENCE,
+          roleSessionName: config.roleSessionName,
           durationSeconds: VERCEL_WEB_SESSION_SECONDS,
-          clientConfig: { region: config.stsRegion, ignoreConfiguredEndpointUrls: true },
+          clientConfig: { region: config.stsRegion, ignoreConfiguredEndpointUrls: true, ...(attempts === undefined ? {} : { maxAttempts: 1 }) },
         });
         const credentials = await provider();
         return {

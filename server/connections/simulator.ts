@@ -31,9 +31,14 @@ export function createLocalSimulator(world: SimulatorWorld): LocalSimulator {
 
 let simulator: LocalSimulator | undefined;
 
+/** The one rule for where the simulator may exist (development/test); compositions consult it instead of catching. */
+export function isLocalSimulatorRuntime(environment: Readonly<Record<string, string | undefined>>): boolean {
+  return ALLOWED.includes(environment["NODE_ENV"] ?? "");
+}
+
 /** The process's simulator, built once from the synthetic baseline scenario; refused outside development/test. */
 export function localSimulator(environment: Readonly<Record<string, string | undefined>> = process.env): LocalSimulator {
-  if (!ALLOWED.includes(environment["NODE_ENV"] ?? "")) throw new Error("provider simulator is local/test only");
+  if (!isLocalSimulatorRuntime(environment)) throw new Error("provider simulator is local/test only");
   simulator ??= createLocalSimulator(new SimulatorWorld(parseScenario(JSON.parse(readFileSync(path.join(process.cwd(), SCENARIO), "utf8")))));
   return simulator;
 }

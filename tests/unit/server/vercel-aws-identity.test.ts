@@ -15,17 +15,20 @@ import { composeCredentialSealer } from "@/server/connections/credential-crypto"
 import {
   VERCEL_OIDC_MAX_TOKEN_LENGTH,
   VERCEL_OIDC_PREFLIGHT_MIN_TTL_SECONDS,
+  VERCEL_OIDC_TEAM_ISSUER,
+  VERCEL_PRODUCTION_SUBJECT,
   VERCEL_WEB_SESSION_SECONDS,
   createVercelAwsIdentity,
   preflightVercelOidcToken,
+  unverifiedVercelOidcClaims,
   vercelIdentityFailure,
   type VercelAwsIdentityDependencies,
 } from "@/server/connections/vercel-aws-identity";
-import { composeWebAwsCredentials, type WebAwsIdentityConfig } from "@/server/connections/web-identity";
+import { WEB_AWS_ROLE_SESSION_NAME, composeWebAwsCredentials, type WebAwsIdentityConfig } from "@/server/connections/web-identity";
 
 const ROLE = "arn:aws:iam::000000000000:role/social-intelligence-platform-dev-web-encrypt";
 const KEY = "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa";
-const CONFIG: WebAwsIdentityConfig = Object.freeze({ roleArn: ROLE, audience: AWS_STS_OIDC_AUDIENCE, stsRegion: "sa-east-1" });
+const CONFIG: WebAwsIdentityConfig = Object.freeze({ roleArn: ROLE, audience: AWS_STS_OIDC_AUDIENCE, roleSessionName: WEB_AWS_ROLE_SESSION_NAME, stsRegion: "sa-east-1" });
 const SECRET = `sensitive-${randomUUID()}`;
 const NOW = 1_800_000_000;
 const REQUEST_CONTEXT = Symbol.for("@vercel/request-context");
@@ -211,7 +214,7 @@ describe("7E.3B.12 · request isolation", () => {
 });
 
 describe("7E.3B.7–10 · official provider configuration", () => {
-  it("exact role, audience constant, explicit STS region, ignored endpoint overrides, one-hour session — nothing else", async () => {
+  it("exact role, audience constant, fixed session name, explicit STS region, ignored endpoint overrides, one-hour session — nothing else", async () => {
     setRequestHeaders({ "x-vercel-oidc-token": tokenExpiringIn(3600) });
     const official = officialSpy();
     await createVercelAwsIdentity({ officialProvider: official, nowSeconds: () => NOW })(CONFIG)();
@@ -219,12 +222,71 @@ describe("7E.3B.7–10 · official provider configuration", () => {
     expect(init).toEqual({
       roleArn: ROLE,
       audience: "sts.amazonaws.com",
+      roleSessionName: "wrenkind-vercel-web",
       durationSeconds: 3600,
       clientConfig: { region: "sa-east-1", ignoreConfiguredEndpointUrls: true },
     });
+    expect(Object.keys(init ?? {}).sort()).toEqual(["audience", "clientConfig", "durationSeconds", "roleArn", "roleSessionName"]);
+    expect(init?.roleSessionName).toBe(WEB_AWS_ROLE_SESSION_NAME);
     expect(init?.audience).toBe(AWS_STS_OIDC_AUDIENCE);
     expect(init?.audience).not.toBe("https://sts.amazonaws.com");
     expect(VERCEL_WEB_SESSION_SECONDS).toBeLessThanOrEqual(3600);
+  });
+
+  it("7E.10-B: an explicit single-attempt bound adds exactly maxAttempts 1 to the STS client; nothing else changes", async () => {
+    setRequestHeaders({ "x-vercel-oidc-token": tokenExpiringIn(3600) });
+    const official = officialSpy();
+    await createVercelAwsIdentity({ officialProvider: official, nowSeconds: () => NOW }, { maxAttempts: 1 })(CONFIG)();
+    expect(official.mock.calls[0]?.[0]).toEqual({
+      roleArn: ROLE,
+      audience: "sts.amazonaws.com",
+      roleSessionName: "wrenkind-vercel-web",
+      durationSeconds: 3600,
+      clientConfig: { region: "sa-east-1", ignoreConfiguredEndpointUrls: true, maxAttempts: 1 },
+    });
+  });
+
+  it("7E.10-B: the session name is fixed, short, non-secret and free of user, workspace or request data", () => {
+    expect(WEB_AWS_ROLE_SESSION_NAME).toBe("wrenkind-vercel-web");
+    expect(WEB_AWS_ROLE_SESSION_NAME).toMatch(/^[\w+=,.@-]{2,64}$/);
+  });
+});
+
+describe("7E.10-B · unverified issuer and subject for the diagnostic's local guard", () => {
+  const claimsToken = (payload: Record<string, unknown>): string => jwt({ exp: NOW + 3600, ...payload });
+
+  it("returns only issuer and subject, read with the adapter's precedence: the request header first, then VERCEL_OIDC_TOKEN", () => {
+    vi.stubEnv("VERCEL_OIDC_TOKEN", claimsToken({ iss: "https://env.example.test", sub: "from-env" }));
+    setRequestHeaders({ "x-vercel-oidc-token": claimsToken({ iss: VERCEL_OIDC_TEAM_ISSUER, sub: VERCEL_PRODUCTION_SUBJECT, aud: "https://vercel.com/social-intelligence", extra: SECRET }) });
+    const claims = unverifiedVercelOidcClaims(undefined, NOW);
+    expect(claims).toEqual({ issuer: VERCEL_OIDC_TEAM_ISSUER, subject: VERCEL_PRODUCTION_SUBJECT });
+    expect(Object.keys(claims)).toEqual(["issuer", "subject"]);
+    expect(JSON.stringify(claims)).not.toContain(SECRET);
+    setRequestHeaders(undefined);
+    expect(unverifiedVercelOidcClaims(undefined, NOW)).toEqual({ issuer: "https://env.example.test", subject: "from-env" });
+  });
+
+  it.each([
+    ["missing token", undefined, "IDENTITY_MISCONFIGURED"],
+    ["malformed JWT", "not-a-jwt", "IDENTITY_ACCESS_DENIED"],
+    ["expired token", jwt({ exp: NOW - 1, iss: VERCEL_OIDC_TEAM_ISSUER, sub: VERCEL_PRODUCTION_SUBJECT }), "IDENTITY_ACCESS_DENIED"],
+    ["about to expire", jwt({ exp: NOW + 30, iss: VERCEL_OIDC_TEAM_ISSUER, sub: VERCEL_PRODUCTION_SUBJECT }), "IDENTITY_UNAVAILABLE"],
+  ] as const)("%s → %s (the preflight runs first)", (_label, token, failure) => {
+    const error = (() => {
+      try {
+        unverifiedVercelOidcClaims(() => token, NOW);
+        return undefined;
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(error).toBeInstanceOf(AwsIdentityError);
+    expect((error as AwsIdentityError).failure).toBe(failure);
+  });
+
+  it("the expected identity is the Team issuer and the exact Production subject", () => {
+    expect(VERCEL_OIDC_TEAM_ISSUER).toBe("https://oidc.vercel.com/social-intelligence");
+    expect(VERCEL_PRODUCTION_SUBJECT).toBe("owner:social-intelligence:project:social-intelligence-platform:environment:production");
   });
 });
 
@@ -263,7 +325,7 @@ describe("7E.3B.13 · web composition", () => {
     const official = officialSpy();
     const factory = vi.fn(createVercelAwsIdentity({ readToken, officialProvider: official, nowSeconds: () => NOW }));
     const composed = composeCredentialSealer(kmsWebEnvironment, composeWebAwsCredentials(kmsWebEnvironment, factory));
-    expect(factory).toHaveBeenCalledWith({ roleArn: ROLE, audience: "sts.amazonaws.com", stsRegion: "sa-east-1" });
+    expect(factory).toHaveBeenCalledWith({ roleArn: ROLE, audience: "sts.amazonaws.com", roleSessionName: "wrenkind-vercel-web", stsRegion: "sa-east-1" });
     expect(readToken).not.toHaveBeenCalled();
     expect(official).not.toHaveBeenCalled();
     expect(Object.keys(composed.sealer)).toEqual(["seal"]);

@@ -79,7 +79,11 @@ describe("Vercel OIDC web identity adapter (Step 7E.3B)", () => {
 
   it("reads the token without side effects: no env write, no file, CLI, subprocess, network or .vercel access, no module-level token state", () => {
     expect(adapter).not.toMatch(/process\.env(\.\w+|\[[^\]]+\])\s*(=(?!=)|\?\?=|\|\|=)|delete\s+process\.env|Object\.assign\(\s*process\.env|Reflect\.(set|deleteProperty)\(\s*process\.env/);
-    expect(adapter).not.toMatch(/\.vercel\b|node:fs|child_process|\bspawn|\bexec\(|\bfetch\(|https?:\/\/|node:https?/);
+    // Step 7E.10-B: the ONLY URL-shaped text is the expected Team issuer, a comparison constant (never fetched).
+    const ISSUER_DECLARATION = 'export const VERCEL_OIDC_TEAM_ISSUER = "https://oidc.vercel.com/social-intelligence";';
+    expect(adapter.split(ISSUER_DECLARATION)).toHaveLength(2);
+    expect(adapter.match(/\bVERCEL_OIDC_TEAM_ISSUER\b/g)).toHaveLength(1);
+    expect(adapter.replace(ISSUER_DECLARATION, "")).not.toMatch(/\.vercel\b|node:fs|child_process|\bspawn|\bexec\(|\bfetch\(|https?:\/\/|node:https?/);
     expect(adapter).not.toMatch(/^(?:export\s+)?(?:let|var)\s/m);
     expect(adapter.match(/process\.env/g)).toHaveLength(1);
     expect(adapter).toMatch(/getContext\(\)\.headers\?\.\[OIDC_TOKEN_HEADER\] \?\? process\.env\[OIDC_TOKEN_ENV\]/);
@@ -90,14 +94,15 @@ describe("Vercel OIDC web identity adapter (Step 7E.3B)", () => {
     expect(adapter).not.toMatch(/\bAWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|REGION|DEFAULT_REGION|PROFILE|ROLE_ARN|WEB_IDENTITY_TOKEN_FILE|ENDPOINT_URL\w*)\b/);
   });
 
-  it("enters the official provider only after the preflight, with the fixed audience, the KMS key's region and endpoint overrides ignored", () => {
+  it("enters the official provider only after the preflight, with the fixed audience and session name, the KMS key's region and endpoint overrides ignored", () => {
     const preflight = adapter.indexOf("preflightVercelOidcToken(token, dependencies.nowSeconds())");
     const official = adapter.indexOf("dependencies.officialProvider(");
     expect(preflight).toBeGreaterThan(0);
     expect(official).toBeGreaterThan(preflight);
     expect(adapter.match(/dependencies\.officialProvider\(/g)).toHaveLength(1);
     expect(adapter).toMatch(/audience: AWS_STS_OIDC_AUDIENCE,/);
-    expect(adapter).toMatch(/clientConfig: \{ region: config\.stsRegion, ignoreConfiguredEndpointUrls: true \}/);
+    expect(adapter).toMatch(/roleSessionName: config\.roleSessionName,/);
+    expect(adapter).toMatch(/clientConfig: \{ region: config\.stsRegion, ignoreConfiguredEndpointUrls: true, \.\.\.\(attempts === undefined \? \{\} : \{ maxAttempts: 1 \}\) \}/);
     expect(raw).toMatch(/export const VERCEL_OIDC_PREFLIGHT_MIN_TTL_SECONDS = 120;/);
     expect(raw).toMatch(/export const VERCEL_WEB_SESSION_SECONDS = 3600;/);
   });
@@ -139,6 +144,8 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
   const DIAGNOSTIC = "jobs/integration-kms-diagnostic.ts";
   const DIAGNOSTIC_TASK = "jobs/trigger/integration/kms-worker-auth-diagnostic.ts";
   const SEAL_COMPOSITION = "server/connections/credential-crypto.ts";
+  const WEB_DIAGNOSTIC = "server/connections/web-kms-diagnostic.ts";
+  const WEB_COMPOSITION = "server/connections/runtime.ts";
   const runtime = sourceFiles(RUNTIME_ROOTS);
   const users = (pattern: RegExp): string[] => findReferences(runtime, [pattern]).map(([file]) => file).sort();
   const count = (file: string, pattern: RegExp): number => codeOf(file).match(new RegExp(pattern.source, "g"))?.length ?? 0;
@@ -156,14 +163,15 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
 
   it("only the diagnostic opts in; the product compositions (open and seal) never pass the option", () => {
     expect(users(/\bKMS_DIAGNOSTIC_AWS_ATTEMPTS\b/)).toEqual([DIAGNOSTIC]);
-    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([WORKER_ADAPTER, DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT].sort());
+    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([WORKER_ADAPTER, DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT, VERCEL_ADAPTER, WEB_DIAGNOSTIC].sort());
     expect(codeOf(DIAGNOSTIC_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/); // the Trigger.dev task retry: a separate control
     expect(codeOf(DIAGNOSTIC)).toMatch(/export const KMS_DIAGNOSTIC_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
     expect(count(DIAGNOSTIC, /composeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment, KMS_DIAGNOSTIC_AWS_ATTEMPTS\), KMS_DIAGNOSTIC_AWS_ATTEMPTS\)/)).toBe(1);
 
     // Exact call sites of every factory on the path.
     expect(users(/\bcreateKmsClient\(/)).toEqual([KMS_CLIENT, SEAL_COMPOSITION, COMPOSITION].sort());
-    expect(count(SEAL_COMPOSITION, /createKmsClient\(selection\.config, awsCredentials\)/)).toBe(1);
+    expect(count(SEAL_COMPOSITION, /createKmsClient\(/)).toBe(1);
+    expect(count(SEAL_COMPOSITION, /createKmsClient\(selection\.config, awsCredentials, attempts\)/)).toBe(1);
     expect(count(COMPOSITION, /createKmsClient\(/)).toBe(1);
     expect(count(COMPOSITION, /createKmsClient\(selection\.config, awsCredentials, attempts\)/)).toBe(1);
     expect(users(/\bintegrationWorkerAwsCredentials\(/)).toEqual([COMPOSITION, DIAGNOSTIC].sort());
@@ -177,6 +185,21 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
     expect(product).not.toMatch(/attempts|maxAttempts|KMS_DIAGNOSTIC/);
     // The composition only forwards the option; it never constructs one.
     expect(codeOf(COMPOSITION)).not.toMatch(/maxAttempts/);
+  });
+
+  it("7E.10-B web side: only the web KMS identity diagnostic opts in; the product web composition never passes the option", () => {
+    expect(users(/\bWEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS\b/)).toEqual([WEB_COMPOSITION, WEB_DIAGNOSTIC].sort());
+    expect(codeOf(WEB_DIAGNOSTIC)).toMatch(/export const WEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS: AwsSingleAttempt = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
+    // The Vercel adapter adds exactly maxAttempts 1, only when the option is present (an inline literal type).
+    expect(count(VERCEL_ADAPTER, /\.\.\.\(attempts === undefined \? \{\} : \{ maxAttempts: 1 \}\)/)).toBe(1);
+    expect(codeOf(VERCEL_ADAPTER)).toMatch(/attempts\?: \{ readonly maxAttempts: 1 \}/);
+    expect(codeOf(VERCEL_ADAPTER)).not.toMatch(/attempts\.maxAttempts|\.\.\.attempts\b|\.\.\.options\b|retryStrategy|retryMode|requestHandler/);
+    // Exact web call sites: the diagnostic composition bounds both clients; the product composition bounds neither.
+    expect(count(WEB_COMPOSITION, /composeCredentialSealer\(env, composeWebAwsCredentials\(env, createVercelAwsIdentity\(\{\}, WEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS\)\), WEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS\)/)).toBe(1);
+    expect(count(WEB_COMPOSITION, /composeCredentialSealer\(environment, composeWebAwsCredentials\(environment, WEB_AWS_IDENTITY\)\);/)).toBe(1);
+    expect(users(/\bcomposeCredentialSealer\(/)).toEqual([SEAL_COMPOSITION, WEB_COMPOSITION].sort());
+    expect(codeOf(WEB_DIAGNOSTIC)).not.toMatch(/process\.env/);
+    expect(codeOf(WEB_DIAGNOSTIC)).not.toMatch(/^(?:export\s+)?(?:let|var)\s/m);
   });
 
   it("no environment variable, shared configuration or global mutable state drives AWS retries", () => {

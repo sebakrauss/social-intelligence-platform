@@ -129,7 +129,7 @@ describe("7E.2.3/7E.2.6 · web identity seam", () => {
   it("reads the web role ARN: unset (or empty) → none; valid → role + the fixed audience; malformed → refused, never echoed", () => {
     expect(readWebAwsIdentityConfig({})).toBeUndefined();
     expect(readWebAwsIdentityConfig({ CREDENTIAL_KMS_WEB_ROLE_ARN: "" })).toBeUndefined();
-    expect(readWebAwsIdentityConfig({ CREDENTIAL_KMS_WEB_ROLE_ARN: ROLE })).toEqual({ roleArn: ROLE, audience: "sts.amazonaws.com" });
+    expect(readWebAwsIdentityConfig({ CREDENTIAL_KMS_WEB_ROLE_ARN: ROLE })).toEqual({ roleArn: ROLE, audience: "sts.amazonaws.com", roleSessionName: "wrenkind-vercel-web" });
     const bad = "arn:aws:iam::000000000000:user/not-a-role";
     let caught: unknown;
     try {
@@ -145,7 +145,7 @@ describe("7E.2.3/7E.2.6 · web identity seam", () => {
     const provider = syntheticProvider();
     const factory = vi.fn<WebAwsIdentityFactory>(() => provider);
     expect(composeWebAwsCredentials(kmsWebEnvironment(), factory)).toBe(provider);
-    expect(factory).toHaveBeenCalledWith({ roleArn: ROLE, audience: "sts.amazonaws.com", stsRegion: "sa-east-1" });
+    expect(factory).toHaveBeenCalledWith({ roleArn: ROLE, audience: "sts.amazonaws.com", roleSessionName: "wrenkind-vercel-web", stsRegion: "sa-east-1" });
     expect(provider).not.toHaveBeenCalled();
     expect(composeWebAwsCredentials(kmsWebEnvironment(), undefined)).toBeUndefined();
     expect(composeWebAwsCredentials(kmsWebEnvironment({ CREDENTIAL_KMS_WEB_ROLE_ARN: undefined }), factory)).toBeUndefined();
