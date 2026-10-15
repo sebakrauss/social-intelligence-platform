@@ -123,15 +123,39 @@ describe("web role trust statement — Vercel Production only (DUAL TRUST additi
 
   it("the README fixes dual trust, Production-only scope, no KMS policy change and no long-lived AWS keys in Vercel", () => {
     const readme = read("README.md");
-    for (const required of ["DUAL TRUST", "verbatim", "break-glass", "Preview", "Production scope only", "The KMS key policy", "AWS_ACCESS_KEY_ID", "BLOCKED_PENDING_SAFE_ROUTE_PROTECTION", "CREDENTIAL_KMS_WEB_ROLE_ARN", "Rollback"]) {
+    for (const required of ["DUAL TRUST", "verbatim", "break-glass", "Preview", "Production scope only", "The KMS key policy", "AWS_ACCESS_KEY_ID", "BLOCKED_PENDING_SAFE_ROUTE_PROTECTION", "CREDENTIAL_KMS_WEB_ROLE_ARN", "Rollback", "TEMP_PROTECTED_ROUTE_READY", "not part of the product", "WEB_KMS_DIAGNOSTIC_OPERATOR_KEY", "x-wrenkind-diagnostic-key", "One-shot is operational", "Delete `WEB_KMS_DIAGNOSTIC_OPERATOR_KEY`", "Remove the temporary route"]) {
       expect(readme, required).toContain(required);
     }
   });
 });
 
-describe("hosted web KMS identity diagnostic — invocation stays blocked", () => {
-  it("no route, page, server action or other module references the diagnostic; only the web composition wires it", () => {
-    const users = findReferences(sourceFiles(["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts"]), [/web-kms-diagnostic|\bwebKmsIdentityDiagnostic\b|\brunWebKmsIdentityDiagnostic\b/]).map(([file]) => file);
-    expect([...new Set(users)].sort()).toEqual(["server/connections/runtime.ts", "server/connections/web-kms-diagnostic.ts"]);
+describe("hosted web KMS identity diagnostic — invocation only through the TEMPORARY operator route (Step 7E.10-C0)", () => {
+  const ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts"];
+  const ROUTE = "app/api/internal/kms-web-diagnostic/route.ts";
+  const HANDLER = "server/connections/web-kms-diagnostic-route.ts";
+  const unique = (pattern: RegExp): string[] => [...new Set(findReferences(sourceFiles(ROOTS), [pattern]).map(([file]) => file))].sort();
+
+  it("the diagnostic is wired only by the web composition, the temporary handler and its one route", () => {
+    expect(unique(/web-kms-diagnostic|\bwebKmsIdentityDiagnostic\b|\brunWebKmsIdentityDiagnostic\b/)).toEqual([ROUTE, "server/connections/runtime.ts", HANDLER, "server/connections/web-kms-diagnostic.ts"].sort());
+    expect(unique(/\bwebKmsIdentityDiagnostic\b/)).toEqual([ROUTE, "server/connections/runtime.ts"].sort());
+    expect(unique(/web-kms-diagnostic-route|\bhandleWebKmsDiagnosticRequest\b/)).toEqual([ROUTE, HANDLER].sort());
+  });
+
+  it("the ephemeral operator key and its header are read only by the temporary handler (never by product composition)", () => {
+    expect(unique(/WEB_KMS_DIAGNOSTIC_OPERATOR_KEY|x-wrenkind-diagnostic-key/)).toEqual([HANDLER]);
+  });
+
+  it("app/api/internal holds only the one temporary route, and it exports POST only", () => {
+    expect(sourceFiles(["app/api/internal"])).toEqual([ROUTE]);
+    const exported = [...codeOf(ROUTE).matchAll(/^export\s+(?:async\s+)?(?:const|function)\s+(\w+)/gm)].map((m) => m[1]);
+    expect(exported.sort()).toEqual(["POST", "dynamic"]);
+  });
+
+  it("the route and its handler log nothing and reach no database, file, subprocess, Trigger.dev or network client", () => {
+    for (const file of [ROUTE, HANDLER]) {
+      expect(codeOf(file), file).not.toMatch(/console\.|createLogger|logger\.|platform\/db|persistence|node:fs|child_process|@trigger\.dev|platform\/jobs|server\/jobs|\bfetch\(|node:https?/);
+      expect(codeOf(file), file).not.toMatch(/searchParams\.get|x-vercel-oidc-token|VERCEL_OIDC_TOKEN/);
+      expect(codeOf(file), file).not.toMatch(/^(?:export\s+)?(?:let|var)\s/m);
+    }
   });
 });

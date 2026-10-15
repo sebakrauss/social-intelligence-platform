@@ -92,7 +92,8 @@ Production scope only; none of these is a long-lived AWS credential:
 ## Live proof (later gate)
 
 Through the guarded hosted web KMS identity diagnostic (`server/connections/web-kms-diagnostic.ts`). Its invocation
-is **BLOCKED_PENDING_SAFE_ROUTE_PROTECTION** until a protected route exists. The proof is accepted only with:
+was **BLOCKED_PENDING_SAFE_ROUTE_PROTECTION** until Step 7E.10-C0, and is now **TEMP_PROTECTED_ROUTE_READY** through the
+temporary operator route below. The proof is accepted only with:
 
 - exactly one AssumeRoleWithWebIdentity from the new provider, with the exact Production subject and session
   `wrenkind-vercel-web`, into the web role, without error;
@@ -101,3 +102,46 @@ is **BLOCKED_PENDING_SAFE_ROUTE_PROTECTION** until a protected route exists. The
 - no IAM user access key in either event.
 
 Rollback: restore the captured trust document exactly, then delete the OIDC provider.
+
+## Temporary invocation lifecycle (Step 7E.10-C0)
+
+The diagnostic is invoked through ONE temporary route, `POST /api/internal/kms-web-diagnostic`
+(`app/api/internal/kms-web-diagnostic/route.ts` → `server/connections/web-kms-diagnostic-route.ts`), protected by an
+EPHEMERAL operator key plus the diagnostic acknowledgement.
+
+**The temporary secret is not part of the product authentication model.** It is not an AWS credential, not a customer
+credential and not a permanent operator credential; no platform-admin role exists or is created for it. The route
+and the key exist only for the one live proof.
+
+| Contract | Value |
+|---|---|
+| Method | `POST` only (no other method is exported; GET never invokes anything) |
+| Runtime | `NODE_ENV` = `production` and `VERCEL_ENV` = `production` (the diagnostic re-checks both) |
+| Key variable | `WEB_KMS_DIAGNOSTIC_OPERATOR_KEY`, Vercel **Production** scope only; at least 32 random bytes as 64+ hex or 43+ base64url characters; absent, empty or weak → the route is inert |
+| Key header | `x-wrenkind-diagnostic-key`, exactly the configured value, compared in constant time. Never a query string, URL or body (any query string is refused) |
+| Body | exactly `{"acknowledge":"VERCEL_WEB_KMS_IDENTITY_DIAGNOSTIC_V1"}`, at most 1 KiB, no other field |
+| Refusals | every pre-diagnostic refusal is the same generic `404 {"result":"NOT_FOUND"}` |
+| Result | `200` with the sanitized outcome, or `500` with `{"result":"VERCEL_WEB_KMS_IDENTITY_DIAGNOSTIC_FAILED","failure":<closed code>}` |
+| OIDC token | never accepted from the caller: the diagnostic uses only the platform's request token |
+
+**One-shot is operational, not technical.** A serverless runtime can't guarantee a single execution with in-memory
+state, and no database table is added for it. "Exactly once" is enforced by the procedure: one manual request without
+retry, CloudTrail correlation, then deleting the key and removing the route.
+
+Lifecycle:
+
+1. Generate the high-entropy operator key locally (at least 32 random bytes); it never passes through chat or a file in
+   the repository.
+2. Provision `WEB_KMS_DIAGNOSTIC_OPERATOR_KEY` to Vercel **Production** only, marked sensitive. It is never
+   provisioned to any Trigger.dev project or worker environment (MAIN or Integration), nor to Vercel Preview or
+   Development; the Trigger plane guards are deliberately left unchanged, so this rule is operational.
+3. Configure AWS: the OIDC provider and the DUAL TRUST statement (this directory's artifacts).
+4. Configure the permanent Vercel Production KMS metadata variables (table above).
+5. Deploy the exact reviewed diagnostic commit to Production.
+6. Make ONE `POST` with the `x-wrenkind-diagnostic-key` header and the exact acknowledgement body, without retry
+   (for example `curl --retry 0`).
+7. Verify the response (the sanitized outcome) and CloudTrail (the live-proof criteria above).
+8. Delete `WEB_KMS_DIAGNOSTIC_OPERATOR_KEY` from Vercel immediately, whatever the result.
+9. Remove the temporary route, its handler and their tests in a cleanup commit.
+10. Keep the permanent OIDC identity and the KMS metadata variables only if the proof passed; otherwise roll back the
+    trust (above) and remove them.
