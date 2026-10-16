@@ -14,6 +14,9 @@
 /tsconfig.tsbuildinfo
 /step-1-final-review.zip
 
+# Local-only harnesses, evidence and tooling (git-excluded via .git/info/exclude, which the CLI does not read).
+/.wrenkind-local/
+
 # Tests, test-only configuration, disposable spikes, documentation and design artifacts.
 /tests
 /vitest.config.ts
