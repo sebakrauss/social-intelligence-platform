@@ -47,7 +47,7 @@ import { createStagingStubReadPort } from "@/integrations/providers/staging-stub
 import { readKmsKeyringConfig, selectCredentialCrypto } from "@/server/connections/environment";
 import { createIntegrationWorkerAwsCredentials } from "./integration-aws-identity";
 import { providerComposition } from "@/server/connections/provider-mode";
-import { localSimulator } from "@/server/connections/simulator";
+import { isLocalSimulatorRuntime, localSimulator } from "@/server/connections/simulator";
 import { capabilityRefreshStores, connectionWorkerStore } from "@/server/persistence/connections";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -118,6 +118,10 @@ export function createStagingStubCredentialAccess(): ProviderCredentialAccess {
  * The job runtime's provider adapters, chosen ONLY at this composition boundary (server/connections/provider-mode.ts).
  * The application services and task handlers are identical in every mode. The local-keyring guard runs first in
  * every mode (LOCAL_KEYRING_KEY outside development/test aborts).
+ *
+ * Step 7F-B: the local simulator is built only where its own rule allows it (development/test). A managed runtime
+ * composes the real credential opener and NO provider adapter (real adapters are Step 7G): every provider read port is
+ * absent, so a task fails closed at the provider boundary before any credential is opened — never a simulator fallback.
  */
 export function composeJobProviders(environment: Environment): JobComposition {
   assertNoLocalKeyringOutsideLocal(environment);
@@ -126,7 +130,7 @@ export function composeJobProviders(environment: Environment): JobComposition {
     const clock = (): Date => new Date();
     return { access: createStagingStubCredentialAccess(), providers: { read: (provider) => createStagingStubReadPort(provider, clock) } };
   }
-  const read = localSimulator(environment).read;
+  const read = isLocalSimulatorRuntime(environment) ? localSimulator(environment).read : undefined;
   const opening = composeCredentialOpener(environment, integrationWorkerAwsCredentials(environment));
   return {
     access: createCredentialAccess(opening.opener, opening.contextEnv),

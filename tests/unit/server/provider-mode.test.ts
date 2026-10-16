@@ -10,6 +10,14 @@ import { PermanentRejectedError, WebhookRejectedError, providerObjectRef, READ_O
 import { STAGING_STUB_API_VERSION, createStagingStubReadPort } from "@/integrations/providers/staging-stub";
 import { ProviderModeError, providerComposition } from "@/server/connections/provider-mode";
 import { composeJobProviders, createStagingStubCredentialAccess } from "@/jobs/connections";
+import type * as SimulatorModule from "@/server/connections/simulator";
+
+// Step 7F-B: count local-simulator constructions (the original still runs, and still refuses outside development/test).
+const simulatorCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/server/connections/simulator", async (importOriginal) => {
+  const original = await importOriginal<typeof SimulatorModule>();
+  return { ...original, localSimulator: (...args: Parameters<typeof original.localSimulator>) => { simulatorCalls.count += 1; return original.localSimulator(...args); } };
+});
 
 const PROD = { NODE_ENV: "production" } as const;
 const stub = (tier: string | undefined, extra: Record<string, string> = {}) => ({
@@ -77,15 +85,56 @@ describe("E · the existing simulator rules are unchanged", () => {
   it("no provider mode → the local simulator composition, development/test only", () => {
     expect(providerComposition({ NODE_ENV: "test" })).toEqual({ kind: "local_simulator" });
     expect(providerComposition({ NODE_ENV: "production" })).toEqual({ kind: "local_simulator" });
-    // …which still refuses to be built under a production runtime, even with a non-production tier:
-    expect(() => composeJobProviders({ NODE_ENV: "production" })).toThrow(/simulator is local\/test only/);
-    expect(() => composeJobProviders({ NODE_ENV: "production", APP_DEPLOYMENT_ENV: "preview" })).toThrow(/simulator is local\/test only/);
-    expect(() => composeJobProviders({ NODE_ENV: "production", APP_DEPLOYMENT_ENV: "staging" })).toThrow(/simulator is local\/test only/);
+    // …which is never built under a production runtime (Step 7F-B), whatever the tier: without the KMS keyring
+    // configuration the deployed composition refuses at the credential opener instead (no local fallback).
+    simulatorCalls.count = 0;
+    expect(() => composeJobProviders({ NODE_ENV: "production" })).toThrow(/credential_crypto_keyring_misconfigured/);
+    expect(() => composeJobProviders({ NODE_ENV: "production", APP_DEPLOYMENT_ENV: "preview" })).toThrow(/credential_crypto_keyring_misconfigured/);
+    expect(() => composeJobProviders({ NODE_ENV: "production", APP_DEPLOYMENT_ENV: "staging" })).toThrow(/credential_crypto_keyring_misconfigured/);
+    expect(simulatorCalls.count).toBe(0);
   });
 
   it("the staging stub is never the simulator: the simulator connection key gets the synthetic stub in staging_stub mode", () => {
     const port = composeJobProviders(stub("staging")).providers.read("simulator") as ProviderReadPort & { synthetic?: boolean };
     expect(port.synthetic).toBe(true);
+  });
+});
+
+describe("G · Step 7F-B: managed composition never builds the simulator and composes no provider adapter", () => {
+  const KEY = "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa";
+  const managed = { NODE_ENV: "production", APP_DEPLOYMENT_ENV: "staging", CREDENTIAL_CONTEXT_ENV: "dev", CREDENTIAL_KMS_KEY_ARN: KEY, CREDENTIAL_KMS_ALLOWED_KEY_ARNS: KEY };
+
+  it("managed (KMS configured): the real credential opener is composed; no simulator is built; every provider read port is absent", () => {
+    simulatorCalls.count = 0;
+    const composed = composeJobProviders(managed);
+    expect(simulatorCalls.count).toBe(0);
+    expect(typeof composed.access.withCredential).toBe("function");
+    for (const provider of ["meta", "tiktok", "simulator"] as const) expect(composed.providers.read(provider), provider).toBeUndefined();
+  });
+
+  it("no simulator fallback in managed mode, whatever the tier", () => {
+    simulatorCalls.count = 0;
+    for (const tier of [undefined, "preview", "staging", "production"]) {
+      const environment = tier === undefined ? { ...managed, APP_DEPLOYMENT_ENV: undefined } : { ...managed, APP_DEPLOYMENT_ENV: tier };
+      expect(composeJobProviders(environment).providers.read("simulator"), String(tier)).toBeUndefined();
+    }
+    expect(simulatorCalls.count).toBe(0);
+  });
+
+  it("local/test runtime still composes the simulator where its own rule allows it", () => {
+    simulatorCalls.count = 0;
+    const composed = composeJobProviders({ NODE_ENV: "test", LOCAL_KEYRING_KEY: Buffer.alloc(32, 7).toString("base64url") });
+    expect(simulatorCalls.count).toBe(1);
+    expect(composed.providers.read("simulator")).toBeDefined();
+    expect(composed.providers.read("meta")).toBeUndefined();
+  });
+
+  it("staging_stub is unchanged: synthetic port, synthetic lent credential, no simulator built", async () => {
+    simulatorCalls.count = 0;
+    const composed = composeJobProviders(stub("staging"));
+    expect(simulatorCalls.count).toBe(0);
+    const lent = await composed.access.withCredential({ workspaceId: WORKSPACE, credentialId: "00000000-0000-4000-8000-000000000001", envelope: new Uint8Array([1, 2, 3]) }, (credential) => Promise.resolve(credential.id));
+    expect(lent).toBe("staging-stub");
   });
 });
 

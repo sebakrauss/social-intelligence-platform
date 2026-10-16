@@ -8,7 +8,7 @@
  * privileges may trigger the task by id, so every precondition must fail before AWS transport is reachable.
  */
 import { EventEmitter } from "node:events";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import { Readable } from "node:stream";
@@ -16,7 +16,8 @@ import { inspect } from "node:util";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeProviderCredential } from "@/modules/connections";
+import { discoverConnectionAssets, encodeProviderCredential } from "@/modules/connections";
+import { parseCorrelationId } from "@/domain/correlation";
 import { providerCredential } from "@/integrations/providers/contract";
 import { kmsEncryptionContext } from "@/platform/crypto/credentials/aws-kms-common";
 import { KMS_PROVIDER_CREDENTIALS_KEY_REF } from "@/platform/crypto/credentials/aws-kms-config";
@@ -797,11 +798,27 @@ describe("the fixture variable never reaches another plane", () => {
 });
 
 describe("the existing integration tasks stay inert with APP_DEPLOYMENT_ENV=staging and the diagnostic configuration", () => {
-  it("without CAPABILITY_PROVIDER_MODE the product composition refuses (simulator is local/test only) before any AWS request", async () => {
+  it("Step 7F-B: without CAPABILITY_PROVIDER_MODE the product composition builds the real opener but NO provider adapter and no simulator; a discovery run fails closed at the provider boundary and nothing reaches AWS", async () => {
     const world = kmsWorld();
-    const env = useEnv(deployed((await sealFixture(world)).raw));
+    const fixture = await sealFixture(world);
+    const env = useEnv(deployed(fixture.raw));
     const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
-    expect(() => composeJobProviders(env)).toThrow(/simulator is local\/test only/);
+    const composition = composeJobProviders(env);
+    for (const provider of ["meta", "tiktok", "simulator"] as const) expect(composition.providers.read(provider), provider).toBeUndefined();
+    const workspaceId = parseWorkspaceId(KMS_DIAGNOSTIC_WORKSPACE_ID);
+    const correlationId = parseCorrelationId(randomUUID());
+    if (workspaceId === undefined || correlationId === undefined) throw new Error("synthetic id");
+    const connection = { id: randomUUID(), status: "ACTIVE", provider: "meta", activeCredentialId: KMS_DIAGNOSTIC_CREDENTIAL_ID };
+    const store = {
+      connections: { get: () => Promise.resolve(connection) },
+      credentials: { load: () => Promise.resolve({ connectionId: connection.id, envelope: new Uint8Array(Buffer.from(fixture.envelope, "base64")) }) },
+    };
+    const run = discoverConnectionAssets(
+      { inScope: (work) => work(store as never), access: composition.access, providers: composition.providers, clock: () => new Date(), newId: randomUUID },
+      { workspaceId, connectionId: connection.id, outboxId: randomUUID(), correlationId },
+    );
+    await expect(run).rejects.toMatchObject({ code: "NOT_FOUND" });
+    // The credential was loaded but never opened: no AssumeRole, no Decrypt, no other request.
     expect(exchanges).toEqual([]);
   });
 
