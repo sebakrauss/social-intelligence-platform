@@ -25,8 +25,7 @@ import { webUnitOfWork } from "@/server/persistence/runtime";
 import { createActionPipeline } from "@/server/pipeline";
 import type { ConnectionAuthorizationDependencies } from "./authorization";
 import { composeCredentialSealer } from "./credential-crypto";
-import { VERCEL_OIDC_TEAM_ISSUER, VERCEL_PRODUCTION_SUBJECT, createVercelAwsIdentity, unverifiedVercelOidcClaims, vercelAwsIdentity } from "./vercel-aws-identity";
-import { WEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS, runWebKmsIdentityDiagnostic, type WebKmsDiagnosticOutcome } from "./web-kms-diagnostic";
+import { vercelAwsIdentity } from "./vercel-aws-identity";
 import { composeWebAwsCredentials, type WebAwsIdentityFactory } from "./web-identity";
 import { isLocalSimulatorRuntime, localSimulator } from "./simulator";
 
@@ -87,21 +86,6 @@ function compose(environment: Environment): Composition {
   const crypto = composeCredentialSealer(environment, composeWebAwsCredentials(environment, WEB_AWS_IDENTITY));
   const sealing = createCredentialSealing(crypto.sealer, crypto.contextEnv);
   return { commands: createConnectionCommands({ secrets, providers }), providers, secrets, sealing };
-}
-
-/**
- * The web KMS identity diagnostic's production composition (Step 7E.10-B; ./web-kms-diagnostic.ts): the product
- * sealer composition and the product Vercel identity, each bounded to ONE AWS attempt. No route invokes it
- * (BLOCKED_PENDING_SAFE_ROUTE_PROTECTION); nothing is composed until every diagnostic guard passed.
- */
-export function webKmsIdentityDiagnostic(payload: unknown, environment: Environment = process.env): Promise<WebKmsDiagnosticOutcome> {
-  return runWebKmsIdentityDiagnostic(payload, environment, {
-    nodeVersion: process.version,
-    readClaims: () => unverifiedVercelOidcClaims(),
-    expected: { issuer: VERCEL_OIDC_TEAM_ISSUER, subject: VERCEL_PRODUCTION_SUBJECT },
-    composeSealer: (env) =>
-      composeCredentialSealer(env, composeWebAwsCredentials(env, createVercelAwsIdentity({}, WEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS)), WEB_KMS_DIAGNOSTIC_AWS_ATTEMPTS),
-  });
 }
 
 /** Per-request dependencies: the shared composition plus a pipeline bound to this request's identity. */

@@ -4,7 +4,7 @@
  * evaluate an OFFLINE model of the trust statement's StringEquals conditions. The model documents intent; it never
  * proves AWS behavior (the live proof does, through CloudTrail).
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectSecrets } from "@/domain/secret-patterns";
@@ -20,6 +20,7 @@ const ISSUER_HOST_PATH = "oidc.vercel.com/social-intelligence";
 const SUBJECT = "owner:social-intelligence:project:social-intelligence-platform:environment:production";
 const APPROVED_PLACEHOLDERS = ["<DEV_AWS_PARTITION>", "<DEV_AWS_ACCOUNT_ID>"];
 const ADAPTER = "server/connections/vercel-aws-identity.ts";
+const RUNTIME_ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts", "trigger.config.ts", "trigger.integration.config.ts"];
 
 const read = (file: string): string => readFileSync(path.join(REPOSITORY_ROOT, DIR, file), "utf8");
 const json = (file: string): Record<string, unknown> => JSON.parse(read(path.join("artifacts", file))) as Record<string, unknown>;
@@ -96,12 +97,13 @@ describe("web role trust statement — Vercel Production only (DUAL TRUST additi
     expect(raw).not.toMatch(/[*?]|StringLike|ForAnyValue|ForAllValues|IfExists|NotPrincipal|NotAction/);
   });
 
-  it("matches the source contract: audience constant, fixed session name, the adapter's expected issuer and subject", () => {
+  it("matches the source contract: the audience constant, the fixed session name and the exact Production subject", () => {
     const conditions = (statement["Condition"] as { StringEquals: Record<string, string> }).StringEquals;
     expect(conditions[`${ISSUER_HOST_PATH}:aud`]).toBe(AWS_STS_OIDC_AUDIENCE);
+    expect(AWS_STS_OIDC_AUDIENCE).toBe("sts.amazonaws.com");
     expect(conditions["sts:RoleSessionName"]).toBe(WEB_AWS_ROLE_SESSION_NAME);
-    expect(codeOf(ADAPTER)).toContain(`export const VERCEL_OIDC_TEAM_ISSUER = "${ISSUER}";`);
-    expect(codeOf(ADAPTER)).toContain(`export const VERCEL_PRODUCTION_SUBJECT = "${conditions[`${ISSUER_HOST_PATH}:sub`] ?? ""}";`);
+    expect(WEB_AWS_ROLE_SESSION_NAME).toBe("wrenkind-vercel-web");
+    expect(conditions[`${ISSUER_HOST_PATH}:sub`]).toBe(SUBJECT);
   });
 
   it("offline model: the exact Production request is the ONLY admitted request", () => {
@@ -123,39 +125,32 @@ describe("web role trust statement — Vercel Production only (DUAL TRUST additi
 
   it("the README fixes dual trust, Production-only scope, no KMS policy change and no long-lived AWS keys in Vercel", () => {
     const readme = read("README.md");
-    for (const required of ["DUAL TRUST", "verbatim", "break-glass", "Preview", "Production scope only", "The KMS key policy", "AWS_ACCESS_KEY_ID", "BLOCKED_PENDING_SAFE_ROUTE_PROTECTION", "CREDENTIAL_KMS_WEB_ROLE_ARN", "Rollback", "TEMP_PROTECTED_ROUTE_READY", "not part of the product", "WEB_KMS_DIAGNOSTIC_OPERATOR_KEY", "x-wrenkind-diagnostic-key", "One-shot is operational", "Delete `WEB_KMS_DIAGNOSTIC_OPERATOR_KEY`", "Remove the temporary route"]) {
+    for (const required of ["DUAL TRUST", "verbatim", "break-glass", "Preview", "Production scope only", "The KMS key policy", "AWS_ACCESS_KEY_ID", "CREDENTIAL_KMS_WEB_ROLE_ARN", "Rollback", "PASS_ALIGNED_LIVE_PROVEN_CLEANED", "2026-10-16", "REMOVED AFTER PROOF", "REMOVED FROM VERCEL PRODUCTION", "DELETED AFTER PROOF", "RESTORED_TO_STANDARD_PROTECTION"]) {
       expect(readme, required).toContain(required);
     }
   });
 });
 
-describe("hosted web KMS identity diagnostic — invocation only through the TEMPORARY operator route (Step 7E.10-C0)", () => {
-  const ROOTS = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools", "proxy.ts", "next.config.ts"];
-  const ROUTE = "app/api/internal/kms-web-diagnostic/route.ts";
-  const HANDLER = "server/connections/web-kms-diagnostic-route.ts";
-  const unique = (pattern: RegExp): string[] => [...new Set(findReferences(sourceFiles(ROOTS), [pattern]).map(([file]) => file))].sort();
+describe("Step 7E.10 cleanup — the temporary hosted KMS diagnostic is gone; the permanent identity remains", () => {
+  const references = (pattern: RegExp): string[] => [...new Set(findReferences(sourceFiles(RUNTIME_ROOTS), [pattern]).map(([file]) => file))];
 
-  it("the diagnostic is wired only by the web composition, the temporary handler and its one route", () => {
-    expect(unique(/web-kms-diagnostic|\bwebKmsIdentityDiagnostic\b|\brunWebKmsIdentityDiagnostic\b/)).toEqual([ROUTE, "server/connections/runtime.ts", HANDLER, "server/connections/web-kms-diagnostic.ts"].sort());
-    expect(unique(/\bwebKmsIdentityDiagnostic\b/)).toEqual([ROUTE, "server/connections/runtime.ts"].sort());
-    expect(unique(/web-kms-diagnostic-route|\bhandleWebKmsDiagnosticRequest\b/)).toEqual([ROUTE, HANDLER].sort());
+  it("A · no versioned route, handler or service for the retired diagnostic (nothing under app/api/internal)", () => {
+    expect(existsSync(path.join(REPOSITORY_ROOT, "app/api/internal"))).toBe(false);
+    for (const file of ["server/connections/web-kms-diagnostic.ts", "server/connections/web-kms-diagnostic-route.ts"]) expect(existsSync(path.join(REPOSITORY_ROOT, file)), file).toBe(false);
+    expect(references(/kms-web-diagnostic|web-kms-diagnostic|\bwebKmsIdentityDiagnostic\b|\brunWebKmsIdentityDiagnostic\b/)).toEqual([]);
   });
 
-  it("the ephemeral operator key and its header are read only by the temporary handler (never by product composition)", () => {
-    expect(unique(/WEB_KMS_DIAGNOSTIC_OPERATOR_KEY|x-wrenkind-diagnostic-key/)).toEqual([HANDLER]);
+  it("B/C · no runtime source reads the retired operator key or carries the retired acknowledgement", () => {
+    expect(references(/WEB_KMS_DIAGNOSTIC_OPERATOR_KEY|x-wrenkind-diagnostic-key/)).toEqual([]);
+    expect(references(/VERCEL_WEB_KMS_IDENTITY_DIAGNOSTIC_V1/)).toEqual([]);
   });
 
-  it("app/api/internal holds only the one temporary route, and it exports POST only", () => {
-    expect(sourceFiles(["app/api/internal"])).toEqual([ROUTE]);
-    const exported = [...codeOf(ROUTE).matchAll(/^export\s+(?:async\s+)?(?:const|function)\s+(\w+)/gm)].map((m) => m[1]);
-    expect(exported.sort()).toEqual(["POST", "dynamic"]);
-  });
-
-  it("the route and its handler log nothing and reach no database, file, subprocess, Trigger.dev or network client", () => {
-    for (const file of [ROUTE, HANDLER]) {
-      expect(codeOf(file), file).not.toMatch(/console\.|createLogger|logger\.|platform\/db|persistence|node:fs|child_process|@trigger\.dev|platform\/jobs|server\/jobs|\bfetch\(|node:https?/);
-      expect(codeOf(file), file).not.toMatch(/searchParams\.get|x-vercel-oidc-token|VERCEL_OIDC_TOKEN/);
-      expect(codeOf(file), file).not.toMatch(/^(?:export\s+)?(?:let|var)\s/m);
-    }
+  it("D/E/F · the permanent hosted identity remains: the adapter, the seam, the fixed session name and the audience", () => {
+    expect(existsSync(path.join(REPOSITORY_ROOT, ADAPTER))).toBe(true);
+    expect(codeOf(ADAPTER)).toMatch(/roleSessionName: config\.roleSessionName,/);
+    expect(codeOf(ADAPTER)).toMatch(/audience: AWS_STS_OIDC_AUDIENCE,/);
+    expect(codeOf("server/connections/web-identity.ts")).toContain(`export const WEB_AWS_ROLE_SESSION_NAME = "wrenkind-vercel-web";`);
+    expect(codeOf("server/connections/runtime.ts")).toMatch(/composeCredentialSealer\(environment, composeWebAwsCredentials\(environment, WEB_AWS_IDENTITY\)\);/);
+    expect(codeOf("server/connections/runtime.ts")).toMatch(/isLocalSimulatorRuntime\(environment\) \? \{ simulator: localSimulator\(environment\)\.authorization \} : \{\}/);
   });
 });

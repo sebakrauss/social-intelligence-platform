@@ -565,27 +565,6 @@ module.exports = {
       from: { pathNot: "^(server/connections/runtime\\.ts|tests/unit/server/vercel-aws-identity\\.test\\.ts)$" },
       to: { path: "^server/connections/vercel-aws-identity\\.ts$" },
     },
-    {
-      name: "web-kms-diagnostic-composition-only",
-      severity: "error",
-      comment: "Step 7E.10-B/C0: the hosted web KMS identity diagnostic is composed only by the web's connection runtime (server/connections/runtime.ts) and reached only by the TEMPORARY operator route handler (server/connections/web-kms-diagnostic-route.ts) and tests. No other app/ route, ui/ module, job or server module imports it.",
-      from: { pathNot: "^(server/connections/runtime\\.ts|server/connections/web-kms-diagnostic-route\\.ts|tests/)" },
-      to: { path: "^server/connections/web-kms-diagnostic\\.ts$" },
-    },
-    {
-      name: "web-kms-diagnostic-route-temporary-only",
-      severity: "error",
-      comment: "Step 7E.10-C0: the TEMPORARY operator route handler is imported only by its one app route (app/api/internal/kms-web-diagnostic/route.ts) and tests. It is removed after the live proof.",
-      from: { pathNot: "^(app/api/internal/kms-web-diagnostic/route\\.ts|tests/)" },
-      to: { path: "^server/connections/web-kms-diagnostic-route\\.ts$" },
-    },
-    {
-      name: "web-kms-diagnostic-route-no-side-effects",
-      severity: "error",
-      comment: "Step 7E.10-C0: the temporary route and its handler reach no database, persistence, job runtime, Trigger.dev, file system or subprocess directly.",
-      from: { path: "^(app/api/internal/kms-web-diagnostic/route|server/connections/web-kms-diagnostic-route)\\.ts$" },
-      to: { path: "^(platform/db|server/persistence|platform/jobs|server/jobs|jobs)/|(^|/)node_modules/@trigger\\.dev/|^(node:)?(fs|fs/promises|child_process)$" },
-    },
 
     // ── Hygiene ──────────────────────────────────────────────────────────────────────────────
     {

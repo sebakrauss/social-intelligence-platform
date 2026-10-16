@@ -15,12 +15,9 @@ import { composeCredentialSealer } from "@/server/connections/credential-crypto"
 import {
   VERCEL_OIDC_MAX_TOKEN_LENGTH,
   VERCEL_OIDC_PREFLIGHT_MIN_TTL_SECONDS,
-  VERCEL_OIDC_TEAM_ISSUER,
-  VERCEL_PRODUCTION_SUBJECT,
   VERCEL_WEB_SESSION_SECONDS,
   createVercelAwsIdentity,
   preflightVercelOidcToken,
-  unverifiedVercelOidcClaims,
   vercelIdentityFailure,
   type VercelAwsIdentityDependencies,
 } from "@/server/connections/vercel-aws-identity";
@@ -233,60 +230,9 @@ describe("7E.3B.7–10 · official provider configuration", () => {
     expect(VERCEL_WEB_SESSION_SECONDS).toBeLessThanOrEqual(3600);
   });
 
-  it("7E.10-B: an explicit single-attempt bound adds exactly maxAttempts 1 to the STS client; nothing else changes", async () => {
-    setRequestHeaders({ "x-vercel-oidc-token": tokenExpiringIn(3600) });
-    const official = officialSpy();
-    await createVercelAwsIdentity({ officialProvider: official, nowSeconds: () => NOW }, { maxAttempts: 1 })(CONFIG)();
-    expect(official.mock.calls[0]?.[0]).toEqual({
-      roleArn: ROLE,
-      audience: "sts.amazonaws.com",
-      roleSessionName: "wrenkind-vercel-web",
-      durationSeconds: 3600,
-      clientConfig: { region: "sa-east-1", ignoreConfiguredEndpointUrls: true, maxAttempts: 1 },
-    });
-  });
-
   it("7E.10-B: the session name is fixed, short, non-secret and free of user, workspace or request data", () => {
     expect(WEB_AWS_ROLE_SESSION_NAME).toBe("wrenkind-vercel-web");
     expect(WEB_AWS_ROLE_SESSION_NAME).toMatch(/^[\w+=,.@-]{2,64}$/);
-  });
-});
-
-describe("7E.10-B · unverified issuer and subject for the diagnostic's local guard", () => {
-  const claimsToken = (payload: Record<string, unknown>): string => jwt({ exp: NOW + 3600, ...payload });
-
-  it("returns only issuer and subject, read with the adapter's precedence: the request header first, then VERCEL_OIDC_TOKEN", () => {
-    vi.stubEnv("VERCEL_OIDC_TOKEN", claimsToken({ iss: "https://env.example.test", sub: "from-env" }));
-    setRequestHeaders({ "x-vercel-oidc-token": claimsToken({ iss: VERCEL_OIDC_TEAM_ISSUER, sub: VERCEL_PRODUCTION_SUBJECT, aud: "https://vercel.com/social-intelligence", extra: SECRET }) });
-    const claims = unverifiedVercelOidcClaims(undefined, NOW);
-    expect(claims).toEqual({ issuer: VERCEL_OIDC_TEAM_ISSUER, subject: VERCEL_PRODUCTION_SUBJECT });
-    expect(Object.keys(claims)).toEqual(["issuer", "subject"]);
-    expect(JSON.stringify(claims)).not.toContain(SECRET);
-    setRequestHeaders(undefined);
-    expect(unverifiedVercelOidcClaims(undefined, NOW)).toEqual({ issuer: "https://env.example.test", subject: "from-env" });
-  });
-
-  it.each([
-    ["missing token", undefined, "IDENTITY_MISCONFIGURED"],
-    ["malformed JWT", "not-a-jwt", "IDENTITY_ACCESS_DENIED"],
-    ["expired token", jwt({ exp: NOW - 1, iss: VERCEL_OIDC_TEAM_ISSUER, sub: VERCEL_PRODUCTION_SUBJECT }), "IDENTITY_ACCESS_DENIED"],
-    ["about to expire", jwt({ exp: NOW + 30, iss: VERCEL_OIDC_TEAM_ISSUER, sub: VERCEL_PRODUCTION_SUBJECT }), "IDENTITY_UNAVAILABLE"],
-  ] as const)("%s → %s (the preflight runs first)", (_label, token, failure) => {
-    const error = (() => {
-      try {
-        unverifiedVercelOidcClaims(() => token, NOW);
-        return undefined;
-      } catch (e) {
-        return e;
-      }
-    })();
-    expect(error).toBeInstanceOf(AwsIdentityError);
-    expect((error as AwsIdentityError).failure).toBe(failure);
-  });
-
-  it("the expected identity is the Team issuer and the exact Production subject", () => {
-    expect(VERCEL_OIDC_TEAM_ISSUER).toBe("https://oidc.vercel.com/social-intelligence");
-    expect(VERCEL_PRODUCTION_SUBJECT).toBe("owner:social-intelligence:project:social-intelligence-platform:environment:production");
   });
 });
 
