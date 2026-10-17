@@ -44,3 +44,74 @@ Owner: `server/connections/meta-app-config.ts`, read only where the Meta authori
 
 Meta is authorizable in the domain, but no Meta authorization adapter, read adapter or HTTP transport exists: Meta
 authorization fails closed everywhere, and the repository has no Meta remote-call capability.
+
+## Authoritative FLfB authorization contract (Step 7G-D1)
+
+Retrieved 2026-10-17 from Meta-owned documentation only (the Meta pages carry no visible revision date; the
+Graph changelog dates its versions). Placeholders in braces stand for runtime values; none is recorded here.
+
+| Ref | Source |
+|---|---|
+| S1 | Facebook Login for Business — `https://developers.facebook.com/documentation/facebook-login/facebook-login-for-business` (same content at `/docs/facebook-login/facebook-login-for-business`) |
+| S2 | Manually Build a Login Flow — `https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow` (S1 links its `#logindialog` and `#exchangecode` sections) |
+| S3 | Graph API versioning — `https://developers.facebook.com/docs/graph-api/guides/versioning` |
+| S4 | Graph API changelog — `https://developers.facebook.com/docs/graph-api/changelog` |
+
+**G1 — authorization-code grant with a User Access Token configuration: SUPPORTED, with `response_type=code` and
+`override_default_response_type=true`.**
+
+- S1, access-token comparison, user access tokens: "Implicit grant by default, and can support authorization code
+  grant".
+- S1 defines the override: "When true, any response types passed in the `response_type` will take precedence over
+  the default types". The system-user section, the only one with an example, sets `response_type` to `code` and says
+  "`override_default_response_type` must be set to `true`".
+- Conclusion: a configuration's default governs unless the override is true, and a user-token configuration defaults
+  to implicit. So a server-side code flow sends both parameters. This is derived from the documented semantics; S1
+  shows no user-token example. First live confirmation: 7G-H.
+
+**G2 — the dialog is the Facebook Login manual-flow dialog plus `config_id`.**
+
+- S1: "When invoking the login dialog and setting the redirect URL, include your configuration ID as an optional
+  parameter (although scope can still be included, we recommend that you do not use it)". The link targets
+  S2 `#logindialog`.
+- S2: `https://www.facebook.com/v25.0/dialog/oauth?client_id={app-id}&redirect_uri={redirect-uri}&state={state-param}`.
+  `state` is "used for preventing Cross-site Request Forgery". The `code` response type: "Response data is included
+  as URL parameters and contains code parameter".
+- Origin `https://www.facebook.com`, path `/{version}/dialog/oauth`. S3: the dialog is versioned like Graph calls,
+  and a call without a version uses the one set in the app dashboard (the fetched page was localized; paraphrased).
+- First-slice parameter set: `client_id`, `config_id`, `redirect_uri`, `state`, `response_type=code`,
+  `override_default_response_type=true`.
+- Never sent: `scope`, PKCE parameters, `client_secret`, the Client Token.
+
+**G3 — token exchange is the manual-flow exchange; `redirect_uri` REQUIRED, exact match.**
+
+- S1, after the code redirect: "See Exchanging Code for an Access Token for more information about this step",
+  linking to S2 `#exchangecode`. S1's own example (system-user section, invoked through the JS SDK) omits
+  `redirect_uri`; it does not govern the redirect-based manual flow.
+- S2: `GET https://graph.facebook.com/v25.0/oauth/access_token?client_id={app-id}&redirect_uri={redirect-uri}&client_secret={app-secret}&code={code-parameter}`.
+  `redirect_uri`: "This argument is required and must be the same as the original request_uri that you used when
+  starting the OAuth login process".
+- Response (S2): `{"access_token": …, "token_type": …, "expires_in": …}`. S1 calls a user access token "short-lived".
+  No refresh token, user id or scope is documented in the response.
+
+**Callback.**
+
+- Success (`response_type=code`): query parameters `code` and `state`.
+- Cancellation (S2): `?error_reason=user_denied&error=access_denied&error_description=…`. S2's example carries no
+  `state`; whether `state` accompanies an error is unstated. Policy: a denial without a bindable state is MALFORMED
+  (fail closed). `error_description` is never interpreted.
+
+**Version.**
+
+- REQUIRED_VERSION: none documented. Any available version works. An unversioned call depends on the app dashboard
+  setting, and S3 recommends always specifying the version.
+- EXAMPLE_VERSION: `v25.0` in every S1/S2 example.
+- S4: v25.0 was introduced on 2026-02-18 and is available until 2028-07-29. v26.0 (2026-07-29) is the latest.
+- First-slice policy: pin `v25.0` explicitly, one constant for the dialog, the token exchange and the 7G-E Graph
+  reads. A version upgrade is a deliberate, reviewed change.
+
+**Remaining uncertainties (live-only, 7G-H).**
+
+- That a user-token configuration returns a `code` with the override.
+- Whether Meta echoes `state` on a denial.
+- The exact `expires_in` of the short-lived user token.
