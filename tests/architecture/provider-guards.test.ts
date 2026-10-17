@@ -10,7 +10,7 @@
  *
  * Dependency-direction rules (contract purity, mutation-port reachability) live in .dependency-cruiser.cjs.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -25,7 +25,7 @@ import {
   type ReadOperation,
 } from "@/integrations/providers/contract";
 import type { ProviderMutationPort } from "@/integrations/providers/contract/mutation-port";
-import { codeOf, sourceFiles } from "../support/source-scan";
+import { PLANE_ENVIRONMENT_GUARD, codeOf, codeWithoutPlaneRefusals, findReferences, sourceFiles } from "../support/source-scan";
 
 const root = path.resolve(import.meta.dirname, "../..");
 
@@ -121,6 +121,30 @@ describe("dependencies", () => {
     const names = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies });
     const forbidden = /facebook|^fb$|instagram|tiktok|meta-?(business|graph|sdk)|^axios$|^node-fetch$|^undici$|^got$|^superagent$|^request$/i;
     expect(names.filter((name) => forbidden.test(name))).toEqual([]);
+  });
+});
+
+describe("Meta enablement (Step 7G-C): domain and hosted configuration only, no adapter", () => {
+  const RUNTIME = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "proxy.ts", "next.config.ts", "trigger.config.ts", "trigger.integration.config.ts"];
+  const META_APP_NAMES = /\bPROVIDER_META_(CLIENT_ID|CONFIG_ID|CLIENT_SECRET)\b/;
+  const META_APP_CONFIG = "server/connections/meta-app-config.ts";
+
+  it("the Meta app configuration is named only by its hosted-web owner and, to refuse it, the jobs per-plane contract", () => {
+    expect(findReferences(sourceFiles(RUNTIME), [META_APP_NAMES]).map(([file]) => file)).toEqual([PLANE_ENVIRONMENT_GUARD, META_APP_CONFIG]);
+    expect(META_APP_NAMES.test(codeWithoutPlaneRefusals(PLANE_ENVIRONMENT_GUARD))).toBe(false);
+  });
+
+  it("no runtime code configures or reads a Meta Client Token", () => {
+    expect(findReferences(sourceFiles(RUNTIME), [/META_CLIENT_TOKEN|\bclient_token\b|\bclientToken\b/])).toEqual([]);
+  });
+
+  it("no Meta adapter exists yet: no integrations/providers/meta tree, no Meta port composed, the configuration read by nobody", () => {
+    expect(existsSync(path.join(root, "integrations/providers/meta"))).toBe(false);
+    expect(readdirSync(path.join(root, "integrations/providers")).sort()).toEqual(["contract", "simulator", "staging-stub"]);
+    const web = codeOf("server/connections/runtime.ts");
+    expect(web).not.toMatch(/meta-app-config|readMetaAppConfig/);
+    expect(web).toMatch(/isLocalSimulatorRuntime\(environment\) \? \{ simulator: localSimulator\(environment\)\.authorization \} : \{\}/);
+    expect(findReferences(sourceFiles(RUNTIME).filter((file) => file !== META_APP_CONFIG), [/meta-app-config|readMetaAppConfig/])).toEqual([]);
   });
 });
 

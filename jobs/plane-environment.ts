@@ -15,6 +15,11 @@
  *   INTEGRATION_KMS_DIAGNOSTIC_FIXTURE           the synthetic envelope of the integration-only KMS worker-auth
  *                                                diagnostic (Step 7E.7-B; jobs/integration-kms-diagnostic.ts)
  *
+ *   PROVIDER_META_CLIENT_ID, PROVIDER_META_CONFIG_ID, PROVIDER_META_CLIENT_SECRET
+ *                                                the Meta app configuration (Step 7G-C): hosted web only
+ *                                                (server/connections/meta-app-config.ts). With "Require App Secret"
+ *                                                OFF no jobs plane needs any of it, so BOTH planes refuse all three
+ *
  * The two Trigger keys are orchestration credentials — never AWS identity — and neither ever falls back to
  * TRIGGER_SECRET_KEY (the project's own key that Trigger.dev injects into each run). Partial DB separation: the
  * integration plane never holds the system database credential; the main plane still needs the worker one (Move saga).
@@ -35,6 +40,9 @@ export const INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV = "INTEGRATION_KMS_DIAGNOSTI
 /** The standard AWS SDK credential-chain variables: never an identity source of the integration worker. */
 const AWS_CREDENTIAL_CHAIN_VARIABLES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE"];
 
+/** The hosted web's Meta app configuration (Step 7G-C): never a jobs-plane variable. */
+const PROVIDER_META_APP_VARIABLES = ["PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET"];
+
 /** Variables a deployed run of each plane must NOT hold. */
 export const PLANE_FORBIDDEN_VARIABLES: Readonly<Record<ExecutionPlane, readonly string[]>> = Object.freeze({
   main: Object.freeze([
@@ -43,8 +51,9 @@ export const PLANE_FORBIDDEN_VARIABLES: Readonly<Record<ExecutionPlane, readonly
     INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY_ENV,
     INTEGRATION_AWS_WORKER_ROLE_ARN_ENV,
     INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV,
+    ...PROVIDER_META_APP_VARIABLES,
   ]),
-  integration: Object.freeze(["DATABASE_SYSTEM_URL", INTEGRATION_TASK_OPERATOR_KEY_ENV, ...AWS_CREDENTIAL_CHAIN_VARIABLES]),
+  integration: Object.freeze(["DATABASE_SYSTEM_URL", INTEGRATION_TASK_OPERATOR_KEY_ENV, ...AWS_CREDENTIAL_CHAIN_VARIABLES, ...PROVIDER_META_APP_VARIABLES]),
 });
 
 type Environment = Readonly<Record<string, string | undefined>>;

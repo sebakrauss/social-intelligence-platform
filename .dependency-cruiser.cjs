@@ -565,6 +565,13 @@ module.exports = {
       from: { pathNot: "^(server/connections/runtime\\.ts|tests/unit/server/vercel-aws-identity\\.test\\.ts)$" },
       to: { path: "^server/connections/vercel-aws-identity\\.ts$" },
     },
+    {
+      name: "meta-app-config-web-composition-only",
+      severity: "error",
+      comment: "Step 7G-C: the Meta app configuration (App ID, login configuration ID, App Secret) belongs to the hosted web. Only the web's connection runtime (server/connections/runtime.ts, where the Meta adapter is composed from Step 7G-D) reads it; the jobs planes, app/, ui/, modules and provider adapters never reach it — adapters receive explicit values from the composition.",
+      from: { pathNot: "^(server/connections/runtime\\.ts|tests/unit/server/meta-app-config\\.test\\.ts)$" },
+      to: { path: "^server/connections/meta-app-config\\.ts$" },
+    },
 
     // ── Hygiene ──────────────────────────────────────────────────────────────────────────────
     {

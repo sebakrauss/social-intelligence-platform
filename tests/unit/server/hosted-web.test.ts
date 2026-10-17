@@ -138,6 +138,12 @@ describe("6B.4 · forbidden configuration in the hosted web runtime", () => {
 
   // Step 7D: the local keyring's KEK never reaches a hosted web; the web's own PKCE secret and the non-secret KMS
   // keyring configuration remain allowed.
+  it("the hosted web owns the Meta app configuration (Step 7G-C): it is allowed here and refused by the jobs planes instead", () => {
+    const meta = { PROVIDER_META_CLIENT_ID: "synthetic", PROVIDER_META_CONFIG_ID: "synthetic", PROVIDER_META_CLIENT_SECRET: SECRET_MARKER };
+    for (const name of Object.keys(meta)) expect(FORBIDDEN_WEB_VARIABLES as readonly string[], name).not.toContain(name);
+    expect(forbiddenWebVariables({ NODE_ENV: "production", ...meta })).toEqual([]);
+  });
+
   it("LOCAL_KEYRING_KEY is refused (even empty); OAUTH_PKCE_DERIVATION_KEY and the CREDENTIAL_* configuration are allowed", () => {
     for (const value of [SECRET_MARKER, ""]) {
       expect(forbiddenWebVariables({ NODE_ENV: "production", LOCAL_KEYRING_KEY: value })).toEqual(["LOCAL_KEYRING_KEY"]);

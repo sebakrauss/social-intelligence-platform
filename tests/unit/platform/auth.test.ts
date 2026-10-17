@@ -124,6 +124,10 @@ describe("auth configuration", () => {
       "CREDENTIAL_KMS_WEB_ROLE_ARN=",
       // Step 5D OAuth: web-only stateless PKCE derivation key, name only.
       "OAUTH_PKCE_DERIVATION_KEY=",
+      // Step 7G-C: the hosted web's Meta app configuration (App ID, login configuration ID, App Secret), names only.
+      "PROVIDER_META_CLIENT_ID=",
+      "PROVIDER_META_CONFIG_ID=",
+      "PROVIDER_META_CLIENT_SECRET=",
       // Step 5K: explicit deployment tier and job-runtime provider mode (staging_stub only for preview/staging).
       "APP_DEPLOYMENT_ENV=",
       "CAPABILITY_PROVIDER_MODE=",

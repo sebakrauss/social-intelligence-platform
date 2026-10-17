@@ -17,6 +17,8 @@ import {
   providerCredential,
 } from "@/integrations/providers/contract";
 import {
+  AUTHORIZABLE_PROVIDERS,
+  CONNECTION_PROVIDERS,
   CredentialCodecError,
   CredentialUnreadableError,
   decodeProviderCredential,
@@ -27,7 +29,11 @@ import {
 } from "@/modules/connections";
 import { isClaimable, isStaleExchange, statusAfterDiscoveryFailure, statusAfterReauthorization, type ConnectAttempt } from "@/modules/connections/domain/model";
 import { exchangeOutcome } from "@/server/connections/authorization";
-import { connectionAuthorizationRuntime } from "@/server/connections/runtime";
+import { startAuthorization, type ConnectionStore } from "@/modules/connections";
+import { SimulatorWorld } from "@/integrations/providers/simulator";
+import { authorizationProviders, connectionAuthorizationRuntime } from "@/server/connections/runtime";
+import { createLocalSimulator } from "@/server/connections/simulator";
+import { loadScenario } from "../../providers/support/fixtures";
 import { credentialEnvironmentLabel } from "@/server/connections/environment";
 import { codeOf } from "../../support/source-scan";
 
@@ -142,5 +148,42 @@ describe("composition guards", () => {
 
   it("nothing in the connections module can write the reserved 0007 PKCE columns (B1: the verifier is never stored)", () => {
     for (const file of ["modules/connections/persistence/tables.ts", "modules/connections/persistence/store.ts"]) expect(codeOf(file)).not.toMatch(/pkce/i);
+  });
+});
+
+describe("authorizable providers (Step 7G-C: Meta enabled in the domain, no adapter yet)", () => {
+  const APP = "https://app.example.test/some/path";
+  const untouchable = new Proxy({} as ConnectionStore, {
+    get: () => {
+      throw new Error("the store must not be touched");
+    },
+  });
+
+  it("Meta and the simulator are authorizable; TikTok stays a known but non-authorizable provider", () => {
+    expect(AUTHORIZABLE_PROVIDERS).toEqual(["simulator", "meta"]);
+    expect(AUTHORIZABLE_PROVIDERS).not.toContain("tiktok");
+    expect(CONNECTION_PROVIDERS).toContain("tiktok");
+    for (const provider of AUTHORIZABLE_PROVIDERS) expect(CONNECTION_PROVIDERS, provider).toContain(provider);
+  });
+
+  it("no provider stands in for another: without a Meta adapter, Meta is unavailable even beside the simulator", () => {
+    const sim = createLocalSimulator(new SimulatorWorld(loadScenario("baseline")));
+    expect(authorizationProviders({}, APP).authorization("meta")).toBeUndefined();
+    expect(authorizationProviders({ simulator: sim.authorization }, APP).authorization("meta")).toBeUndefined();
+    expect(authorizationProviders({ simulator: sim.authorization }, APP).authorization("simulator")).toBe(sim.authorization);
+  });
+
+  it("the Meta callback is the app's fixed, query-free path on the configured origin", () => {
+    const providers = authorizationProviders({}, APP);
+    expect(providers.redirectUri("meta")).toBe("https://app.example.test/api/oauth/meta/callback");
+    expect(providers.redirectUri("simulator")).toBe("https://app.example.test/api/oauth/simulator/callback");
+  });
+
+  it("starting a Meta authorization without its adapter fails closed (INVALID_INPUT) before any database work", async () => {
+    const providers = authorizationProviders({}, APP);
+    const secrets = { newState: () => "s", stateDigest: () => "d", pkceVerifier: () => "v", pkceChallenge: () => "c" };
+    const scope = { workspaceId: WS, organizationId: WS, userId: WS } as Parameters<typeof startAuthorization>[2]["scope"];
+    await expect(startAuthorization(untouchable, { secrets, providers }, { scope, provider: "meta", reconnectConnectionId: null, now: new Date(), newId: () => WS }))
+      .rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 });

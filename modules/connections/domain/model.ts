@@ -10,8 +10,12 @@ import { parseWorkspaceId, type OrganizationId, type UserId, type WorkspaceId } 
 export const CONNECTION_PROVIDERS = ["meta", "tiktok", "simulator"] as const;
 export type ConnectionProvider = (typeof CONNECTION_PROVIDERS)[number];
 
-/** Providers the authorization flow accepts in Step 5D: the simulator only (real OAuth stays VALIDATE). */
-export const AUTHORIZABLE_PROVIDERS = ["simulator"] as const;
+/**
+ * Providers the authorization flow accepts: the simulator (Step 5D) and Meta (Step 7G-C; first real provider). Accepting
+ * a provider here never makes it available: the flow still needs that provider's composed adapter, and without one it
+ * fails closed before any database work. TikTok is a known connection provider but not authorizable.
+ */
+export const AUTHORIZABLE_PROVIDERS = ["simulator", "meta"] as const;
 export type AuthorizableProvider = (typeof AUTHORIZABLE_PROVIDERS)[number];
 
 export const ATTEMPT_STATUSES = ["PENDING", "EXCHANGING", "COMPLETED", "DENIED", "EXPIRED", "CANCELLED", "EXCHANGE_FAILED", "OUTCOME_UNKNOWN"] as const;

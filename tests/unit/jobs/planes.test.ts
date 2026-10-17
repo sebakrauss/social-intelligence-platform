@@ -125,6 +125,7 @@ describe("per-plane environment contract (deployed runs)", () => {
     expect(PLANE_FORBIDDEN_VARIABLES.integration).toEqual([
       "DATABASE_SYSTEM_URL", "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY",
       "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
+      "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET",
     ]);
     expect(planeEnvironmentProblems("integration", PINNED, { AWS_ACCESS_KEY_ID: "synthetic", INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID: "synthetic" })).toEqual(["AWS_ACCESS_KEY_ID"]);
     expect(planeEnvironmentProblems("integration", PINNED, { DATABASE_SYSTEM_URL: "postgres://synthetic", DATABASE_WORKER_URL: "postgres://synthetic" })).toEqual(["DATABASE_SYSTEM_URL"]);
@@ -135,12 +136,22 @@ describe("per-plane environment contract (deployed runs)", () => {
   it("the main plane refuses the integration→main relay key and the integration worker's AWS bootstrap identity, and still holds the worker DB credential (Move saga)", () => {
     expect(PLANE_FORBIDDEN_VARIABLES.main).toEqual([
       "TRIGGER_MAIN_RELAY_TRIGGER_KEY", "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN", "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
+      "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET",
     ]);
     for (const name of ["INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN"]) {
       expect(() => { assertPlaneEnvironment("main", PINNED, { [name]: "synthetic" }); }, name).toThrow(NonRetryableJobError);
     }
     expect(() => { assertPlaneEnvironment("main", UNIDENTIFIED, { TRIGGER_MAIN_RELAY_TRIGGER_KEY: RELAY }); }).toThrow(NonRetryableJobError);
     expect(() => { assertPlaneEnvironment("main", PINNED, { DATABASE_SYSTEM_URL: "x", DATABASE_WORKER_URL: "x", TRIGGER_INTEGRATION_TASK_OPERATOR_KEY: OPERATOR }); }).not.toThrow();
+  });
+
+  it("neither plane may hold any of the hosted web's Meta app configuration (Step 7G-C; Require App Secret OFF)", () => {
+    for (const plane of ["main", "integration"] as const) {
+      for (const name of ["PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET"]) {
+        expect(planeEnvironmentProblems(plane, PINNED, { [name]: "synthetic" }), `${plane} ${name}`).toEqual([name]);
+        expect(() => { assertPlaneEnvironment(plane, PINNED, { [name]: "synthetic" }); }, `${plane} ${name}`).toThrow(NonRetryableJobError);
+      }
+    }
   });
 
   it("local development runs (one shared .env for both dev sessions) are not refused", () => {

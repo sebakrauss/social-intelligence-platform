@@ -168,6 +168,12 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["no-undeclared-package", "server/reads-vercel-oidc.ts", "../../../../node_modules/execa/index.d.ts"],
   ["vercel-identity-web-composition-only", "jobs/uses-vercel-identity.ts", "server/connections/vercel-aws-identity.ts"],
   ["vercel-identity-web-composition-only", "app/uses-vercel-identity.ts", "server/connections/vercel-aws-identity.ts"],
+  // Meta app configuration (Step 7G-C): hosted web only, read by the web's connection runtime alone
+  ["meta-app-config-web-composition-only", "jobs/uses-meta-app-config.ts", "server/connections/meta-app-config.ts"],
+  ["meta-app-config-web-composition-only", "jobs/trigger/integration/uses-meta-app-config.ts", "server/connections/meta-app-config.ts"],
+  ["meta-app-config-web-composition-only", "app/uses-meta-app-config.ts", "server/connections/meta-app-config.ts"],
+  ["meta-app-config-web-composition-only", "integrations/providers/meta/uses-meta-app-config.ts", "server/connections/meta-app-config.ts"],
+  ["provider-adapter-isolated", "integrations/providers/meta/uses-meta-app-config.ts", "server/connections/meta-app-config.ts"],
   // OAuth secrets (Step 5D, B1): the stateless PKCE derivation key is web-only, composed by server/
   // Capability (Step 5E): evaluated on the server only; the UI renders the result
   ["capability-evaluated-server-side-only", "app/evaluates-capability.ts", "modules/capability/index.ts"],

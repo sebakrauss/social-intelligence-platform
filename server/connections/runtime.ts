@@ -7,7 +7,9 @@
  *   - OAUTH_PKCE_DERIVATION_KEY must be a canonical 32-byte key (no generated or default key);
  *   - providers: the local simulator only (development/test); real providers stay VALIDATE. A hosted runtime
  *     composes NO provider adapter (Step 7E.10-B): it never constructs the simulator, every provider is unavailable,
- *     and the flow fails closed before any database work — while the sealer is still the real KMS one.
+ *     and the flow fails closed before any database work — while the sealer is still the real KMS one. Meta is
+ *     authorizable (Step 7G-C) but has no adapter yet: its app configuration (./meta-app-config.ts) is read only
+ *     where the future Meta adapter is composed, so an unprovisioned hosted web keeps booting.
  */
 import { randomUUID } from "node:crypto";
 import { credentialContext } from "@/platform/crypto/credentials/context";
@@ -50,11 +52,17 @@ export function createCredentialSealing(sealer: CredentialSealer, env: string): 
   };
 }
 
-/** The app's fixed, query-free callback URL per provider (0007 persists exactly that shape). An absent port is unavailable. */
-export function authorizationProviders(ports: { readonly simulator?: ProviderAuthorizationPort }, appBaseUrl: string): AuthorizationProviders {
+/**
+ * The app's fixed, query-free callback URL per provider (0007 persists exactly that shape). An absent port is unavailable:
+ * no provider ever stands in for another (Meta has no adapter before Step 7G-D, so it is unavailable everywhere).
+ */
+export function authorizationProviders(
+  ports: { readonly simulator?: ProviderAuthorizationPort; readonly meta?: ProviderAuthorizationPort },
+  appBaseUrl: string,
+): AuthorizationProviders {
   const base = new URL(appBaseUrl);
   return {
-    authorization: (provider) => ({ simulator: ports.simulator })[provider],
+    authorization: (provider) => ({ simulator: ports.simulator, meta: ports.meta })[provider],
     redirectUri: (provider) => new URL(`/api/oauth/${provider}/callback`, base.origin).href,
   };
 }
