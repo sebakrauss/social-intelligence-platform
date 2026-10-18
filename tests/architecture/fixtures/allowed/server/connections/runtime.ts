@@ -1,4 +1,5 @@
-/** Allowed: the web's connection runtime composes the Vercel identity adapter and reads the Meta app configuration. */
+/** Allowed: the web's connection runtime composes the Vercel identity adapter, reads the Meta app configuration and composes the Meta authorization adapter. */
 import { adapter } from "./vercel-aws-identity";
 import { readMetaAppConfig } from "./meta-app-config";
-export const composed = [adapter, readMetaAppConfig];
+import { createMetaAuthorizationPort } from "../../integrations/providers/meta/authorization";
+export const composed = [adapter, readMetaAppConfig, createMetaAuthorizationPort];

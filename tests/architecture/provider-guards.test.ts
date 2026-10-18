@@ -10,7 +10,7 @@
  *
  * Dependency-direction rules (contract purity, mutation-port reachability) live in .dependency-cruiser.cjs.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -138,13 +138,51 @@ describe("Meta enablement (Step 7G-C): domain and hosted configuration only, no 
     expect(findReferences(sourceFiles(RUNTIME), [/META_CLIENT_TOKEN|\bclient_token\b|\bclientToken\b/])).toEqual([]);
   });
 
-  it("no Meta adapter exists yet: no integrations/providers/meta tree, no Meta port composed, the configuration read by nobody", () => {
-    expect(existsSync(path.join(root, "integrations/providers/meta"))).toBe(false);
-    expect(readdirSync(path.join(root, "integrations/providers")).sort()).toEqual(["contract", "simulator", "staging-stub"]);
+  it("the web's connection runtime is the configuration's only reader, and it composes the Meta authorization adapter from it", () => {
     const web = codeOf("server/connections/runtime.ts");
-    expect(web).not.toMatch(/meta-app-config|readMetaAppConfig/);
+    expect(web).toMatch(/const meta = readMetaAppConfig\(environment\);/);
     expect(web).toMatch(/isLocalSimulatorRuntime\(environment\) \? \{ simulator: localSimulator\(environment\)\.authorization \} : \{\}/);
-    expect(findReferences(sourceFiles(RUNTIME).filter((file) => file !== META_APP_CONFIG), [/meta-app-config|readMetaAppConfig/])).toEqual([]);
+    expect(web).toMatch(/meta === undefined \? \{\} : \{ meta: createMetaAuthorizationPort\(/);
+    expect(findReferences(sourceFiles(RUNTIME).filter((file) => file !== META_APP_CONFIG), [/meta-app-config|readMetaAppConfig/]).map(([file]) => file)).toEqual(["server/connections/runtime.ts"]);
+  });
+});
+
+describe("Meta authorization adapter (Step 7G-D): offline, authorization only", () => {
+  const RUNTIME = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "proxy.ts", "next.config.ts", "trigger.config.ts", "trigger.integration.config.ts"];
+  const META = "integrations/providers/meta";
+  const files = () => sourceFiles([META]);
+
+  it("is exactly the authorization adapter, its token transport, Graph error normalization and the fixed endpoints — no read adapter yet", () => {
+    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/oauth-transport.ts`]);
+    for (const file of files()) {
+      expect(codeOf(file), file).not.toMatch(/discoverAssets|\/me\/accounts|instagram_business_account|ProviderReadPort|ProviderMutationPort|refreshCredential|fb_exchange_token|appsecret_proof/);
+    }
+  });
+
+  it("reads no environment, and only the token transport touches the network", () => {
+    for (const file of files()) expect(codeOf(file), file).not.toMatch(/process\.env/);
+    expect(findReferences(sourceFiles(RUNTIME), [/\bfetch\s*\(/]).map(([file]) => file)).toEqual([`${META}/oauth-transport.ts`]);
+    for (const file of files()) expect(codeOf(file), file).not.toMatch(/from\s+["'](?:node:)?(?:http|https|http2|net|tls|dgram|dns)["']/);
+  });
+
+  it("one pinned version and two fixed origins, declared once (never configuration)", () => {
+    expect(findReferences(sourceFiles(RUNTIME), [/"v\d+\.\d+"|\/v\d+\.\d+\//]).map(([file]) => file)).toEqual([`${META}/endpoints.ts`]);
+    expect(findReferences(sourceFiles(RUNTIME), [/www\.facebook\.com|graph\.facebook\.com/]).map(([file]) => file)).toEqual([`${META}/endpoints.ts`]);
+    expect(codeOf(`${META}/endpoints.ts`)).toMatch(/export const META_GRAPH_VERSION = "v25\.0";/);
+  });
+
+  it("the App Secret and the authorization code are unwrapped only where the token request is built", () => {
+    // The simulator redeems its own synthetic codes in-process; it never holds the Meta App Secret.
+    const real = sourceFiles(RUNTIME).filter((file) => !file.startsWith("integrations/providers/simulator/"));
+    expect(findReferences(real, [/(clientSecret|\.code)\.expose\(\)/]).map(([file]) => file)).toEqual([`${META}/oauth-transport.ts`]);
+  });
+
+  it("no PKCE, scope or Client Token in the dialog; no config_id, scope or proof in the exchange", () => {
+    const authorization = codeOf(`${META}/authorization.ts`);
+    const transport = codeOf(`${META}/oauth-transport.ts`);
+    expect(authorization).toMatch(/pkce: "not_supported"/);
+    for (const code of [authorization, transport]) expect(code).not.toMatch(/"scope"|code_challenge|code_verifier|client_token|appsecret_proof/);
+    expect(transport).not.toMatch(/config_id/);
   });
 });
 

@@ -566,6 +566,27 @@ module.exports = {
       to: { path: "^server/connections/vercel-aws-identity\\.ts$" },
     },
     {
+      name: "meta-authorization-web-composition-only",
+      severity: "error",
+      comment: "Step 7G-D: the Meta authorization adapter and its token-exchange transport hold the App Secret path. Only the web's connection runtime composes them (and the adapter reaches its own transport); the jobs planes, other server code, modules and the future Meta read adapter never do.",
+      from: { pathNot: "^(server/connections/runtime\\.ts|integrations/providers/meta/authorization\\.ts|tests/)" },
+      to: { path: "^integrations/providers/meta/(authorization|oauth-transport)\\.ts$" },
+    },
+    {
+      name: "meta-adapter-no-platform",
+      severity: "error",
+      comment: "Step 7G-D: the Meta adapter imports only the provider contract, its own files and Node built-ins — no platform module (no DB, KMS, jobs, crypto, observability), no shared kernel, tooling or fixtures.",
+      from: { path: "^integrations/providers/meta/" },
+      to: { path: "^(platform|tools|fixtures|domain)/" },
+    },
+    {
+      name: "meta-adapter-no-packages",
+      severity: "error",
+      comment: "Step 7G-D: the Meta adapter uses the runtime's fetch and Node built-ins only; no npm package.",
+      from: { path: "^integrations/providers/meta/" },
+      to: { dependencyTypes: NPM },
+    },
+    {
       name: "meta-app-config-web-composition-only",
       severity: "error",
       comment: "Step 7G-C: the Meta app configuration (App ID, login configuration ID, App Secret) belongs to the hosted web. Only the web's connection runtime (server/connections/runtime.ts, where the Meta adapter is composed from Step 7G-D) reads it; the jobs planes, app/, ui/, modules and provider adapters never reach it — adapters receive explicit values from the composition.",

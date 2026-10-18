@@ -141,8 +141,11 @@ describe("7E.10 · hosted connection composition: no local-only adapter, the rea
     const deps = connectionAuthorizationRuntime({ getVerifiedUser: () => Promise.resolve(undefined) }, hostedEnv());
     expect(simulatorCalls.count).toBe(0);
     expect(deps.providers.authorization("simulator")).toBeUndefined();
+    // Step 7G-D: without the Meta app configuration the hosted web still composes (boots), and Meta is unavailable.
+    expect(deps.providers.authorization("meta")).toBeUndefined();
     const result = await completeConnectionAuthorization(deps, { provider: "simulator", query: [["state", "synthetic"], ["code", "synthetic"]] });
     expect(result).toEqual({ status: "restart_required", reason: "invalid_callback" });
+    expect(await completeConnectionAuthorization(deps, { provider: "meta", query: [["state", "synthetic"], ["code", "synthetic"]] })).toEqual({ status: "restart_required", reason: "invalid_callback" });
     expect(world.exchanges).toEqual([]);
     expect(simulatorCalls.count).toBe(0);
   });

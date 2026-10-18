@@ -23,7 +23,7 @@ import { CONTENT_SECURITY_POLICY, SECURITY_HEADERS } from "@/server/http/securit
 import { FORBIDDEN_WEB_VARIABLES, WebEnvironmentError, assertWebEnvironment, forbiddenWebVariables, rejectForbiddenWebEnvironment } from "@/server/http/web-environment";
 import { HEALTHY, UNHEALTHY, webHealth } from "@/server/http/health";
 import { createWebDatabase, webPoolMax } from "@/server/persistence/runtime";
-import { connectionAuthorizationRuntime } from "@/server/connections/runtime";
+import { authorizationPorts, authorizationProviders, connectionAuthorizationRuntime } from "@/server/connections/runtime";
 import type * as SimulatorModule from "@/server/connections/simulator";
 
 const LOCAL_WEB_URL = ["postgresql://web_login:", "local-test", "@127.0.0.1:5432/postgres"].join("");
@@ -291,5 +291,60 @@ describe("6B.6 · provider connections stay fail-closed in a production-built we
     expect(() => connectionAuthorizationRuntime(identity, { ...hosted, APP_DEPLOYMENT_ENV: "preview", CAPABILITY_PROVIDER_MODE: "staging_stub" })).toThrow(/credential_crypto_keyring_misconfigured/);
     expect(() => connectionAuthorizationRuntime(identity, { ...hosted, LOCAL_KEYRING_KEY: randomBytes(32).toString("base64url") })).toThrow(/local_keyring_forbidden/);
     expect(simulatorCalls.count).toBe(0);
+  });
+});
+
+describe("7G-D · Meta authorization composition (hosted web)", () => {
+  const identity = { getVerifiedUser: () => Promise.resolve(undefined) };
+  const META = { PROVIDER_META_CLIENT_ID: "synthetic-meta-app-id", PROVIDER_META_CONFIG_ID: "synthetic-meta-config-id", PROVIDER_META_CLIENT_SECRET: SECRET_MARKER };
+  const hosted = { NODE_ENV: "production", APP_BASE_URL: "https://app.example.test", OAUTH_PKCE_DERIVATION_KEY: randomBytes(32).toString("base64url") };
+
+  it("no Meta variables: nothing is composed — Meta is unavailable and nothing fails", () => {
+    const before = simulatorCalls.count;
+    expect(authorizationPorts({ NODE_ENV: "production" })).toEqual({});
+    expect(authorizationProviders(authorizationPorts({ NODE_ENV: "production" }), hosted.APP_BASE_URL).authorization("meta")).toBeUndefined();
+    expect(simulatorCalls.count).toBe(before);
+  });
+
+  it("all three: the real Meta authorization adapter is composed, and the hosted web still never constructs the simulator", () => {
+    const before = simulatorCalls.count;
+    const ports = authorizationPorts({ NODE_ENV: "production", ...META });
+    expect(Object.keys(ports)).toEqual(["meta"]);
+    expect(ports.meta?.provider).toBe("meta");
+    expect(ports.meta?.pkce).toBe("not_supported");
+    const providers = authorizationProviders(ports, hosted.APP_BASE_URL);
+    expect(providers.authorization("meta")).toBe(ports.meta);
+    expect(providers.authorization("simulator")).toBeUndefined();
+    expect(providers.redirectUri("meta")).toBe("https://app.example.test/api/oauth/meta/callback");
+    expect(simulatorCalls.count).toBe(before);
+  });
+
+  it("development with all three: simulator and Meta are distinct ports, never one in place of the other", () => {
+    const ports = authorizationPorts({ NODE_ENV: "development", ...META });
+    expect(ports.simulator?.provider).toBe("simulator");
+    expect(ports.meta?.provider).toBe("meta");
+    const providers = authorizationProviders(ports, hosted.APP_BASE_URL);
+    expect(providers.authorization("meta")).toBe(ports.meta);
+    expect(providers.authorization("simulator")).toBe(ports.simulator);
+  });
+
+  it("partial Meta configuration: composition fails closed, naming variables only", () => {
+    for (const partial of [{ PROVIDER_META_CLIENT_ID: META.PROVIDER_META_CLIENT_ID }, { PROVIDER_META_CLIENT_SECRET: SECRET_MARKER, PROVIDER_META_CONFIG_ID: META.PROVIDER_META_CONFIG_ID }]) {
+      let caught: unknown;
+      try {
+        authorizationPorts({ NODE_ENV: "production", ...partial });
+      } catch (error) {
+        caught = error;
+      }
+      // Identified by name: only the web's connection runtime may import the configuration module (dependency-cruiser).
+      expect(caught).toBeInstanceOf(Error);
+      const error = caught as Error & { readonly reason?: unknown; readonly variables?: unknown };
+      expect(error.name).toBe("MetaAppConfigError");
+      expect(error.reason).toBe("incomplete");
+      expect((error.variables as readonly string[]).every((name) => name.startsWith("PROVIDER_META_"))).toBe(true);
+      expect(`${error.message} ${error.stack ?? ""} ${JSON.stringify(error)}`).not.toMatch(/synthetic/);
+    }
+    // The connection runtime refuses to compose (lazily, on first use — never at boot) and caches nothing.
+    expect(() => connectionAuthorizationRuntime(identity, { ...hosted, PROVIDER_META_CLIENT_ID: META.PROVIDER_META_CLIENT_ID })).toThrow(expect.objectContaining({ name: "MetaAppConfigError", reason: "incomplete" }));
   });
 });

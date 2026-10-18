@@ -174,6 +174,14 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["meta-app-config-web-composition-only", "app/uses-meta-app-config.ts", "server/connections/meta-app-config.ts"],
   ["meta-app-config-web-composition-only", "integrations/providers/meta/uses-meta-app-config.ts", "server/connections/meta-app-config.ts"],
   ["provider-adapter-isolated", "integrations/providers/meta/uses-meta-app-config.ts", "server/connections/meta-app-config.ts"],
+  // Meta authorization adapter (Step 7G-D): composed by the web runtime only; no platform module in the adapter
+  ["meta-authorization-web-composition-only", "jobs/uses-meta-authorization.ts", "integrations/providers/meta/authorization.ts"],
+  ["meta-authorization-web-composition-only", "jobs/uses-meta-authorization.ts", "integrations/providers/meta/oauth-transport.ts"],
+  ["meta-authorization-web-composition-only", "integrations/providers/meta/read-uses-token-transport.ts", "integrations/providers/meta/oauth-transport.ts"],
+  ["meta-adapter-no-platform", "integrations/providers/meta/uses-platform.ts", "platform/jobs/port.ts"],
+  ["product-code-no-job-runtime", "integrations/providers/meta/uses-platform.ts", "platform/jobs/port.ts"],
+  ["meta-adapter-no-platform", "integrations/providers/meta/uses-credential-crypto.ts", "platform/crypto/credentials/seal.ts"],
+  ["meta-adapter-no-packages", "integrations/providers/meta/uses-package.ts", "../../../../node_modules/next/dist/server/next.js"],
   // OAuth secrets (Step 5D, B1): the stateless PKCE derivation key is web-only, composed by server/
   // Capability (Step 5E): evaluated on the server only; the UI renders the result
   ["capability-evaluated-server-side-only", "app/evaluates-capability.ts", "modules/capability/index.ts"],

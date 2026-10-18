@@ -115,3 +115,20 @@ Graph changelog dates its versions). Placeholders in braces stand for runtime va
 - That a user-token configuration returns a `code` with the override.
 - Whether Meta echoes `state` on a denial.
 - The exact `expires_in` of the short-lived user token.
+
+## Implementation status (Step 7G-D)
+
+| Item | State |
+|---|---|
+| Meta authorization adapter | IMPLEMENTED_OFFLINE: `integrations/providers/meta/{authorization,oauth-transport,errors,endpoints}.ts` |
+| Graph version | `META_GRAPH_VERSION = "v25.0"`, declared once (`endpoints.ts`) |
+| PKCE | NOT_SUPPORTED (`pkce: "not_supported"`) |
+| Token exchange | one GET per call; no retry (TOKEN_EXCHANGE_RETRY = NONE); manual redirects refused; 10 s timeout; 64 KiB body bound |
+| Ambiguous exchange (no response, timeout, redirect, unreadable or unexpected body) | OutcomeUnknown: the code is treated as spent |
+| Credential | ProviderCredential v1: `randomUUID()` id, access token as SecretValue, `grantedScopes: []` |
+| Expiry | `expires_in` REQUIRED on success (positive whole seconds, at most ten years): missing or invalid → OutcomeUnknown, no credential, no default lifetime; a successful Meta exchange never yields `expiresAt = null` |
+| Long-lived token exchange · refresh | NOT_IMPLEMENTED |
+| Client Token | NOT_USED |
+| Composition | `server/connections/runtime.ts` only: no Meta variables → no Meta port; partial → MetaAppConfigError (names only); all three → adapter |
+| Read adapter (`discoverAssets`) | PENDING_7G_E |
+| Shared authorization contract suite | SHARED_REAL_PROVIDER_CONTRACT_SUITE = PENDING_7G_H (deferral approved; NOT a pass): several assertions (cancel vs deny, unknown/expired/reused code, redirect mismatch) depend on Meta behavior the documentation does not state; they run against controlled real-provider evidence or recorded, sanitized exchanges |

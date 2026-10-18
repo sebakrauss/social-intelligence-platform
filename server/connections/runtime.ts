@@ -5,11 +5,11 @@
  *   - the web receives a SEALER only (TA §39, ADR-64): no opener, no unwrap capability exists here — the local
  *     keyring's sealer in development/test, the KMS GenerateDataKey sealer where KMS is configured (Step 7D);
  *   - OAUTH_PKCE_DERIVATION_KEY must be a canonical 32-byte key (no generated or default key);
- *   - providers: the local simulator only (development/test); real providers stay VALIDATE. A hosted runtime
- *     composes NO provider adapter (Step 7E.10-B): it never constructs the simulator, every provider is unavailable,
- *     and the flow fails closed before any database work — while the sealer is still the real KMS one. Meta is
- *     authorizable (Step 7G-C) but has no adapter yet: its app configuration (./meta-app-config.ts) is read only
- *     where the future Meta adapter is composed, so an unprovisioned hosted web keeps booting.
+ *   - the local simulator only in development/test: a hosted runtime never constructs it (Step 7E.10-B), and a
+ *     provider without a composed port is unavailable — the flow fails closed before any database work;
+ *   - Meta (Step 7G-D): composed only from its complete app configuration (./meta-app-config.ts), read here and
+ *     nowhere else. None of it set → no Meta port (unavailable, fail closed) and the web keeps booting; some of it
+ *     → MetaAppConfigError naming the variables; all of it → the Facebook Login for Business adapter.
  */
 import { randomUUID } from "node:crypto";
 import { credentialContext } from "@/platform/crypto/credentials/context";
@@ -18,6 +18,7 @@ import { assertNoLocalKeyringOutsideLocal } from "@/platform/crypto/credentials/
 import type { CredentialSealer } from "@/platform/crypto/credentials/seal";
 import { newOAuthState, oauthStateDigest, pkceDeriverFromEnvironment, type PkceDeriver } from "@/platform/crypto/oauth";
 import type { ProviderAuthorizationPort } from "@/integrations/providers/contract";
+import { createMetaAuthorizationPort } from "@/integrations/providers/meta/authorization";
 import type { AuthorizationProviders, CredentialSealing, OAuthSecrets } from "@/modules/connections";
 import type { IdentityPort } from "@/platform/auth/port";
 import { createLogger, stdoutSink } from "@/platform/observability";
@@ -29,6 +30,7 @@ import type { ConnectionAuthorizationDependencies } from "./authorization";
 import { composeCredentialSealer } from "./credential-crypto";
 import { vercelAwsIdentity } from "./vercel-aws-identity";
 import { composeWebAwsCredentials, type WebAwsIdentityFactory } from "./web-identity";
+import { readMetaAppConfig } from "./meta-app-config";
 import { isLocalSimulatorRuntime, localSimulator } from "./simulator";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -52,14 +54,28 @@ export function createCredentialSealing(sealer: CredentialSealer, env: string): 
   };
 }
 
+export interface AuthorizationPorts {
+  readonly simulator?: ProviderAuthorizationPort;
+  readonly meta?: ProviderAuthorizationPort;
+}
+
+/**
+ * The provider authorization ports this runtime composes: the local simulator only where its own rule allows it, and
+ * Meta only from its complete app configuration. Never one in place of the other.
+ */
+export function authorizationPorts(environment: Environment): AuthorizationPorts {
+  const meta = readMetaAppConfig(environment);
+  return {
+    ...(isLocalSimulatorRuntime(environment) ? { simulator: localSimulator(environment).authorization } : {}),
+    ...(meta === undefined ? {} : { meta: createMetaAuthorizationPort({ clientId: meta.clientId, configId: meta.configId, clientSecret: meta.clientSecret }) }),
+  };
+}
+
 /**
  * The app's fixed, query-free callback URL per provider (0007 persists exactly that shape). An absent port is unavailable:
- * no provider ever stands in for another (Meta has no adapter before Step 7G-D, so it is unavailable everywhere).
+ * no provider ever stands in for another.
  */
-export function authorizationProviders(
-  ports: { readonly simulator?: ProviderAuthorizationPort; readonly meta?: ProviderAuthorizationPort },
-  appBaseUrl: string,
-): AuthorizationProviders {
+export function authorizationProviders(ports: AuthorizationPorts, appBaseUrl: string): AuthorizationProviders {
   const base = new URL(appBaseUrl);
   return {
     authorization: (provider) => ({ simulator: ports.simulator, meta: ports.meta })[provider],
@@ -87,9 +103,7 @@ function compose(environment: Environment): Composition {
   const appBaseUrl = environment["APP_BASE_URL"];
   if (appBaseUrl === undefined || appBaseUrl === "") throw new Error("APP_BASE_URL is not set");
   const secrets = createOAuthSecrets(pkceDeriverFromEnvironment(environment));
-  // Local-only adapters exist only where their own rule allows them; a hosted runtime has none (real providers VALIDATE).
-  const ports = isLocalSimulatorRuntime(environment) ? { simulator: localSimulator(environment).authorization } : {};
-  const providers = authorizationProviders(ports, appBaseUrl);
+  const providers = authorizationProviders(authorizationPorts(environment), appBaseUrl);
   // Local keyring in development/test; KMS where configured, with the web's lazy Vercel OIDC identity.
   const crypto = composeCredentialSealer(environment, composeWebAwsCredentials(environment, WEB_AWS_IDENTITY));
   const sealing = createCredentialSealing(crypto.sealer, crypto.contextEnv);
