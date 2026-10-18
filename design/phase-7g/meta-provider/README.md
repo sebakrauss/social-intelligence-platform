@@ -132,3 +132,129 @@ Graph changelog dates its versions). Placeholders in braces stand for runtime va
 | Composition | `server/connections/runtime.ts` only: no Meta variables → no Meta port; partial → MetaAppConfigError (names only); all three → adapter |
 | Read adapter (`discoverAssets`) | PENDING_7G_E |
 | Shared authorization contract suite | SHARED_REAL_PROVIDER_CONTRACT_SUITE = PENDING_7G_H (deferral approved; NOT a pass): several assertions (cancel vs deny, unknown/expired/reused code, redirect mismatch) depend on Meta behavior the documentation does not state; they run against controlled real-provider evidence or recorded, sanitized exchanges |
+
+## Authoritative Meta discoverAssets read contract (Step 7G-E1)
+
+Retrieved 2026-10-18 from Meta-owned documentation only. Pages marked (localized) were served in Spanish and are
+paraphrased here, not quoted. Braces stand for runtime values; none is recorded here. `ProviderReadPort` fits
+DIRECT: `discoverAssets` returns the complete `SocialAssetDto[]`, paginating internally. The platforms `facebook`
+and `instagram`, `assetClass` and `relatedAssets` already exist. No contract change.
+
+| Ref | Source |
+|---|---|
+| R1 | User accounts edge — `https://developers.facebook.com/docs/graph-api/reference/user/accounts/` |
+| R2 | Instagram API with Facebook Login, get started — `https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/get-started` |
+| R3 | Graph API overview (localized) — `https://developers.facebook.com/docs/graph-api/overview` |
+| R4 | Field Expansion — `https://developers.facebook.com/docs/graph-api/guides/field-expansion` |
+| R5 | Paginated results (localized) — `https://developers.facebook.com/docs/graph-api/results` |
+| R6 | Page reference — `https://developers.facebook.com/docs/graph-api/reference/page/` |
+| R7 | Instagram Platform Page reference — `https://developers.facebook.com/docs/instagram-api/reference/page/` |
+| R8 | IG User reference — `https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-user` |
+| R9 | IG User Media reference — `https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-user/media` |
+| R10 | Access tokens — `https://developers.facebook.com/docs/facebook-login/guides/access-tokens` |
+| R11 | Permissions reference — `https://developers.facebook.com/docs/permissions` |
+
+**Discovery: three stages, only documented requests (strategy ME_ACCOUNTS_PLUS_PAGE_LOOKUPS).**
+
+1. `GET https://graph.facebook.com/v25.0/me/accounts?fields=id,name`, paginated. R1: the Pages "the User has a role
+   on", in a `data` / `paging` / `summary` shape. R2 uses `GET /me/accounts`. R11: `pages_show_list` "allows your
+   app to access the list of Pages a person manages". R3: the `fields` parameter overrides a node's or an edge's
+   default fields and returns only those specified. R6: `id` is "The ID representing a Facebook Page" and `name` is
+   "The name of the Page".
+2. For each distinct Page: `GET https://graph.facebook.com/v25.0/{page-id}?fields=instagram_business_account`. R7
+   gives the response `{"instagram_business_account": {"id": …}, "id": …}`, with a Facebook User access token and
+   `instagram_basic` and `pages_show_list`. R6 describes the field as an IG User: "Instagram account linked to page
+   during Instagram business conversion flow".
+3. For each distinct linked IG account: `GET https://graph.facebook.com/v25.0/{ig-user-id}?fields=id,username`. R8:
+   "Represents an Instagram Business Account or an Instagram Creator Account". `username` is "Your app user's
+   Instagram profile username". The request needs `instagram_basic` and `pages_read_engagement`.
+
+Field expansion is documented generically (R4: "Certain resources … are unable to utilize field expansion"). The
+exact `/me/accounts` + `instagram_business_account{…}` form is not established, so it stays out of the first slice:
+IG_FIELD_EXPANSION_FROM_ME_ACCOUNTS = DEFERRED_7G_H.
+
+**Page access tokens.**
+
+- Not required for discovery. By default `/me/accounts` returns each Page's access token (R10: "… and the Page
+  access token"; R2's sample response). The explicit `fields=id,name` selection excludes it (R3).
+- The parser whitelists only the fields it maps. An `access_token` that arrives anyway is ignored at once. It is
+  never wrapped as a credential, never mapped, persisted or logged, never in errors or `rawReference`, and only a
+  synthetic placeholder in fixtures.
+
+**Access-token transport: QUERY_PARAMETER, a deliberate documented-provider exception (TL decision).**
+
+R3, R8 and R9 show `access_token={access-token}` as a query parameter on `graph.facebook.com` for these endpoints.
+`Authorization: Bearer` was not established for them, so it is not used. Bearer may be tried later as a hardening
+experiment in 7G-H; adopting it would be a separate reviewed change.
+
+The exception covers the documented Meta Graph read transport only. It is not a precedent for query-string secrets
+elsewhere. Mandatory containment in `graph-transport.ts`:
+
+- the sensitive URL is built only there, and the caller never supplies a full URL or receives the built one;
+- the URL is never logged, thrown, returned or serialized; `response.url` and raw fetch errors never propagate; the
+  query string never reaches telemetry; the provider body never enters an error;
+- `redirect: "manual"`, and any redirect fails closed; a finite timeout; a bounded response; exactly one request per
+  transport invocation; no ambient cookies;
+- never the App Secret, the Client Token or `appsecret_proof` ("Require App Secret" is OFF, so Integration holds no
+  App Secret);
+- the access token stays a SecretValue until the request is built.
+
+**Pagination (R5, localized).**
+
+- A page carries `paging.cursors.{before,after}` and full `previous` / `next` URLs of the form
+  `…?limit=…&after={cursor}`.
+- Stop when `next` is absent. A short page is not an end. Cursors are not stored.
+- Contract:
+  - continue only while `paging.next` exists AND `paging.cursors.after` is valid (non-empty, bounded, printable, never
+    treated as a URL);
+  - the next request is the fixed endpoint plus that cursor (NEXT_REQUEST = FIXED_ENDPOINT_PLUS_VALIDATED_CURSOR);
+  - the returned `next` URL is never fetched (FOLLOW_PROVIDER_NEXT_URL_DIRECTLY = NO).
+- `next` without a valid `after`, or a repeated cursor: fail closed.
+- No `limit` is sent in the first slice.
+- DISCOVER_ASSETS_MAX_PAGES = 20, a fixed constant and never configuration. A twentieth page that still has `next`
+  fails closed (`limit_exceeded`). There is no silent truncation: PARTIAL_DISCOVERY_RESULT = NOT_SUPPORTED.
+
+**Permissions (documented minimum; nothing added preemptively).**
+
+| Stage | Permissions |
+|---|---|
+| Page discovery | `pages_show_list` |
+| Linked IG account | `instagram_basic`, `pages_show_list` |
+| IG user details | `instagram_basic`, `pages_read_engagement` |
+
+- Not added: `pages_read_user_content`, `ads_management`, `ads_read`.
+- R7's conditional ("If the token is from a User whose Page role was granted via the Business Manager, one of the
+  following permissions is also required: ads_management, ads_read") remains a 7G-H concern. The controlled test
+  asset should not depend on such a role.
+
+**Errors.**
+
+- `errors.ts` is reused (capability `discover_assets`). 7G-E2 adds only the documented `error_subcode` 492 (no role
+  on the Page): it maps to `PermissionMissing(discover_assets)`.
+- No code is invented for a missing Page task, Business Manager specifics or other per-Page behavior. Unknown
+  behavior fails closed.
+- Any failure while discovering a Page or an IG account fails the whole `discoverAssets`: no partial success.
+
+**SocialAssetDto mapping.**
+
+| Source | `ref` | `assetClass` | `displayName` | `rawReference` |
+|---|---|---|---|---|
+| Page | `providerObjectRef("facebook", "asset", page.id)` | `content_bearing` | `page.name` if valid, else the existing downstream fallback (the provider id) | `rawReference("meta", META_GRAPH_VERSION, "facebook:page:{id}")` |
+| IG account | `providerObjectRef("instagram", "asset", ig.id)` | `content_bearing` | `ig.username` if valid, else the existing fallback | `rawReference("meta", META_GRAPH_VERSION, "instagram:account:{id}")` |
+
+- `relatedAssets`: a Page references its linked IG asset. An IG asset references every Page through which it was
+  observed.
+- Pages are deduplicated by Page id and IG accounts by IG id: one IG account seen from several Pages is one asset.
+- Relationship and output order are deterministic: by platform, then provider id.
+- An id that fails the existing provider-id rule, or a malformed object, fails the whole discovery closed. No new
+  enum values.
+
+**Live uncertainties (7G-H; none is proven).**
+
+1. Whether `Authorization: Bearer` works for these exact endpoints.
+2. `/me/accounts` nested field expansion for `instagram_business_account`.
+3. The Business Manager conditional `ads_read` / `ads_management` behavior.
+4. The `pages_read_user_content` ambiguity between the general Page reference (R6) and the Instagram Page
+   reference (R7).
+5. The exact error for a Page-specific permission or task failure.
+6. The provider's default page size.
