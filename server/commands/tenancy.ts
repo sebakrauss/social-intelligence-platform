@@ -27,6 +27,7 @@ import {
   inviteToOrganization,
   invitationExpiresAt,
   inviteToWorkspace,
+  listOwnTenancy,
   removeOrganizationMember,
   removeWorkspaceMember,
   revokeInvitation,
@@ -38,6 +39,7 @@ import {
   type MembershipChange,
   type OrganizationMemberRemoval,
   type OrganizationMembership,
+  type OwnOrganization,
   type WorkspaceMembership,
 } from "@/modules/tenancy";
 import type { OrganizationCommand, UserCommand, WorkspaceCommand } from "@/server/pipeline";
@@ -59,6 +61,67 @@ const workspaceMembershipChange = ({ previous, current }: MembershipChange<Works
   current: workspaceMembershipState(current),
 });
 
+/**
+ * Organization and workspace creation need no invitation services, so they are defined once at module level: the
+ * full tenancy command set includes them, and the web's onboarding surface (Step 7G-F3) composes exactly these.
+ */
+const createOrganizationCommand: UserCommand<{ readonly name: string }, OrganizationId, { readonly organizationId: OrganizationId }> = {
+  scope: "user",
+  name: "tenancy.organization.create",
+  validate: object({ name: NAME }),
+  async execute(context, input, tx, env) {
+    const id = parseOrganizationId(env.newId());
+    if (id === undefined) throw new TypeError("id generator must return UUIDs");
+    await createOrganization(tx.tenancy, { id, name: input.name, ownerUserId: context.userId, now: env.now });
+    return id;
+  },
+  audit: (organizationId) => ({ action: "organization.created", targetType: "organization", targetId: organizationId, organizationId }),
+  respond: (organizationId) => ({ organizationId }),
+};
+
+const createWorkspaceCommand: OrganizationCommand<
+  { readonly name: string; readonly mode: (typeof WORKSPACE_MODES)[number] | undefined },
+  WorkspaceId,
+  { readonly workspaceId: WorkspaceId }
+> = {
+  scope: "organization",
+  name: "tenancy.workspace.create",
+  permission: "organization.manage",
+  validate: object({ name: NAME, mode: optional(oneOf(WORKSPACE_MODES)) }),
+  async execute(context, input, tx, env) {
+    const id = parseWorkspaceId(env.newId());
+    if (id === undefined) throw new TypeError("id generator must return UUIDs");
+    await createWorkspace(tx.tenancy, {
+      id,
+      organizationId: context.organizationId,
+      name: input.name,
+      mode: input.mode ?? "STANDARD",
+      creator: context.actor(),
+      now: env.now,
+    });
+    return id;
+  },
+  audit: (workspaceId) => ({ action: "workspace.created", targetType: "workspace", targetId: workspaceId, workspaceId }),
+  respond: (workspaceId) => ({ workspaceId }),
+};
+
+/** The caller's own organizations and workspaces (read only; no audit: nothing changes). */
+const listOwnTenancyCommand: UserCommand<Record<string, never>, readonly OwnOrganization[], readonly OwnOrganization[]> = {
+  scope: "user",
+  name: "tenancy.membership.list_own",
+  validate: object({}),
+  execute: (context, _input, tx) => listOwnTenancy(tx.tenancy, context.userId),
+  audit: () => undefined,
+  respond: (organizations) => organizations,
+};
+
+/** The onboarding commands: create the first organization and workspace, and read the caller's own tenancy. */
+export const tenancyOnboardingCommands = {
+  createOrganization: createOrganizationCommand,
+  createWorkspace: createWorkspaceCommand,
+  listOwnTenancy: listOwnTenancyCommand,
+} as const;
+
 export interface TenancyCommandDependencies {
   readonly tokens: InvitationTokens;
   readonly delivery: InvitationDelivery;
@@ -74,46 +137,6 @@ export function createTenancyCommands(deps: TenancyCommandDependencies) {
       recipientEmail: issued.invitation.recipientEmail,
       rawToken: issued.rawToken,
     });
-
-  const createOrganizationCommand: UserCommand<{ readonly name: string }, OrganizationId, { readonly organizationId: OrganizationId }> = {
-    scope: "user",
-    name: "tenancy.organization.create",
-    validate: object({ name: NAME }),
-    async execute(context, input, tx, env) {
-      const id = parseOrganizationId(env.newId());
-      if (id === undefined) throw new TypeError("id generator must return UUIDs");
-      await createOrganization(tx.tenancy, { id, name: input.name, ownerUserId: context.userId, now: env.now });
-      return id;
-    },
-    audit: (organizationId) => ({ action: "organization.created", targetType: "organization", targetId: organizationId, organizationId }),
-    respond: (organizationId) => ({ organizationId }),
-  };
-
-  const createWorkspaceCommand: OrganizationCommand<
-    { readonly name: string; readonly mode: (typeof WORKSPACE_MODES)[number] | undefined },
-    WorkspaceId,
-    { readonly workspaceId: WorkspaceId }
-  > = {
-    scope: "organization",
-    name: "tenancy.workspace.create",
-    permission: "organization.manage",
-    validate: object({ name: NAME, mode: optional(oneOf(WORKSPACE_MODES)) }),
-    async execute(context, input, tx, env) {
-      const id = parseWorkspaceId(env.newId());
-      if (id === undefined) throw new TypeError("id generator must return UUIDs");
-      await createWorkspace(tx.tenancy, {
-        id,
-        organizationId: context.organizationId,
-        name: input.name,
-        mode: input.mode ?? "STANDARD",
-        creator: context.actor(),
-        now: env.now,
-      });
-      return id;
-    },
-    audit: (workspaceId) => ({ action: "workspace.created", targetType: "workspace", targetId: workspaceId, workspaceId }),
-    respond: (workspaceId) => ({ workspaceId }),
-  };
 
   const changeWorkspaceModeCommand: WorkspaceCommand<
     { readonly mode: (typeof WORKSPACE_MODES)[number] },
@@ -397,8 +420,7 @@ export function createTenancyCommands(deps: TenancyCommandDependencies) {
   return {
     changeOrganizationMemberRole: changeOrganizationMemberRoleCommand,
     removeOrganizationMember: removeOrganizationMemberCommand,
-    createOrganization: createOrganizationCommand,
-    createWorkspace: createWorkspaceCommand,
+    ...tenancyOnboardingCommands,
     changeWorkspaceMode: changeWorkspaceModeCommand,
     inviteToWorkspace: inviteToWorkspaceCommand,
     inviteToOrganization: inviteToOrganizationCommand,

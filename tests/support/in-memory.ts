@@ -70,6 +70,8 @@ function storeFor(state: InMemoryState): TenancyStore {
       remove: (organizationId, userId) => done(void state.organizationMemberships.delete(key(organizationId, userId))),
       countWithRole: (organizationId, role) =>
         done([...state.organizationMemberships.values()].filter((m) => m.organizationId === organizationId && m.role === role).length),
+      listForUser: (userId) =>
+        done([...state.organizationMemberships.values()].filter((m) => m.userId === userId).sort((a, b) => (a.organizationId < b.organizationId ? -1 : 1))),
     },
     workspaceMemberships: {
       find: (workspaceId, userId) => done(state.workspaceMemberships.get(key(workspaceId, userId))),

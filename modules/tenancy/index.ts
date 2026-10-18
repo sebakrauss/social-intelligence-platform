@@ -28,6 +28,7 @@ export {
   createWorkspace,
   inviteToOrganization,
   inviteToWorkspace,
+  listOwnTenancy,
   removeOrganizationMember,
   removeWorkspaceMember,
   revokeInvitation,
@@ -37,5 +38,6 @@ export {
   type MembershipChange,
   type OrganizationActor,
   type OrganizationMemberRemoval,
+  type OwnOrganization,
   type WorkspaceActor,
 } from "./application/services";

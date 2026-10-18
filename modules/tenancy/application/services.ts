@@ -131,6 +131,33 @@ export async function createWorkspace(
   return workspace;
 }
 
+/** One of the caller's organizations, with the caller's role and the workspaces they are a member of there. */
+export interface OwnOrganization {
+  readonly organization: Organization;
+  readonly role: OrganizationRole;
+  readonly workspaces: readonly { readonly workspace: Workspace; readonly role: WorkspaceRole }[];
+}
+
+/**
+ * The caller's own tenancy (onboarding, workspace selection): their organization memberships and, in each, their
+ * workspace memberships. Read only, from live rows; only memberships the caller holds are listed, so nothing about
+ * other users or other tenants is visible (and RLS enforces the same).
+ */
+export async function listOwnTenancy(store: TenancyStore, userId: UserId): Promise<readonly OwnOrganization[]> {
+  const result: OwnOrganization[] = [];
+  for (const membership of await store.organizationMemberships.listForUser(userId)) {
+    const organization = await store.organizations.get(membership.organizationId);
+    if (organization === undefined) continue;
+    const workspaces: { readonly workspace: Workspace; readonly role: WorkspaceRole }[] = [];
+    for (const workspaceMembership of await store.workspaceMemberships.listForUser(membership.organizationId, userId)) {
+      const workspace = await store.workspaces.get(workspaceMembership.workspaceId);
+      if (workspace !== undefined) workspaces.push({ workspace, role: workspaceMembership.role });
+    }
+    result.push({ organization, role: membership.role, workspaces });
+  }
+  return result;
+}
+
 /** Records the authoritative mode (PD D-49). Automation side effects (IA-16) arrive with the automation module. */
 export async function changeWorkspaceMode(
   store: TenancyStore,

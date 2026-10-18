@@ -47,6 +47,20 @@ export const MESSAGE_KEYS = [
   "auth.sign_up.link",
   "auth.status.sign_up_check_email",
   "auth.status.weak_password",
+  "onboarding.link",
+  "onboarding.heading",
+  "onboarding.organization.heading",
+  "onboarding.organization.field.name",
+  "onboarding.organization.submit",
+  "onboarding.workspace.heading",
+  "onboarding.workspace.field.name",
+  "onboarding.workspace.submit",
+  "onboarding.ready.heading",
+  "onboarding.ready.workspaces",
+  "onboarding.awaiting_access",
+  "onboarding.status.invalid_input",
+  "onboarding.status.not_allowed",
+  "onboarding.status.unavailable",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

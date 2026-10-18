@@ -322,6 +322,47 @@ export function definePersistenceSuite(getTarget: () => DbTarget): void {
     });
   });
 
+  describe("onboarding read (Step 7G-F3): tenancy.membership.list_own under RLS", () => {
+    it("lists exactly the caller's own organizations and workspaces, and nothing of another tenant", async () => {
+      const owner = newUser();
+      const stranger = newUser();
+      const member = newUser();
+      const organizationId = await createOrganization(owner);
+      const workspaceId = await createWorkspace(owner, organizationId);
+      const other = await createOrganization(stranger);
+      await createWorkspace(stranger, other);
+
+      as(owner);
+      const own = expectOk(await pipeline.run(commands.listOwnTenancy, { input: {} }));
+      expect(own.map(({ organization, role, workspaces }) => ({ id: organization.id, role, workspaces: workspaces.map(({ workspace, role: r }) => [workspace.id, workspace.mode, r]) }))).toEqual([
+        { id: organizationId, role: "OWNER", workspaces: [[workspaceId, "STANDARD", "OWNER"]] },
+      ]);
+
+      // An organization member without a workspace sees the organization, not its workspaces.
+      as(owner);
+      expectOk(await pipeline.run(commands.inviteToOrganization, { organizationId, input: { recipientEmail: emailFor(member), role: "MEMBER" } }));
+      as(member);
+      expectOk(await pipeline.run(commands.acceptInvitation, { input: { token: delivery.delivered.at(-1)?.rawToken } }));
+      const memberView = expectOk(await pipeline.run(commands.listOwnTenancy, { input: {} }));
+      expect(memberView.map(({ organization, role, workspaces }) => [organization.id, role, workspaces.length])).toEqual([[organizationId, "MEMBER", 0]]);
+
+      // A brand-new user has no tenancy at all.
+      as(newUser());
+      expect(expectOk(await pipeline.run(commands.listOwnTenancy, { input: {} }))).toEqual([]);
+    });
+
+    it("RLS itself, not only the query, limits the web role to the caller's own organization memberships", async () => {
+      const a = newUser();
+      const b = newUser();
+      const organizationA = await createOrganization(a);
+      await createOrganization(b);
+      const visible = await withUserScope(web, { sub: a, role: "authenticated" }, undefined, async (tx) =>
+        (await tx.execute<{ organization_id: string }>(sql`select organization_id from tenancy.organization_memberships`)).rows.map((row) => row.organization_id),
+      );
+      expect(visible).toEqual([organizationA]);
+    });
+  });
+
   describe("user-scoped commands without a pipeline-registered workspace", () => {
     it("a user command never binds a workspace", async () => {
       const owner = newUser();

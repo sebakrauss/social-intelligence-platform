@@ -165,6 +165,11 @@ export function createPostgresTenancyStore(tx: DatabaseTransaction): TenancyStor
           .where(and(eq(organizationMemberships.organizationId, organizationId), eq(organizationMemberships.role, role)));
         return row?.value ?? 0;
       },
+      async listForUser(userId) {
+        // Under RLS the web role reads only its own rows here (read_own_or_managed: user_id = auth.uid()).
+        const rows = await tx.select().from(organizationMemberships).where(eq(organizationMemberships.userId, userId)).orderBy(organizationMemberships.organizationId);
+        return rows.map(toOrganizationMembership);
+      },
     },
 
     workspaceMemberships: {

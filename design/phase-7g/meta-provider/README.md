@@ -272,3 +272,20 @@ elsewhere. Mandatory containment in `graph-transport.ts`:
 | Errors | the shared Graph mapping; reads add `error_subcode` 492 → PermissionMissing(discover_assets); network/timeout/5xx without a Graph error → Transient; unreadable or malformed → PermanentRejected(unknown) |
 | Field expansion · Bearer hardening | DEFERRED_7G_H |
 | Shared read contract suite | the applicable `discoverAssets` and shape assertions run on Meta; every other section is NOT_APPLICABLE (operations not implemented), not a pass |
+
+## Live-acceptance prerequisite: tenancy onboarding (Step 7G-F3)
+
+A product surface, not test scaffolding: it serves every new user, not only the Meta acceptance run.
+
+| Item | State |
+|---|---|
+| TENANCY_ONBOARDING_SURFACE | IMPLEMENTED_OFFLINE: `/onboarding` (`app/onboarding/page.tsx`, `server/tenancy/{onboarding,actions,runtime}.ts`), linked from `/` for a signed-in user |
+| TENANCY_CREATION | REAL_PRODUCT_COMMANDS through the action pipeline: ORGANIZATION_COMMAND `tenancy.organization.create`, WORKSPACE_COMMAND `tenancy.workspace.create` |
+| State read | `tenancy.membership.list_own` (user scope, read only, no audit): the caller's own organization and workspace memberships; RLS limits the web role to the same rows |
+| WORKSPACE_MODE | STANDARD_SERVER_FIXED |
+| Identity | the server-validated session only; unverified users are refused by the pipeline |
+| DIRECT_SQL_SEEDING | NOT_USED (no SQL, service-role or operator path) |
+| PROVIDER_DEPENDENCY | NONE |
+| REMOTE_DB_MUTATIONS_THIS_GATE | 0 |
+| Multiples | domain behavior: two submissions create two objects; the page guides only the first organization and workspace |
+| External auth configuration | unchanged: Supabase Site URL and redirect allowlist are verified in the live-run gates (F8/H1) |

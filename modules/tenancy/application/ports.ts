@@ -22,6 +22,8 @@ export interface TenancyStore {
     update(membership: OrganizationMembership): Promise<void>;
     remove(organizationId: OrganizationId, userId: UserId): Promise<void>;
     countWithRole(organizationId: OrganizationId, role: OrganizationRole): Promise<number>;
+    /** The user's own organization memberships, in organization-id order. */
+    listForUser(userId: UserId): Promise<readonly OrganizationMembership[]>;
   };
   readonly workspaceMemberships: {
     find(workspaceId: WorkspaceId, userId: UserId): Promise<WorkspaceMembership | undefined>;
