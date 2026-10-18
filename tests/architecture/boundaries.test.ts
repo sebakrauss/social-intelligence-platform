@@ -182,6 +182,11 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["product-code-no-job-runtime", "integrations/providers/meta/uses-platform.ts", "platform/jobs/port.ts"],
   ["meta-adapter-no-platform", "integrations/providers/meta/uses-credential-crypto.ts", "platform/crypto/credentials/seal.ts"],
   ["meta-adapter-no-packages", "integrations/providers/meta/uses-package.ts", "../../../../node_modules/next/dist/server/next.js"],
+  // Meta read port (Step 7G-E): integration composition only; only the read port reaches the Graph transport
+  ["meta-read-integration-composition-only", "server/uses-meta-read.ts", "integrations/providers/meta/read-port.ts"],
+  ["meta-read-integration-composition-only", "jobs/trigger/main/uses-meta-read.ts", "integrations/providers/meta/read-port.ts"],
+  ["meta-read-integration-composition-only", "jobs/trigger/main/uses-meta-read.ts", "integrations/providers/meta/graph-transport.ts"],
+  ["meta-read-integration-composition-only", "integrations/providers/meta/auth-uses-graph-transport.ts", "integrations/providers/meta/graph-transport.ts"],
   // OAuth secrets (Step 5D, B1): the stateless PKCE derivation key is web-only, composed by server/
   // Capability (Step 5E): evaluated on the server only; the UI renders the result
   ["capability-evaluated-server-side-only", "app/evaluates-capability.ts", "modules/capability/index.ts"],

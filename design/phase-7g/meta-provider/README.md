@@ -258,3 +258,17 @@ elsewhere. Mandatory containment in `graph-transport.ts`:
    reference (R7).
 5. The exact error for a Page-specific permission or task failure.
 6. The provider's default page size.
+
+## Implementation status (Step 7G-E)
+
+| Item | State |
+|---|---|
+| Meta read adapter · `discoverAssets` | IMPLEMENTED_OFFLINE: `integrations/providers/meta/{read-port,graph-transport}.ts`; every other read operation refused (permanent) |
+| Composition | the integration worker only (`composeJobProviders`, `jobs/connections.ts`); never the hosted web or MAIN; no Meta app configuration, no App Secret |
+| Graph access-token transport | QUERY_PARAMETER_CONTAINED: the URL is built only in `graph-transport.ts`, never logged, thrown, returned or serialized |
+| Requests | GET only; manual redirects refused; 10 s timeout; 64 KiB body bound; one request per operation; no internal retry |
+| Pagination | `paging.cursors.after` on the fixed endpoint; `next` is never fetched; DISCOVER_ASSETS_MAX_PAGES = 20 (page 21 is never requested) |
+| Results | PARTIAL_DISCOVERY_RESULT = NOT_SUPPORTED: any failure fails the whole discovery |
+| Errors | the shared Graph mapping; reads add `error_subcode` 492 → PermissionMissing(discover_assets); network/timeout/5xx without a Graph error → Transient; unreadable or malformed → PermanentRejected(unknown) |
+| Field expansion · Bearer hardening | DEFERRED_7G_H |
+| Shared read contract suite | the applicable `discoverAssets` and shape assertions run on Meta; every other section is NOT_APPLICABLE (operations not implemented), not a pass |

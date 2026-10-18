@@ -13,6 +13,10 @@
  *                                                            458 / 460 revoked, anything else unknown
  *   anything else understood as a Graph error                permanent rejection (unknown)
  * A response that isn't a recognizable Graph error is not mapped here: the caller treats it as an unknown outcome.
+ *
+ * Graph reads (Step 7G-E) add one documented case first: error_subcode 492 (the User has no role on the Page) is a
+ * missing permission, never an invalid credential — even inside an OAuthException. The authorization-code exchange
+ * keeps the mapping above unchanged.
  */
 import {
   CredentialInvalidError,
@@ -64,4 +68,12 @@ export function metaGraphError(operation: ProviderOperation, fields: MetaGraphEr
     return new CredentialInvalidError(operation, "unknown");
   }
   return new PermanentRejectedError(operation, "unknown");
+}
+
+const NO_PAGE_ROLE_SUBCODE = 492;
+
+/** Graph READ errors: subcode 492 → permission missing, then the shared mapping. */
+export function metaGraphReadError(operation: ProviderOperation, fields: MetaGraphErrorFields, capability: PermissionCapability): ProviderError {
+  if (fields.subcode === NO_PAGE_ROLE_SUBCODE) return new PermissionMissingError(operation, capability);
+  return metaGraphError(operation, fields, capability);
 }

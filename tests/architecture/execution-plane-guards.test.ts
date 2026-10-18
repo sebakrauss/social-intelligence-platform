@@ -175,6 +175,19 @@ describe("cross-project credentials", () => {
     expect(await reachable(PLANE_DIRS.main)).not.toContain("jobs/integration-aws-identity.ts");
   }, 60_000);
 
+  it("Step 7G-E: the Meta read port and its Graph transport are reachable only from the integration plane; the Meta authorization side from neither", async () => {
+    const integration = await reachable(PLANE_DIRS.integration);
+    const main = await reachable(PLANE_DIRS.main);
+    for (const file of ["integrations/providers/meta/read-port.ts", "integrations/providers/meta/graph-transport.ts"]) {
+      expect(integration, file).toContain(file);
+      expect(main, file).not.toContain(file);
+    }
+    for (const file of ["integrations/providers/meta/authorization.ts", "integrations/providers/meta/oauth-transport.ts", "server/connections/meta-app-config.ts"]) {
+      expect(integration, file).not.toContain(file);
+      expect(main, file).not.toContain(file);
+    }
+  }, 60_000);
+
   it("the integration worker never seals: no KMS data-key generation or sealing composition, and no sealer is built or called", async () => {
     const modules = await reachable(PLANE_DIRS.integration);
     expect(modules.filter((source) => /^platform\/crypto\/credentials\/(aws-kms-generator|aws-kms-sealer)\.ts$|^server\/connections\/(credential-crypto|runtime)\.ts$/.test(source))).toEqual([]);

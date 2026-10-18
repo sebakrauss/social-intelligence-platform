@@ -798,17 +798,18 @@ describe("the fixture variable never reaches another plane", () => {
 });
 
 describe("the existing integration tasks stay inert with APP_DEPLOYMENT_ENV=staging and the diagnostic configuration", () => {
-  it("Step 7F-B: without CAPABILITY_PROVIDER_MODE the product composition builds the real opener but NO provider adapter and no simulator; a discovery run fails closed at the provider boundary and nothing reaches AWS", async () => {
+  it("Step 7F-B/7G-E: without CAPABILITY_PROVIDER_MODE the product composition builds the real opener, the Meta read port only and no simulator; a provider without a port fails closed at the provider boundary and nothing reaches AWS", async () => {
     const world = kmsWorld();
     const fixture = await sealFixture(world);
     const env = useEnv(deployed(fixture.raw));
     const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
     const composition = composeJobProviders(env);
-    for (const provider of ["meta", "tiktok", "simulator"] as const) expect(composition.providers.read(provider), provider).toBeUndefined();
+    for (const provider of ["tiktok", "simulator"] as const) expect(composition.providers.read(provider), provider).toBeUndefined();
+    expect(composition.providers.read("meta")?.provider).toBe("meta");
     const workspaceId = parseWorkspaceId(KMS_DIAGNOSTIC_WORKSPACE_ID);
     const correlationId = parseCorrelationId(randomUUID());
     if (workspaceId === undefined || correlationId === undefined) throw new Error("synthetic id");
-    const connection = { id: randomUUID(), status: "ACTIVE", provider: "meta", activeCredentialId: KMS_DIAGNOSTIC_CREDENTIAL_ID };
+    const connection = { id: randomUUID(), status: "ACTIVE", provider: "tiktok", activeCredentialId: KMS_DIAGNOSTIC_CREDENTIAL_ID };
     const store = {
       connections: { get: () => Promise.resolve(connection) },
       credentials: { load: () => Promise.resolve({ connectionId: connection.id, envelope: new Uint8Array(Buffer.from(fixture.envelope, "base64")) }) },

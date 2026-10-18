@@ -43,6 +43,7 @@ import { parseCorrelationId } from "@/domain/correlation";
 import { parseWorkspaceId } from "@/domain/ids";
 import { NonRetryableJobError, type TenantStepJobContext } from "@/platform/jobs";
 import { providerCredential } from "@/integrations/providers/contract";
+import { createMetaReadPort } from "@/integrations/providers/meta/read-port";
 import { createStagingStubReadPort } from "@/integrations/providers/staging-stub";
 import { readKmsKeyringConfig, selectCredentialCrypto } from "@/server/connections/environment";
 import { createIntegrationWorkerAwsCredentials } from "./integration-aws-identity";
@@ -119,9 +120,10 @@ export function createStagingStubCredentialAccess(): ProviderCredentialAccess {
  * The application services and task handlers are identical in every mode. The local-keyring guard runs first in
  * every mode (LOCAL_KEYRING_KEY outside development/test aborts).
  *
- * Step 7F-B: the local simulator is built only where its own rule allows it (development/test). A managed runtime
- * composes the real credential opener and NO provider adapter (real adapters are Step 7G): every provider read port is
- * absent, so a task fails closed at the provider boundary before any credential is opened — never a simulator fallback.
+ * Step 7F-B: the local simulator is built only where its own rule allows it (development/test); never a fallback.
+ * Step 7G-E: the Meta read port (discoverAssets only; no Meta app configuration, no App Secret) is composed here, in
+ * the integration worker's composition and nowhere else. A provider without a composed read port (TikTok) fails
+ * closed at the provider boundary before any credential is opened.
  */
 export function composeJobProviders(environment: Environment): JobComposition {
   assertNoLocalKeyringOutsideLocal(environment);
@@ -131,10 +133,11 @@ export function composeJobProviders(environment: Environment): JobComposition {
     return { access: createStagingStubCredentialAccess(), providers: { read: (provider) => createStagingStubReadPort(provider, clock) } };
   }
   const read = isLocalSimulatorRuntime(environment) ? localSimulator(environment).read : undefined;
+  const meta = createMetaReadPort();
   const opening = composeCredentialOpener(environment, integrationWorkerAwsCredentials(environment));
   return {
     access: createCredentialAccess(opening.opener, opening.contextEnv),
-    providers: { read: (provider) => (provider === "simulator" ? read : undefined) },
+    providers: { read: (provider) => (provider === "simulator" ? read : provider === "meta" ? meta : undefined) },
   };
 }
 

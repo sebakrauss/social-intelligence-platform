@@ -6,3 +6,5 @@ import { open } from "../platform/crypto/credentials/open";
 export const composed = [kms_opener, kms_unwrapper, local_opener, open];
 import { workerIdentity } from "./integration-aws-identity";
 export const composedIdentity = workerIdentity;
+import { createMetaReadPort } from "../integrations/providers/meta/read-port";
+export const composedMetaRead = createMetaReadPort;

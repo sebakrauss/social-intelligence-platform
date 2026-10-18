@@ -573,6 +573,13 @@ module.exports = {
       to: { path: "^integrations/providers/meta/(authorization|oauth-transport)\\.ts$" },
     },
     {
+      name: "meta-read-integration-composition-only",
+      severity: "error",
+      comment: "Step 7G-E: the Meta read port and its Graph transport (the documented query-token exception) are composed only by the integration worker's provider composition (jobs/connections.ts, itself integration-plane only), and only the read port reaches the Graph transport. The hosted web, MAIN, other jobs code and the Meta authorization adapter never do.",
+      from: { pathNot: "^(jobs/connections\\.ts|integrations/providers/meta/read-port\\.ts|tests/)" },
+      to: { path: "^integrations/providers/meta/(read-port|graph-transport)\\.ts$" },
+    },
+    {
       name: "meta-adapter-no-platform",
       severity: "error",
       comment: "Step 7G-D: the Meta adapter imports only the provider contract, its own files and Node built-ins — no platform module (no DB, KMS, jobs, crypto, observability), no shared kernel, tooling or fixtures.",

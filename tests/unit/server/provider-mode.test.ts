@@ -104,12 +104,13 @@ describe("G · Step 7F-B: managed composition never builds the simulator and com
   const KEY = "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa";
   const managed = { NODE_ENV: "production", APP_DEPLOYMENT_ENV: "staging", CREDENTIAL_CONTEXT_ENV: "dev", CREDENTIAL_KMS_KEY_ARN: KEY, CREDENTIAL_KMS_ALLOWED_KEY_ARNS: KEY };
 
-  it("managed (KMS configured): the real credential opener is composed; no simulator is built; every provider read port is absent", () => {
+  it("managed (KMS configured): the real credential opener is composed; no simulator is built; only the Meta read port exists (Step 7G-E)", () => {
     simulatorCalls.count = 0;
     const composed = composeJobProviders(managed);
     expect(simulatorCalls.count).toBe(0);
     expect(typeof composed.access.withCredential).toBe("function");
-    for (const provider of ["meta", "tiktok", "simulator"] as const) expect(composed.providers.read(provider), provider).toBeUndefined();
+    expect(composed.providers.read("meta")?.provider).toBe("meta");
+    for (const provider of ["tiktok", "simulator"] as const) expect(composed.providers.read(provider), provider).toBeUndefined();
   });
 
   it("no simulator fallback in managed mode, whatever the tier", () => {
@@ -125,8 +126,10 @@ describe("G · Step 7F-B: managed composition never builds the simulator and com
     simulatorCalls.count = 0;
     const composed = composeJobProviders({ NODE_ENV: "test", LOCAL_KEYRING_KEY: Buffer.alloc(32, 7).toString("base64url") });
     expect(simulatorCalls.count).toBe(1);
-    expect(composed.providers.read("simulator")).toBeDefined();
-    expect(composed.providers.read("meta")).toBeUndefined();
+    expect(composed.providers.read("simulator")?.provider).toBe("simulator");
+    // Step 7G-E: Meta is its own port, never the simulator in its place.
+    expect(composed.providers.read("meta")?.provider).toBe("meta");
+    expect(composed.providers.read("tiktok")).toBeUndefined();
   });
 
   it("staging_stub is unchanged: synthetic port, synthetic lent credential, no simulator built", async () => {

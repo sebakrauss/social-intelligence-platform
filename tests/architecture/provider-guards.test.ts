@@ -152,16 +152,18 @@ describe("Meta authorization adapter (Step 7G-D): offline, authorization only", 
   const META = "integrations/providers/meta";
   const files = () => sourceFiles([META]);
 
-  it("is exactly the authorization adapter, its token transport, Graph error normalization and the fixed endpoints — no read adapter yet", () => {
-    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/oauth-transport.ts`]);
-    for (const file of files()) {
-      expect(codeOf(file), file).not.toMatch(/discoverAssets|\/me\/accounts|instagram_business_account|ProviderReadPort|ProviderMutationPort|refreshCredential|fb_exchange_token|appsecret_proof/);
-    }
+  const AUTHORIZATION_SIDE = [`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/oauth-transport.ts`];
+
+  it("the Meta tree is the authorization adapter and its token transport, the read port and its Graph transport, error normalization and the fixed endpoints", () => {
+    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/graph-transport.ts`, `${META}/oauth-transport.ts`, `${META}/read-port.ts`]);
+    // The authorization side knows nothing of reads; nothing anywhere in the tree mutates, refreshes or proves.
+    for (const file of AUTHORIZATION_SIDE) expect(codeOf(file), file).not.toMatch(/discoverAssets|\/me\/accounts|instagram_business_account|ProviderReadPort/);
+    for (const file of files()) expect(codeOf(file), file).not.toMatch(/ProviderMutationPort|fb_exchange_token|appsecret_proof/);
   });
 
-  it("reads no environment, and only the token transport touches the network", () => {
+  it("reads no environment, and only the two narrow transports touch the network", () => {
     for (const file of files()) expect(codeOf(file), file).not.toMatch(/process\.env/);
-    expect(findReferences(sourceFiles(RUNTIME), [/\bfetch\s*\(/]).map(([file]) => file)).toEqual([`${META}/oauth-transport.ts`]);
+    expect(findReferences(sourceFiles(RUNTIME), [/\bfetch\s*\(/]).map(([file]) => file)).toEqual([`${META}/graph-transport.ts`, `${META}/oauth-transport.ts`]);
     for (const file of files()) expect(codeOf(file), file).not.toMatch(/from\s+["'](?:node:)?(?:http|https|http2|net|tls|dgram|dns)["']/);
   });
 
@@ -183,6 +185,48 @@ describe("Meta authorization adapter (Step 7G-D): offline, authorization only", 
     expect(authorization).toMatch(/pkce: "not_supported"/);
     for (const code of [authorization, transport]) expect(code).not.toMatch(/"scope"|code_challenge|code_verifier|client_token|appsecret_proof/);
     expect(transport).not.toMatch(/config_id/);
+  });
+});
+
+describe("Meta read port (Step 7G-E): discoverAssets only, the contained query-token Graph transport", () => {
+  const RUNTIME = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "proxy.ts", "next.config.ts", "trigger.config.ts", "trigger.integration.config.ts"];
+  const META = "integrations/providers/meta";
+  const READ = [`${META}/read-port.ts`, `${META}/graph-transport.ts`];
+  const transport = () => codeOf(`${META}/graph-transport.ts`);
+
+  it("the access token is unwrapped only where the Graph request is built, and placed exactly once, as the documented query parameter", () => {
+    const real = sourceFiles(RUNTIME).filter((file) => !file.startsWith("integrations/providers/simulator/"));
+    expect(findReferences(real, [/\btoken\.expose\(\)/]).map(([file]) => file)).toEqual([`${META}/graph-transport.ts`]);
+    expect(transport().match(/access_token/g)).toHaveLength(1);
+    expect(transport()).toMatch(/\["access_token", token\.expose\(\)\]/);
+    expect(codeOf(`${META}/read-port.ts`)).not.toMatch(/\.expose\(|access_token/);
+  });
+
+  it("the Graph transport never uses a header token, the provider URL or anything of the app's secrets", () => {
+    expect(transport()).not.toMatch(/authorization|Bearer|response\.url|\.url\b(?!\.)|paging\.next|client_secret|appsecret|client_token|PROVIDER_META_|clientSecret/i);
+    expect(transport()).toMatch(/redirect: "manual"/);
+    expect(transport()).toMatch(/credentials: "omit"/);
+    expect(transport()).toMatch(/signal: AbortSignal\.timeout\(timeoutMs\)/);
+    expect(transport()).toMatch(/headers: \{ accept: "application\/json" \}/);
+  });
+
+  it("only documented reads: /me/accounts with id,name (no limit), the Page's instagram_business_account and the IG account's id,username", () => {
+    expect(transport()).toMatch(/\["me", "accounts"\]/);
+    expect([...transport().matchAll(/\["fields", "([^"]+)"\]/g)].map((match) => match[1]).sort()).toEqual(["id,name", "id,name", "id,username", "instagram_business_account"]);
+    expect(transport()).not.toMatch(/"limit"|\{[a-z_,]+\}|\.limit\(/);
+  });
+
+  it("the read side holds no Meta app configuration and no state", () => {
+    for (const file of READ) {
+      expect(codeOf(file), file).not.toMatch(/PROVIDER_META_|readMetaAppConfig|MetaAppCredentials|clientId|configId|process\.env/);
+      expect(codeOf(file), file).not.toMatch(/^(?:export\s+)?(?:let|var)\s/m);
+    }
+    expect(codeOf(`${META}/read-port.ts`)).toMatch(/export const DISCOVER_ASSETS_MAX_PAGES = 20;/);
+  });
+
+  it("the integration worker's composition is the read port's only composer", () => {
+    expect(findReferences(sourceFiles(RUNTIME), [/\bcreateMetaReadPort\(/]).map(([file]) => file)).toEqual(["integrations/providers/meta/read-port.ts", "jobs/connections.ts"]);
+    expect(codeOf("jobs/connections.ts")).toMatch(/provider === "meta" \? meta : undefined/);
   });
 });
 
