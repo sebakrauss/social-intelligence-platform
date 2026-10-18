@@ -3,6 +3,7 @@ import { createOrganizationAction, createWorkspaceAction } from "@/server/tenanc
 import { ONBOARDING_STATUS_MESSAGES, parseOnboardingStatus } from "@/server/tenancy/onboarding";
 import { currentOnboardingState } from "@/server/tenancy/runtime";
 import { t } from "@/server/i18n";
+import { workspaceConnectionsPath } from "@/server/routes";
 
 /** Tenancy state is per request: never prerender it. */
 export const dynamic = "force-dynamic";
@@ -59,11 +60,20 @@ export default async function OnboardingPage({
           <h2>{t("onboarding.ready.heading")}</h2>
           <p>{t("onboarding.ready.workspaces")}</p>
           <ul>
-            {state.workspaces.map((workspace) => (
-              <li key={workspace.id}>
-                {workspace.name} · {workspace.organizationName}
-              </li>
-            ))}
+            {state.workspaces.map((workspace) => {
+              const connections = workspaceConnectionsPath(workspace.id);
+              return (
+                <li key={workspace.id}>
+                  {workspace.name} · {workspace.organizationName}
+                  {connections === undefined ? null : (
+                    <>
+                      {" · "}
+                      <a href={connections}>{t("connections.settings.link")}</a>
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ) : null}

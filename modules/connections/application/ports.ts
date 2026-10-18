@@ -84,10 +84,19 @@ export interface ConnectionStore {
     close(id: string, from: "PENDING" | "EXCHANGING", to: Exclude<AttemptStatus, "PENDING" | "EXCHANGING">, now: Date, failureCode?: ExchangeFailureCode): Promise<boolean>;
     /** Housekeeping of the caller's own attempts: expired PENDING → EXPIRED, stale EXCHANGING → OUTCOME_UNKNOWN (both get closed_at). */
     recoverStale(now: Date, staleBefore: Date): Promise<{ readonly expired: number; readonly outcomeUnknown: number }>;
+    /** The caller's own OPEN (PENDING or EXCHANGING) fresh attempts for `provider`, no reconnect target (RLS: creator only). */
+    listOpenFresh(provider: AuthorizableProvider): Promise<readonly ConnectAttempt[]>;
   };
   readonly connections: {
     get(id: string): Promise<Connection | undefined>;
     list(): Promise<readonly Connection[]>;
+    /**
+     * Serializes fresh-connection creation for (workspace, provider) until THIS transaction ends (Step 7G-F4): a
+     * transaction-scoped lock, never a session one, with a bounded wait. It decides nothing by itself: callers re-check
+     * the state in later statements. A wait past the bound rejects with CONFLICT; the transaction is then aborted and
+     * must issue no further statement. Rejects (TypeError) without a workspace or with an unknown provider.
+     */
+    serializeFresh(workspaceId: WorkspaceId, provider: AuthorizableProvider): Promise<void>;
     insert(connection: Connection): Promise<void>;
     /** Optimistic update: applies only if the stored version is `expectedVersion`. */
     update(connection: Connection, expectedVersion: number): Promise<boolean>;
@@ -200,6 +209,12 @@ export interface AuthorizationProviders {
   authorization(provider: AuthorizableProvider): ProviderAuthorizationPort | undefined;
   /** The exact, query-free callback URL registered for this provider (0007 persists that shape). */
   redirectUri(provider: AuthorizableProvider): string;
+  /**
+   * The exact authorization endpoint (https origin + path) this provider's authorization URL must target before the
+   * browser is sent there, or undefined when the destination is unconstrained (the local simulator). Composition owns
+   * the value; the query the adapter builds is never interpreted.
+   */
+  authorizationEndpoint(provider: AuthorizableProvider): string | undefined;
 }
 
 export interface DiscoveryProviders {

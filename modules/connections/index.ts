@@ -13,6 +13,9 @@ export {
   CONNECTION_PROVIDERS,
   EXCHANGE_FAILURE_CODES,
   EXCHANGE_STALE_AFTER_MS,
+  SINGLE_CONNECTION_PROVIDERS,
+  blocksFreshConnection,
+  isSingleConnectionProvider,
   stateWorkspace,
   type AttemptStatus,
   type AuthorizableProvider,
@@ -47,10 +50,20 @@ export {
   verifyCallback,
   type ClaimedExchange,
   type CompletionOutput,
+  type StartOutcome,
   type StartedAuthorization,
   type WorkspaceScope,
 } from "./application/authorization";
-export { getConnection, listConnections, removeConnection, type ConnectionDetail, type ConnectionSummary, type RemovalOutput } from "./application/management";
+export {
+  getConnection,
+  listConnections,
+  removeConnection,
+  viewConnectionSettings,
+  type ConnectionDetail,
+  type ConnectionSettings,
+  type ConnectionSummary,
+  type RemovalOutput,
+} from "./application/management";
 export {
   DISCOVER_ASSETS_TASK,
   discoverConnectionAssets,

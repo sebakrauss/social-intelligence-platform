@@ -20,15 +20,17 @@ import {
   removeConnection,
   startAuthorization,
   verifyCallback,
+  viewConnectionSettings,
   type AuthorizationProviders,
   type ClaimedExchange,
   type CompletionOutput,
   type ConnectionDetail,
+  type ConnectionSettings,
   type ConnectionSummary,
   type ExchangeFailureCode,
   type OAuthSecrets,
   type RemovalOutput,
-  type StartedAuthorization,
+  type StartOutcome,
   type WorkspaceScope,
 } from "@/modules/connections";
 import type { AuditDraft, WorkspaceCommand, WorkspaceContext } from "@/server/pipeline";
@@ -46,6 +48,22 @@ const scopeOf = (context: WorkspaceContext): WorkspaceScope => ({
   userId: context.userId,
 });
 
+/**
+ * Workspace Settings › Connections read model (Step 7G-F4). Settings › Connections is Owner/Admin only (IA §18), so it
+ * requires connections.manage — narrower than connections.connection.list (workspace.read_operational). Read only:
+ * it needs no OAuth secret or provider, recovers no attempt and starts nothing.
+ */
+export const connectionSettingsViewCommand: WorkspaceCommand<Record<string, never>, ConnectionSettings, ConnectionSettings> = {
+  scope: "workspace",
+  name: "connections.settings.view",
+  permission: "connections.manage",
+  requiresStandardMode: false,
+  validate: object({}),
+  execute: (_context, _input, tx) => viewConnectionSettings(tx.connections),
+  audit: () => undefined,
+  respond: (settings) => settings,
+};
+
 export interface ConnectionCommandDependencies {
   readonly secrets: OAuthSecrets;
   readonly providers: AuthorizationProviders;
@@ -54,8 +72,8 @@ export interface ConnectionCommandDependencies {
 export function createConnectionCommands(deps: ConnectionCommandDependencies) {
   const start: WorkspaceCommand<
     { readonly provider: (typeof AUTHORIZABLE_PROVIDERS)[number]; readonly reconnectConnectionId: string | undefined },
-    StartedAuthorization,
-    StartedAuthorization
+    StartOutcome,
+    StartOutcome
   > = {
     scope: "workspace",
     name: "connections.authorization.start",

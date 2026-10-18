@@ -107,8 +107,8 @@ const simulatedFailure = (operation: string): Promise<never> => Promise.reject(n
 /** Connections are proven on the real database only (RLS, definer functions, constraints): no in-memory fake. */
 const unavailable = (): Promise<never> => Promise.reject(new Error("in-memory unit of work: connections store not available"));
 const NO_CONNECTIONS: ConnectionStore = {
-  attempts: { insert: unavailable, get: unavailable, findByStateDigest: unavailable, claim: unavailable, close: unavailable, recoverStale: unavailable },
-  connections: { get: unavailable, list: unavailable, insert: unavailable, update: unavailable },
+  attempts: { insert: unavailable, get: unavailable, findByStateDigest: unavailable, claim: unavailable, close: unavailable, recoverStale: unavailable, listOpenFresh: unavailable },
+  connections: { get: unavailable, list: unavailable, serializeFresh: unavailable, insert: unavailable, update: unavailable },
   events: { append: unavailable },
   credentials: { store: unavailable, delete: unavailable },
   connectedAccounts: { get: unavailable, findForAsset: unavailable, activate: unavailable, list: unavailable, unlink: unavailable, deactivateForConnection: unavailable },

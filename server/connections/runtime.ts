@@ -19,6 +19,7 @@ import type { CredentialSealer } from "@/platform/crypto/credentials/seal";
 import { newOAuthState, oauthStateDigest, pkceDeriverFromEnvironment, type PkceDeriver } from "@/platform/crypto/oauth";
 import type { ProviderAuthorizationPort } from "@/integrations/providers/contract";
 import { createMetaAuthorizationPort } from "@/integrations/providers/meta/authorization";
+import { META_DIALOG_URL } from "@/integrations/providers/meta/endpoints";
 import type { AuthorizationProviders, CredentialSealing, OAuthSecrets } from "@/modules/connections";
 import type { IdentityPort } from "@/platform/auth/port";
 import { createLogger, stdoutSink } from "@/platform/observability";
@@ -73,13 +74,15 @@ export function authorizationPorts(environment: Environment): AuthorizationPorts
 
 /**
  * The app's fixed, query-free callback URL per provider (0007 persists exactly that shape). An absent port is unavailable:
- * no provider ever stands in for another.
+ * no provider ever stands in for another. Meta's authorization URL must target the frozen dialog endpoint (Step 7G-F4,
+ * from the adapter's own single source); the local simulator's is unconstrained.
  */
 export function authorizationProviders(ports: AuthorizationPorts, appBaseUrl: string): AuthorizationProviders {
   const base = new URL(appBaseUrl);
   return {
     authorization: (provider) => ({ simulator: ports.simulator, meta: ports.meta })[provider],
     redirectUri: (provider) => new URL(`/api/oauth/${provider}/callback`, base.origin).href,
+    authorizationEndpoint: (provider) => (provider === "meta" ? META_DIALOG_URL : undefined),
   };
 }
 

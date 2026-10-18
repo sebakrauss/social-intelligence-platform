@@ -5,7 +5,7 @@
  * accounts are deactivated with history — all in the caller's single transaction. Repeating it is a no-op.
  */
 import { AppError } from "@/domain/errors";
-import type { Connection, DiscoveredAsset } from "../domain/model";
+import { blocksFreshConnection, type Connection, type DiscoveredAsset } from "../domain/model";
 import type { WorkspaceScope } from "./authorization";
 import type { ConnectionStore } from "./ports";
 
@@ -68,6 +68,24 @@ export function summarize(connection: Connection): ConnectionSummary {
 
 export async function listConnections(store: ConnectionStore): Promise<readonly ConnectionSummary[]> {
   return (await store.connections.list()).map(summarize);
+}
+
+/**
+ * Workspace Settings › Connections (Step 7G-F4): every Connection's safe summary, plus whether a fresh Meta connect
+ * looks open by the current Connection state. UX only — the atomic start decides, under its lock. Read only: no stale
+ * recovery, no authorization start.
+ */
+export interface ConnectionSettings {
+  readonly connections: readonly ConnectionSummary[];
+  readonly metaConnect: "available" | "existing_connection";
+}
+
+export async function viewConnectionSettings(store: ConnectionStore): Promise<ConnectionSettings> {
+  const connections = await store.connections.list();
+  return {
+    connections: connections.map(summarize),
+    metaConnect: connections.some((connection) => blocksFreshConnection(connection, "meta")) ? "existing_connection" : "available",
+  };
 }
 
 export async function getConnection(store: ConnectionStore, connectionId: string): Promise<ConnectionDetail> {

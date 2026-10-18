@@ -4,9 +4,15 @@
  * transactions, in the server orchestration, never inside one:
  *
  *   start      own stale attempts recovered → v1 state + digest → derived S256 challenge → attempt PENDING
+ *              fresh, single-connection provider (Meta, Step 7G-F4): first K(workspace, provider), then the re-checks —
+ *              a Connection that isn't REMOVED → existing_connection; the caller's own live fresh attempt →
+ *              authorization_in_progress; neither → the attempt (nothing is cancelled, no state is reused)
  *   verify     SHA-256(callback state) → the caller's own attempt in the routed workspace, same provider
  *              denied: PENDING → DENIED   ·   code: PENDING → EXCHANGING (the exactly-once claim)
  *   complete   EXCHANGING → COMPLETED with the sealed credential stored and the Connection created or updated
+ *              fresh, single-connection provider: K again, then the re-check — another admin's flow already created the
+ *              Connection → EXCHANGE_FAILED (CONNECTION_UNAVAILABLE), nothing stored. This is the guard that makes "at most
+ *              one non-REMOVED Connection" hold across creators, whose attempts are invisible to each other (RLS).
  *   fail       EXCHANGING → EXCHANGE_FAILED (closed code) | OUTCOME_UNKNOWN
  *
  * Every rejection of a callback (unknown, modified, expired, replayed, closed, other user, other workspace,
@@ -20,7 +26,10 @@ import {
   ATTEMPT_TTL_MS,
   EXCHANGE_STALE_AFTER_MS,
   acceptsAuthorization,
+  blocksFreshConnection,
   isClaimable,
+  isLiveFreshAttempt,
+  isSingleConnectionProvider,
   statusAfterReauthorization,
   type AuthorizableProvider,
   type Connection,
@@ -43,6 +52,15 @@ export interface StartedAuthorization {
   readonly provider: AuthorizableProvider;
 }
 
+/**
+ * What a start decided, committed either way. Only `started` carries an attempt (and its raw state, for the URL
+ * builder); the two refusals are safe product states, never errors, and carry nothing.
+ */
+export type StartOutcome =
+  | { readonly kind: "started"; readonly authorization: StartedAuthorization }
+  | { readonly kind: "existing_connection" }
+  | { readonly kind: "authorization_in_progress" };
+
 const notFound = (): never => {
   throw new AppError("NOT_FOUND", {});
 };
@@ -57,7 +75,7 @@ export async function startAuthorization(
     readonly now: Date;
     readonly newId: () => string;
   },
-): Promise<StartedAuthorization> {
+): Promise<StartOutcome> {
   const port = deps.providers.authorization(input.provider);
   if (port === undefined) throw new AppError("INVALID_INPUT", { field: "provider" });
   const redirectUri = parseRedirectUri(deps.providers.redirectUri(input.provider));
@@ -68,9 +86,21 @@ export async function startAuthorization(
     if (connection === undefined || !acceptsAuthorization(connection) || connection.provider !== input.provider) notFound();
   }
 
+  // Fresh start of a single-connection provider: serialize on K(workspace, provider) BEFORE recovery and the re-checks,
+  // so a concurrent start by the same creator waits here and then sees this one's committed attempt.
+  const fresh = input.reconnectConnectionId === null && isSingleConnectionProvider(input.provider);
+  if (fresh) await store.connections.serializeFresh(input.scope.workspaceId, input.provider);
+
   // Stale recovery (decision B2 §11): the caller's expired attempts close; a long-running exchange becomes
   // OUTCOME_UNKNOWN, so its late result can never complete it.
   await store.attempts.recoverStale(input.now, new Date(input.now.getTime() - EXCHANGE_STALE_AFTER_MS));
+
+  if (fresh) {
+    if ((await store.connections.list()).some((connection) => blocksFreshConnection(connection, input.provider))) return { kind: "existing_connection" };
+    if ((await store.attempts.listOpenFresh(input.provider)).some((attempt) => isLiveFreshAttempt(attempt, input.provider, input.now))) {
+      return { kind: "authorization_in_progress" };
+    }
+  }
 
   const state = deps.secrets.newState(input.scope.workspaceId);
   const pkce = port.pkce === "not_supported" ? null : (parsePkceChallenge(deps.secrets.pkceChallenge(state)) ?? null);
@@ -92,7 +122,7 @@ export async function startAuthorization(
     exchangeStartedAt: null,
     failureCode: null,
   });
-  return { attemptId, state, pkce, redirectUri, provider: input.provider };
+  return { kind: "started", authorization: { attemptId, state, pkce, redirectUri, provider: input.provider } };
 }
 
 export interface ClaimedExchange {
@@ -155,6 +185,15 @@ export async function completeExchange(
   const base = { organizationId: input.scope.organizationId, workspaceId: input.scope.workspaceId };
 
   if (attempt.reconnectConnectionId === null) {
+    if (isSingleConnectionProvider(attempt.provider)) {
+      // Same K as the fresh start, then the authoritative re-check (a later statement: READ COMMITTED sees every
+      // committed Connection). The loser's sealed envelope is never stored; its code is never exchanged again.
+      await store.connections.serializeFresh(input.scope.workspaceId, attempt.provider);
+      if ((await store.connections.list()).some((connection) => blocksFreshConnection(connection, attempt.provider))) {
+        if (!(await store.attempts.close(attempt.id, "EXCHANGING", "EXCHANGE_FAILED", input.now, "CONNECTION_UNAVAILABLE"))) throw new AppError("CONFLICT", {});
+        return { kind: "connection_unavailable", attemptId: attempt.id };
+      }
+    }
     const connectionId = input.newId();
     const created: Connection = {
       id: connectionId,

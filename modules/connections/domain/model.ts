@@ -319,6 +319,40 @@ export function acceptsAuthorization(connection: Connection): boolean {
   return connection.status !== "REMOVED";
 }
 
+// ── Fresh-connection policy (Step 7G-F4; TEMPORARY PRODUCT POLICY, not a schema invariant) ─────────────────────────
+
+/**
+ * Providers for which a workspace holds at most ONE Connection that isn't REMOVED. Meta only: one Meta user token
+ * discovers every Page and linked Instagram account it can reach, so the first slice needs a single Meta Connection,
+ * recovered by reconnect or removal, never duplicated by a fresh connect. Enforced in the application under a
+ * per-(workspace, provider) serialization at fresh start AND at fresh completion; deliberately NOT a database
+ * uniqueness rule, so a future identity-keyed model (several Meta identities per workspace) stays open. Other
+ * providers (the simulator, TikTok) keep their multiplicity unchanged.
+ */
+export const SINGLE_CONNECTION_PROVIDERS = ["meta"] as const satisfies readonly AuthorizableProvider[];
+
+export type SingleConnectionProvider = (typeof SINGLE_CONNECTION_PROVIDERS)[number];
+
+export function isSingleConnectionProvider(provider: ConnectionProvider): provider is SingleConnectionProvider {
+  return (SINGLE_CONNECTION_PROVIDERS as readonly string[]).includes(provider);
+}
+
+/** A Connection that blocks a fresh connect of `provider`: same provider, any status except REMOVED. */
+export function blocksFreshConnection(connection: Connection, provider: ConnectionProvider): boolean {
+  return connection.provider === provider && connection.status !== "REMOVED";
+}
+
+/**
+ * A live attempt that blocks the same creator's fresh start of `provider`: a fresh one (no reconnect target) that is
+ * PENDING inside its lifetime, or EXCHANGING and not yet stale. Every other status is closed and never blocks.
+ */
+export function isLiveFreshAttempt(attempt: ConnectAttempt, provider: ConnectionProvider, now: Date): boolean {
+  if (attempt.provider !== provider || attempt.reconnectConnectionId !== null) return false;
+  if (attempt.status === "PENDING") return attempt.expiresAt.getTime() > now.getTime();
+  if (attempt.status === "EXCHANGING") return attempt.exchangeStartedAt !== null && !isStaleExchange(attempt, now);
+  return false;
+}
+
 /**
  * Status after a re-authorization stored a new credential: a working connection keeps its status (the new
  * credential is validated by discovery next); a failed or disconnected one goes back to CONNECTING.

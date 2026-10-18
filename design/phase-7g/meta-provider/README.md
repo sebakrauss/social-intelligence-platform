@@ -289,3 +289,32 @@ A product surface, not test scaffolding: it serves every new user, not only the 
 | REMOTE_DB_MUTATIONS_THIS_GATE | 0 |
 | Multiples | domain behavior: two submissions create two objects; the page guides only the first organization and workspace |
 | External auth configuration | unchanged: Supabase Site URL and redirect allowlist are verified in the live-run gates (F8/H1) |
+
+## Live-acceptance prerequisite: Connect Meta surface (Step 7G-F4)
+
+Permanent product code. The F4A contract, with the TL decisions D1–D4 and T1.
+
+| Item | State |
+|---|---|
+| CONNECT_META_SURFACE | IMPLEMENTED_OFFLINE: `app/workspaces/[workspaceId]/settings/connections/page.tsx` (read only, `force-dynamic`), `server/connections/{settings,settings-runtime,actions}.ts`; linked from the onboarding ready state through `server/routes.ts` |
+| CONNECT_META_ROUTE | `/workspaces/[workspaceId]/settings/connections` |
+| Settings read | `connections.settings.view` (workspace scope, `connections.manage`: Owner/Admin per IA §18; read only, no stale recovery, no start, no audit); its "Connect Meta available" hint is UX only |
+| Connect action | `startMetaConnectionAction` (`"use server"`): reads only `workspaceId` (parsed, then resolved live); provider fixed to `meta`; identity from the session; `connections.manage` through the pipeline; fixed internal redirects from the parsed id; invalid id → `/onboarding` |
+| FRESH_META_CONNECTION_POLICY | AT_MOST_ONE_NON_REMOVED_PER_WORKSPACE_TEMPORARY_PRODUCT_POLICY (`SINGLE_CONNECTION_PROVIDERS = ["meta"]`); CONNECTING, ACTIVE, DEGRADED, FAILED and DISCONNECTED block a fresh connect; REMOVED doesn't; simulator and TikTok multiplicity unchanged |
+| GLOBAL_WORKSPACE_PROVIDER_UNIQUENESS | NOT_ENFORCED (no schema rule; a future identity-keyed model stays open) |
+| META_FRESH_CONNECTION_SERIALIZATION | POSTGRES_TRANSACTION_ADVISORY_LOCK: `pg_advisory_xact_lock(hashtextextended('connections.fresh_connection:' \|\| workspace \|\| ':' \|\| provider, 0))`, only in `modules/connections/persistence/store.ts`, taken before the re-checks at fresh start and at fresh completion; never held across a provider, network or KMS call |
+| META_FRESH_LOCK_TIMEOUT | 5_SECONDS_TRANSACTION_LOCAL (code constant `FRESH_CONNECTION_LOCK_TIMEOUT_MS`, not configuration) |
+| LOCK_TIMEOUT_SCOPE | ADVISORY_LOCK_ACQUISITION_ONLY: the previous `lock_timeout` is read and restored, transaction-locally, once K is held |
+| LOCK_TIMEOUT_SQLSTATE | 55P03_INTERNAL_ONLY: surfaced only as CONFLICT; the aborted transaction issues no further statement |
+| LOCK_TIMEOUT_START_OUTCOME | UNAVAILABLE (no attempt, no authorization request, no URL) |
+| LOCK_TIMEOUT_COMPLETION_OUTCOME | CREDENTIAL_NOT_STORED_RESTART_REQUIRED (the existing failure path, in a new transaction) |
+| LIVE_ATTEMPT_POLICY | PER_CREATOR: the caller's own fresh Meta attempt, PENDING before `expires_at` or EXCHANGING for less than `EXCHANGE_STALE_AFTER_MS`, after the caller's stale recovery; attempt RLS unchanged |
+| CONCURRENT_SECOND_START | AUTHORIZATION_IN_PROGRESS (no second attempt, no URL, no state reuse, nothing cancelled) |
+| FRESH_COMPLETION_DUPLICATE_GUARD | ENABLED_META_ONLY: a losing completion closes its attempt EXCHANGE_FAILED / CONNECTION_UNAVAILABLE; no Connection, credential, pointer, event, audit or `discover_assets` row |
+| Known temporary-policy cost | in a two-admin race the loser's code was already exchanged and its token sealed (one GenerateDataKey) before the guard refuses; the envelope is never stored, the plaintext follows the existing zeroing, nothing secret is surfaced |
+| AUTHORIZATION_REDIRECT_VALIDATION | HTTPS_EXACT_META_ORIGIN_AND_DIALOG_PATH: https, no userinfo, no fragment, origin + path exactly `META_DIALOG_URL` (composed in `server/connections/runtime.ts`); the query is never interpreted; otherwise `authorization_start_failed`, no redirect |
+| DB_MIGRATION | NO |
+| RECONNECT_SURFACE | NOT_IMPLEMENTED (the domain path is unchanged) |
+| REMOVE_SURFACE | NOT_IMPLEMENTED |
+| F4C_REMOVE_SURFACE_REQUIRED_BEFORE_LIVE | YES: a FAILED or DISCONNECTED Meta connection blocks a fresh connect with no recovery surface until F4-C |
+| ROLE_LEVEL_IDLE_TRANSACTION_HARDENING | DEFERRED_BEFORE_CUSTOMER_EXPOSURE (separate operational gate; not a blocker for the controlled DEV live acceptance) |

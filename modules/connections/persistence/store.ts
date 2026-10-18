@@ -6,8 +6,9 @@
  * outside the closed vocabularies is treated as corruption, never passed on. Credentials are reached only
  * through the credential definer functions, as EnvelopeV1 bytes.
  */
-import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { isConnectionStatus } from "@/domain/connections";
+import { AppError } from "@/domain/errors";
 import { parseOrganizationId, parseUserId, parseWorkspaceId } from "@/domain/ids";
 import type { AuditLog } from "@/modules/audit";
 import { postgresError, type DatabaseTransaction } from "@/platform/db";
@@ -309,6 +310,45 @@ async function getConnection(tx: DatabaseTransaction, id: string): Promise<Conne
   return row === undefined ? undefined : toConnection(row);
 }
 
+/**
+ * Fresh-connection serialization (Step 7G-F4, TL decision T1): the longest a fresh path waits for its
+ * (workspace, provider) lock. A code-level constant, never configuration: past it the waiting statement fails with
+ * SQLSTATE 55P03, the transaction aborts, and the caller sees only CONFLICT.
+ */
+export const FRESH_CONNECTION_LOCK_TIMEOUT_MS = 5_000;
+const FRESH_CONNECTION_LOCK_TIMEOUT = `${String(FRESH_CONNECTION_LOCK_TIMEOUT_MS)}ms`;
+const FRESH_CONNECTION_LOCK_NAMESPACE = "connections.fresh_connection:";
+const LOCK_NOT_AVAILABLE = "55P03";
+
+/**
+ * Takes K(workspace, provider) = pg_advisory_xact_lock(hashtextextended('connections.fresh_connection:' || workspace
+ * || ':' || provider, 0)) inside the caller's transaction (released only by its COMMIT/ROLLBACK; never a session lock).
+ * The wait alone is bounded: the transaction's lock_timeout is read, set transaction-locally to the bound, and
+ * restored to exactly that value once K is held, so no later statement runs under it. On 55P03 the transaction is
+ * already aborted: nothing more is sent (no restore — the rollback discards transaction-local settings) and the
+ * failure leaves only as CONFLICT, without SQLSTATE, SQL text or key. The key input is injective (fixed prefix,
+ * canonical UUID text, a closed provider value); a 64-bit hash collision can only add waiting, never admit anything.
+ */
+async function serializeFreshConnection(tx: DatabaseTransaction, workspaceId: unknown, provider: unknown): Promise<void> {
+  const workspace = parseWorkspaceId(workspaceId);
+  if (workspace === undefined || typeof provider !== "string" || !(CONNECTION_PROVIDERS as readonly string[]).includes(provider)) {
+    throw new TypeError("connections persistence: the fresh-connection lock needs a workspace and a known provider");
+  }
+  const current = await tx.execute<{ value: string }>(sql`select pg_catalog.current_setting('lock_timeout') as value`);
+  const previous = current.rows[0]?.value;
+  if (typeof previous !== "string") corrupt("lock_timeout");
+  await tx.execute(sql`select pg_catalog.set_config('lock_timeout', ${FRESH_CONNECTION_LOCK_TIMEOUT}::text, true)`);
+  try {
+    await tx.execute(
+      sql`select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${FRESH_CONNECTION_LOCK_NAMESPACE}::text || ${workspace}::uuid::text || ':' || ${provider}::text, 0))`,
+    );
+  } catch (error) {
+    if (postgresError(error)?.code === LOCK_NOT_AVAILABLE) throw new AppError("CONFLICT", {}, { cause: error });
+    throw error;
+  }
+  await tx.execute(sql`select pg_catalog.set_config('lock_timeout', ${previous}::text, true)`);
+}
+
 const versioned = (connection: Connection, expectedVersion: number) =>
   and(eq(connectionsTable.id, connection.id), eq(connectionsTable.version, expectedVersion));
 
@@ -371,12 +411,21 @@ export function createPostgresConnectionStore(tx: DatabaseTransaction): Connecti
           .returning({ id: connectAttempts.id });
         return { expired: expired.length, outcomeUnknown: unknown.length };
       },
+      async listOpenFresh(provider) {
+        const rows = await tx
+          .select()
+          .from(connectAttempts)
+          .where(and(eq(connectAttempts.provider, provider), isNull(connectAttempts.reconnectConnectionId), inArray(connectAttempts.status, ["PENDING", "EXCHANGING"])))
+          .orderBy(asc(connectAttempts.createdAt), asc(connectAttempts.id));
+        return rows.map(toAttempt);
+      },
     },
     connections: {
       get: (id) => getConnection(tx, id),
       async list() {
         return (await tx.select().from(connectionsTable).orderBy(asc(connectionsTable.createdAt), asc(connectionsTable.id))).map(toConnection);
       },
+      serializeFresh: (workspaceId, provider) => serializeFreshConnection(tx, workspaceId, provider),
       async insert(c) {
         await tx.insert(connectionsTable).values({
           id: c.id,

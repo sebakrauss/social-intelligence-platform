@@ -3,7 +3,9 @@
  * short pipeline runs (each its own user-scoped transaction) and makes the provider calls BETWEEN them, never
  * inside one:
  *
- *   start      pipeline: start (attempt PENDING) → port.authorizationRequest → URL to the browser
+ *   start      pipeline: start (attempt PENDING, or a committed existing_connection / authorization_in_progress for a
+ *              fresh Meta start — Step 7G-F4) → AFTER commit: port.authorizationRequest → the URL must target the
+ *              provider's exact composed endpoint (origin + path; the query is never interpreted) → URL to the browser
  *   callback   parseCallback (adapter) → malformed: stop, nothing touched
  *              state routing prefix → pipeline: verify (digest match; denied → DENIED; code → EXCHANGING claim)
  *              → derive the PKCE verifier again from the returned state (never stored)
@@ -53,8 +55,36 @@ type Unauthenticated = { readonly status: "unauthenticated" } | { readonly statu
 
 export type StartResult =
   | { readonly status: "ok"; readonly authorizationUrl: string }
+  | { readonly status: "existing_connection" }
+  | { readonly status: "authorization_in_progress" }
   | Unauthenticated
   | { readonly status: "error"; readonly code: string };
+
+/**
+ * Whether an adapter-built authorization URL may be followed: https, no userinfo, no fragment, and exactly the
+ * composed endpoint's origin and path. The query (state, client id, configuration, redirect URI) belongs to the
+ * adapter contract and is never read here.
+ */
+export function isAuthorizationDestination(url: string, endpoint: string): boolean {
+  let actual: URL;
+  let expected: URL;
+  try {
+    actual = new URL(url);
+    expected = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  return (
+    expected.protocol === "https:" &&
+    actual.protocol === "https:" &&
+    actual.username === "" &&
+    actual.password === "" &&
+    actual.hash === "" &&
+    !url.includes("#") &&
+    actual.origin === expected.origin &&
+    actual.pathname === expected.pathname
+  );
+}
 
 export const RESTART_REASONS = ["invalid_callback", "not_found", "exchange_failed", "outcome_unknown", "not_stored", "connection_unavailable"] as const;
 export type RestartReason = (typeof RESTART_REASONS)[number];
@@ -101,19 +131,26 @@ export async function startConnectionAuthorization(
   });
   if (result.status === "unauthenticated" || result.status === "verification_required") return { status: result.status };
   if (result.status === "error") return { status: "error", code: result.error.code };
-  const started = result.value;
+  if (result.value.kind !== "started") return { status: result.value.kind };
+  const started = result.value.authorization;
   const port = deps.providers.authorization(started.provider);
   const state = parseOAuthState(started.state);
   if (port === undefined || state === undefined) return { status: "error", code: "PROVIDER_PERMANENT" };
+  let url: string;
   try {
-    // After commit: the attempt exists before the user can be sent anywhere. A failure here leaves a PENDING
-    // attempt that simply expires.
-    const authorization = await port.authorizationRequest({ state, redirectUri: started.redirectUri, pkce: started.pkce });
-    return { status: "ok", authorizationUrl: authorization.url };
+    // After commit (no transaction, no lock is held here): the attempt exists before the user can be sent anywhere. A
+    // failure here leaves a PENDING attempt that simply expires.
+    url = (await port.authorizationRequest({ state, redirectUri: started.redirectUri, pkce: started.pkce })).url;
   } catch {
     deps.logger.warn("connections.authorization.request_failed", { outcome: "error", workspaceId: String(request.workspaceId) });
     return { status: "error", code: "PROVIDER_PERMANENT" };
   }
+  const endpoint = deps.providers.authorizationEndpoint(started.provider);
+  if (endpoint !== undefined && !isAuthorizationDestination(url, endpoint)) {
+    deps.logger.warn("connections.authorization.destination_rejected", { outcome: "error", workspaceId: String(request.workspaceId) });
+    return { status: "error", code: "PROVIDER_PERMANENT" };
+  }
+  return { status: "ok", authorizationUrl: url };
 }
 
 export async function completeConnectionAuthorization(
