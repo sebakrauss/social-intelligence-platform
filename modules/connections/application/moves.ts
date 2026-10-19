@@ -236,7 +236,8 @@ export async function activateDestination(store: ConnectionWorkerStore, input: S
   };
 
   if (!(await store.moves.initiatorCanManage(move.moveId))) return fail("AUTHORITY_REVOKED");
-  const connection = await store.connections.get(move.connectionId);
+  // FOR SHARE (Step 7G-F4C): serializes with a concurrent removal of the destination Connection (see loadLinkableAsset).
+  const connection = await store.connections.getForShare(move.connectionId);
   if (connection?.status !== "ACTIVE") return fail("DESTINATION_CONNECTION_UNHEALTHY");
   const asset = await store.discoveredAssets.find(move.connectionId, move.platform, move.providerAssetId);
   if (asset === undefined) return fail("ASSET_NOT_DISCOVERED");

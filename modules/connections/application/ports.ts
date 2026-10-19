@@ -29,6 +29,7 @@ import type {
   MoveReasonCode,
   OutgoingMove,
   RouteResult,
+  SingleConnectionProvider,
   SingleWorkspaceRule,
 } from "../domain/model";
 
@@ -86,9 +87,22 @@ export interface ConnectionStore {
     recoverStale(now: Date, staleBefore: Date): Promise<{ readonly expired: number; readonly outcomeUnknown: number }>;
     /** The caller's own OPEN (PENDING or EXCHANGING) fresh attempts for `provider`, no reconnect target (RLS: creator only). */
     listOpenFresh(provider: AuthorizableProvider): Promise<readonly ConnectAttempt[]>;
+    /**
+     * Removal of a single-connection provider's Connection (Step 7G-F4C, 0012): closes EVERY open fresh attempt of the
+     * bound workspace for that provider, across creators (PENDING → CANCELLED, EXCHANGING → EXCHANGE_FAILED /
+     * CONNECTION_UNAVAILABLE). Write-only: nothing about other creators' attempts comes back, not even a count.
+     */
+    invalidateOpenFresh(provider: SingleConnectionProvider, now: Date): Promise<void>;
   };
   readonly connections: {
     get(id: string): Promise<Connection | undefined>;
+    /** Row-locked read (FOR UPDATE) for a removal: concurrent writers of this Connection wait for its transaction. */
+    lockForUpdate(id: string): Promise<Connection | undefined>;
+    /**
+     * Share-locked read (FOR SHARE) before activating an account from this Connection: a concurrent removal either
+     * commits first (this read then sees REMOVED) or waits for this transaction (and then deactivates what it activated).
+     */
+    getForShare(id: string): Promise<Connection | undefined>;
     list(): Promise<readonly Connection[]>;
     /**
      * Serializes fresh-connection creation for (workspace, provider) until THIS transaction ends (Step 7G-F4): a
@@ -139,6 +153,8 @@ export interface ConnectionStore {
 export interface ConnectionWorkerStore {
   readonly connections: {
     get(id: string): Promise<Connection | undefined>;
+    /** Share-locked read (FOR SHARE) before a Move activation: serializes with a concurrent removal (see the web store). */
+    getForShare(id: string): Promise<Connection | undefined>;
     update(connection: Connection, expectedVersion: number): Promise<boolean>;
   };
   readonly events: { append(event: ConnectionEvent): Promise<void> };

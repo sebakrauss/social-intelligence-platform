@@ -218,7 +218,14 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   },
   "connections.connect_attempts": {
     class: "workspace_tenant",
-    policies: ["creator_read SELECT authenticated", "creator_update UPDATE authenticated", "manage_insert INSERT authenticated"],
+    policies: [
+      "creator_read SELECT authenticated",
+      "creator_update UPDATE authenticated",
+      "manage_insert INSERT authenticated",
+      // Step 7G-F4C (0012): admit only the write-only invalidation definer, bound workspace.
+      "owner_bound_invalidate UPDATE app_owner",
+      "owner_bound_read SELECT app_owner",
+    ],
     privileges: {
       authenticated: [
         "INSERT", "SELECT", "UPDATE(closed_at)", "UPDATE(exchange_started_at)", "UPDATE(failure_code)", "UPDATE(pkce_envelope)",
@@ -366,4 +373,6 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "connections.route_move_step(uuid,text,text,timestamp with time zone)": ["app_worker", "authenticated"],
   "connections.move_initiator_can_manage(uuid)": ["app_worker"],
   "connections.record_move_audit(uuid,text,text)": ["app_worker"],
+  // Step 7G-F4C (0012): Meta removal closes every open fresh Meta attempt of the bound workspace (write-only, web only).
+  "connections.invalidate_open_fresh_meta_attempts(timestamp with time zone)": ["authenticated"],
 };

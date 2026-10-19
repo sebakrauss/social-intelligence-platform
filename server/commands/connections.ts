@@ -64,6 +64,33 @@ export const connectionSettingsViewCommand: WorkspaceCommand<Record<string, neve
   respond: (settings) => settings,
 };
 
+/**
+ * Removal (Step 5D; Step 7G-F4C adds the optional expected-provider precondition a single-provider surface fixes server
+ * side, so a tampered id can't remove another provider's Connection). Needs no OAuth secret or provider: the Remove
+ * surface composes it without the authorization runtime.
+ */
+export const connectionRemoveCommand: WorkspaceCommand<
+  { readonly connectionId: string; readonly expectedProvider: "meta" | undefined },
+  RemovalOutput,
+  { readonly changed: boolean }
+> = {
+  scope: "workspace",
+  name: "connections.connection.remove",
+  permission: "connections.manage",
+  requiresStandardMode: false,
+  validate: object({ connectionId: uuid, expectedProvider: optional(oneOf(["meta"] as const)) }),
+  execute: (context, input, tx, env) =>
+    removeConnection(tx.connections, {
+      scope: scopeOf(context),
+      connectionId: input.connectionId,
+      ...(input.expectedProvider === undefined ? {} : { expectedProvider: input.expectedProvider }),
+      now: env.now,
+      newId: env.newId,
+    }),
+  audit: (output) => (output.changed ? { action: "connection.removed", targetType: "connection", targetId: output.connectionId } : undefined),
+  respond: (output) => ({ changed: output.changed }),
+};
+
 export interface ConnectionCommandDependencies {
   readonly secrets: OAuthSecrets;
   readonly providers: AuthorizationProviders;
@@ -177,17 +204,6 @@ export function createConnectionCommands(deps: ConnectionCommandDependencies) {
     respond: (closed) => closed,
   };
 
-  const remove: WorkspaceCommand<{ readonly connectionId: string }, RemovalOutput, { readonly changed: boolean }> = {
-    scope: "workspace",
-    name: "connections.connection.remove",
-    permission: "connections.manage",
-    requiresStandardMode: false,
-    validate: object({ connectionId: uuid }),
-    execute: (context, input, tx, env) => removeConnection(tx.connections, { scope: scopeOf(context), connectionId: input.connectionId, now: env.now, newId: env.newId }),
-    audit: (output) => (output.changed ? { action: "connection.removed", targetType: "connection", targetId: output.connectionId } : undefined),
-    respond: (output) => ({ changed: output.changed }),
-  };
-
   const list: WorkspaceCommand<Record<string, never>, readonly ConnectionSummary[], readonly ConnectionSummary[]> = {
     scope: "workspace",
     name: "connections.connection.list",
@@ -210,7 +226,7 @@ export function createConnectionCommands(deps: ConnectionCommandDependencies) {
     respond: (detail) => detail,
   };
 
-  return { start, verify, complete, fail, remove, list, get };
+  return { start, verify, complete, fail, remove: connectionRemoveCommand, list, get };
 }
 
 export type ConnectionCommands = ReturnType<typeof createConnectionCommands>;

@@ -81,6 +81,11 @@ export const MESSAGE_KEYS = [
   "connections.provider.meta",
   "connections.provider.tiktok",
   "connections.provider.simulator",
+  "connections.status.removed",
+  "connections.status.remove_not_confirmed",
+  "connections.status.connection_not_found",
+  "connections.remove.acknowledge",
+  "connections.remove.submit",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

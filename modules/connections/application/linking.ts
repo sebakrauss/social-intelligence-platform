@@ -31,11 +31,16 @@ export type LinkOutput =
   | { readonly kind: "already_linked"; readonly account: ConnectedAccount }
   | ActiveElsewhere;
 
-/** The local discovered asset and its Connection, which must be ACTIVE (a degraded/failed one can't link). */
+/**
+ * The local discovered asset and its Connection, which must be ACTIVE (a degraded/failed one can't link). The
+ * Connection is read FOR SHARE (Step 7G-F4C): a concurrent removal either commits first — this read then sees REMOVED
+ * and refuses — or waits for this transaction and then deactivates what it activated. ACTIVE account under REMOVED
+ * Connection can't be committed.
+ */
 export async function loadLinkableAsset(store: ConnectionStore, discoveredAssetId: string): Promise<DiscoveredAsset> {
   const asset = await store.discoveredAssets.get(discoveredAssetId);
   if (asset === undefined) throw new AppError("NOT_FOUND", {});
-  const connection = await store.connections.get(asset.connectionId);
+  const connection = await store.connections.getForShare(asset.connectionId);
   if (connection === undefined) throw new AppError("NOT_FOUND", {});
   if (connection.status !== "ACTIVE") throw new AppError("CONNECTION_PROBLEM", { platform: asset.platform });
   return asset;

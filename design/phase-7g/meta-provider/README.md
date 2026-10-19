@@ -315,6 +315,31 @@ Permanent product code. The F4A contract, with the TL decisions D1–D4 and T1.
 | AUTHORIZATION_REDIRECT_VALIDATION | HTTPS_EXACT_META_ORIGIN_AND_DIALOG_PATH: https, no userinfo, no fragment, origin + path exactly `META_DIALOG_URL` (composed in `server/connections/runtime.ts`); the query is never interpreted; otherwise `authorization_start_failed`, no redirect |
 | DB_MIGRATION | NO |
 | RECONNECT_SURFACE | NOT_IMPLEMENTED (the domain path is unchanged) |
-| REMOVE_SURFACE | NOT_IMPLEMENTED |
-| F4C_REMOVE_SURFACE_REQUIRED_BEFORE_LIVE | YES: a FAILED or DISCONNECTED Meta connection blocks a fresh connect with no recovery surface until F4-C |
+| REMOVE_SURFACE | IMPLEMENTED_OFFLINE in Step 7G-F4C (see below) |
+| F4C_REMOVE_SURFACE_REQUIRED_BEFORE_LIVE | YES: satisfied by Step 7G-F4C (a FAILED or DISCONNECTED Meta connection is recovered by Remove, then a fresh connect) |
 | ROLE_LEVEL_IDLE_TRANSACTION_HARDENING | DEFERRED_BEFORE_CUSTOMER_EXPOSURE (separate operational gate; not a blocker for the controlled DEV live acceptance) |
+
+## Live-acceptance prerequisite: Remove Meta, terminal (Step 7G-F4C)
+
+The F4C0 contract, with the TL decisions D1–D7.
+
+| Item | State |
+|---|---|
+| REMOVE_META_SURFACE | IMPLEMENTED_OFFLINE: an inline Remove form per Meta connection that isn't REMOVED on Settings › Connections; `removeMetaConnectionAction` (`"use server"`) reads only `workspaceId`, `connectionId` and the visible acknowledgement |
+| REMOVE_ROUTE | WORKSPACE_SETTINGS_CONNECTIONS_INLINE_ACTION (no confirmation route) |
+| Command | the existing `connections.connection.remove` (`connectionRemoveCommand`), `connections.manage`; the surface fixes `expectedProvider: "meta"`, so another provider's id is `connection_not_found`; generic callers unchanged |
+| Acknowledgement | UX intent only: the exact form value, else `remove_not_confirmed` and no command; security is the POST Server Action, Next's Origin check, the verified session, `connections.manage` and RLS |
+| REMOVE_META_SERIALIZATION | SAME_K_WORKSPACE_META: `get` (provider) → K → FOR UPDATE re-read → REMOVED? `changed:false` → REMOVED + pointer cleared + credential row deleted (crypto-shred) + accounts INACTIVE (REMOVED) + open fresh attempts closed + REMOVED_BY_USER event + `connection.removed` audit, one transaction |
+| REMOVE_META_LOCK_TIMEOUT | 5_SECONDS_TRANSACTION_LOCAL (the F4-B primitive); past it → `unavailable`, nothing changed |
+| REMOVE_INVALIDATES_OPEN_FRESH_META_ATTEMPTS | YES: every open fresh Meta attempt of the workspace, any creator: PENDING → CANCELLED, EXCHANGING → EXCHANGE_FAILED / CONNECTION_UNAVAILABLE; reconnect, other-provider and terminal attempts untouched |
+| CROSS_CREATOR_ATTEMPT_INVALIDATION | WRITE_ONLY_SECURITY_DEFINER: `connections.invalidate_open_fresh_meta_attempts(timestamptz)` (0012), returns void, sealed workspace only, live Owner/Admin web callers only, EXECUTE for `authenticated` only |
+| ATTEMPT_READ_RLS | CREATOR_ONLY_UNCHANGED (the two new policies are for `app_owner`, i.e. the definer, bound workspace) |
+| Fresh completion | re-reads its attempt AFTER K: one closed by a removal is refused (`connection_unavailable`), nothing persisted |
+| REMOVED_TERMINAL_CONNECTION | YES: no writer moves a REMOVED Connection (discovery and reconnect refuse it; removal is idempotent) |
+| REMOVED_TERMINAL_ACCOUNT_ACTIVATION | GUARDED: link and Move activation read the Connection FOR SHARE, so ACTIVE-account-under-REMOVED-Connection can't commit |
+| META_REMOTE_REVOCATION | NOT_IMPLEMENTED (no Meta call; deferred) |
+| REMOVE_MEANS | WRENKIND_FORGETS_LOCAL_CONNECTION: Wrenkind deletes its stored credential and deactivates the accounts; discovery history stays; the authorization inside Meta is NOT revoked (the UI says so) |
+| DISCOVERY_IN_FLIGHT_AFTER_REMOVE | SAFE_BUT_MAY_WASTE_PROVIDER_WORK: a run that already loaded the envelope may still Decrypt and call Meta; its write is refused; later runs skip before Decrypt |
+| LIVE_CLEANUP_ORDER | WAIT_FOR_DISCOVERY_TERMINAL_THEN_REMOVE (so Decrypt / provider-call evidence counts stay exact) |
+| CAPABILITY_PROFILE_FINAL_RECHECK | DEFERRED_HARDENING (a late profile for an already inactive account is derived metadata, not resurrection) |
+| RECONNECT_SURFACE | NOT_IMPLEMENTED (a reconnect after removal stays refused) |

@@ -86,4 +86,9 @@ export const developmentReferenceCatalog: Catalog = {
   "connections.provider.meta": "Meta",
   "connections.provider.tiktok": "TikTok",
   "connections.provider.simulator": "Simulator",
+  "connections.status.removed": "The Meta connection was removed from Wrenkind. Wrenkind deleted its stored credential and deactivated the connection's accounts. This does not revoke Wrenkind's authorization inside Meta; you can do that in your Meta settings.",
+  "connections.status.remove_not_confirmed": "Nothing was removed. Tick the confirmation box, then try again.",
+  "connections.status.connection_not_found": "That connection isn't available.",
+  "connections.remove.acknowledge": "I understand: Wrenkind will delete its stored Meta credential and deactivate this connection's accounts. Discovery history stays. This does not revoke Wrenkind's authorization inside Meta.",
+  "connections.remove.submit": "Remove from Wrenkind",
 };

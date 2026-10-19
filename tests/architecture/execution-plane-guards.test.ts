@@ -126,9 +126,11 @@ describe("the persisted plane selects the runtime; no cross-plane fallback", () 
     expect(store).toMatch(/returning[\s\S]*o\.execution_plane`\);/);
   });
 
-  it("system.outbox_runs stays plane-free; the plane lives on the logical delivery (0011); no 0012 exists", () => {
+  it("system.outbox_runs stays plane-free; the plane lives on the logical delivery (0011); no later migration touches either", () => {
     expect(Object.keys(outboxRuns)).not.toContain("executionPlane");
-    expect(readdirSync(path.join(root, "db/migrations")).filter((file) => file.startsWith("0012"))).toEqual([]);
+    // Later migrations (0012+, e.g. Step 7G-F4C's attempt invalidation) may exist, but none may touch the outbox runs or the plane.
+    const later = readdirSync(path.join(root, "db/migrations")).filter((file) => file.endsWith(".sql") && file >= "0012");
+    for (const file of later) expect(readFileSync(path.join(root, "db/migrations", file), "utf8"), file).not.toMatch(/outbox_runs|execution_plane|system\.outbox\b/);
   });
 });
 

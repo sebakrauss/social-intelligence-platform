@@ -12,7 +12,8 @@
  *   complete   EXCHANGING → COMPLETED with the sealed credential stored and the Connection created or updated
  *              fresh, single-connection provider: K again, then the re-check — another admin's flow already created the
  *              Connection → EXCHANGE_FAILED (CONNECTION_UNAVAILABLE), nothing stored. This is the guard that makes "at most
- *              one non-REMOVED Connection" hold across creators, whose attempts are invisible to each other (RLS).
+ *              one non-REMOVED Connection" hold across creators, whose attempts are invisible to each other (RLS). The
+ *              attempt is re-read after K: one a removal invalidated meanwhile (Step 7G-F4C) is refused the same way.
  *   fail       EXCHANGING → EXCHANGE_FAILED (closed code) | OUTCOME_UNKNOWN
  *
  * Every rejection of a callback (unknown, modified, expired, replayed, closed, other user, other workspace,
@@ -189,6 +190,8 @@ export async function completeExchange(
       // Same K as the fresh start, then the authoritative re-check (a later statement: READ COMMITTED sees every
       // committed Connection). The loser's sealed envelope is never stored; its code is never exchanged again.
       await store.connections.serializeFresh(input.scope.workspaceId, attempt.provider);
+      // The attempt as it is NOW, after K: a removal serialized before us closed it (0012) — refuse, persist nothing.
+      if ((await store.attempts.get(attempt.id))?.status !== "EXCHANGING") return { kind: "connection_unavailable", attemptId: attempt.id };
       if ((await store.connections.list()).some((connection) => blocksFreshConnection(connection, attempt.provider))) {
         if (!(await store.attempts.close(attempt.id, "EXCHANGING", "EXCHANGE_FAILED", input.now, "CONNECTION_UNAVAILABLE"))) throw new AppError("CONFLICT", {});
         return { kind: "connection_unavailable", attemptId: attempt.id };

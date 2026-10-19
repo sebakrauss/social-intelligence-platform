@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
-import { startMetaConnectionAction } from "@/server/connections/actions";
+import { removeMetaConnectionAction, startMetaConnectionAction } from "@/server/connections/actions";
 import {
   CONNECTION_PROVIDER_MESSAGES,
   CONNECTION_STATUS_MESSAGES,
   CONNECT_STATUS_MESSAGES,
+  REMOVE_ACKNOWLEDGEMENT,
   parseConnectStatus,
 } from "@/server/connections/settings";
 import { currentConnectionSettings } from "@/server/connections/settings-runtime";
@@ -15,8 +16,9 @@ export const dynamic = "force-dynamic";
 /**
  * Workspace Settings › Connections (Step 7G-F4; IA §18: Owner/Admin). Rendering only reads (connections.settings.view);
  * Connect Meta is one form posting the workspace id to a server action. Whether that button shows is UX only — the
- * atomic start decides. No reconnect or remove here yet: a Meta connection that isn't REMOVED (including a FAILED or
- * DISCONNECTED one) blocks a fresh connect and is shown with its status only. Minimal and utilitarian.
+ * atomic start decides. A Meta connection that isn't REMOVED (including a FAILED or DISCONNECTED one) blocks a fresh
+ * connect; each has an inline Remove form (Step 7G-F4C) with a visible acknowledgement — a LOCAL removal that does not
+ * revoke anything inside Meta. REMOVED ones show their status only. No reconnect here. Minimal and utilitarian.
  */
 export default async function WorkspaceConnectionsPage({
   params,
@@ -47,6 +49,17 @@ export default async function WorkspaceConnectionsPage({
             {state.connections.map((connection) => (
               <li key={connection.id}>
                 {t(CONNECTION_PROVIDER_MESSAGES[connection.provider])} · {t(CONNECTION_STATUS_MESSAGES[connection.status])}
+                {connection.provider === "meta" && connection.status !== "REMOVED" ? (
+                  <form action={removeMetaConnectionAction}>
+                    <input name="workspaceId" type="hidden" value={state.workspaceId} />
+                    <input name="connectionId" type="hidden" value={connection.id} />
+                    <label>
+                      <input name="acknowledgement" type="checkbox" value={REMOVE_ACKNOWLEDGEMENT} required />
+                      {t("connections.remove.acknowledge")}
+                    </label>
+                    <button type="submit">{t("connections.remove.submit")}</button>
+                  </form>
+                ) : null}
               </li>
             ))}
           </ul>

@@ -3,9 +3,14 @@
  * so the credential is crypto-shredded definitively (D8): the Connection becomes REMOVED, the active pointer is
  * cleared first (0007 keeps a gone connection credential-free), the envelope is deleted, and any connected
  * accounts are deactivated with history — all in the caller's single transaction. Repeating it is a no-op.
+ *
+ * A single-connection provider (Meta, Step 7G-F4C) is removed under the same K(workspace, provider) as its fresh start
+ * and completion, from a FOR UPDATE re-read taken after K, and the removal closes every open fresh attempt of that
+ * provider in the workspace, across creators (REMOVE_INVALIDATES_OPEN_FRESH_META_ATTEMPTS): no OAuth flow that began
+ * before the removal can complete after it. REMOVED is terminal: nothing reactivates it.
  */
 import { AppError } from "@/domain/errors";
-import { blocksFreshConnection, type Connection, type DiscoveredAsset } from "../domain/model";
+import { blocksFreshConnection, isSingleConnectionProvider, type Connection, type ConnectionProvider, type DiscoveredAsset } from "../domain/model";
 import type { WorkspaceScope } from "./authorization";
 import type { ConnectionStore } from "./ports";
 
@@ -15,16 +20,33 @@ export type RemovalOutput =
 
 export async function removeConnection(
   store: ConnectionStore,
-  input: { readonly scope: WorkspaceScope; readonly connectionId: string; readonly now: Date; readonly newId: () => string },
+  input: {
+    readonly scope: WorkspaceScope;
+    readonly connectionId: string;
+    /** A surface that removes one provider's connections only (Connect Meta): another provider is NOT_FOUND. */
+    readonly expectedProvider?: ConnectionProvider;
+    readonly now: Date;
+    readonly newId: () => string;
+  },
 ): Promise<RemovalOutput> {
-  const connection = await store.connections.get(input.connectionId);
-  if (connection === undefined) throw new AppError("NOT_FOUND", {});
+  const found = await store.connections.get(input.connectionId);
+  // The provider column is immutable (no runtime UPDATE grant), so checking it before the lock is final.
+  if (found === undefined || (input.expectedProvider !== undefined && found.provider !== input.expectedProvider)) throw new AppError("NOT_FOUND", {});
+  const single = isSingleConnectionProvider(found.provider) ? found.provider : undefined;
+  let connection = found;
+  if (single !== undefined) {
+    await store.connections.serializeFresh(input.scope.workspaceId, single);
+    const locked = await store.connections.lockForUpdate(found.id);
+    if (locked === undefined) throw new AppError("NOT_FOUND", {});
+    connection = locked;
+  }
   if (connection.status === "REMOVED") return { changed: false, connectionId: connection.id };
 
   const removed: Connection = { ...connection, status: "REMOVED", activeCredentialId: null, version: connection.version + 1, updatedAt: input.now };
   if (!(await store.connections.update(removed, connection.version))) throw new AppError("CONFLICT", {});
   const shredded = connection.activeCredentialId === null ? false : await store.credentials.delete(connection.activeCredentialId);
   const deactivatedAccounts = await store.connectedAccounts.deactivateForConnection(connection.id, "REMOVED", input.now, input.scope.userId, input.newId);
+  if (single !== undefined) await store.attempts.invalidateOpenFresh(single, input.now);
   await store.events.append({
     id: input.newId(),
     organizationId: input.scope.organizationId,

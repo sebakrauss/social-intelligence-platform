@@ -1,8 +1,9 @@
 /**
  * Connect Meta surface guards (Step 7G-F4): the permanent Settings › Connections page and its server action stay thin
  * and server-only; the provider is fixed; Meta's endpoint expectation comes from server composition; the fresh-connection
- * lock exists only in the connections persistence boundary, transaction-scoped and bounded; and there is no reconnect
- * and no remove surface yet (F4-C adds removal deliberately, updating these guards).
+ * lock exists only in the connections persistence boundary, transaction-scoped and bounded; Remove Meta (Step 7G-F4C)
+ * reuses the existing remove command with the provider fixed, closes old fresh attempts only through one write-only
+ * definer, and never calls Meta; there is still no reconnect surface.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -38,28 +39,40 @@ describe("Connect Meta surface (Step 7G-F4)", () => {
     }
   });
 
-  it("the action is a server-action module that reads ONE form field (workspaceId) and fixes the provider to meta", () => {
+  it("the actions are a server-action module; connect reads only workspaceId, remove only workspaceId + connectionId + acknowledgement; provider fixed to meta", () => {
     expect(readFileSync(path.join(REPOSITORY_ROOT, ACTIONS), "utf8").startsWith('"use server";')).toBe(true);
     const actions = codeOf(ACTIONS);
-    expect([...actions.matchAll(/form\.get\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1])).toEqual(["workspaceId"]);
+    const connect = actions.slice(actions.indexOf("export async function startMetaConnectionAction"), actions.indexOf("export async function removeMetaConnectionAction"));
+    const remove = actions.slice(actions.indexOf("export async function removeMetaConnectionAction"));
+    const fields = (code: string): (string | undefined)[] => [...code.matchAll(/form\.get\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1]);
+    expect(fields(connect)).toEqual(["workspaceId"]);
+    expect(fields(remove)).toEqual(["workspaceId", "connectionId", "acknowledgement"]);
+    expect(fields(actions)).toHaveLength(4);
     expect(actions).not.toMatch(/form\.(getAll|entries|keys|values|has)\(|Object\.fromEntries/);
     expect(codeOf(SETTINGS)).toMatch(/startConnectionAuthorization\(deps, \{ workspaceId, provider: "meta" \}\)/);
+    expect(codeOf(SETTINGS)).toMatch(/input: \{ connectionId: input\.connectionId, expectedProvider: "meta" \}/);
     for (const file of SURFACE) expect(codeOf(file), file).not.toMatch(/reconnectConnectionId|provider: "simulator"/);
   });
 
-  it("the page renders and reads only; its one form posts to the action", () => {
+  it("the page renders and reads only; exactly two forms: Connect Meta and the per-connection Remove", () => {
     const page = codeOf(PAGE);
-    expect(page).not.toMatch(/"use client"|connectMeta|startConnectionAuthorization|connectionAuthorizationRuntime|recoverStale|\.start\b/);
-    expect(page).toMatch(/action=\{startMetaConnectionAction\}/);
+    expect(page).not.toMatch(/"use client"|connectMeta|removeMeta\(|startConnectionAuthorization|connectionAuthorizationRuntime|recoverStale|\.start\b|onClick|confirm\(/);
     expect(page).toMatch(/export const dynamic = "force-dynamic"/);
-    expect([...page.matchAll(/<form\b/g)]).toHaveLength(1);
+    expect([...page.matchAll(/<form action=\{(\w+)\}>/g)].map((match) => match[1])).toEqual(["removeMetaConnectionAction", "startMetaConnectionAction"]);
+    expect([...page.matchAll(/<form\b/g)]).toHaveLength(2);
+    // Remove only for a Meta connection that isn't REMOVED, with the visible acknowledgement.
+    expect(page).toMatch(/connection\.provider === "meta" && connection\.status !== "REMOVED"/);
+    expect(page).toMatch(/name="acknowledgement" type="checkbox" value=\{REMOVE_ACKNOWLEDGEMENT\} required/);
   });
 
-  it("no reconnect and no remove surface in this step", () => {
+  it("no reconnect surface; removal only through the existing remove command; no remote Meta revocation", () => {
     for (const file of SURFACE) {
       const code = codeOf(file);
-      expect(code, file).not.toMatch(/removeConnection|commands\.remove|connections\.connection\.remove|reconnect/i);
+      expect(code, file).not.toMatch(/reconnect/i);
+      expect(code, file).not.toMatch(/removeConnection\(|commands\.remove\b|\/permissions|deauthori[sz]e|revoke|graph\.facebook|unsubscribe/i);
     }
+    const commandUsers = sourceFiles(PRODUCTION_ROOTS).filter((file) => /connectionRemoveCommand/.test(codeOf(file)));
+    expect(commandUsers.sort()).toEqual(["server/commands/connections.ts", SETTINGS]);
   });
 
   it("the onboarding ready state links each workspace through the validated Settings path helper only", () => {
@@ -99,6 +112,26 @@ describe("Meta endpoint expectation and fresh-connection lock boundaries", () =>
     expect([...application.matchAll(/\.serializeFresh\(/g)]).toHaveLength(2);
     // Call sites: only the application layer (the store defines it; the port declares it).
     const callers = sourceFiles(PRODUCTION_ROOTS).filter((file) => /\.serializeFresh\(/.test(codeOf(file)));
-    expect(callers).toEqual(["modules/connections/application/authorization.ts"]);
+    // Fresh start, fresh completion (authorization.ts) and the Meta removal (management.ts, Step 7G-F4C).
+    expect(callers).toEqual(["modules/connections/application/authorization.ts", "modules/connections/application/management.ts"]);
+    expect([...codeOf("modules/connections/application/management.ts").matchAll(/\.serializeFresh\(/g)]).toHaveLength(1);
+  });
+
+  it("cross-creator invalidation is ONE write-only definer, called only by the connections store during a Meta removal", () => {
+    const users = sourceFiles(PRODUCTION_ROOTS).filter((file) => /invalidate_open_fresh_meta_attempts|\.invalidateOpenFresh\(/.test(codeOf(file)));
+    expect(users.sort()).toEqual(["modules/connections/application/management.ts", STORE]);
+    const migration = readFileSync(path.join(REPOSITORY_ROOT, "db/migrations/0012_remove_invalidates_fresh_meta_attempts.sql"), "utf8");
+    expect([...migration.matchAll(/create function ([a-z_.]+)\(/g)].map((match) => match[1])).toEqual(["connections.invalidate_open_fresh_meta_attempts"]);
+    expect(migration).toMatch(/invalidate_open_fresh_meta_attempts\(p_closed_at timestamptz\) returns void/);
+    expect(migration).not.toMatch(/returns (table|setof|integer|bigint|boolean|record)|execute format|execute '|\bexecute\s+v_/i);
+    expect(migration).not.toMatch(/to authenticated[^;]*select|for select to authenticated|alter policy|drop policy|create policy [a-z_]+ on [a-z_.]+ for (select|update) to authenticated/i);
+    expect(migration).toMatch(/revoke all on function connections\.invalidate_open_fresh_meta_attempts\(timestamptz\) from public;/);
+    expect([...migration.matchAll(/grant execute on function ([^;]+);/g)].map((match) => match[1])).toEqual(["connections.invalidate_open_fresh_meta_attempts(timestamptz) to authenticated"]);
+  });
+
+  it("account activation reads its Connection FOR SHARE (link and Move activation), so REMOVED stays terminal", () => {
+    expect(codeOf("modules/connections/application/linking.ts")).toMatch(/store\.connections\.getForShare\(asset\.connectionId\)/);
+    expect(codeOf("modules/connections/application/moves.ts")).toMatch(/store\.connections\.getForShare\(move\.connectionId\)/);
+    expect(codeOf(STORE)).toMatch(/getForShare: \(id\) => getConnection\(tx, id, "share"\)/);
   });
 });

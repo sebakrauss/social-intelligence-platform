@@ -303,8 +303,9 @@ function accountLinking(tx: DatabaseTransaction) {
   };
 }
 
-async function getConnection(tx: DatabaseTransaction, id: string): Promise<Connection | undefined> {
-  const rows = await tx.select().from(connectionsTable).where(eq(connectionsTable.id, id)).limit(2);
+async function getConnection(tx: DatabaseTransaction, id: string, lock?: "update" | "share"): Promise<Connection | undefined> {
+  const query = tx.select().from(connectionsTable).where(eq(connectionsTable.id, id)).limit(2);
+  const rows = lock === undefined ? await query : await query.for(lock);
   if (rows.length > 1) corrupt("connections");
   const row = rows[0];
   return row === undefined ? undefined : toConnection(row);
@@ -411,6 +412,10 @@ export function createPostgresConnectionStore(tx: DatabaseTransaction): Connecti
           .returning({ id: connectAttempts.id });
         return { expired: expired.length, outcomeUnknown: unknown.length };
       },
+      // The only single-connection provider is Meta (the type admits nothing else); 0012 fixes it inside the definer too.
+      async invalidateOpenFresh(_provider, now) {
+        await tx.execute(sql`select connections.invalidate_open_fresh_meta_attempts(${now}::timestamptz)`);
+      },
       async listOpenFresh(provider) {
         const rows = await tx
           .select()
@@ -422,6 +427,8 @@ export function createPostgresConnectionStore(tx: DatabaseTransaction): Connecti
     },
     connections: {
       get: (id) => getConnection(tx, id),
+      lockForUpdate: (id) => getConnection(tx, id, "update"),
+      getForShare: (id) => getConnection(tx, id, "share"),
       async list() {
         return (await tx.select().from(connectionsTable).orderBy(asc(connectionsTable.createdAt), asc(connectionsTable.id))).map(toConnection);
       },
@@ -574,6 +581,7 @@ export function createPostgresConnectionWorkerStore(
   return {
     connections: {
       get: (id) => getConnection(tx, id),
+      getForShare: (id) => getConnection(tx, id, "share"),
       async update(c, expectedVersion) {
         const rows = await tx
           .update(connectionsTable)
