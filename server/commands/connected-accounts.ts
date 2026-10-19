@@ -9,24 +9,26 @@
  * links are invisible to connections.locate_active_link and never conflict (M-01 is per organization).
  */
 import { isUuid, type WorkspaceId } from "@/domain/ids";
-import { object, parsed } from "@/domain/validation";
+import { list, object, oneOf, parsed } from "@/domain/validation";
 import {
   CAPABILITY_EVALUATION_TOPIC,
   linkAccount,
   listConnectedAccounts,
   requestMove,
   retryMove,
+  saveManagedSelection,
   unlinkAccount,
   type ConnectedAccountSummary,
   type LinkOutput,
   type MoveRequestOutput,
+  type SelectionOutput,
   type SingleWorkspaceRule,
   type UnlinkOutput,
   type WorkspaceScope,
 } from "@/modules/connections";
 import { loadWorkspaceAccess, type TenancyStore } from "@/modules/tenancy";
 import { effectivePermissions } from "@/platform/permissions";
-import type { WorkspaceCommand, WorkspaceContext } from "@/server/pipeline";
+import type { AuditDraft, WorkspaceCommand, WorkspaceContext } from "@/server/pipeline";
 
 const uuid = parsed((value) => (isUuid(value) ? value : undefined));
 
@@ -57,6 +59,42 @@ async function present(tenancy: TenancyStore, context: WorkspaceContext, workspa
     ? { kind: "identified", workspaceId: own.workspace.id, workspaceName: own.workspace.name }
     : { kind: "organization" };
 }
+
+/** The most assets one save may name: above what one bounded discovery can return (20 pages, Facebook + Instagram). */
+export const SELECTION_MAX_ASSETS = 1000;
+
+/**
+ * Save the managed set of one Meta connection's discovered assets (Step 7G-H5): the whole desired set, atomically, in
+ * one unit of work — activations and deactivations of this workspace's Connected Accounts, one audit record per changed
+ * account. The provider is fixed server side ("meta"); the browser contributes only the routed ids. Configuration, not
+ * platform mutation (no Standard mode). Deliberately NOT here: any provider, KMS or job — not even the capability
+ * evaluation connections.account.link enqueues; activation stays local until a later gate decides that wiring.
+ */
+export const connectedAccountSelectionCommand: WorkspaceCommand<
+  { readonly connectionId: string; readonly expectedProvider: "meta"; readonly discoveredAssetIds: readonly string[] },
+  SelectionOutput,
+  { readonly activated: number; readonly deactivated: number; readonly managed: number }
+> = {
+  scope: "workspace",
+  name: "connections.account.save_selection",
+  permission: "connections.manage",
+  requiresStandardMode: false,
+  validate: object({ connectionId: uuid, expectedProvider: oneOf(["meta"] as const), discoveredAssetIds: list(uuid, { max: SELECTION_MAX_ASSETS }) }),
+  execute: (context, input, tx, env) =>
+    saveManagedSelection(tx.connections, {
+      scope: scopeOf(context),
+      connectionId: input.connectionId,
+      expectedProvider: input.expectedProvider,
+      discoveredAssetIds: input.discoveredAssetIds,
+      now: env.now,
+      newId: env.newId,
+    }),
+  audit: (output): readonly AuditDraft[] => [
+    ...output.deactivated.map((id): AuditDraft => ({ action: "connected_account.unlinked", targetType: "connected_account", targetId: id })),
+    ...output.activated.map((id): AuditDraft => ({ action: "connected_account.linked", targetType: "connected_account", targetId: id })),
+  ],
+  respond: (output) => ({ activated: output.activated.length, deactivated: output.deactivated.length, managed: output.managed.length }),
+};
 
 export function createConnectedAccountCommands() {
   const link: WorkspaceCommand<{ readonly discoveredAssetId: string }, { readonly output: LinkOutput; readonly result: LinkResult }, LinkResult> = {

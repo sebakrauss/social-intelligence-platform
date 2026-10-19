@@ -9,6 +9,9 @@
  *   - Remove Meta (Step 7G-F4C) runs connections.connection.remove with the expected provider FIXED to "meta", only
  *     after the visible acknowledgement; it is a LOCAL removal: Wrenkind deletes its stored credential and deactivates
  *     the connection's accounts. It does NOT revoke the authorization inside Meta.
+ *   - Manage accounts (Step 7G-H5) saves which of an ACTIVE Meta connection's discovered Facebook Pages and Instagram
+ *     professional accounts this workspace manages: connections.account.save_selection, the whole desired set at once,
+ *     with the expected provider FIXED to "meta". Local only: no provider, KMS or job.
  *   - Outcomes are closed codes: nothing from an error, a provider or the database reaches a URL or the page. A
  *     workspace that doesn't exist, isn't the caller's, or isn't a UUID is the same `workspace_not_found`; a connection
  *     that doesn't exist, isn't this workspace's, isn't Meta's or isn't a UUID is the same `connection_not_found`.
@@ -17,6 +20,7 @@ import { isUuid, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
 import type { MessageKey } from "@/domain/i18n/message-keys";
 import type { ConnectionProvider, ConnectionSettings, ConnectionSummary } from "@/modules/connections";
 import type { ConnectionStatus } from "@/domain/connections";
+import { SELECTION_MAX_ASSETS, connectedAccountSelectionCommand } from "@/server/commands/connected-accounts";
 import { connectionRemoveCommand, connectionSettingsViewCommand } from "@/server/commands/connections";
 import type { ActionPipeline } from "@/server/pipeline";
 import { startConnectionAuthorization, type ConnectionAuthorizationDependencies, type StartResult } from "./authorization";
@@ -33,6 +37,7 @@ export type ConnectionSettingsState =
       readonly workspaceId: WorkspaceId;
       readonly connections: readonly ConnectionSummary[];
       readonly metaConnect: ConnectionSettings["metaConnect"];
+      readonly manageableAssets: ConnectionSettings["manageableAssets"];
     };
 
 export const CONNECT_STATUSES = [
@@ -45,6 +50,10 @@ export const CONNECT_STATUSES = [
   "removed",
   "remove_not_confirmed",
   "connection_not_found",
+  "accounts_saved",
+  "accounts_not_found",
+  "accounts_conflict",
+  "connection_not_ready",
   "unavailable",
 ] as const;
 export type ConnectStatus = (typeof CONNECT_STATUSES)[number];
@@ -59,6 +68,10 @@ export const CONNECT_STATUS_MESSAGES: { readonly [S in ConnectStatus]: MessageKe
   removed: "connections.status.removed",
   remove_not_confirmed: "connections.status.remove_not_confirmed",
   connection_not_found: "connections.status.connection_not_found",
+  accounts_saved: "connections.status.accounts_saved",
+  accounts_not_found: "connections.status.accounts_not_found",
+  accounts_conflict: "connections.status.accounts_conflict",
+  connection_not_ready: "connections.status.connection_not_ready",
   unavailable: "connections.settings.unavailable",
 };
 
@@ -77,6 +90,15 @@ export const CONNECTION_PROVIDER_MESSAGES: { readonly [P in ConnectionProvider]:
   simulator: "connections.provider.simulator",
 };
 
+/** One discovered asset the page may offer, as the read model carries it (persisted discovery only). */
+export type ManageableAssetView = ConnectionSettings["manageableAssets"][number];
+
+export const ASSET_PLATFORM_MESSAGES: { readonly [P in ManageableAssetView["platform"]]: MessageKey } = {
+  facebook: "connections.accounts.platform.facebook",
+  instagram: "connections.accounts.platform.instagram",
+  tiktok: "connections.accounts.platform.tiktok",
+};
+
 export function parseConnectStatus(value: unknown): ConnectStatus | undefined {
   return typeof value === "string" && (CONNECT_STATUSES as readonly string[]).includes(value) ? (value as ConnectStatus) : undefined;
 }
@@ -93,7 +115,7 @@ export async function resolveConnectionSettings(pipeline: ActionPipeline, worksp
   }
   const resolved = parseWorkspaceId(workspaceId);
   if (resolved === undefined) return { kind: "workspace_not_found" };
-  return { kind: "ready", workspaceId: resolved, connections: result.value.connections, metaConnect: result.value.metaConnect };
+  return { kind: "ready", workspaceId: resolved, connections: result.value.connections, metaConnect: result.value.metaConnect, manageableAssets: result.value.manageableAssets };
 }
 
 export type ConnectOutcome =
@@ -159,3 +181,38 @@ export async function removeMeta(pipeline: ActionPipeline, input: { readonly wor
 
 /** A removal never leaves the app: every outcome is a fixed internal destination. */
 export type RemoveOutcome = Exclude<ConnectOutcome, { readonly kind: "authorize" }>;
+
+/**
+ * Save the managed accounts of one Meta connection. The browser routes the workspace and connection ids and the checked
+ * discovered-asset ids (all untrusted: parsed here, resolved live by the pipeline and RLS); the provider is this
+ * constant. Nothing is saved unless the whole set is: an unknown, foreign or unmanageable asset, a connection that
+ * isn't ACTIVE, or an account already managed in another workspace refuses the save as one closed status.
+ */
+export async function saveManagedAccounts(
+  pipeline: ActionPipeline,
+  input: { readonly workspaceId: unknown; readonly connectionId: unknown; readonly discoveredAssetIds: readonly unknown[] },
+): Promise<RemoveOutcome> {
+  if (!isUuid(input.connectionId)) return { kind: "status", status: "connection_not_found" };
+  if (input.discoveredAssetIds.length > SELECTION_MAX_ASSETS || !input.discoveredAssetIds.every(isUuid)) return { kind: "status", status: "accounts_not_found" };
+  // A repeated checkbox value is the same choice, not a second one.
+  const discoveredAssetIds = [...new Set(input.discoveredAssetIds)];
+  const result = await pipeline.run(connectedAccountSelectionCommand, {
+    workspaceId: input.workspaceId,
+    input: { connectionId: input.connectionId, expectedProvider: "meta", discoveredAssetIds },
+  });
+  switch (result.status) {
+    case "ok":
+      return { kind: "status", status: "accounts_saved" };
+    case "unauthenticated":
+      return { kind: "signed_out" };
+    case "verification_required":
+      return { kind: "verification_required" };
+    case "error":
+      if (result.error.code === "NOT_FOUND" || result.error.code === "INVALID_INPUT") return { kind: "status", status: "accounts_not_found" };
+      if (result.error.code === "PERMISSION_DENIED") return { kind: "status", status: "not_allowed" };
+      // The connection isn't ACTIVE (any more): checked under the row lock, and again by each activation.
+      if (result.error.code === "STALE_STATE" || result.error.code === "CONNECTION_PROBLEM") return { kind: "status", status: "connection_not_ready" };
+      if (result.error.code === "CONFLICT") return { kind: "status", status: "accounts_conflict" };
+      return { kind: "status", status: "unavailable" };
+  }
+}

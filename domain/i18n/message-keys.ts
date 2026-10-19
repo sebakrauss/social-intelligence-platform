@@ -86,6 +86,22 @@ export const MESSAGE_KEYS = [
   "connections.status.connection_not_found",
   "connections.remove.acknowledge",
   "connections.remove.submit",
+  "connections.connection.provider_status",
+  "connections.status.accounts_saved",
+  "connections.status.accounts_not_found",
+  "connections.status.accounts_conflict",
+  "connections.status.connection_not_ready",
+  "connections.accounts.heading",
+  "connections.accounts.explainer",
+  "connections.accounts.summary",
+  "connections.accounts.none_selected",
+  "connections.accounts.all_selected",
+  "connections.accounts.empty",
+  "connections.accounts.platform.facebook",
+  "connections.accounts.platform.instagram",
+  "connections.accounts.platform.tiktok",
+  "connections.accounts.save",
+  "connections.accounts.saving",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

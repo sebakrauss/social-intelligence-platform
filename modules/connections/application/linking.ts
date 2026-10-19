@@ -7,6 +7,8 @@
  *            active here is returned as is. Identity always comes from the local discovered asset, never the caller.
  *   unlink   ACTIVE → INACTIVE (UNLINKED). Explicit user intent: no credential is shredded and no data is deleted;
  *            the M-01 / TA-Q-02 slot is freed. Idempotent.
+ *   select   (Step 7G-H5) the desired set of managed accounts for ONE Connection, converged in one transaction from
+ *            link/unlink above: activation is an explicit Wrenkind decision, never a side effect of discovery.
  *
  * M-01 (LOCKED) and the TEMPORARY TA-Q-02 ad-account restriction are decided by the database's two named unique
  * indexes; connections.locate_active_link only lets the application explain the refusal (same organization only).
@@ -14,7 +16,7 @@
  */
 import { AppError } from "@/domain/errors";
 import type { WorkspaceId } from "@/domain/ids";
-import { singleWorkspaceRule, type ConnectedAccount, type DiscoveredAsset, type SingleWorkspaceRule } from "../domain/model";
+import { singleWorkspaceRule, type ConnectedAccount, type ConnectionProvider, type DiscoveredAsset, type SingleWorkspaceRule } from "../domain/model";
 import type { WorkspaceScope } from "./authorization";
 import type { ConnectionStore } from "./ports";
 
@@ -141,4 +143,73 @@ export async function listConnectedAccounts(store: ConnectionStore): Promise<rea
     status,
     deactivationReason,
   }));
+}
+
+// ── Managed-account selection (Step 7G-H5) ────────────────────────────────────────────────────────────────────
+
+/** The discovered assets a workspace can choose to manage: content-bearing Facebook Pages and Instagram accounts. */
+export function isManageableAsset(asset: Pick<DiscoveredAsset, "assetClass" | "platform">): boolean {
+  return asset.assetClass === "content_bearing" && (asset.platform === "facebook" || asset.platform === "instagram");
+}
+
+export interface SelectionOutput {
+  /** Connected accounts this save activated (linked or reactivated) or deactivated (unlinked); empty when unchanged. */
+  readonly activated: readonly string[];
+  readonly deactivated: readonly string[];
+  /** The discovered assets managed by this Connection after the save. */
+  readonly managed: readonly string[];
+}
+
+/**
+ * Converges the managed accounts of ONE Connection to exactly `discoveredAssetIds`, in the caller's single transaction.
+ * Every fact comes from the database, never from the request: the Connection is read FOR UPDATE in the bound workspace
+ * (RLS; another workspace's or a removed one is NOT_FOUND / STALE_STATE), it must be the expected provider and ACTIVE,
+ * and every id must be one of ITS manageable discovered assets (anything else is NOT_FOUND, with nothing changed).
+ *
+ * The row lock serializes this with a concurrent save of the same Connection (the later one re-reads the committed
+ * state: identical saves are no-ops, different ones end as the last committed) and with a removal, which locks the
+ * same row: a removal that commits first makes this a STALE_STATE refusal; one that waits deactivates what this
+ * activated. Deactivation is the existing unlink (INACTIVE, UNLINKED; the row keeps its identity), activation the
+ * existing link (reactivating that row, or inserting the first one). An asset active in another workspace of the
+ * organization (M-01 / TA-Q-02) refuses the whole save (CONFLICT) — partial selections are never committed. No
+ * provider, KMS or job call: this is local Wrenkind state built only from the persisted discovery.
+ */
+export async function saveManagedSelection(
+  store: ConnectionStore,
+  input: {
+    readonly scope: WorkspaceScope;
+    readonly connectionId: string;
+    readonly expectedProvider: ConnectionProvider;
+    readonly discoveredAssetIds: readonly string[];
+    readonly now: Date;
+    readonly newId: () => string;
+  },
+): Promise<SelectionOutput> {
+  const connection = await store.connections.lockForUpdate(input.connectionId);
+  if (connection === undefined || connection.provider !== input.expectedProvider) throw new AppError("NOT_FOUND", {});
+  if (connection.status !== "ACTIVE") throw new AppError("STALE_STATE", {});
+
+  const manageable = new Map((await store.discoveredAssets.list(connection.id)).filter(isManageableAsset).map((asset) => [asset.id, asset]));
+  const desired = new Map<string, DiscoveredAsset>();
+  for (const id of input.discoveredAssetIds) {
+    const asset = manageable.get(id);
+    if (asset === undefined) throw new AppError("NOT_FOUND", {});
+    desired.set(`${asset.platform}:${asset.providerAssetId}`, asset);
+  }
+
+  const active = (await store.connectedAccounts.list()).filter((account) => account.connectionId === connection.id && account.status === "ACTIVE");
+  const activeKeys = new Set(active.map((account) => `${account.platform}:${account.providerAssetId}`));
+  const deactivated: string[] = [];
+  for (const account of active) {
+    if (desired.has(`${account.platform}:${account.providerAssetId}`)) continue;
+    if ((await unlinkAccount(store, { scope: input.scope, connectedAccountId: account.id, now: input.now, newId: input.newId })).changed) deactivated.push(account.id);
+  }
+  const activated: string[] = [];
+  for (const [key, asset] of [...desired].sort(([a], [b]) => a.localeCompare(b))) {
+    if (activeKeys.has(key)) continue;
+    const linked = await linkAccount(store, { scope: input.scope, discoveredAssetId: asset.id, now: input.now, newId: input.newId });
+    if (linked.kind === "active_elsewhere") throw new AppError("CONFLICT", {});
+    if (linked.kind === "linked") activated.push(linked.account.id);
+  }
+  return { activated, deactivated, managed: [...desired.values()].map((asset) => asset.id).sort() };
 }

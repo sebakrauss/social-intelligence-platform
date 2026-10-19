@@ -609,7 +609,7 @@ export function defineMetaFreshConnectionSuite(getTarget: () => DbTarget): void 
       expect(await resolveConnectionSettings(pipelineFor(other.owner), t.workspaceId)).toEqual({ kind: "workspace_not_found" });
       expect(await resolveConnectionSettings(pipelineFor(t.owner), "not-a-workspace")).toEqual({ kind: "workspace_not_found" });
       const empty = await tenant();
-      expect(await resolveConnectionSettings(pipelineFor(empty.owner), empty.workspaceId)).toEqual({ kind: "ready", workspaceId: empty.workspaceId, connections: [], metaConnect: "available" });
+      expect(await resolveConnectionSettings(pipelineFor(empty.owner), empty.workspaceId)).toEqual({ kind: "ready", workspaceId: empty.workspaceId, connections: [], metaConnect: "available", manageableAssets: [] });
     });
 
     it("reading mutates nothing: no stale-attempt recovery, no start, no row written anywhere", async () => {

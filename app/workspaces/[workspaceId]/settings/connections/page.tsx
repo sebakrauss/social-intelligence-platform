@@ -1,14 +1,17 @@
 import { redirect } from "next/navigation";
-import { removeMetaConnectionAction, startMetaConnectionAction } from "@/server/connections/actions";
+import { removeMetaConnectionAction, saveManagedAccountsAction, startMetaConnectionAction } from "@/server/connections/actions";
 import {
+  ASSET_PLATFORM_MESSAGES,
   CONNECTION_PROVIDER_MESSAGES,
   CONNECTION_STATUS_MESSAGES,
   CONNECT_STATUS_MESSAGES,
   REMOVE_ACKNOWLEDGEMENT,
   parseConnectStatus,
+  type ManageableAssetView,
 } from "@/server/connections/settings";
 import { currentConnectionSettings } from "@/server/connections/settings-runtime";
 import { t } from "@/server/i18n";
+import { PendingSubmitButton } from "@/ui/connections/pending-submit-button";
 
 /** Connection state is per request: never prerender it. */
 export const dynamic = "force-dynamic";
@@ -19,6 +22,11 @@ export const dynamic = "force-dynamic";
  * atomic start decides. A Meta connection that isn't REMOVED (including a FAILED or DISCONNECTED one) blocks a fresh
  * connect; each has an inline Remove form (Step 7G-F4C) with a visible acknowledgement — a LOCAL removal that does not
  * revoke anything inside Meta. REMOVED ones show their status only. No reconnect here. Minimal and utilitarian.
+ *
+ * Managed accounts (Step 7G-H5): an ACTIVE Meta connection lists its persisted discovered Facebook Pages and Instagram
+ * professional accounts (never a live Meta read) with what this workspace manages now, kept visibly apart from the
+ * provider connection's own status: authorizing Meta manages nothing by itself. Nothing is preselected beyond what is
+ * already managed, and nothing changes until Save posts the whole checked set.
  */
 export default async function WorkspaceConnectionsPage({
   params,
@@ -48,7 +56,14 @@ export default async function WorkspaceConnectionsPage({
           <ul>
             {state.connections.map((connection) => (
               <li key={connection.id}>
-                {t(CONNECTION_PROVIDER_MESSAGES[connection.provider])} · {t(CONNECTION_STATUS_MESSAGES[connection.status])}
+                {t(CONNECTION_PROVIDER_MESSAGES[connection.provider])} · {t("connections.connection.provider_status", { status: t(CONNECTION_STATUS_MESSAGES[connection.status]) })}
+                {connection.provider === "meta" && connection.status === "ACTIVE" ? (
+                  <ManagedAccounts
+                    workspaceId={state.workspaceId}
+                    connectionId={connection.id}
+                    assets={state.manageableAssets.filter((asset) => asset.connectionId === connection.id)}
+                  />
+                ) : null}
                 {connection.provider === "meta" && connection.status !== "REMOVED" ? (
                   <form action={removeMetaConnectionAction}>
                     <input name="workspaceId" type="hidden" value={state.workspaceId} />
@@ -74,5 +89,40 @@ export default async function WorkspaceConnectionsPage({
         </section>
       ) : null}
     </main>
+  );
+}
+
+/** One ACTIVE Meta connection's managed accounts: the persisted state, and one form that saves the whole checked set. */
+function ManagedAccounts({ workspaceId, connectionId, assets }: { readonly workspaceId: string; readonly connectionId: string; readonly assets: readonly ManageableAssetView[] }) {
+  const selected = assets.filter((asset) => asset.managed).length;
+  return (
+    <section>
+      <h2>{t("connections.accounts.heading")}</h2>
+      {assets.length === 0 ? (
+        <p>{t("connections.accounts.empty")}</p>
+      ) : (
+        <>
+          <p>{t("connections.accounts.explainer")}</p>
+          <p>{t("connections.accounts.summary", { selected: String(selected), available: String(assets.length) })}</p>
+          {selected === 0 ? <p>{t("connections.accounts.none_selected")}</p> : null}
+          {selected === assets.length ? <p>{t("connections.accounts.all_selected")}</p> : null}
+          <form action={saveManagedAccountsAction}>
+            <input name="workspaceId" type="hidden" value={workspaceId} />
+            <input name="connectionId" type="hidden" value={connectionId} />
+            <ul>
+              {assets.map((asset) => (
+                <li key={asset.discoveredAssetId}>
+                  <label>
+                    <input name="discoveredAssetId" type="checkbox" value={asset.discoveredAssetId} defaultChecked={asset.managed} />
+                    {asset.displayName} · {t(ASSET_PLATFORM_MESSAGES[asset.platform])}
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <PendingSubmitButton label={t("connections.accounts.save")} pendingLabel={t("connections.accounts.saving")} />
+          </form>
+        </>
+      )}
+    </section>
   );
 }

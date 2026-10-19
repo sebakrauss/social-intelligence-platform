@@ -7,6 +7,8 @@
  *   connect   reads ONE value, the routed workspace id. The only external redirect is the authorization URL the
  *             orchestration has already matched to Meta's exact dialog endpoint.
  *   remove    reads the routed workspace id, the connection id and the visible acknowledgement. No external redirect.
+ *   accounts  reads the routed workspace id, the connection id and the checked discovered-asset ids. No external
+ *             redirect; no provider, KMS or job is reached.
  *
  * No form field chooses a destination: every other outcome returns to a fixed internal path built from the parsed
  * workspace id. Nothing internal is logged or returned, and no form payload is logged.
@@ -18,7 +20,7 @@ import { createLogger, stdoutSink } from "@/platform/observability";
 import { requestAuth } from "@/server/auth/request-auth";
 import { workspaceConnectionsPath } from "@/server/routes";
 import { connectionAuthorizationRuntime } from "./runtime";
-import { connectMeta, removeMeta, type ConnectOutcome } from "./settings";
+import { connectMeta, removeMeta, saveManagedAccounts, type ConnectOutcome } from "./settings";
 import { connectionSettingsPipeline } from "./settings-runtime";
 
 const log = createLogger({ sink: stdoutSink, base: { module: "server.connections" } });
@@ -61,4 +63,15 @@ export async function removeMetaConnectionAction(form: FormData): Promise<void> 
   const acknowledgement = form.get("acknowledgement");
   // Removal needs no OAuth secret, sealer or provider: the plain settings pipeline (web unit of work) runs it.
   redirect(destination(await run("remove_meta", (auth) => removeMeta(connectionSettingsPipeline(auth), { workspaceId, connectionId, acknowledgement })), workspaceId));
+}
+
+export async function saveManagedAccountsAction(form: FormData): Promise<void> {
+  const workspaceId = parseWorkspaceId(form.get("workspaceId"));
+  if (workspaceId === undefined) redirect("/onboarding");
+  const connectionId = form.get("connectionId");
+  const discoveredAssetIds = form.getAll("discoveredAssetId");
+  // Selection is local configuration: the plain settings pipeline (web unit of work) runs it.
+  redirect(
+    destination(await run("save_managed_accounts", (auth) => saveManagedAccounts(connectionSettingsPipeline(auth), { workspaceId, connectionId, discoveredAssetIds })), workspaceId),
+  );
 }

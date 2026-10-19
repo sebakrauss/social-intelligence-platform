@@ -343,3 +343,39 @@ The F4C0 contract, with the TL decisions D1–D7.
 | LIVE_CLEANUP_ORDER | WAIT_FOR_DISCOVERY_TERMINAL_THEN_REMOVE (so Decrypt / provider-call evidence counts stay exact) |
 | CAPABILITY_PROFILE_FINAL_RECHECK | DEFERRED_HARDENING (a late profile for an already inactive account is derived metadata, not resurrection) |
 | RECONNECT_SURFACE | NOT_IMPLEMENTED (a reconnect after removal stays refused) |
+
+## First controlled live acceptance (Steps 7G-H3/H4)
+
+DEV, 2026-10-19: one operator, one synthetic workspace, the real Meta app, the hosted web and both Trigger planes on the same reviewed build. Evidence came from read-only database inspection (counts, states and hash-correlation labels only), the Trigger run records and AWS CloudTrail (operator-confirmed). No identifier, token or key appears in this record.
+
+| Item | Result |
+|---|---|
+| OAuth callback | SUCCEEDED: one fresh Meta attempt COMPLETED |
+| Connection | exactly ONE, ACTIVE, with its active-credential pointer set |
+| Credential | exactly ONE sealed credential, the one the pointer names |
+| KMS GenerateDataKey | exactly ONE, succeeded (the web sealing the token) |
+| KMS Decrypt | exactly ONE, succeeded, by the integration worker |
+| `connections.discover_assets` | ONE attempt: one outbox row on the integration plane, one dispatch, one domain effect claimed, its assets written |
+| Discovered assets | exactly ONE Facebook Page and ONE Instagram professional account; no duplicates |
+| Encryption-context correlation | MATCHED: the workspace, connection and credential the KMS calls named are the persisted ones |
+| Page access token | NOT persisted (no token-like value in any table, payload or display name) |
+| Connected accounts | 0: discovery activates nothing |
+| Temporary acceptance credentials | REMOVED afterwards (operator-confirmed) |
+
+## Managed accounts (Step 7G-H5)
+
+Which discovered accounts a workspace manages is an explicit Wrenkind decision, saved as a whole; discovery and authorization alone manage nothing.
+
+| Item | State |
+|---|---|
+| MANAGED_ACCOUNTS_SURFACE | IMPLEMENTED_OFFLINE: a "Managed accounts" section per ACTIVE Meta connection on Settings › Connections, "N of M selected" apart from the provider connection's status; `saveManagedAccountsAction` (`"use server"`) reads only `workspaceId`, `connectionId` and the checked `discoveredAssetId` values |
+| Command | `connections.account.save_selection` (`connectedAccountSelectionCommand`), `connections.manage`, provider fixed to `meta`, at most 1000 ids; configuration, not a platform mutation (Monitor-only allowed) |
+| Supported assets | content-bearing Facebook Pages and Instagram professional accounts already persisted by discovery; ad accounts and other platforms are refused |
+| SELECTION_SEMANTICS | DESIRED_SET_ONE_TRANSACTION: Connection re-read FOR UPDATE → must be ACTIVE → every id must be a manageable asset of that connection → unlink what isn't wanted, link what is; any refusal saves nothing |
+| CONNECTED_ACCOUNT_IDENTITY | UNCHANGED_0007: one row per (connection, platform, provider asset); reactivation reuses the INACTIVE row; M-01 enforced by the database's unique index |
+| DESELECTION | ACTIVE → INACTIVE (UNLINKED); never a delete; history kept |
+| CONCURRENCY | saves of one connection serialize on its row lock; the LAST COMMITTED save decides the set; no duplicates |
+| REMOVE_COMPATIBILITY | Remove takes the same row lock after K: a stale save after Remove is `connection_not_ready`; a save in flight is deactivated by the Remove that follows it |
+| Audit | one `connected_account.linked` / `connected_account.unlinked` per changed account (user, workspace); none for a no-op |
+| PROVIDER_KMS_JOB_SIDE_EFFECTS | NONE: no Meta, KMS, STS or Trigger call and no outbox row (the capability evaluation the single-account link enqueues is deliberately NOT enqueued here; deferred to a later gate) |
+| DB_MIGRATION | NO |

@@ -62,6 +62,7 @@ export {
   type ConnectionDetail,
   type ConnectionSettings,
   type ConnectionSummary,
+  type ManageableAsset,
   type RemovalOutput,
 } from "./application/management";
 export {
@@ -77,12 +78,15 @@ export {
 export { CredentialCodecError, decodeProviderCredential, encodeProviderCredential } from "./application/credential-codec";
 export { refreshAccountCapabilities, type CapabilityRefreshDependencies, type CapabilityRefreshOutcome } from "./application/capability-refresh";
 export {
+  isManageableAsset,
   linkAccount,
   listConnectedAccounts,
+  saveManagedSelection,
   unlinkAccount,
   type ActiveElsewhere,
   type ConnectedAccountSummary,
   type LinkOutput,
+  type SelectionOutput,
   type UnlinkOutput,
 } from "./application/linking";
 export {

@@ -12,6 +12,7 @@
 import { AppError } from "@/domain/errors";
 import { blocksFreshConnection, isSingleConnectionProvider, type Connection, type ConnectionProvider, type DiscoveredAsset } from "../domain/model";
 import type { WorkspaceScope } from "./authorization";
+import { isManageableAsset } from "./linking";
 import type { ConnectionStore } from "./ports";
 
 export type RemovalOutput =
@@ -100,13 +101,41 @@ export async function listConnections(store: ConnectionStore): Promise<readonly 
 export interface ConnectionSettings {
   readonly connections: readonly ConnectionSummary[];
   readonly metaConnect: "available" | "existing_connection";
+  /**
+   * Step 7G-H5: for each ACTIVE Meta connection, the discovered assets the workspace may choose to manage, and whether it
+   * manages each one now (an ACTIVE connected account). Persisted discovery only — never a provider call; no provider id.
+   */
+  readonly manageableAssets: readonly ManageableAsset[];
+}
+
+export interface ManageableAsset {
+  readonly connectionId: string;
+  readonly discoveredAssetId: string;
+  readonly platform: DiscoveredAsset["platform"];
+  readonly displayName: string;
+  readonly managed: boolean;
 }
 
 export async function viewConnectionSettings(store: ConnectionStore): Promise<ConnectionSettings> {
   const connections = await store.connections.list();
+  const accounts = await store.connectedAccounts.list();
+  const manageableAssets: ManageableAsset[] = [];
+  for (const connection of connections.filter((c) => c.provider === "meta" && c.status === "ACTIVE")) {
+    const managed = new Set(accounts.filter((a) => a.connectionId === connection.id && a.status === "ACTIVE").map((a) => `${a.platform}:${a.providerAssetId}`));
+    for (const asset of (await store.discoveredAssets.list(connection.id)).filter(isManageableAsset)) {
+      manageableAssets.push({
+        connectionId: connection.id,
+        discoveredAssetId: asset.id,
+        platform: asset.platform,
+        displayName: asset.displayName,
+        managed: managed.has(`${asset.platform}:${asset.providerAssetId}`),
+      });
+    }
+  }
   return {
     connections: connections.map(summarize),
     metaConnect: connections.some((connection) => blocksFreshConnection(connection, "meta")) ? "existing_connection" : "available",
+    manageableAssets,
   };
 }
 

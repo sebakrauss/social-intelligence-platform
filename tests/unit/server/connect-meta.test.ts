@@ -174,7 +174,7 @@ describe("orchestration order and refusals", () => {
 describe("connections.settings.view", () => {
   it("requires connections.manage (Owner/Admin only, never grantable), runs in any mode, and audits nothing", () => {
     expect(connectionSettingsViewCommand).toMatchObject({ scope: "workspace", name: "connections.settings.view", permission: "connections.manage", requiresStandardMode: false });
-    expect(connectionSettingsViewCommand.audit({ connections: [], metaConnect: "available" })).toBeUndefined();
+    expect(connectionSettingsViewCommand.audit({ connections: [], metaConnect: "available", manageableAssets: [] })).toBeUndefined();
     expect(WORKSPACE_ROLE_PERMISSIONS.OWNER.has("connections.manage")).toBe(true);
     expect(WORKSPACE_ROLE_PERMISSIONS.ADMIN.has("connections.manage")).toBe(true);
     for (const role of ["MANAGER", "RESPONDER", "ANALYST_VIEWER", "CLIENT_GUEST"] as const) {
@@ -190,11 +190,12 @@ describe("connections.settings.view", () => {
     expect(await resolveConnectionSettings(answer({ status: "error", correlationId: "c" as never, error: new AppError("NOT_FOUND", {}) }), WS)).toEqual({ kind: "workspace_not_found" });
     expect(await resolveConnectionSettings(answer({ status: "error", correlationId: "c" as never, error: new AppError("PERMISSION_DENIED", {}) }), WS)).toEqual({ kind: "not_allowed" });
     expect(await resolveConnectionSettings(answer({ status: "error", correlationId: "c" as never, error: new AppError("CONFLICT", {}) }), WS)).toEqual({ kind: "unavailable" });
-    expect(await resolveConnectionSettings(answer({ status: "ok", correlationId: "c" as never, value: { connections: [], metaConnect: "available" } }), WS)).toEqual({
+    expect(await resolveConnectionSettings(answer({ status: "ok", correlationId: "c" as never, value: { connections: [], metaConnect: "available", manageableAssets: [] } }), WS)).toEqual({
       kind: "ready",
       workspaceId: WS,
       connections: [],
       metaConnect: "available",
+      manageableAssets: [],
     });
   });
 });

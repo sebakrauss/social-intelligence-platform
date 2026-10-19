@@ -3,7 +3,8 @@
  * and server-only; the provider is fixed; Meta's endpoint expectation comes from server composition; the fresh-connection
  * lock exists only in the connections persistence boundary, transaction-scoped and bounded; Remove Meta (Step 7G-F4C)
  * reuses the existing remove command with the provider fixed, closes old fresh attempts only through one write-only
- * definer, and never calls Meta; there is still no reconnect surface.
+ * definer, and never calls Meta; there is still no reconnect surface. Managed accounts (Step 7G-H5) save the whole
+ * checked set through one command with the provider fixed, from persisted discovery only: no provider, KMS or job.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,7 +15,8 @@ const PAGE = "app/workspaces/[workspaceId]/settings/connections/page.tsx";
 const ACTIONS = "server/connections/actions.ts";
 const SETTINGS = "server/connections/settings.ts";
 const SETTINGS_RUNTIME = "server/connections/settings-runtime.ts";
-const SURFACE = [PAGE, ACTIONS, SETTINGS, SETTINGS_RUNTIME, "server/routes.ts"];
+const PENDING_BUTTON = "ui/connections/pending-submit-button.tsx";
+const SURFACE = [PAGE, ACTIONS, SETTINGS, SETTINGS_RUNTIME, "server/routes.ts", PENDING_BUTTON];
 const STORE = "modules/connections/persistence/store.ts";
 const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "");
 const PRODUCTION_ROOTS = ["app", "server", "modules", "domain", "platform", "integrations", "jobs", "mutations", "ai", "ui"];
@@ -22,7 +24,7 @@ const PRODUCTION_ROOTS = ["app", "server", "modules", "domain", "platform", "int
 describe("Connect Meta surface (Step 7G-F4)", () => {
   it("the page imports only server-side surface modules: no adapter, persistence, database, provider or job code", () => {
     for (const specifier of importsOf(PAGE)) {
-      expect(specifier, specifier).toMatch(/^(next\/navigation|@\/server\/connections\/(actions|settings|settings-runtime)|@\/server\/i18n)$/);
+      expect(specifier, specifier).toMatch(/^(next\/navigation|@\/server\/connections\/(actions|settings|settings-runtime)|@\/server\/i18n|@\/ui\/connections\/pending-submit-button)$/);
     }
     for (const file of SURFACE) {
       for (const specifier of importsOf(file)) {
@@ -43,23 +45,34 @@ describe("Connect Meta surface (Step 7G-F4)", () => {
     expect(readFileSync(path.join(REPOSITORY_ROOT, ACTIONS), "utf8").startsWith('"use server";')).toBe(true);
     const actions = codeOf(ACTIONS);
     const connect = actions.slice(actions.indexOf("export async function startMetaConnectionAction"), actions.indexOf("export async function removeMetaConnectionAction"));
-    const remove = actions.slice(actions.indexOf("export async function removeMetaConnectionAction"));
+    const removeAndAfter = actions.slice(actions.indexOf("export async function removeMetaConnectionAction"));
     const fields = (code: string): (string | undefined)[] => [...code.matchAll(/form\.get\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1]);
     expect(fields(connect)).toEqual(["workspaceId"]);
+    const accounts = actions.slice(actions.indexOf("export async function saveManagedAccountsAction"));
+    const remove = removeAndAfter.slice(0, removeAndAfter.indexOf("export async function saveManagedAccountsAction"));
     expect(fields(remove)).toEqual(["workspaceId", "connectionId", "acknowledgement"]);
-    expect(fields(actions)).toHaveLength(4);
-    expect(actions).not.toMatch(/form\.(getAll|entries|keys|values|has)\(|Object\.fromEntries/);
+    // Managed accounts: the routed ids plus the checked discovered-asset ids, nothing else.
+    expect(fields(accounts)).toEqual(["workspaceId", "connectionId"]);
+    expect([...accounts.matchAll(/form\.getAll\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1])).toEqual(["discoveredAssetId"]);
+    expect(fields(actions)).toHaveLength(6);
+    expect([...actions.matchAll(/form\.getAll\(/g)]).toHaveLength(1);
+    expect(actions).not.toMatch(/form\.(entries|keys|values|has)\(|Object\.fromEntries/);
+    expect(codeOf(SETTINGS)).toMatch(/input: \{ connectionId: input\.connectionId, expectedProvider: "meta", discoveredAssetIds \}/);
     expect(codeOf(SETTINGS)).toMatch(/startConnectionAuthorization\(deps, \{ workspaceId, provider: "meta" \}\)/);
     expect(codeOf(SETTINGS)).toMatch(/input: \{ connectionId: input\.connectionId, expectedProvider: "meta" \}/);
     for (const file of SURFACE) expect(codeOf(file), file).not.toMatch(/reconnectConnectionId|provider: "simulator"/);
   });
 
-  it("the page renders and reads only; exactly two forms: Connect Meta and the per-connection Remove", () => {
+  it("the page renders and reads only; exactly three forms: Connect Meta, the per-connection Remove and Managed accounts", () => {
     const page = codeOf(PAGE);
     expect(page).not.toMatch(/"use client"|connectMeta|removeMeta\(|startConnectionAuthorization|connectionAuthorizationRuntime|recoverStale|\.start\b|onClick|confirm\(/);
     expect(page).toMatch(/export const dynamic = "force-dynamic"/);
-    expect([...page.matchAll(/<form action=\{(\w+)\}>/g)].map((match) => match[1])).toEqual(["removeMetaConnectionAction", "startMetaConnectionAction"]);
-    expect([...page.matchAll(/<form\b/g)]).toHaveLength(2);
+    expect([...page.matchAll(/<form action=\{(\w+)\}>/g)].map((match) => match[1])).toEqual(["removeMetaConnectionAction", "startMetaConnectionAction", "saveManagedAccountsAction"]);
+    expect([...page.matchAll(/<form\b/g)]).toHaveLength(3);
+    // Managed accounts only for an ACTIVE Meta connection; checked = already managed, never preselected otherwise.
+    expect(page).toMatch(/connection\.provider === "meta" && connection\.status === "ACTIVE"/);
+    expect(page).toMatch(/name="discoveredAssetId" type="checkbox" value=\{asset\.discoveredAssetId\} defaultChecked=\{asset\.managed\}/);
+    expect(page).not.toMatch(/dangerouslySetInnerHTML/);
     // Remove only for a Meta connection that isn't REMOVED, with the visible acknowledgement.
     expect(page).toMatch(/connection\.provider === "meta" && connection\.status !== "REMOVED"/);
     expect(page).toMatch(/name="acknowledgement" type="checkbox" value=\{REMOVE_ACKNOWLEDGEMENT\} required/);
@@ -80,6 +93,38 @@ describe("Connect Meta surface (Step 7G-F4)", () => {
     expect(onboarding).toMatch(/workspaceConnectionsPath\(workspace\.id\)/);
     expect(onboarding).not.toMatch(/\/settings\/connections/);
     expect(codeOf("server/routes.ts")).toMatch(/`\/workspaces\/\$\{id\}\/settings\/connections`/);
+  });
+});
+
+describe("Managed accounts (Step 7G-H5): local configuration only", () => {
+  const LINKING = "modules/connections/application/linking.ts";
+  const COMMAND = "server/commands/connected-accounts.ts";
+  const selection = (code: string, start: string, end: string): string => code.slice(code.indexOf(start), code.indexOf(end, code.indexOf(start)));
+
+  it("the selection command is used only by its module and the Settings surface; it appends no outbox row and names no provider", () => {
+    const users = sourceFiles(PRODUCTION_ROOTS).filter((file) => /connectedAccountSelectionCommand/.test(codeOf(file)));
+    expect(users.sort()).toEqual([COMMAND, SETTINGS]);
+    const command = selection(codeOf(COMMAND), "export const connectedAccountSelectionCommand", "export function createConnectedAccountCommands");
+    expect(command).toMatch(/permission: "connections\.manage"/);
+    expect(command).toMatch(/expectedProvider: oneOf\(\["meta"\] as const\)/);
+    expect(command).not.toMatch(/outbox|CAPABILITY_EVALUATION_TOPIC|providers?\b\.|sealing|secrets|credential/i);
+  });
+
+  it("the convergence locks the Connection FOR UPDATE, reuses link/unlink, and touches no provider, credential, KMS or job", () => {
+    const linking = codeOf(LINKING);
+    const save = linking.slice(linking.indexOf("export async function saveManagedSelection"));
+    expect(save).toMatch(/store\.connections\.lockForUpdate\(input\.connectionId\)/);
+    expect(save).toMatch(/linkAccount\(store,/);
+    expect(save).toMatch(/unlinkAccount\(store,/);
+    expect(save).not.toMatch(/outbox|credential|withCredential|provider\w*Port|discoverAssets|kms|decrypt/i);
+    for (const specifier of importsOf(LINKING)) expect(specifier, specifier).toMatch(/^(@\/domain\/errors|@\/domain\/ids|\.\.\/domain\/model|\.\/authorization|\.\/ports)$/);
+  });
+
+  it("the pending-state button is the only client component, and it only reads the form status", () => {
+    const clients = sourceFiles(PRODUCTION_ROOTS).filter((file) => readFileSync(path.join(REPOSITORY_ROOT, file), "utf8").startsWith('"use client";'));
+    expect(clients).toEqual([PENDING_BUTTON]);
+    expect(importsOf(PENDING_BUTTON)).toEqual(["react-dom"]);
+    expect(codeOf(PENDING_BUTTON)).toMatch(/disabled=\{pending\}/);
   });
 });
 
