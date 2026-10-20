@@ -276,21 +276,47 @@ Provider credentials are sealed with the local keyring in development/test and w
 
 All three or none: none means the local keyring (development/test only), and a deployed runtime without them is
 refused, never given the local keyring. The envelope's logical key reference is the constant
-`kms-provider-credentials-v1`, not configuration. The AWS identity is supplied explicitly by each runtime and is
-not configured yet (7E): until then KMS composition fails closed. No `AWS_*` variable is read.
+`kms-provider-credentials-v1`, not configuration. The AWS identity is supplied explicitly by each runtime, never
+discovered ambiently, and KMS composition fails closed without it: the hosted web's Vercel OIDC identity and the
+integration worker's IAM Roles Anywhere identity, described below. No `AWS_*` variable is read.
 
 The hosted web's identity (Step 7E.2 contract; adapter in 7E.3): its Vercel OIDC token (Team issuer, audience exactly
 `sts.amazonaws.com`) is exchanged for temporary credentials of one role, `CREDENTIAL_KMS_WEB_ROLE_ARN` (a full IAM
 role ARN, non-secret), which may only GenerateDataKey. Credentials are resolved lazily, inside the request that
 needs them; no long-lived AWS credential is stored in Vercel.
 
-The integration worker's identity (Step 7E.4C; **DEV/non-prod candidate only**, production open under TA-Q-05,
-`KMS_WORKER_AUTH` still open): a bootstrap IAM user, given only to the INTEGRATION Trigger.dev project as
-`INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID` / `INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY`, assumes exactly
-`INTEGRATION_AWS_WORKER_ROLE_ARN` (same account and partition as the KMS key) through STS in the KMS key's region:
-`jobs/integration-aws-identity.ts`, 900-second sessions named `integration-worker`, refreshed 120 s before expiry,
-one request for concurrent callers, re-read on every resolution so a rotated key takes effect without a redeploy.
-KMS only ever receives the temporary role credentials (Decrypt only); the main plane and the web refuse all three names.
+The integration worker's identity (Step 7G-H5.6B; **DEV/non-prod**, production open under TA-Q-05; live acceptance
+pending) is **AWS IAM Roles Anywhere**: the workload's X.509 certificate and private key → the official
+`aws_signing_helper` 1.8.5 (`credential-process`) → Roles Anywhere `CreateSession` → 900-second temporary
+credentials of the existing worker role → KMS Decrypt only (`jobs/integration-aws-identity.ts`). Five variables, set
+only in the INTEGRATION Trigger.dev project:
+
+- `INTEGRATION_AWS_WORKER_ROLE_ARN`: the one role (same partition and account as the KMS key), non-secret.
+- `INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN`, `INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN`: same partition,
+  account and region as the KMS key, non-secret.
+- `INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM`: the end-entity certificate (P-256 named curve, `CA:false`, subject CN
+  `social-intelligence-platform-integration-<CREDENTIAL_CONTEXT_ENV>`), confidential.
+- `INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM`: its unencrypted PKCS#8 private key, a **Secret** variable; never in Git.
+
+PEM values may be multi-line or one line with literal `\n` sequences. For each helper run the certificate and key are
+written to a fresh 0700 temporary directory as 0600 files and removed in `finally`; the helper runs without a shell
+and with an empty environment, and the key is never an argument. Sessions are cached in memory only, refreshed when
+120 s or less remain (one helper run for concurrent callers); the five variables are re-read and re-validated on every
+resolution, so a rotated certificate takes effect without a redeploy and withdrawn configuration fails closed. There is
+no fallback: no AWS default credential chain and no static access key (the integration plane refuses `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE` and `AWS_WEB_IDENTITY_TOKEN_FILE`). The main plane and the
+web refuse all five names. The helper is packaged, pinned and digest-verified, into the INTEGRATION image only
+(`design/phase-7e/aws-authorization/README.md`, "INTEGRATION deployment").
+
+The DEV Roles Anywhere resources (trust anchor, profile and the worker role's trust) are applied by separate operator
+gates. The worker identity's **live acceptance is still pending**: one `CreateSession` → temporary worker credentials →
+one KMS Decrypt → CloudTrail evidence. Until it passes, the migration and the bootstrap retirement are not closed.
+
+The Step 7E.4C bootstrap identity is **retired**: `INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID` /
+`INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY` are read by no code and refused by both planes and the web. The bootstrap
+IAM user may still exist as a resource pending retirement, but it is not in the worker role's trust and is not an
+identity mechanism; it is deleted only after the Roles Anywhere live acceptance
+(`design/phase-7e/aws-authorization/runbooks/bootstrap-retirement.md`).
 
 ## Deployed non-production validation (TA-Q-31)
 
