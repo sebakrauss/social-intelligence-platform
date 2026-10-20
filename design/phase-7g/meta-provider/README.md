@@ -377,5 +377,61 @@ Which discovered accounts a workspace manages is an explicit Wrenkind decision, 
 | CONCURRENCY | saves of one connection serialize on its row lock; the LAST COMMITTED save decides the set; no duplicates |
 | REMOVE_COMPATIBILITY | Remove takes the same row lock after K: a stale save after Remove is `connection_not_ready`; a save in flight is deactivated by the Remove that follows it |
 | Audit | one `connected_account.linked` / `connected_account.unlinked` per changed account (user, workspace); none for a no-op |
-| PROVIDER_KMS_JOB_SIDE_EFFECTS | NONE: no Meta, KMS, STS or Trigger call and no outbox row (the capability evaluation the single-account link enqueues is deliberately NOT enqueued here; deferred to a later gate) |
+| PROVIDER_KMS_JOB_SIDE_EFFECTS | NONE: no Meta, KMS, STS or Trigger call. Step 7G-H5.5 adds exactly one `capability.evaluate_account` outbox row per activation transition (see below) |
 | DB_MIGRATION | NO |
+
+## Managed-account capability lifecycle (Step 7G-H5.5)
+
+DISCOVERED ASSET → explicit activation → Connected Account ACTIVE → evaluation requested → profile current → downstream
+operations proceed only as `capabilityAvailability` allows. The profile is derived, recomputable state; it never decides
+activation. An account may be ACTIVE while its evaluation is pending, and that fails closed.
+
+| Item | State |
+|---|---|
+| EVALUATION_REQUEST | ONE provider-neutral primitive, `capabilityEvaluationRequest` (`modules/connections/application/capability-request.ts`), used by link, save_selection, the Move activation and reconciliation |
+| ACTIVATION_ENQUEUE | one `capability.evaluate_account` outbox row per activation transition (new or reactivated account), in the activation's own transaction; subject `connected_account_id` only; web initiator = the user |
+| DISPATCH_KEY | `capability.evaluate_account:{account}:{LINKED or MOVED_IN event id}`; `…:initial` for an ACTIVE account without a recorded activation; `…:{catalog}.r{revision}` for a stale profile |
+| UNCHANGED_SAVE / RETAINED / DESELECTED | no request |
+| RECONCILIATION | `requestCapabilityReevaluations` (worker scope, one workspace, ≤ 200 accounts per call, resumable by `next`): ACTIVE account under an ACTIVE connection with no profile, or a profile on another catalog or an older revision → one request; the missing-profile key is the latest activation's, so an activation's pending request is found (`already_requested`), never duplicated. Duplicate dispatch keys are absorbed by `appendOutboxOnce` (savepoint). NOT scheduled: no task or deploy yet |
+| NOT_RECONCILED | INACTIVE accounts; accounts under a non-ACTIVE connection; a profile on a NEWER revision than the running code |
+| AVAILABILITY_ORDER | account not ACTIVE → `ACCOUNT_INACTIVE`; no profile → `PROFILE_NOT_EVALUATED`; profile not on the provider's catalog at exactly its revision → `PROFILE_STALE`; then the stored row with connection health (`REMOVED` → `CONNECTION_REMOVED`). One capability per answer |
+| DEACTIVATION / REMOVE | the profile is kept as history and is never authority: availability refuses it (`ACCOUNT_INACTIVE`) |
+| FAILURE_SEMANTICS | unchanged (Step 5E): a definite provider refusal or an unreadable credential → "facts unavailable" → UNKNOWN, never SUPPORTED; transient, rate-limited or ambiguous → retried by the task, profile untouched; nothing deactivates the account or touches the credential |
+| CATALOG_REVISION | both catalogs → revision 2 (the vocabulary gained `read_content`): every revision-1 profile is stale |
+| READ_CONTENT | DEDICATED_CAPABILITY: top-level content is its own provider operation (`listContent` / `getContent`) and permission (`read_content` already exists in the provider contract's normalized names), distinct from `read_interactions` |
+| DB_MIGRATION | `0013_capability_read_content.sql`: the verified widening of `capability.profile_entries_capability_check`; nothing else |
+
+**Meta describeAccount contract (H55).**
+
+| Ref | Source |
+|---|---|
+| R6, R8 | as in E1 (Page reference; IG User reference) |
+| R12 | User permissions edge — `https://developers.facebook.com/docs/graph-api/reference/user/permissions/` (retrieved 2026-10-19: `GET /{user-id}/permissions`; `data` is a list of Permission nodes `{permission: string, status: enum{granted, declined, expired}}`; the edge is paginated; the token type for reading is not stated) |
+
+1. The asset, its echoed id checked: Facebook Page `GET /v25.0/{page-id}?fields=id,name` (R6: `id`, `name`); Instagram
+   professional account `GET /v25.0/{ig-user-id}?fields=id,username` (E1's documented read, R8).
+2. `GET /v25.0/me/permissions?fields=permission,status` (R12). Only `granted` names count. One page only: a response that
+   reports a next page, an unknown status, a non-identifier name or more than 256 entries is unreadable (fail closed,
+   never a truncated grant set).
+
+Facts: `content_bearing`; the account identity is the asset itself; no linked ad accounts (no ads permission is
+requested, so none is claimed); `describedAt` is the local clock. Another platform is refused before any request; any
+failure fails the whole description. Same transport containment as E1. No scope is added.
+
+Live uncertainties (to be proven in a live capability gate): whether the Page node read needs more than
+`pages_show_list`; whether `me/permissions` under Facebook Login for Business lists the configuration's permissions;
+whether it is ever paginated for one app grant.
+
+| Item | State |
+|---|---|
+| META_DESCRIBE_ACCOUNT | IMPLEMENTED_OFFLINE (fake transport only; never executed live) |
+| CAPABILITY_CATALOG_META | BLOCKED_ON_API_VALIDATION_EVIDENCE: the platform catalog holds NO entry. Every Meta capability, `read_content` and `read_interactions` included, evaluates UNKNOWN_NOT_VALIDATED until a live API-validation gate records `api-validation:` evidence for an exact (platform, asset class, capability, scope, required permissions) entry |
+| LIVE_EVALUATION_BLOCKER | the permanent Integration workload authentication (no static AWS key; separate infrastructure gate) and a live capability-validation gate |
+
+**H6 readiness contract.** H6 may ingest for a Connected Account only when, at the moment of ingestion:
+the account is ACTIVE; its connection is ACTIVE with a valid credential pointer; and `capabilityAvailability` answers
+AVAILABLE (or AVAILABLE_WITH_LIMITATION, honoring the limitation) for EXACTLY the capability of that operation —
+`read_content` for top-level content, `read_interactions` for comments and replies, `read_history` for backfill depth.
+H6 consumes the resolver; it never infers a capability from the Meta authorization, the granted permissions, the
+discovery result or the data it sees. Today that means: the simulator for development; real Meta only after the
+live capability-validation gate.

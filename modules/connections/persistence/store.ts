@@ -6,14 +6,14 @@
  * outside the closed vocabularies is treated as corruption, never passed on. Credentials are reached only
  * through the credential definer functions, as EnvelopeV1 bytes.
  */
-import { and, asc, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 import { isConnectionStatus } from "@/domain/connections";
 import { AppError } from "@/domain/errors";
 import { parseOrganizationId, parseUserId, parseWorkspaceId } from "@/domain/ids";
 import type { AuditLog } from "@/modules/audit";
 import { postgresError, type DatabaseTransaction } from "@/platform/db";
 import type { OutboxWriter } from "@/platform/outbox";
-import type { AccountActivation, ActivationOutcome, ActiveLink, ConnectionStore, ConnectionWorkerStore } from "../application/ports";
+import type { AccountActivation, ActivationOutcome, ActiveLink, CapabilityReconcileStore, ConnectionStore, ConnectionWorkerStore } from "../application/ports";
 import {
   ASSET_CLASSES,
   ASSET_PLATFORMS,
@@ -698,5 +698,40 @@ export function createPostgresConnectionWorkerStore(
     },
     audit: extras.audit,
     claimEffect: extras.claimEffect,
+  };
+}
+
+/**
+ * Capability reconciliation store (Step 7G-H5.5; role `app_worker`, the job's single bound workspace). Reads ACTIVE
+ * accounts with their connection's provider and status, and the latest activation event; appends requests through
+ * `extras.requestOnce` (composed with the job's post-commit relay wake-up).
+ */
+export function createPostgresCapabilityReconcileStore(tx: DatabaseTransaction, extras: Pick<CapabilityReconcileStore, "requestOnce">): CapabilityReconcileStore {
+  return {
+    async activeAccounts(after, limit) {
+      const rows = await tx
+        .select({ id: connectedAccounts.id, connectionId: connectedAccounts.connectionId, provider: connectionsTable.provider, connectionStatus: connectionsTable.status })
+        .from(connectedAccounts)
+        .innerJoin(connectionsTable, and(eq(connectionsTable.workspaceId, connectedAccounts.workspaceId), eq(connectionsTable.id, connectedAccounts.connectionId)))
+        .where(after === null ? eq(connectedAccounts.status, "ACTIVE") : and(eq(connectedAccounts.status, "ACTIVE"), gt(connectedAccounts.id, after)))
+        .orderBy(asc(connectedAccounts.id))
+        .limit(limit);
+      return rows.map((row) => ({
+        id: row.id,
+        connectionId: row.connectionId,
+        provider: closed(CONNECTION_PROVIDERS, row.provider, "connections"),
+        connectionStatus: isConnectionStatus(row.connectionStatus) ? row.connectionStatus : corrupt("connections"),
+      }));
+    },
+    async latestActivation(connectedAccountId) {
+      const rows = await tx
+        .select({ id: connectedAccountEvents.id })
+        .from(connectedAccountEvents)
+        .where(and(eq(connectedAccountEvents.connectedAccountId, connectedAccountId), inArray(connectedAccountEvents.eventType, ["LINKED", "MOVED_IN"])))
+        .orderBy(desc(connectedAccountEvents.occurredAt), desc(connectedAccountEvents.id))
+        .limit(1);
+      return rows[0]?.id;
+    },
+    requestOnce: extras.requestOnce,
   };
 }

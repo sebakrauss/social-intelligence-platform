@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import type { ConnectionStatus } from "@/domain/connections";
 import type { PlatformKey } from "@/domain/platforms";
 import { isProviderError, type AccountDescriptionDto } from "@/integrations/providers/contract";
-import { PLATFORM_CATALOG, SIMULATOR_CATALOG, type CapabilityCatalog } from "../domain/catalog";
+import { PLATFORM_CATALOG, SIMULATOR_CATALOG, catalogIdFor, isCurrentProfile, type CapabilityCatalog } from "../domain/catalog";
 import {
   effectiveAvailability,
   evaluateProfile,
@@ -49,7 +49,7 @@ export class CapabilityCatalogError extends Error {
 
 /** The catalog for a connection provider. Never chosen by platform: simulator evidence can't reach a real provider. */
 export function selectCatalog(provider: "meta" | "tiktok" | "simulator", environment: Readonly<Record<string, string | undefined>>): CapabilityCatalog {
-  if (provider !== "simulator") return PLATFORM_CATALOG;
+  if (catalogIdFor(provider) === "platform") return PLATFORM_CATALOG;
   if (!SIMULATOR_CATALOG_ENVIRONMENTS.includes(environment["NODE_ENV"] ?? "")) throw new CapabilityCatalogError();
   return SIMULATOR_CATALOG;
 }
@@ -127,18 +127,44 @@ export async function evaluateAndStore(store: CapabilityProfileStore, input: Eva
   return { profile, outcome };
 }
 
-/** Effective availability of one capability for one target scope, from the stored profile and connection health. */
+/**
+ * Effective availability of one capability for one target scope (Step 7G-H5.5: the ONE resolver downstream gates
+ * consume). The account's lifecycle and the profile's currency are checked here, before any stored row is read as
+ * authority, so no caller can forget them:
+ *
+ *   account not ACTIVE                     → UNAVAILABLE / ACCOUNT_INACTIVE   (an old profile is history, not authority)
+ *   no profile                             → UNAVAILABLE / PROFILE_NOT_EVALUATED
+ *   profile on another catalog or revision → UNAVAILABLE / PROFILE_STALE      (re-evaluation required; never "assumed")
+ *   otherwise                              → the stored row overlaid with connection health (REMOVED → CONNECTION_REMOVED)
+ *
+ * One capability, one scope: an available capability never implies another.
+ */
 export async function capabilityAvailability(
   store: CapabilityReadStore,
   input: {
     readonly connectedAccountId: string;
+    readonly accountStatus: "ACTIVE" | "INACTIVE";
+    /** The account's connection provider: which catalog a current profile rests on. */
+    readonly provider: string;
     readonly capability: CapabilityKey;
     readonly contentKind: CapabilityContentKind | typeof ANY;
     readonly source: CapabilitySource | typeof ANY;
     readonly connection: ConnectionStatus;
   },
 ): Promise<CapabilityAvailability> {
+  const refused = (reason: "ACCOUNT_INACTIVE" | "PROFILE_STALE", asOf: Date | null): CapabilityAvailability => ({
+    state: "UNAVAILABLE",
+    reason,
+    recovery: null,
+    limitation: null,
+    capability: input.capability,
+    scope: null,
+    baseState: null,
+    asOf,
+  });
+  if (input.accountStatus !== "ACTIVE") return refused("ACCOUNT_INACTIVE", null);
   const header = await store.header(input.connectedAccountId);
+  if (header !== undefined && !isCurrentProfile(header, input.provider)) return refused("PROFILE_STALE", header.evaluatedAt);
   const entries = header === undefined ? [] : await store.entries(input.connectedAccountId);
   return effectiveAvailability(resolveEntry(entries, input.capability, input.contentKind, input.source), input.connection, input.capability, header?.evaluatedAt ?? null);
 }

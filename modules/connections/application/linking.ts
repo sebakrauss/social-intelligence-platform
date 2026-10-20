@@ -12,7 +12,8 @@
  *
  * M-01 (LOCKED) and the TEMPORARY TA-Q-02 ad-account restriction are decided by the database's two named unique
  * indexes; connections.locate_active_link only lets the application explain the refusal (same organization only).
- * No provider I/O happens here: capability evaluation is enqueued by the caller after activation.
+ * No provider I/O happens here: capability evaluation is requested by the caller, in the activation's transaction,
+ * through the one shared request (capability-request.ts), keyed by the activation event returned here.
  */
 import { AppError } from "@/domain/errors";
 import type { WorkspaceId } from "@/domain/ids";
@@ -29,7 +30,8 @@ export interface ActiveElsewhere {
 }
 
 export type LinkOutput =
-  | { readonly kind: "linked"; readonly account: ConnectedAccount; readonly reactivated: boolean }
+  /** `activationId`: the LINKED event this activation wrote — the identity of the activation (capability-request.ts). */
+  | { readonly kind: "linked"; readonly account: ConnectedAccount; readonly reactivated: boolean; readonly activationId: string }
   | { readonly kind: "already_linked"; readonly account: ConnectedAccount }
   | ActiveElsewhere;
 
@@ -83,8 +85,9 @@ export async function linkAccount(
     // Lost a race: the database refused. Explain it when the winner is visible; never guess a workspace.
     return (await locate(store, asset, input.scope)) ?? { kind: "active_elsewhere", rule: outcome.rule, workspaceId: null };
   }
+  const activationId = input.newId();
   await store.accountEvents.append({
-    id: input.newId(),
+    id: activationId,
     organizationId: input.scope.organizationId,
     workspaceId: input.scope.workspaceId,
     connectedAccountId: outcome.account.id,
@@ -94,7 +97,7 @@ export async function linkAccount(
     actor: { type: "user", userId: input.scope.userId },
     occurredAt: input.now,
   });
-  return { kind: "linked", account: outcome.account, reactivated: outcome.reactivated };
+  return { kind: "linked", account: outcome.account, reactivated: outcome.reactivated, activationId };
 }
 
 export type UnlinkOutput = { readonly changed: false; readonly connectedAccountId: string } | { readonly changed: true; readonly connectedAccountId: string };
@@ -152,9 +155,18 @@ export function isManageableAsset(asset: Pick<DiscoveredAsset, "assetClass" | "p
   return asset.assetClass === "content_bearing" && (asset.platform === "facebook" || asset.platform === "instagram");
 }
 
+/** One activation transition: the account and the id of the LINKED event that records it. */
+export interface Activation {
+  readonly connectedAccountId: string;
+  readonly activationId: string;
+}
+
 export interface SelectionOutput {
-  /** Connected accounts this save activated (linked or reactivated) or deactivated (unlinked); empty when unchanged. */
-  readonly activated: readonly string[];
+  /**
+   * Connected accounts this save activated (linked or reactivated) or deactivated (unlinked); empty when unchanged.
+   * Only `activated` asks for a capability evaluation (one per transition); a retained or deactivated account never does.
+   */
+  readonly activated: readonly Activation[];
   readonly deactivated: readonly string[];
   /** The discovered assets managed by this Connection after the save. */
   readonly managed: readonly string[];
@@ -172,7 +184,8 @@ export interface SelectionOutput {
  * activated. Deactivation is the existing unlink (INACTIVE, UNLINKED; the row keeps its identity), activation the
  * existing link (reactivating that row, or inserting the first one). An asset active in another workspace of the
  * organization (M-01 / TA-Q-02) refuses the whole save (CONFLICT) — partial selections are never committed. No
- * provider, KMS or job call: this is local Wrenkind state built only from the persisted discovery.
+ * provider, KMS or job call: this is local Wrenkind state built only from the persisted discovery. The caller requests
+ * one capability evaluation per returned activation, in this same transaction (Step 7G-H5.5).
  */
 export async function saveManagedSelection(
   store: ConnectionStore,
@@ -204,12 +217,12 @@ export async function saveManagedSelection(
     if (desired.has(`${account.platform}:${account.providerAssetId}`)) continue;
     if ((await unlinkAccount(store, { scope: input.scope, connectedAccountId: account.id, now: input.now, newId: input.newId })).changed) deactivated.push(account.id);
   }
-  const activated: string[] = [];
+  const activated: Activation[] = [];
   for (const [key, asset] of [...desired].sort(([a], [b]) => a.localeCompare(b))) {
     if (activeKeys.has(key)) continue;
     const linked = await linkAccount(store, { scope: input.scope, discoveredAssetId: asset.id, now: input.now, newId: input.newId });
     if (linked.kind === "active_elsewhere") throw new AppError("CONFLICT", {});
-    if (linked.kind === "linked") activated.push(linked.account.id);
+    if (linked.kind === "linked") activated.push({ connectedAccountId: linked.account.id, activationId: linked.activationId });
   }
   return { activated, deactivated, managed: [...desired.values()].map((asset) => asset.id).sort() };
 }

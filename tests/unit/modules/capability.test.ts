@@ -71,16 +71,17 @@ describe("vocabulary", () => {
     expect([...CAPABILITY_SOURCES]).toEqual([...CONTENT_SOURCES]);
     expect([...CAPABILITY_ASSET_CLASSES]).toEqual([...ASSET_CLASSES]);
     const reused = CAPABILITY_KEYS.filter((key) => (PERMISSION_CAPABILITIES as readonly string[]).includes(key));
-    expect(reused.sort()).toEqual(["block", "delete", "hide", "read_interactions", "read_paid_context", "reply_private", "reply_public"]);
+    expect(reused.sort()).toEqual(["block", "delete", "hide", "read_content", "read_interactions", "read_paid_context", "reply_private", "reply_public"]);
     expect(CAPABILITY_KEYS.filter((key) => !reused.includes(key)).sort()).toEqual(["detect_native_replies", "read_history"]);
   });
 });
 
 describe("platform capability catalog", () => {
   it("carries a monotonic integer revision (the only ordering value) and a human label that is never compared", () => {
-    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.id, SIMULATOR_CATALOG.revision]).toEqual(["platform", 1, "simulator", 1]);
+    // Revision 2 (Step 7G-H5.5): the vocabulary gained read_content, so every revision-1 profile is stale.
+    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.id, SIMULATOR_CATALOG.revision]).toEqual(["platform", 2, "simulator", 2]);
     expect(Number.isInteger(PLATFORM_CATALOG.revision) && Number.isInteger(SIMULATOR_CATALOG.revision)).toBe(true);
-    expect([PLATFORM_CATALOG.label, SIMULATOR_CATALOG.label]).toEqual(["platform-catalog-r1", "simulator-catalog-r1"]);
+    expect([PLATFORM_CATALOG.label, SIMULATOR_CATALOG.label]).toEqual(["platform-catalog-r2", "simulator-catalog-r2"]);
     for (const file of ["modules/capability/application/ports.ts", "modules/capability/persistence/store.ts"]) expect(codeOf(file)).not.toMatch(/\.label\b/);
     expect(Object.isFrozen(PLATFORM_CATALOG.entries) && Object.isFrozen(SIMULATOR_CATALOG.entries)).toBe(true);
   });
@@ -96,7 +97,7 @@ describe("platform capability catalog", () => {
               expect(result).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", validation: "not_validated", evidence: null, limitation: null });
               checked += 1;
             }
-    expect(checked).toBe(3 * 2 * 9 * 8 * 5);
+    expect(checked).toBe(3 * 2 * 10 * 8 * 5);
   });
 
   it("guard: a real-platform entry may exist only as a validated, api-validation-evidenced fact — never a simulator one", () => {

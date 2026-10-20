@@ -1,10 +1,12 @@
 /**
  * The Meta Graph READ transport for discoverAssets (Step 7G-E; design/phase-7g/meta-provider/README.md, E1 — the
- * implementation authority). Three typed operations, nothing else:
+ * implementation authority) and describeAccount (Step 7G-H5.5, contract H55). Five typed operations, nothing else:
  *
  *   listPages            GET https://graph.facebook.com/v25.0/me/accounts?fields=id,name[&after={cursor}]
  *   getPageInstagram     GET https://graph.facebook.com/v25.0/{page-id}?fields=instagram_business_account
  *   getInstagramAccount  GET https://graph.facebook.com/v25.0/{ig-user-id}?fields=id,username
+ *   getPage              GET https://graph.facebook.com/v25.0/{page-id}?fields=id,name
+ *   listPermissions      GET https://graph.facebook.com/v25.0/me/permissions?fields=permission,status
  *
  * Callers name an operation and pass a SecretValue token plus validated provider ids or a validated cursor — never a
  * URL. Meta documents the User Access Token as the `access_token` query parameter for these exact endpoints, so the
@@ -62,7 +64,17 @@ export interface MetaGraphTransport {
   getPageInstagram(token: SecretValue, pageId: ProviderObjectId): Promise<MetaGraphOutcome<ProviderObjectId | null>>;
   /** The account's username as reported ("" when absent). */
   getInstagramAccount(token: SecretValue, instagramId: ProviderObjectId): Promise<MetaGraphOutcome<{ readonly username: string }>>;
+  /** The Page node itself, its echoed id checked; the name as reported ("" when absent). */
+  getPage(token: SecretValue, pageId: ProviderObjectId): Promise<MetaGraphOutcome<{ readonly name: string }>>;
+  /** The permissions the user granted to the app: only `status = "granted"` entries, sorted and distinct. */
+  listPermissions(token: SecretValue): Promise<MetaGraphOutcome<readonly string[]>>;
 }
+
+/** A Meta permission name: lower-case identifier, bounded. Anything else is an unreadable response, never kept. */
+const PERMISSION_NAME = /^[a-z][a-z0-9_]{0,99}$/;
+const PERMISSION_STATUSES = ["granted", "declined", "expired"] as const;
+/** More entries than any real grant set: a larger list is not the documented shape. */
+export const META_PERMISSIONS_MAX_ENTRIES = 256;
 
 export type MetaGraphFetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -165,6 +177,38 @@ function instagramAccountOf(body: unknown, instagramId: ProviderObjectId): { rea
   return username === undefined ? undefined : Object.freeze({ username });
 }
 
+/** `{page-id}?fields=id,name`: the echoed id must be the requested one. */
+function pageOf(body: unknown, pageId: ProviderObjectId): { readonly name: string } | undefined {
+  const root = record(body);
+  if (root === undefined || root["id"] !== pageId) return undefined;
+  const name = displayString(root["name"]);
+  return name === undefined ? undefined : Object.freeze({ name });
+}
+
+/**
+ * `me/permissions?fields=permission,status`: `data[]` of `{permission, status ∈ granted|declined|expired}` (R12). One
+ * page only: the permissions of one app grant fit it, so a response that reports a next page is not trusted as complete
+ * (unreadable, never a silently truncated grant set). Only granted names are returned.
+ */
+function permissionsOf(body: unknown): readonly string[] | undefined {
+  const root = record(body);
+  if (root === undefined || !Array.isArray(root["data"])) return undefined;
+  const data = root["data"] as readonly unknown[];
+  if (data.length > META_PERMISSIONS_MAX_ENTRIES) return undefined;
+  const paging = root["paging"];
+  if (paging !== undefined && (record(paging) === undefined || record(paging)?.["next"] !== undefined)) return undefined;
+  const granted = new Set<string>();
+  for (const item of data) {
+    const entry = record(item);
+    const permission = entry?.["permission"];
+    const status = entry?.["status"];
+    if (typeof permission !== "string" || !PERMISSION_NAME.test(permission)) return undefined;
+    if (typeof status !== "string" || !(PERMISSION_STATUSES as readonly string[]).includes(status)) return undefined;
+    if (status === "granted") granted.add(permission);
+  }
+  return Object.freeze([...granted].sort());
+}
+
 export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}): MetaGraphTransport {
   const fetchImpl: MetaGraphFetch = options.fetch ?? ((url, init) => fetch(url, init));
   const timeoutMs = options.timeoutMs ?? META_GRAPH_TIMEOUT_MS;
@@ -216,6 +260,12 @@ export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}
     },
     getInstagramAccount(token, instagramId) {
       return get([instagramId], [["fields", "id,username"]], token, (body) => instagramAccountOf(body, instagramId));
+    },
+    getPage(token, pageId) {
+      return get([pageId], [["fields", "id,name"]], token, (body) => pageOf(body, pageId));
+    },
+    listPermissions(token) {
+      return get(["me", "permissions"], [["fields", "permission,status"]], token, permissionsOf);
     },
   };
 }

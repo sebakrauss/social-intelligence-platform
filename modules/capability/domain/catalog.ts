@@ -17,6 +17,11 @@
  *
  * Lookup is most-specific-first over (platform, content kind, source), defaulting to UNKNOWN_NOT_VALIDATED: a
  * capability the catalog doesn't mention is never implied to be supported.
+ *
+ * A revision covers everything an evaluation's output depends on besides the account's inputs: the entries AND the
+ * capability vocabulary they are evaluated over. Revision 2 (Step 7G-H5.5) adds `read_content` to the vocabulary, so
+ * every revision-1 profile lacks a row for it and is stale by revision: availability refuses it (PROFILE_STALE) and
+ * reconciliation requests its re-evaluation. The platform catalog still holds no entry.
  */
 import type { PlatformKey } from "@/domain/platforms";
 import {
@@ -59,7 +64,7 @@ export interface CapabilityCatalog {
 }
 
 /** Real platforms: empty until API validation produces evidence-backed entries. */
-export const PLATFORM_CATALOG: CapabilityCatalog = Object.freeze({ id: "platform", revision: 1, label: "platform-catalog-r1", entries: Object.freeze([]) });
+export const PLATFORM_CATALOG: CapabilityCatalog = Object.freeze({ id: "platform", revision: 2, label: "platform-catalog-r2", entries: Object.freeze([]) });
 
 const SIM_EVIDENCE = "simulator:contract-v1";
 const sim = (
@@ -84,9 +89,10 @@ const sim = (
 /** SIMULATOR CONTRACT BEHAVIOR ONLY (see header). detect_native_replies is deliberately absent → UNKNOWN. */
 export const SIMULATOR_CATALOG: CapabilityCatalog = Object.freeze({
   id: "simulator",
-  revision: 1,
-  label: "simulator-catalog-r1",
+  revision: 2,
+  label: "simulator-catalog-r2",
   entries: Object.freeze([
+    sim("content_bearing", "read_content", "SUPPORTED", { permissions: ["sim.read_content"] }),
     sim("content_bearing", "read_interactions", "SUPPORTED", { permissions: ["sim.read_interactions"] }),
     sim("content_bearing", "read_history", "AVAILABLE_WITH_LIMITATION", { limitation: { code: "HISTORY_DEPTH_LIMITED", value: 90 }, permissions: ["sim.read_interactions"] }),
     sim("content_bearing", "reply_public", "SUPPORTED", { permissions: ["sim.reply_public"] }),
@@ -169,3 +175,20 @@ export function profileScopes(catalog: CapabilityCatalog, platform: PlatformKey,
 }
 
 export const ALL_CAPABILITIES: readonly CapabilityKey[] = CAPABILITY_KEYS;
+
+export const CATALOGS: { readonly [I in CatalogId]: CapabilityCatalog } = Object.freeze({ platform: PLATFORM_CATALOG, simulator: SIMULATOR_CATALOG });
+
+/**
+ * The catalog a connection provider is evaluated against: the simulator's for the simulator, the platform catalog for
+ * every real provider. Pure — which catalog a profile SHOULD rest on, for staleness checks and reconciliation; whether
+ * the simulator catalog may be used at all in this environment is decided only where it is selected for an evaluation.
+ */
+export function catalogIdFor(provider: string): CatalogId {
+  return provider === "simulator" ? "simulator" : "platform";
+}
+
+/** A stored profile rests on the CURRENT catalog for its provider: same catalog id and exactly its revision. */
+export function isCurrentProfile(stored: { readonly catalogId: CatalogId; readonly catalogRevision: number }, provider: string): boolean {
+  const expected = CATALOGS[catalogIdFor(provider)];
+  return stored.catalogId === expected.id && stored.catalogRevision === expected.revision;
+}

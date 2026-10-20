@@ -2,6 +2,7 @@
  * Step 5F commands: Connected Account linking, unlinking and the web side of the Move saga (TA §8; PD D-50; D4).
  * Configuration, not platform mutation: no command requires Standard mode (S7 restricts platform mutations), and no
  * provider is called here — capability evaluation and the cross-workspace saga steps run in the job runtime.
+ * Every activation requests its evaluation through ONE helper (requestEvaluation), whichever command activated it.
  *
  * M-01 presentation: when an asset is already active in another workspace of the organization, the caller learns
  * which one only if their OWN live membership there may read it (workspace.read_operational); otherwise only that it
@@ -11,13 +12,14 @@
 import { isUuid, type WorkspaceId } from "@/domain/ids";
 import { list, object, oneOf, parsed } from "@/domain/validation";
 import {
-  CAPABILITY_EVALUATION_TOPIC,
+  capabilityEvaluationRequest,
   linkAccount,
   listConnectedAccounts,
   requestMove,
   retryMove,
   saveManagedSelection,
   unlinkAccount,
+  type Activation,
   type ConnectedAccountSummary,
   type LinkOutput,
   type MoveRequestOutput,
@@ -28,7 +30,8 @@ import {
 } from "@/modules/connections";
 import { loadWorkspaceAccess, type TenancyStore } from "@/modules/tenancy";
 import { effectivePermissions } from "@/platform/permissions";
-import type { AuditDraft, WorkspaceCommand, WorkspaceContext } from "@/server/pipeline";
+import type { OutboxWriter } from "@/platform/outbox";
+import type { AuditDraft, CommandEnvironment, WorkspaceCommand, WorkspaceContext } from "@/server/pipeline";
 
 const uuid = parsed((value) => (isUuid(value) ? value : undefined));
 
@@ -60,6 +63,25 @@ async function present(tenancy: TenancyStore, context: WorkspaceContext, workspa
     : { kind: "organization" };
 }
 
+/**
+ * The one capability-evaluation request of one activation transition (shared by link and save_selection): appended in
+ * the activation's own transaction, identifiers only, keyed by the activation's LINKED event.
+ */
+function requestEvaluation(outbox: OutboxWriter, context: WorkspaceContext, env: CommandEnvironment, activation: Activation): Promise<void> {
+  return outbox.append(
+    capabilityEvaluationRequest({
+      id: env.newId(),
+      organizationId: context.organizationId,
+      workspaceId: context.workspaceId,
+      connectedAccountId: activation.connectedAccountId,
+      reason: { kind: "activation", activationId: activation.activationId },
+      correlationId: env.correlationId,
+      initiator: { type: "user", userId: context.userId },
+      createdAt: env.now,
+    }),
+  );
+}
+
 /** The most assets one save may name: above what one bounded discovery can return (20 pages, Facebook + Instagram). */
 export const SELECTION_MAX_ASSETS = 1000;
 
@@ -67,8 +89,9 @@ export const SELECTION_MAX_ASSETS = 1000;
  * Save the managed set of one Meta connection's discovered assets (Step 7G-H5): the whole desired set, atomically, in
  * one unit of work — activations and deactivations of this workspace's Connected Accounts, one audit record per changed
  * account. The provider is fixed server side ("meta"); the browser contributes only the routed ids. Configuration, not
- * platform mutation (no Standard mode). Deliberately NOT here: any provider, KMS or job — not even the capability
- * evaluation connections.account.link enqueues; activation stays local until a later gate decides that wiring.
+ * platform mutation (no Standard mode). No provider, KMS or credential is reached here: each activation transition
+ * (new or reactivated account) requests ONE capability evaluation in this same transaction, through the request the
+ * single-account link shares (Step 7G-H5.5); a retained or deactivated account requests none.
  */
 export const connectedAccountSelectionCommand: WorkspaceCommand<
   { readonly connectionId: string; readonly expectedProvider: "meta"; readonly discoveredAssetIds: readonly string[] },
@@ -80,18 +103,21 @@ export const connectedAccountSelectionCommand: WorkspaceCommand<
   permission: "connections.manage",
   requiresStandardMode: false,
   validate: object({ connectionId: uuid, expectedProvider: oneOf(["meta"] as const), discoveredAssetIds: list(uuid, { max: SELECTION_MAX_ASSETS }) }),
-  execute: (context, input, tx, env) =>
-    saveManagedSelection(tx.connections, {
+  async execute(context, input, tx, env) {
+    const output = await saveManagedSelection(tx.connections, {
       scope: scopeOf(context),
       connectionId: input.connectionId,
       expectedProvider: input.expectedProvider,
       discoveredAssetIds: input.discoveredAssetIds,
       now: env.now,
       newId: env.newId,
-    }),
+    });
+    for (const activation of output.activated) await requestEvaluation(tx.outbox, context, env, activation);
+    return output;
+  },
   audit: (output): readonly AuditDraft[] => [
     ...output.deactivated.map((id): AuditDraft => ({ action: "connected_account.unlinked", targetType: "connected_account", targetId: id })),
-    ...output.activated.map((id): AuditDraft => ({ action: "connected_account.linked", targetType: "connected_account", targetId: id })),
+    ...output.activated.map(({ connectedAccountId }): AuditDraft => ({ action: "connected_account.linked", targetType: "connected_account", targetId: connectedAccountId })),
   ],
   respond: (output) => ({ activated: output.activated.length, deactivated: output.deactivated.length, managed: output.managed.length }),
 };
@@ -108,21 +134,8 @@ export function createConnectedAccountCommands() {
       if (output.kind === "active_elsewhere") {
         return { output, result: { kind: "active_elsewhere", rule: output.rule, location: await present(tx.tenancy, context, output.workspaceId) } };
       }
-      if (output.kind === "linked") {
-        // Capability is evaluated after activation, in the job runtime (provider I/O never in this transaction).
-        const outboxId = env.newId();
-        await tx.outbox.append({
-          id: outboxId,
-          topic: CAPABILITY_EVALUATION_TOPIC,
-          organizationId: context.organizationId,
-          workspaceId: context.workspaceId,
-          subjectIds: { connected_account_id: output.account.id },
-          correlationId: env.correlationId,
-          initiator: { type: "user", userId: context.userId },
-          dispatchKey: `${CAPABILITY_EVALUATION_TOPIC}:${output.account.id}:${outboxId}`,
-          createdAt: env.now,
-        });
-      }
+      // Capability is evaluated after activation, in the job runtime (provider I/O never in this transaction).
+      if (output.kind === "linked") await requestEvaluation(tx.outbox, context, env, { connectedAccountId: output.account.id, activationId: output.activationId });
       return { output, result: { kind: output.kind, connectedAccountId: output.account.id } };
     },
     audit: ({ output }) => (output.kind === "linked" ? { action: "connected_account.linked", targetType: "connected_account", targetId: output.account.id } : undefined),

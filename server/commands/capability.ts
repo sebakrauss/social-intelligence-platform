@@ -38,10 +38,12 @@ export function createCapabilityQueries() {
       const account = await tx.connections.connectedAccounts.get(input.connectedAccountId);
       if (account === undefined) throw new AppError("NOT_FOUND", {});
       const connection = await tx.connections.connections.get(account.connectionId);
-      // A deactivated account or a missing connection is treated like a removed one: never available.
-      const health: ConnectionStatus = connection === undefined || account.status !== "ACTIVE" ? "REMOVED" : connection.status;
+      // A missing connection is treated like a removed one; the account's own lifecycle is decided by the resolver.
+      const health: ConnectionStatus = connection === undefined ? "REMOVED" : connection.status;
       return capabilityAvailability(tx.capability, {
         connectedAccountId: account.id,
+        accountStatus: account.status,
+        provider: connection?.provider ?? "",
         capability: input.capability,
         contentKind: input.contentKind ?? ANY,
         source: input.source ?? ANY,

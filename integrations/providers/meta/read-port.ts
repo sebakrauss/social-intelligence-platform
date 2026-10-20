@@ -15,12 +15,22 @@
  * ordered by platform then id; display names are the reported name/username (empty → the application's fallback).
  *
  * Complete or nothing: any failure — a provider error, an unreadable or malformed response, the page bound — fails
- * the whole call; no partial asset list is ever returned. Every other read operation is refused (permanent).
+ * the whole call; no partial asset list is ever returned.
+ *
+ * describeAccount (Step 7G-H5.5; README contract H55) — the FACTS capability evaluation needs about ONE discovered
+ * asset, never a statement of what the product may do (that is the capability catalog's):
+ *   1. the asset itself, its echoed id checked: a Facebook Page `{page-id}?fields=id,name`, an Instagram professional
+ *      account `{ig-user-id}?fields=id,username` (E1's documented read);
+ *   2. `me/permissions?fields=permission,status`: the names the user GRANTED (declined and expired are not grants).
+ * Facts: content-bearing; the identity the account posts as is the asset itself; no linked ad accounts (no ads
+ * permission is requested, so none is claimed). Any other platform is refused (invalid_request) before any request;
+ * any failure fails the whole description — the evaluator then records "facts unavailable" (UNKNOWN, never SUPPORTED).
+ * Every other read operation is refused (permanent).
  */
 import type { ProviderCredential } from "../contract/credential";
-import { PermanentRejectedError, TransientError, type ReadOperation } from "../contract/errors";
-import type { SocialAssetDto } from "../contract/dto";
-import { providerObjectRef, rawReference, type ProviderObjectId, type ProviderObjectRef } from "../contract/identity";
+import { PermanentRejectedError, TransientError, type PermissionCapability, type ReadOperation } from "../contract/errors";
+import type { AccountDescriptionDto, ProviderAccess, SocialAssetDto } from "../contract/dto";
+import { isoInstant, providerObjectRef, rawReference, type ProviderObjectId, type ProviderObjectRef } from "../contract/identity";
 import { BUDGET_NOT_REPORTED } from "../contract/pagination";
 import type { ProviderReadPort } from "../contract/read-port";
 import { WebhookRejectedError } from "../contract/webhooks";
@@ -33,25 +43,52 @@ export const DISCOVER_ASSETS_MAX_PAGES = 20;
 
 export interface MetaReadPortOptions {
   readonly transport?: MetaGraphTransport;
+  /** describeAccount's `describedAt` (the local clock by default). */
+  readonly clock?: () => Date;
 }
 
 const OPERATION = "discoverAssets";
+const DESCRIBE = "describeAccount";
 
 /** Code-unit order: deterministic, locale-independent. */
 const byId = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** The value of a successful outcome; every failure becomes one normalized provider error. */
-function valueOf<T>(outcome: MetaGraphOutcome<T>): T {
+/** The value of a successful outcome; every failure becomes one normalized provider error of `operation`. */
+function outcomeValue<T>(outcome: MetaGraphOutcome<T>, operation: typeof OPERATION | typeof DESCRIBE, capability: PermissionCapability): T {
   switch (outcome.kind) {
     case "ok":
       return outcome.value;
     case "graph_error":
-      throw metaGraphReadError(OPERATION, outcome.error, "discover_assets");
+      throw metaGraphReadError(operation, outcome.error, capability);
     case "transient":
-      throw new TransientError(OPERATION, outcome.reason);
+      throw new TransientError(operation, outcome.reason);
     case "unreadable":
-      throw new PermanentRejectedError(OPERATION, "unknown");
+      throw new PermanentRejectedError(operation, "unknown");
   }
+}
+
+const valueOf = <T>(outcome: MetaGraphOutcome<T>): T => outcomeValue(outcome, OPERATION, "discover_assets");
+const describedValue = <T>(outcome: MetaGraphOutcome<T>): T => outcomeValue(outcome, DESCRIBE, "read_account");
+
+/** Facts about one discovered Facebook Page or Instagram professional account (README, H55). */
+async function describe(transport: MetaGraphTransport, access: ProviderAccess, now: Date): Promise<AccountDescriptionDto> {
+  const token = access.credential.secret;
+  const { platform, id } = access.account;
+  let displayName: string;
+  if (platform === "facebook") displayName = describedValue(await transport.getPage(token, id)).name;
+  else if (platform === "instagram") displayName = describedValue(await transport.getInstagramAccount(token, id)).username;
+  else throw new PermanentRejectedError(DESCRIBE, "invalid_request");
+  const grantedPermissions = describedValue(await transport.listPermissions(token));
+  return Object.freeze({
+    asset: providerObjectRef(platform, "asset", id),
+    assetClass: "content_bearing",
+    displayName,
+    accountIdentity: providerObjectRef(platform, "author", id),
+    grantedPermissions,
+    linkedAdAccounts: Object.freeze([]),
+    describedAt: isoInstant(now),
+    rawReference: rawReference("meta", META_GRAPH_VERSION, platform === "facebook" ? `facebook:page:${id}` : `instagram:account:${id}`),
+  });
 }
 
 async function discover(transport: MetaGraphTransport, credential: ProviderCredential): Promise<readonly SocialAssetDto[]> {
@@ -115,7 +152,9 @@ async function discover(transport: MetaGraphTransport, credential: ProviderCrede
 
 export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderReadPort {
   const transport = options.transport ?? createMetaGraphTransport();
-  const refuse = (operation: Exclude<ReadOperation, "discoverAssets" | "parseWebhook">): Promise<never> => Promise.reject(new PermanentRejectedError(operation, "invalid_request"));
+  const clock = options.clock ?? (() => new Date());
+  const refuse = (operation: Exclude<ReadOperation, "discoverAssets" | "describeAccount" | "parseWebhook">): Promise<never> =>
+    Promise.reject(new PermanentRejectedError(operation, "invalid_request"));
 
   return Object.freeze({
     provider: "meta",
@@ -124,7 +163,9 @@ export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderR
       return Object.freeze({ data: await discover(transport, credential), budget: BUDGET_NOT_REPORTED });
     },
 
-    describeAccount: () => refuse("describeAccount"),
+    async describeAccount(access) {
+      return Object.freeze({ data: await describe(transport, access, clock()), budget: BUDGET_NOT_REPORTED });
+    },
     listContent: () => refuse("listContent"),
     listInteractions: () => refuse("listInteractions"),
     getInteraction: () => refuse("getInteraction"),

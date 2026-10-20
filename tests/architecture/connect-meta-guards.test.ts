@@ -101,13 +101,26 @@ describe("Managed accounts (Step 7G-H5): local configuration only", () => {
   const COMMAND = "server/commands/connected-accounts.ts";
   const selection = (code: string, start: string, end: string): string => code.slice(code.indexOf(start), code.indexOf(end, code.indexOf(start)));
 
-  it("the selection command is used only by its module and the Settings surface; it appends no outbox row and names no provider", () => {
+  it("the selection command is used only by its module and the Settings surface; its only outbox work is the shared evaluation request (Step 7G-H5.5)", () => {
     const users = sourceFiles(PRODUCTION_ROOTS).filter((file) => /connectedAccountSelectionCommand/.test(codeOf(file)));
     expect(users.sort()).toEqual([COMMAND, SETTINGS]);
     const command = selection(codeOf(COMMAND), "export const connectedAccountSelectionCommand", "export function createConnectedAccountCommands");
     expect(command).toMatch(/permission: "connections\.manage"/);
     expect(command).toMatch(/expectedProvider: oneOf\(\["meta"\] as const\)/);
-    expect(command).not.toMatch(/outbox|CAPABILITY_EVALUATION_TOPIC|providers?\b\.|sealing|secrets|credential/i);
+    // One request per activation transition, through the helper link shares; never a raw append, topic or provider.
+    expect(command).toMatch(/for \(const activation of output\.activated\) await requestEvaluation\(tx\.outbox, context, env, activation\);/);
+    expect(command.replace("tx.outbox, context", "")).not.toMatch(/outbox|CAPABILITY_EVALUATION_TOPIC|providers?\b\.|sealing|secrets|credential|deactivated\.map\([^)]*requestEvaluation/i);
+  });
+
+  it("one primitive builds every capability-evaluation request: activation (link, selection, Move) and reconciliation", () => {
+    const builders = sourceFiles(PRODUCTION_ROOTS).filter((file) => /CAPABILITY_EVALUATION_TOPIC/.test(codeOf(file)));
+    expect(builders.sort()).toEqual(["modules/connections/application/capability-request.ts", "modules/connections/domain/model.ts", "modules/connections/index.ts"]);
+    const callers = sourceFiles(PRODUCTION_ROOTS).filter((file) => /capabilityEvaluationRequest\(/.test(codeOf(file)));
+    expect(callers.sort()).toEqual(["modules/connections/application/capability-reconcile.ts", "modules/connections/application/capability-request.ts", "modules/connections/application/moves.ts", COMMAND]);
+    const commands = codeOf(COMMAND);
+    expect([...commands.matchAll(/capabilityEvaluationRequest\(/g)]).toHaveLength(1);
+    expect([...commands.matchAll(/await requestEvaluation\(/g)]).toHaveLength(2);
+    expect(commands).not.toMatch(/dispatchKey:/);
   });
 
   it("the convergence locks the Connection FOR UPDATE, reuses link/unlink, and touches no provider, credential, KMS or job", () => {

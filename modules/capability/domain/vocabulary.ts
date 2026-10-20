@@ -3,6 +3,8 @@
  * existing here says NOTHING about whether any platform supports it (PD C-07, OQ-18).
  *
  * Keys reuse the provider contract's normalized names where an equivalent exists (PERMISSION_CAPABILITIES):
+ *   read_content        import the account's top-level content (posts, reels, videos…) — its own provider operation
+ *                       (listContent / getContent) and permission, distinct from reading the conversation under it
  *   read_interactions   import comments/replies — organic vs paid is the SOURCE dimension, not a separate key
  *   read_paid_context   link content to campaign / ad group / ad
  *   reply_public · reply_private (one-shot, PD D-36) · hide (hide/unhide) · delete · block
@@ -15,6 +17,7 @@
  */
 
 export const CAPABILITY_KEYS = [
+  "read_content",
   "read_interactions",
   "read_history",
   "read_paid_context",

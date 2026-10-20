@@ -37,7 +37,9 @@ export {
   type ActiveLink,
   type AuthorizationProviders,
   type ConnectionStore,
+  type CapabilityReconcileStore,
   type ConnectionWorkerStore,
+  type ReconcileCandidate,
   type CredentialSealing,
   type DiscoveryProviders,
   type OAuthSecrets,
@@ -77,6 +79,8 @@ export {
 } from "./application/discovery";
 export { CredentialCodecError, decodeProviderCredential, encodeProviderCredential } from "./application/credential-codec";
 export { refreshAccountCapabilities, type CapabilityRefreshDependencies, type CapabilityRefreshOutcome } from "./application/capability-refresh";
+export { capabilityEvaluationDispatchKey, capabilityEvaluationRequest, type EvaluationReason } from "./application/capability-request";
+export { CAPABILITY_RECONCILE_MAX_BATCH, requestCapabilityReevaluations, type CapabilityReconcileOutcome } from "./application/capability-reconcile";
 export {
   isManageableAsset,
   linkAccount,
@@ -86,6 +90,7 @@ export {
   type ActiveElsewhere,
   type ConnectedAccountSummary,
   type LinkOutput,
+  type Activation,
   type SelectionOutput,
   type UnlinkOutput,
 } from "./application/linking";

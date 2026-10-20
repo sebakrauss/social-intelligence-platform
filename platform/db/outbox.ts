@@ -6,6 +6,7 @@
 import { integer, jsonb, pgSchema, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { EXECUTION_PLANES, type ExecutionPlane } from "@/platform/jobs/planes";
 import { createOutboxMessage, type OutboxMessage, type OutboxWriter } from "@/platform/outbox/message";
+import { postgresError } from "./errors";
 import type { DatabaseTransaction } from "./scopes";
 
 const system = pgSchema("system");
@@ -86,4 +87,23 @@ export function createPostgresOutbox(tx: DatabaseTransaction): OutboxWriter {
     // The row is already written (by the definer, in this transaction); only the caller's notifier cares.
     routed: () => undefined,
   };
+}
+
+/**
+ * Appends `input` unless a row with the same DISPATCH KEY already exists — the key is the request's domain idempotency,
+ * so "exists" means the same work is already requested. A savepoint confines the refused insert and the caller's
+ * transaction continues. Only a duplicate dispatch key is absorbed; any other failure (a duplicate row id included)
+ * propagates. Concurrent writers of one key converge: the later one waits on the unique index, then finds it taken.
+ */
+export async function appendOutboxOnce(tx: DatabaseTransaction, input: OutboxMessage): Promise<"appended" | "exists"> {
+  try {
+    await tx.transaction(async (savepoint) => {
+      await createPostgresOutbox(savepoint).append(input);
+    });
+    return "appended";
+  } catch (error) {
+    const failure = postgresError(error);
+    if (failure?.code === "23505" && failure.constraint === "outbox_dispatch_key_key") return "exists";
+    throw error;
+  }
 }

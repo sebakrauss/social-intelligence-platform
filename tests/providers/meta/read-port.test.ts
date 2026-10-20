@@ -1,5 +1,6 @@
 /**
- * The Meta read port — discoverAssets only — and its Graph transport (Step 7G-E), offline. Behavior follows the frozen
+ * The Meta read port — discoverAssets (Step 7G-E) — and its Graph transport, offline (describeAccount, Step 7G-H5.5, is
+ * covered in describe-account.test.ts). Behavior follows the frozen
  * contract in design/phase-7g/meta-provider/README.md (E1): three documented reads, cursor pagination rebuilt against
  * the fixed endpoint, a 20-page bound, whitelist parsing, the contained query-token transport, SocialAssetDto mapping,
  * deduplication, deterministic order, and complete-or-nothing results. `fetch` is an in-process double: no request
@@ -113,7 +114,7 @@ describe("Meta read port · shape (shared contract assertions that apply)", () =
     expect(DISCOVER_ASSETS_MAX_PAGES).toBe(20);
   });
 
-  it.each(READ_OPERATIONS.filter((operation) => operation !== "discoverAssets" && operation !== "parseWebhook"))("%s is refused (permanent), never synthetic data", async (operation) => {
+  it.each(READ_OPERATIONS.filter((operation) => !["discoverAssets", "describeAccount", "parseWebhook"].includes(operation)))("%s is refused (permanent), never synthetic data", async (operation) => {
     const { port, calls } = portWith(graphOf(WORLD));
     const method = port[operation].bind(port) as (...args: unknown[]) => Promise<unknown>;
     const error = await failure(method({}, {}, {}, null));
@@ -336,9 +337,9 @@ describe("Meta read port · Graph transport security (the contained query-token 
     expect(META_GRAPH_RESPONSE_MAX_BYTES).toBe(65_536);
   });
 
-  it("the transport exposes exactly three typed operations: no URL, path or next-link input", () => {
+  it("the transport exposes exactly five typed operations: no URL, path or next-link input", () => {
     const transport = createMetaGraphTransport({ fetch: () => Promise.reject(new Error("unused")) });
-    expect(Object.keys(transport).sort()).toEqual(["getInstagramAccount", "getPageInstagram", "listPages"]);
+    expect(Object.keys(transport).sort()).toEqual(["getInstagramAccount", "getPage", "getPageInstagram", "listPages", "listPermissions"]);
   });
 
   const outcomes: readonly (readonly [string, Reply, ProviderErrorKind, Record<string, unknown>, { readonly timeoutMs?: number; readonly maxResponseBytes?: number }])[] = [

@@ -11,7 +11,7 @@ import type { ConnectionStatus } from "@/domain/connections";
 import type { OrganizationId, UserId, WorkspaceId } from "@/domain/ids";
 import type { AuditLog } from "@/modules/audit";
 import type { ProviderAuthorizationPort, ProviderCredential, ProviderReadPort } from "@/integrations/providers/contract";
-import type { OutboxWriter } from "@/platform/outbox";
+import type { OutboxMessage, OutboxWriter } from "@/platform/outbox";
 import type {
   AssetClass,
   AssetPlatform,
@@ -22,6 +22,7 @@ import type {
   ConnectedAccountEvent,
   Connection,
   ConnectionEvent,
+  ConnectionProvider,
   DiscoveredAsset,
   ExchangeFailureCode,
   IncomingMove,
@@ -249,4 +250,22 @@ export class CredentialUnreadableError extends Error {
   constructor() {
     super("connections_credential_unreadable");
   }
+}
+
+/** An ACTIVE Connected Account as capability reconciliation sees it (Step 7G-H5.5): identifiers and lifecycle only. */
+export interface ReconcileCandidate {
+  readonly id: string;
+  readonly connectionId: string;
+  readonly provider: ConnectionProvider;
+  readonly connectionStatus: ConnectionStatus;
+}
+
+/** Worker store for capability reconciliation (role `app_worker`, the job's single bound workspace). */
+export interface CapabilityReconcileStore {
+  /** ACTIVE accounts of the bound workspace in id order after `after` (exclusive), at most `limit`. */
+  activeAccounts(after: string | null, limit: number): Promise<readonly ReconcileCandidate[]>;
+  /** The id of the account's latest activation event (LINKED or MOVED_IN), if one is recorded. */
+  latestActivation(connectedAccountId: string): Promise<string | undefined>;
+  /** Appends the request unless its dispatch key is already taken (the request's domain idempotency). */
+  requestOnce(message: OutboxMessage): Promise<"appended" | "exists">;
 }

@@ -6,9 +6,9 @@
 import { createPostgresAuditLog } from "@/modules/audit/persistence";
 import type { CapabilityProfileStore } from "@/modules/capability";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
-import type { ConnectionWorkerStore } from "@/modules/connections";
-import { createPostgresConnectionWorkerStore } from "@/modules/connections/persistence";
-import { createPostgresOutbox } from "@/platform/db";
+import type { CapabilityReconcileStore, ConnectionWorkerStore } from "@/modules/connections";
+import { createPostgresCapabilityReconcileStore, createPostgresConnectionWorkerStore } from "@/modules/connections/persistence";
+import { appendOutboxOnce, createPostgresOutbox } from "@/platform/db";
 import type { TenantJobScope } from "@/platform/jobs";
 import type { OutboxWriter } from "@/platform/outbox";
 
@@ -38,4 +38,22 @@ export function connectionWorkerStore(scope: TenantJobScope): ConnectionWorkerSt
 /** Stores for a capability refresh step (Step 5E): the connections worker store and the capability profile store. */
 export function capabilityRefreshStores(scope: TenantJobScope): { readonly connections: ConnectionWorkerStore; readonly capability: CapabilityProfileStore } {
   return { connections: connectionWorkerStore(scope), capability: createPostgresCapabilityStore(scope.tx) };
+}
+
+/**
+ * Stores for capability reconciliation (Step 7G-H5.5): ACTIVE accounts and their latest activation (connections),
+ * profile headers (capability), and requests appended at most once per dispatch key, each newly appended row reported
+ * for the post-commit relay wake-up. No credential, no provider: this runs on any worker plane.
+ */
+export function capabilityReconcileStores(scope: TenantJobScope): { readonly accounts: CapabilityReconcileStore; readonly capability: CapabilityProfileStore } {
+  return {
+    accounts: createPostgresCapabilityReconcileStore(scope.tx, {
+      async requestOnce(message) {
+        const outcome = await appendOutboxOnce(scope.tx, message);
+        if (outcome === "appended") scope.noteOutbox(message);
+        return outcome;
+      },
+    }),
+    capability: createPostgresCapabilityStore(scope.tx),
+  };
 }

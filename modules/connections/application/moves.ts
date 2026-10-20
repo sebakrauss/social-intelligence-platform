@@ -31,13 +31,13 @@ import { AppError } from "@/domain/errors";
 import type { CorrelationId } from "@/domain/correlation";
 import type { UserId, WorkspaceId } from "@/domain/ids";
 import {
-  CAPABILITY_EVALUATION_TOPIC,
   activeElsewhereReason,
   isRetryable,
   singleWorkspaceRule,
   type MoveReasonCode,
 } from "../domain/model";
 import type { WorkspaceScope } from "./authorization";
+import { capabilityEvaluationRequest } from "./capability-request";
 import { loadLinkableAsset } from "./linking";
 import type { ConnectionStore, ConnectionWorkerStore } from "./ports";
 
@@ -204,9 +204,10 @@ export async function activateDestination(store: ConnectionWorkerStore, input: S
     return { kind: "failed", reason };
   };
   const complete = async (connectedAccountId: string, activated: boolean): Promise<ActivationResult> => {
+    const activationId = input.newId();
     if (activated) {
       await store.accountEvents.append({
-        id: input.newId(),
+        id: activationId,
         organizationId: move.organizationId,
         workspaceId: input.workspaceId,
         connectedAccountId,
@@ -220,17 +221,19 @@ export async function activateDestination(store: ConnectionWorkerStore, input: S
     await store.moves.setIncoming(move.moveId, "COMPLETED", null, connectedAccountId, input.now);
     await store.moves.recordAudit(move.moveId, "moved_in", input.correlationId);
     if (activated) {
-      await store.outbox.append({
-        id: input.newId(),
-        topic: CAPABILITY_EVALUATION_TOPIC,
-        organizationId: move.organizationId,
-        workspaceId: input.workspaceId,
-        subjectIds: { connected_account_id: connectedAccountId },
-        correlationId: input.correlationId,
-        initiator: { type: "system" },
-        dispatchKey: `${CAPABILITY_EVALUATION_TOPIC}:${connectedAccountId}:${move.moveId}`,
-        createdAt: input.now,
-      });
+      // The shared request, keyed by this activation's MOVED_IN event (capability-request.ts).
+      await store.outbox.append(
+        capabilityEvaluationRequest({
+          id: input.newId(),
+          organizationId: move.organizationId,
+          workspaceId: input.workspaceId,
+          connectedAccountId,
+          reason: { kind: "activation", activationId },
+          correlationId: input.correlationId,
+          initiator: { type: "system" },
+          createdAt: input.now,
+        }),
+      );
     }
     return { kind: "completed", connectedAccountId, evaluationEnqueued: activated, converged: !activated };
   };

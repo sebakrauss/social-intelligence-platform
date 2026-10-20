@@ -22,6 +22,6 @@ export {
   type DatabaseClaims,
   type DatabaseTransaction,
 } from "./scopes";
-export { createPostgresOutbox, OUTBOX_EXECUTION_PLANES, outbox, outboxRuns, type OutboxExecutionPlane } from "./outbox";
+export { appendOutboxOnce, createPostgresOutbox, OUTBOX_EXECUTION_PLANES, outbox, outboxRuns, type OutboxExecutionPlane } from "./outbox";
 export { InvalidEffectKeyError, claimEffect, effectKeys, type EffectClaim, type EffectClaimRequest } from "./effects";
 export { operationalSwitches, readSwitchRows, type SwitchRow } from "./switches";

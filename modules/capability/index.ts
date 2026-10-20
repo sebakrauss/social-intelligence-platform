@@ -20,7 +20,19 @@ export {
   type ScopeKind,
   type ScopeSource,
 } from "./domain/vocabulary";
-export { CATALOG_IDS, PLATFORM_CATALOG, SIMULATOR_CATALOG, lookupCatalog, profileScopes, type CapabilityCatalog, type CatalogEntry, type CatalogId } from "./domain/catalog";
+export {
+  CATALOGS,
+  CATALOG_IDS,
+  PLATFORM_CATALOG,
+  SIMULATOR_CATALOG,
+  catalogIdFor,
+  isCurrentProfile,
+  lookupCatalog,
+  profileScopes,
+  type CapabilityCatalog,
+  type CatalogEntry,
+  type CatalogId,
+} from "./domain/catalog";
 export {
   AVAILABILITY_REASONS,
   AVAILABILITY_STATES,

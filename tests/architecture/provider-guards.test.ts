@@ -210,9 +210,10 @@ describe("Meta read port (Step 7G-E): discoverAssets only, the contained query-t
     expect(transport()).toMatch(/headers: \{ accept: "application\/json" \}/);
   });
 
-  it("only documented reads: /me/accounts with id,name (no limit), the Page's instagram_business_account and the IG account's id,username", () => {
+  it("only documented reads: /me/accounts with id,name (no limit), the Page's instagram_business_account and the IG account's id,username; describeAccount's Page id,name and me/permissions", () => {
     expect(transport()).toMatch(/\["me", "accounts"\]/);
-    expect([...transport().matchAll(/\["fields", "([^"]+)"\]/g)].map((match) => match[1]).sort()).toEqual(["id,name", "id,name", "id,username", "instagram_business_account"]);
+    expect(transport()).toMatch(/\["me", "permissions"\]/);
+    expect([...transport().matchAll(/\["fields", "([^"]+)"\]/g)].map((match) => match[1]).sort()).toEqual(["id,name", "id,name", "id,name", "id,username", "instagram_business_account", "permission,status"]);
     expect(transport()).not.toMatch(/"limit"|\{[a-z_,]+\}|\.limit\(/);
   });
 
