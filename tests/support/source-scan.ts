@@ -73,6 +73,7 @@ export function codeWithoutPlaneRefusals(relative: string): string {
     .replace(/const AWS_CREDENTIAL_CHAIN_VARIABLES = \[[^\]]*\];/, "")
     .replace(/const PROVIDER_META_APP_VARIABLES = \[[^\]]*\];/, "")
     .replace(/export const INTEGRATION_AWS_[A-Z_]+_ENV = "INTEGRATION_AWS_[A-Z_]+";/g, "")
+    .replace(/export const RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES[^\n]*\n/, "")
     .replace(/export const PLANE_FORBIDDEN_VARIABLES[^\n]*\n[\s\S]*?\n\}\);/, "");
   if (stripped === code) throw new Error(`${relative}: the plane refusal declarations were not found`);
   return stripped;

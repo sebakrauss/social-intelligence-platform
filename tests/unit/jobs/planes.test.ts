@@ -31,7 +31,7 @@ vi.mock("@/platform/jobs/trigger-dev", async () => {
 const { JobRuntimeRejectedError, JobRuntimeUnavailableError, NonRetryableJobError, crossPlanePin, jobRelease, samePlanePin } = await import("@/platform/jobs");
 const { mainRemoteFromIntegration, mainSelfRuntime, relayWakeRuntime } = await import("@/jobs/runtime");
 const { deliveryRuntimes, integrationRemoteFromMain } = await import("@/jobs/main-runtime");
-const { PLANE_FORBIDDEN_VARIABLES, assertPlaneEnvironment, planeEnvironmentProblems } = await import("@/jobs/plane-environment");
+const { INTEGRATION_AWS_IDENTITY_VARIABLES, PLANE_FORBIDDEN_VARIABLES, RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES, assertPlaneEnvironment, planeEnvironmentProblems } = await import("@/jobs/plane-environment");
 const { wakeRelay } = await import("@/jobs/trigger/define");
 
 const PINNED = { kind: "pinned", releaseId: "commit-synthetic-1" } as const;
@@ -121,24 +121,31 @@ describe("plane runtimes: explicit credentials, no fallback, no inherited branch
 });
 
 describe("per-plane environment contract (deployed runs)", () => {
-  it("the integration plane refuses the system DB credential, the integration task-operator key and the standard AWS credential chain", () => {
+  it("the integration plane refuses the system DB credential, the integration task-operator key, the standard AWS credential chain and the RETIRED bootstrap key", () => {
     expect(PLANE_FORBIDDEN_VARIABLES.integration).toEqual([
       "DATABASE_SYSTEM_URL", "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY",
       "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
+      "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY",
       "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET",
     ]);
-    expect(planeEnvironmentProblems("integration", PINNED, { AWS_ACCESS_KEY_ID: "synthetic", INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID: "synthetic" })).toEqual(["AWS_ACCESS_KEY_ID"]);
+    // Step 7G-H5.6B: the retired bootstrap key can never come back unnoticed; the Roles Anywhere identity belongs here.
+    expect(planeEnvironmentProblems("integration", PINNED, { AWS_ACCESS_KEY_ID: "synthetic", INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID: "synthetic" })).toEqual(["AWS_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID"]);
+    expect(planeEnvironmentProblems("integration", PINNED, Object.fromEntries(INTEGRATION_AWS_IDENTITY_VARIABLES.map((name) => [name, "synthetic"])))).toEqual([]);
     expect(planeEnvironmentProblems("integration", PINNED, { DATABASE_SYSTEM_URL: "postgres://synthetic", DATABASE_WORKER_URL: "postgres://synthetic" })).toEqual(["DATABASE_SYSTEM_URL"]);
     expect(() => { assertPlaneEnvironment("integration", PINNED, { TRIGGER_INTEGRATION_TASK_OPERATOR_KEY: OPERATOR }); }).toThrow(NonRetryableJobError);
     expect(() => { assertPlaneEnvironment("integration", PINNED, { DATABASE_WORKER_URL: "postgres://synthetic", TRIGGER_MAIN_RELAY_TRIGGER_KEY: RELAY }); }).not.toThrow();
   });
 
-  it("the main plane refuses the integration→main relay key and the integration worker's AWS bootstrap identity, and still holds the worker DB credential (Move saga)", () => {
+  it("the main plane refuses the integration→main relay key, the integration worker's whole AWS identity (and the retired bootstrap key), and still holds the worker DB credential (Move saga)", () => {
     expect(PLANE_FORBIDDEN_VARIABLES.main).toEqual([
-      "TRIGGER_MAIN_RELAY_TRIGGER_KEY", "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN", "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
+      "TRIGGER_MAIN_RELAY_TRIGGER_KEY",
+      "INTEGRATION_AWS_WORKER_ROLE_ARN", "INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN", "INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN",
+      "INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM", "INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM",
+      "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY",
+      "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
       "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET",
     ]);
-    for (const name of ["INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN"]) {
+    for (const name of [...INTEGRATION_AWS_IDENTITY_VARIABLES, ...RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES]) {
       expect(() => { assertPlaneEnvironment("main", PINNED, { [name]: "synthetic" }); }, name).toThrow(NonRetryableJobError);
     }
     expect(() => { assertPlaneEnvironment("main", UNIDENTIFIED, { TRIGGER_MAIN_RELAY_TRIGGER_KEY: RELAY }); }).toThrow(NonRetryableJobError);

@@ -1,14 +1,17 @@
 /**
- * The INTEGRATION KMS worker-auth diagnostic (Step 7E.7-B), offline. The diagnostic runs its REAL production path —
- * createCredentialAccess(composeCredentialOpener(env, integrationWorkerAwsCredentials(env))), the real pinned STS and
- * KMS clients — against an in-process AWS double: every outbound HTTP(S) request is trapped and answered locally, so no
- * packet leaves the process and every AWS attempt is counted. Synthetic account 000000000000, synthetic keys only.
+ * The INTEGRATION KMS worker-auth diagnostic (Step 7E.7-B; worker identity: Roles Anywhere, Step 7G-H5.6B), offline. The
+ * diagnostic runs its REAL production path — createCredentialAccess(composeCredentialOpener(env,
+ * integrationWorkerAwsCredentials(env))), the real Roles Anywhere identity adapter and the real pinned KMS client —
+ * against in-process doubles: the credential helper process is a recording fake (each run is logged as one
+ * CreateSession exchange), and every outbound HTTP(S) request is trapped and answered locally, so no packet leaves the
+ * process and every AWS attempt is counted. Synthetic account 000000000000, synthetic keys and a PUBLIC synthetic
+ * certificate only (the private key is generated at test time).
  *
  * Threat model: NOT_IN_NORMAL_PRODUCT_REGISTRY != NOT_TRIGGERABLE_BY_TRIGGER. Anyone with enough Integration project
  * privileges may trigger the task by id, so every precondition must fail before AWS transport is reachable.
  */
 import { EventEmitter } from "node:events";
-import { randomBytes, randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import { Readable } from "node:stream";
@@ -49,6 +52,8 @@ import type * as SimulatorModule from "@/server/connections/simulator";
 import type * as StagingStubModule from "@/integrations/providers/staging-stub";
 import type * as DatabaseModule from "@/platform/db";
 import type * as ConnectionsModule from "@/modules/connections";
+import type * as HelperProcessModule from "@/jobs/aws-signing-helper-process";
+import type { SigningHelperRun } from "@/jobs/aws-signing-helper-process";
 import type { ProviderCredentialAccess } from "@/modules/connections";
 import type { TenantStepJobContext } from "@/platform/jobs";
 
@@ -107,12 +112,37 @@ vi.mock("@/platform/db", async (importOriginal) => {
   return { ...original, createRuntimeDatabaseFromEnv: (...args: Parameters<typeof original.createRuntimeDatabaseFromEnv>) => { calls.database += 1; return original.createRuntimeDatabaseFromEnv(...args); } };
 });
 
+// ── Roles Anywhere credential helper double (Step 7G-H5.6B): the packaged executable and its process are fakes; every
+// run is logged into the current exchange log as one CreateSession, so identity and KMS attempts are counted together.
+const helperWorld = vi.hoisted(() => ({
+  exchanges: undefined as undefined | { host: string; target: string; authorization: string; body: string }[],
+  answer: undefined as undefined | (() => unknown),
+}));
+vi.mock("@/jobs/aws-signing-helper-process", async (importOriginal) => {
+  const original = await importOriginal<typeof HelperProcessModule>();
+  return {
+    ...original,
+    deployedAwsSigningHelper: () => Promise.resolve("/synthetic/vendor/aws-signing-helper/linux-x86_64/aws_signing_helper"),
+    nodeSigningHelperProcess: {
+      run: (_executable: string, args: readonly string[]) => {
+        helperWorld.exchanges?.push({ host: "rolesanywhere.sa-east-1.amazonaws.com", target: "CreateSession", authorization: "", body: args.join(" ") });
+        return Promise.resolve(helperWorld.answer?.());
+      },
+    },
+  };
+});
+
 const root = path.resolve(import.meta.dirname, "../../..");
 const KEY_A = "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa";
 const KEY_OTHER = "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000bb";
 const ROLE = "arn:aws:iam::000000000000:role/social-intelligence-platform-dev-integration-worker";
-const BOOTSTRAP_KEY = "SYNTHETICBOOTSTRAPKEYA1";
-const BOOTSTRAP_SECRET = "synthetic/bootstrap+secret-for-diagnostic-000000";
+const ANCHOR = "arn:aws:rolesanywhere:sa-east-1:000000000000:trust-anchor/11111111-1111-4111-8111-111111111111";
+const PROFILE = "arn:aws:rolesanywhere:sa-east-1:000000000000:profile/22222222-2222-4222-8222-222222222222";
+/** One line with literal "\n" sequences: the form a dashboard field keeps intact. */
+const oneLine = (pem: string): string => pem.trimEnd().split("\n").join("\\n");
+const WORKLOAD_CERTIFICATE = readFileSync(path.join(root, "fixtures/aws-identity/workload-dev.pem"), "utf8");
+const WORKLOAD_KEY = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+const WORKLOAD_KEY_BODY = WORKLOAD_KEY.split("\n")[1] ?? "-";
 const SESSION_KEY = "SYNTHETICSESSIONKEYS01";
 const AWS_MESSAGE = "SYNTHETIC-AWS-MESSAGE arn:aws:kms:sa-east-1:000000000000:key/leak";
 const RELEASE = "synthetic-release-0000000000000000000000";
@@ -125,6 +155,7 @@ const ACK = { acknowledge: KMS_DIAGNOSTIC_ACKNOWLEDGEMENT };
 const MANAGED = [
   "NODE_ENV", "APP_DEPLOYMENT_ENV", "CAPABILITY_PROVIDER_MODE", "CREDENTIAL_CONTEXT_ENV", "CREDENTIAL_KMS_KEY_ARN", "CREDENTIAL_KMS_ALLOWED_KEY_ARNS",
   "LOCAL_KEYRING_KEY", "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY", "INTEGRATION_AWS_WORKER_ROLE_ARN",
+  "INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN", "INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN", "INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM", "INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM",
   INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV, "DATABASE_WORKER_URL", "DATABASE_SYSTEM_URL", "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY", "TRIGGER_MAIN_RELAY_TRIGGER_KEY",
   "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
   "AWS_MAX_ATTEMPTS", "AWS_RETRY_MODE",
@@ -141,9 +172,11 @@ const deployed = (fixture: string, overrides: Env = {}): Env => ({
   CREDENTIAL_CONTEXT_ENV: "dev",
   CREDENTIAL_KMS_KEY_ARN: KEY_A,
   CREDENTIAL_KMS_ALLOWED_KEY_ARNS: KEY_A,
-  INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID: BOOTSTRAP_KEY,
-  INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY: BOOTSTRAP_SECRET,
   INTEGRATION_AWS_WORKER_ROLE_ARN: ROLE,
+  INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN: ANCHOR,
+  INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN: PROFILE,
+  INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM: oneLine(WORKLOAD_CERTIFICATE),
+  INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM: oneLine(WORKLOAD_KEY),
   [INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV]: fixture,
   ...overrides,
 });
@@ -174,22 +207,25 @@ interface Reply {
 const connectionReset: Reply = { status: 0, contentType: "", body: "", reset: true };
 const json = (status: number, body: unknown): Reply => ({ status, contentType: "application/x-amz-json-1.1", body: JSON.stringify(body) });
 const kmsError = (type: string, status = 400): Reply => json(status, { __type: type, message: AWS_MESSAGE });
-const stsOk = (): Reply => ({
-  status: 200,
-  contentType: "text/xml",
-  body:
-    '<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult><Credentials>' +
-    `<AccessKeyId>${SESSION_KEY}</AccessKeyId><SecretAccessKey>synthetic-session-secret-000000</SecretAccessKey>` +
-    `<SessionToken>synthetic-session-token</SessionToken><Expiration>${new Date(Date.now() + 900_000).toISOString()}</Expiration>` +
-    "</Credentials><AssumedRoleUser><AssumedRoleId>AROASYNTHETIC0000000:integration-worker</AssumedRoleId>" +
-    "<Arn>arn:aws:sts::000000000000:assumed-role/synthetic/integration-worker</Arn></AssumedRoleUser></AssumeRoleResult>" +
-    "<ResponseMetadata><RequestId>synthetic</RequestId></ResponseMetadata></AssumeRoleResponse>",
+/** A successful credential helper run: the Roles Anywhere session (900 s). */
+const identityOk = (): SigningHelperRun => ({
+  exitCode: 0,
+  signal: null,
+  stdout: JSON.stringify({ Version: 1, AccessKeyId: SESSION_KEY, SecretAccessKey: "synthetic-session-secret-000000", SessionToken: "synthetic-session-token-0000000", Expiration: new Date(Date.now() + 900_000).toISOString() }),
+  stderr: "",
+  timedOut: false,
+  overflow: false,
+  spawnFailure: null,
 });
-const stsError = (code: string, status = 403): Reply => ({
-  status,
-  contentType: "text/xml",
-  body: `<ErrorResponse><Error><Type>Sender</Type><Code>${code}</Code><Message>${AWS_MESSAGE}</Message></Error><RequestId>synthetic</RequestId></ErrorResponse>`,
-});
+/** Real helper 1.8.5 stderr shapes (captured offline), carrying the synthetic AWS message marker. */
+const IDENTITY_STDERR = {
+  denied: `operation error RolesAnywhere: CreateSession, https response error StatusCode: 403, RequestID: , AccessDeniedException: ${AWS_MESSAGE}`,
+  throttled: `operation error RolesAnywhere: CreateSession, exceeded maximum number of attempts, 3, https response error StatusCode: 429, RequestID: , api error ThrottlingException: ${AWS_MESSAGE}`,
+  unavailable: `operation error RolesAnywhere: CreateSession, exceeded maximum number of attempts, 3, https response error StatusCode: 503, RequestID: , api error ServiceUnavailableException: ${AWS_MESSAGE}`,
+  network: `operation error RolesAnywhere: CreateSession, exceeded maximum number of attempts, 3, https response error StatusCode: 0, RequestID: , request send failed, ${AWS_MESSAGE}: connection reset`,
+} as const;
+const identityError = (kind: keyof typeof IDENTITY_STDERR): SigningHelperRun => ({ ...identityOk(), exitCode: 1, stdout: "", stderr: IDENTITY_STDERR[kind] });
+const identityTimeout = (): SigningHelperRun => ({ ...identityOk(), exitCode: null, signal: "SIGKILL", stdout: "", timedOut: true });
 
 /** A synthetic KMS: data keys "wrapped" by an in-memory table bound to the exact encryption context they were made for. */
 function kmsWorld() {
@@ -227,14 +263,16 @@ const header = (headers: Record<string, unknown> | undefined, name: string): str
 };
 
 /** Traps every HTTP(S) request: records it and answers from the handlers (anything unexpected gets a 400). */
-function trapAws(handlers: { sts?: (exchange: Exchange) => Reply; kms?: (exchange: Exchange) => Reply }): Exchange[] {
+function trapAws(handlers: { identity?: () => SigningHelperRun; kms?: (exchange: Exchange) => Reply }): Exchange[] {
   const exchanges: Exchange[] = [];
+  helperWorld.exchanges = exchanges;
+  helperWorld.answer = handlers.identity ?? identityOk;
   const trap = (options: unknown, callback?: (response: unknown) => void) => {
     const o = options as { hostname?: string; host?: string; headers?: Record<string, unknown> };
     const exchange: Exchange = { host: o.hostname ?? o.host ?? "", target: header(o.headers, "x-amz-target"), authorization: header(o.headers, "authorization"), body: "" };
     exchanges.push(exchange);
     const respond = (): void => {
-      const handler = exchange.host.startsWith("sts.") ? handlers.sts : exchange.host.startsWith("kms.") ? handlers.kms : undefined;
+      const handler = exchange.host.startsWith("kms.") ? handlers.kms : undefined;
       const reply = handler?.(exchange) ?? json(400, { __type: "UnexpectedRequest" });
       if (reply.reset === true) {
         request.emit("error", Object.assign(new Error("synthetic connection reset"), { code: "ECONNRESET" }));
@@ -262,7 +300,7 @@ function trapAws(handlers: { sts?: (exchange: Exchange) => Reply; kms?: (exchang
   return exchanges;
 }
 
-const stsCalls = (exchanges: readonly Exchange[]) => exchanges.filter((e) => e.host.startsWith("sts."));
+const identityRuns = (exchanges: readonly Exchange[]) => exchanges.filter((e) => e.host.startsWith("rolesanywhere."));
 const kmsCalls = (exchanges: readonly Exchange[]) => exchanges.filter((e) => e.host.startsWith("kms."));
 
 interface SealOptions {
@@ -373,7 +411,7 @@ describe("input contract: exactly the acknowledgement, validated before anything
   it.each(inputs)("%s → kms_diagnostic_input_refused, zero AWS requests, nothing composed", async (_name, payload) => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world)).raw));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     const compose = composeSpy();
     expect(await outcomeOf(runKmsWorkerAuthDiagnostic(payload, RUN, env, { nodeVersion: NODE_22, composeAccess: compose }))).toBe("kms_diagnostic_input_refused");
     expect(exchanges).toEqual([]);
@@ -440,7 +478,7 @@ describe("pre-AWS guards: every refusal happens before AWS transport is reachabl
     const world = kmsWorld();
     const fixture = await sealFixture(world, change.fixture);
     const env = useEnv(deployed(fixture.raw, change.env));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     const compose = composeSpy();
     expect(await outcomeOf(runKmsWorkerAuthDiagnostic(ACK, change.run ?? RUN, env, { nodeVersion: change.node ?? NODE_22, composeAccess: compose }))).toBe(failure);
     expect(exchanges).toEqual([]);
@@ -455,30 +493,31 @@ describe("pre-AWS guards: every refusal happens before AWS transport is reachabl
 });
 
 describe("the production opening path, end to end against the in-process AWS double", () => {
-  it("succeeds with exactly ONE AssumeRole and ONE Decrypt, the exact six-field dev context, no KeyId, and a safe output", async () => {
+  it("succeeds with exactly ONE CreateSession (one helper run) and ONE Decrypt, the exact six-field dev context, no KeyId, and a safe output", async () => {
     const world = kmsWorld();
     const fixture = await sealFixture(world);
     const env = useEnv(deployed(fixture.raw));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     const outcome = await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 });
 
     expect(outcome).toEqual({ result: "KMS_WORKER_AUTH_DIAGNOSTIC_PASSED", nodeVersion: NODE_22, node22: true, contextEnv: "dev", plaintextMatches: true });
     expect(Object.keys(outcome).sort()).toEqual(["contextEnv", "node22", "nodeVersion", "plaintextMatches", "result"]);
 
     expect(exchanges).toHaveLength(2);
-    const [sts] = stsCalls(exchanges);
+    const [identity] = identityRuns(exchanges);
     const [kms] = kmsCalls(exchanges);
-    expect(stsCalls(exchanges)).toHaveLength(1);
+    expect(identityRuns(exchanges)).toHaveLength(1);
     expect(kmsCalls(exchanges)).toHaveLength(1);
-    // STS: regional, signed by the bootstrap key, the exact worker-role request.
-    expect(sts?.host).toBe("sts.sa-east-1.amazonaws.com");
-    expect(sts?.authorization).toMatch(new RegExp(`^AWS4-HMAC-SHA256 Credential=${BOOTSTRAP_KEY}/\\d{8}/sa-east-1/sts/aws4_request`));
-    expect(sts?.body).toBe(`Action=AssumeRole&Version=2011-06-15&RoleArn=${encodeURIComponent(ROLE)}&RoleSessionName=integration-worker&DurationSeconds=900`);
-    // KMS: Decrypt only, signed by the assumed-role session (never the bootstrap key), exact context, no KeyId.
+    // Roles Anywhere: the exact worker role, trust anchor, profile, region and 900 s; file paths only, never material.
+    expect(identity?.body).toContain(`--role-arn ${ROLE}`);
+    expect(identity?.body).toContain(`--trust-anchor-arn ${ANCHOR}`);
+    expect(identity?.body).toContain(`--profile-arn ${PROFILE}`);
+    expect(identity?.body).toContain("--region sa-east-1 --session-duration 900");
+    expect(identity?.body).not.toContain(WORKLOAD_KEY_BODY);
+    // KMS: Decrypt only, signed by the Roles Anywhere session, exact context, no KeyId.
     expect(kms?.host).toBe("kms.sa-east-1.amazonaws.com");
     expect(kms?.target).toBe("TrentService.Decrypt");
     expect(kms?.authorization).toContain(`Credential=${SESSION_KEY}/`);
-    expect(kms?.authorization).not.toContain(BOOTSTRAP_KEY);
     const decrypt = JSON.parse(kms?.body ?? "{}") as Record<string, unknown>;
     expect(Object.keys(decrypt).sort()).toEqual(["CiphertextBlob", "EncryptionContext"]);
     expect(decrypt["EncryptionContext"]).toEqual({
@@ -495,13 +534,13 @@ describe("the production opening path, end to end against the in-process AWS dou
     for (const exchange of exchanges) {
       expect(exchange.target).not.toMatch(/GenerateDataKey|\.Encrypt$|ReEncrypt|CreateGrant/);
       expect(exchange.body).not.toMatch(/GetCallerIdentity|GetSessionToken/);
-      expect(exchange.host).toMatch(/^(sts|kms)\.sa-east-1\.amazonaws\.com$/);
+      expect(exchange.host).toMatch(/^(rolesanywhere|kms)\.sa-east-1\.amazonaws\.com$/);
     }
     expect(calls).toEqual({ simulator: 0, stagingStub: 0, database: 0 });
 
     // Nothing sensitive in the output, however it is rendered.
     const rendered = [JSON.stringify(outcome), inspect(outcome, { depth: 5 })].join("\n");
-    for (const needle of [fixture.secret, fixture.envelope, fixture.digest, KMS_DIAGNOSTIC_WORKSPACE_ID, KMS_DIAGNOSTIC_CREDENTIAL_ID, KEY_A, ROLE, BOOTSTRAP_KEY, BOOTSTRAP_SECRET, SESSION_KEY, "000000000000"]) {
+    for (const needle of [fixture.secret, fixture.envelope, fixture.digest, KMS_DIAGNOSTIC_WORKSPACE_ID, KMS_DIAGNOSTIC_CREDENTIAL_ID, KEY_A, ROLE, ANCHOR, PROFILE, WORKLOAD_KEY_BODY, SESSION_KEY, "000000000000"]) {
       expect(rendered).not.toContain(needle);
     }
   });
@@ -511,7 +550,7 @@ describe("the production opening path, end to end against the in-process AWS dou
     const env = useEnv(deployed((await sealFixture(world)).raw));
     expect(env["DATABASE_WORKER_URL"]).toBeUndefined();
     expect(env["CAPABILITY_PROVIDER_MODE"]).toBeUndefined();
-    trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect((await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 })).plaintextMatches).toBe(true);
     expect(calls).toEqual({ simulator: 0, stagingStub: 0, database: 0 });
   });
@@ -520,9 +559,9 @@ describe("the production opening path, end to end against the in-process AWS dou
     const world = kmsWorld();
     world.returnedKeyId = KEY_OTHER;
     const env = useEnv(deployed((await sealFixture(world)).raw));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect(await outcomeOf(runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 }))).toBe("kms_diagnostic_keyring_misconfigured");
-    expect(stsCalls(exchanges)).toHaveLength(1);
+    expect(identityRuns(exchanges)).toHaveLength(1);
     expect(kmsCalls(exchanges)).toHaveLength(1);
     expect(Object.keys(JSON.parse(kmsCalls(exchanges)[0]?.body ?? "{}") as object)).not.toContain("KeyId");
   });
@@ -535,16 +574,16 @@ describe("the production opening path, end to end against the in-process AWS dou
   it.each(contexts)("wrong encryption context (%s) fails closed as credential_unreadable after ONE Decrypt", async (_name, seal) => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world, seal)).raw));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect(await outcomeOf(runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 }))).toBe("kms_diagnostic_credential_unreadable");
-    expect(stsCalls(exchanges)).toHaveLength(1);
+    expect(identityRuns(exchanges)).toHaveLength(1);
     expect(kmsCalls(exchanges)).toHaveLength(1);
   });
 
   it("digest mismatch → PLAINTEXT_MISMATCH (plaintextMatches false), nothing else returned", async () => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world, { fixture: { digest: "ab".repeat(32) } })).raw));
-    trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect(await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 })).toEqual({
       result: "KMS_WORKER_AUTH_DIAGNOSTIC_PLAINTEXT_MISMATCH", nodeVersion: NODE_22, node22: true, contextEnv: "dev", plaintextMatches: false,
     });
@@ -553,20 +592,19 @@ describe("the production opening path, end to end against the in-process AWS dou
   it("a credential sealed under another label never matches, even with its own digest", async () => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world, { label: "synthetic-other-label" })).raw));
-    trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect((await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 })).plaintextMatches).toBe(false);
   });
 
-  const failures: [string, KmsDiagnosticFailure, { sts: (e: Exchange) => Reply; kms?: (e: Exchange) => Reply }, number, number][] = [
-    ["STS denies the bootstrap user", "kms_diagnostic_keyring_access_denied", { sts: () => stsError("AccessDenied") }, 1, 0],
-    ["STS rejects a revoked bootstrap key", "kms_diagnostic_keyring_access_denied", { sts: () => stsError("InvalidClientTokenId") }, 1, 0],
-    ["KMS denies the worker role", "kms_diagnostic_keyring_access_denied", { sts: stsOk, kms: () => kmsError("AccessDeniedException") }, 1, 1],
-    ["KMS key disabled", "kms_diagnostic_keyring_misconfigured", { sts: stsOk, kms: () => kmsError("DisabledException") }, 1, 1],
+  const failures: [string, KmsDiagnosticFailure, { identity: () => SigningHelperRun; kms?: (e: Exchange) => Reply }, number, number][] = [
+    ["Roles Anywhere rejects the workload certificate (403)", "kms_diagnostic_keyring_access_denied", { identity: () => identityError("denied") }, 1, 0],
+    ["KMS denies the worker role", "kms_diagnostic_keyring_access_denied", { identity: identityOk, kms: () => kmsError("AccessDeniedException") }, 1, 1],
+    ["KMS key disabled", "kms_diagnostic_keyring_misconfigured", { identity: identityOk, kms: () => kmsError("DisabledException") }, 1, 1],
   ];
-  it.each(failures)("%s → %s with exactly %i STS / %i KMS request(s); no AWS message, ARN or value leaks", async (_name, failure, handlers, sts, kms) => {
+  it.each(failures)("%s → %s with exactly %i CreateSession / %i KMS request(s); no AWS message, ARN or value leaks", async (_name, failure, handlers, sessions, kms) => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world)).raw));
-    const exchanges = trapAws({ sts: handlers.sts, kms: handlers.kms ?? ((e) => world.decrypt(e)) });
+    const exchanges = trapAws({ identity: handlers.identity, kms: handlers.kms ?? ((e) => world.decrypt(e)) });
     let caught: unknown;
     try {
       await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 });
@@ -575,35 +613,35 @@ describe("the production opening path, end to end against the in-process AWS dou
     }
     expect(caught).toBeInstanceOf(KmsDiagnosticError);
     expect((caught as KmsDiagnosticError).failure).toBe(failure);
-    expect(stsCalls(exchanges)).toHaveLength(sts);
+    expect(identityRuns(exchanges)).toHaveLength(sessions);
     expect(kmsCalls(exchanges)).toHaveLength(kms);
     const rendered = [String(caught), inspect(caught, { depth: 5 }), JSON.stringify(caught), (caught as Error).stack ?? ""].join("\n");
-    for (const needle of ["SYNTHETIC-AWS-MESSAGE", "arn:aws", BOOTSTRAP_KEY, BOOTSTRAP_SECRET, SESSION_KEY, "000000000000"]) expect(rendered).not.toContain(needle);
+    for (const needle of ["SYNTHETIC-AWS-MESSAGE", "arn:aws", "RolesAnywhere", WORKLOAD_KEY_BODY, SESSION_KEY, "000000000000"]) expect(rendered).not.toContain(needle);
     expect((caught as Error & { cause?: unknown }).cause).toBeUndefined();
   });
 
-  it("missing worker bootstrap identity fails closed before any AWS request (lazy identity adapter)", async () => {
+  it("a missing workload private key fails closed before any helper run or AWS request (lazy identity adapter)", async () => {
     const world = kmsWorld();
-    const env = useEnv(deployed((await sealFixture(world)).raw, { INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY: undefined }));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const env = useEnv(deployed((await sealFixture(world)).raw, { INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM: undefined }));
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect(await outcomeOf(runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 }))).toBe("kms_diagnostic_keyring_misconfigured");
     expect(exchanges).toEqual([]);
   });
 });
 
 describe("AWS attempt determinism (Step 7E.7-B-R1): three independent controls, each bounded to ONE", () => {
-  const stsFaults: [string, Reply][] = [
-    ["STS InternalFailure (500)", stsError("InternalFailure", 500)],
-    ["STS ServiceUnavailable (503)", stsError("ServiceUnavailable", 503)],
-    ["STS Throttling (400)", stsError("Throttling", 400)],
-    ["STS connection reset", connectionReset],
+  const identityFaults: [string, () => SigningHelperRun][] = [
+    ["Roles Anywhere ThrottlingException (429)", () => identityError("throttled")],
+    ["Roles Anywhere ServiceUnavailableException (503)", () => identityError("unavailable")],
+    ["a network failure", () => identityError("network")],
+    ["the helper timing out", identityTimeout],
   ];
-  it.each(stsFaults)("%s → exactly 1 AssumeRole, 0 Decrypt, keyring_unavailable (no SDK retry, no KMS after a failed STS)", async (_name, fault) => {
+  it.each(identityFaults)("%s → exactly 1 helper run, 0 Decrypt, keyring_unavailable (the adapter never retries; no KMS after a failed identity)", async (_name, fault) => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world)).raw));
-    const exchanges = trapAws({ sts: () => fault, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: fault, kms: (e) => world.decrypt(e) });
     expect(await outcomeOf(runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 }))).toBe("kms_diagnostic_keyring_unavailable");
-    expect(stsCalls(exchanges)).toHaveLength(1);
+    expect(identityRuns(exchanges)).toHaveLength(1);
     expect(kmsCalls(exchanges)).toHaveLength(0);
   });
 
@@ -613,10 +651,10 @@ describe("AWS attempt determinism (Step 7E.7-B-R1): three independent controls, 
     ["KMS ThrottlingException (400)", kmsError("ThrottlingException", 400)],
     ["KMS connection reset", connectionReset],
   ];
-  it.each(kmsFaults)("%s → exactly 1 AssumeRole, exactly 1 Decrypt, keyring_unavailable; no AWS detail leaks", async (_name, fault) => {
+  it.each(kmsFaults)("%s → exactly 1 helper run, exactly 1 Decrypt, keyring_unavailable; no AWS detail leaks", async (_name, fault) => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world)).raw));
-    const exchanges = trapAws({ sts: stsOk, kms: () => fault });
+    const exchanges = trapAws({ identity: identityOk, kms: () => fault });
     let caught: unknown;
     try {
       await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 });
@@ -624,42 +662,42 @@ describe("AWS attempt determinism (Step 7E.7-B-R1): three independent controls, 
       caught = error;
     }
     expect((caught as KmsDiagnosticError).failure).toBe("kms_diagnostic_keyring_unavailable");
-    expect(stsCalls(exchanges)).toHaveLength(1);
+    expect(identityRuns(exchanges)).toHaveLength(1);
     expect(kmsCalls(exchanges)).toHaveLength(1);
     expect(kmsCalls(exchanges)[0]?.target).toBe("TrentService.Decrypt");
     const rendered = [String(caught), inspect(caught, { depth: 5 }), JSON.stringify(caught)].join("\n");
     for (const needle of ["SYNTHETIC-AWS-MESSAGE", "arn:aws", SESSION_KEY, "000000000000", "ECONNRESET"]) expect(rendered).not.toContain(needle);
   });
 
-  it("success → exactly 1 AssumeRole and 1 Decrypt", async () => {
+  it("success → exactly 1 helper run and 1 Decrypt", async () => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world)).raw));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect((await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 })).plaintextMatches).toBe(true);
-    expect([stsCalls(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
+    expect([identityRuns(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
   });
 
   it("no environment variable widens the bound: AWS_MAX_ATTEMPTS / AWS_RETRY_MODE are overridden by the explicit argument", async () => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world)).raw, { AWS_MAX_ATTEMPTS: "7", AWS_RETRY_MODE: "adaptive" }));
-    const stsFault = trapAws({ sts: () => stsError("InternalFailure", 500), kms: (e) => world.decrypt(e) });
+    const stsFault = trapAws({ identity: () => identityError("unavailable"), kms: (e) => world.decrypt(e) });
     expect(await outcomeOf(runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 }))).toBe("kms_diagnostic_keyring_unavailable");
-    expect([stsCalls(stsFault).length, kmsCalls(stsFault).length]).toEqual([1, 0]);
+    expect([identityRuns(stsFault).length, kmsCalls(stsFault).length]).toEqual([1, 0]);
     vi.restoreAllMocks();
-    const kmsFault = trapAws({ sts: stsOk, kms: () => kmsError("KMSInternalException", 500) });
+    const kmsFault = trapAws({ identity: identityOk, kms: () => kmsError("KMSInternalException", 500) });
     expect(await outcomeOf(runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 }))).toBe("kms_diagnostic_keyring_unavailable");
-    expect([stsCalls(kmsFault).length, kmsCalls(kmsFault).length]).toEqual([1, 1]);
+    expect([identityRuns(kmsFault).length, kmsCalls(kmsFault).length]).toEqual([1, 1]);
   });
 
   it("the three controls are independent: the task's single attempt does NOT bound the SDK clients — the explicit argument does", async () => {
     await import("@/jobs/trigger/integration/kms-worker-auth-diagnostic");
     expect(sdk.tasks.at(-1)?.["retry"]).toEqual({ maxAttempts: 1 }); // control 1: Trigger.dev task retry
-    expect(KMS_DIAGNOSTIC_AWS_ATTEMPTS).toEqual({ maxAttempts: 1 }); // controls 2 and 3: STS and KMS clients
+    expect(KMS_DIAGNOSTIC_AWS_ATTEMPTS).toEqual({ maxAttempts: 1 }); // the KMS client (the identity adapter never retries)
     expect(Object.isFrozen(KMS_DIAGNOSTIC_AWS_ATTEMPTS)).toBe(true);
     // The same diagnostic run WITHOUT the AWS bound (default composition) retries inside the SDK despite the task's 1.
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world)).raw));
-    const exchanges = trapAws({ sts: stsOk, kms: () => kmsError("KMSInternalException", 500) });
+    const exchanges = trapAws({ identity: identityOk, kms: () => kmsError("KMSInternalException", 500) });
     const unbounded = (environment: Readonly<Record<string, string | undefined>>) => {
       const opening = composeCredentialOpener(environment, integrationWorkerAwsCredentials(environment));
       return { access: createCredentialAccess(opening.opener, opening.contextEnv), contextEnv: opening.contextEnv };
@@ -681,13 +719,13 @@ describe("default (non-diagnostic) callers: OPTION_ABSENT_USES_EXISTING_SDK_DEFA
     return defaultAccess(environment).withCredential({ workspaceId, credentialId: KMS_DIAGNOSTIC_CREDENTIAL_ID, envelope: Buffer.from(envelope, "base64") }, (credential) => Promise.resolve(credential.id));
   };
 
-  it("integrationWorkerAwsCredentials(env) without the option keeps the SDK's retries on a transient STS fault", async () => {
+  it("a transient identity fault is ONE helper run in the product composition too: the adapter never retries, KMS is never reached", async () => {
     const world = kmsWorld();
     const fixture = await sealFixture(world);
     const env = useEnv(deployed(fixture.raw));
-    const exchanges = trapAws({ sts: () => stsError("InternalFailure", 500), kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: () => identityError("unavailable"), kms: (e) => world.decrypt(e) });
     await expect(open(env, fixture.envelope)).rejects.toBeDefined();
-    expect(stsCalls(exchanges).length).toBeGreaterThan(1); // observed SDK default; not an architectural count
+    expect(identityRuns(exchanges)).toHaveLength(1); // the helper's own SDK retries happen inside that one run
     expect(kmsCalls(exchanges)).toHaveLength(0);
   }, 30_000);
 
@@ -695,9 +733,9 @@ describe("default (non-diagnostic) callers: OPTION_ABSENT_USES_EXISTING_SDK_DEFA
     const world = kmsWorld();
     const fixture = await sealFixture(world);
     const env = useEnv(deployed(fixture.raw));
-    const exchanges = trapAws({ sts: stsOk, kms: () => kmsError("KMSInternalException", 500) });
+    const exchanges = trapAws({ identity: identityOk, kms: () => kmsError("KMSInternalException", 500) });
     await expect(open(env, fixture.envelope)).rejects.toBeDefined();
-    expect(stsCalls(exchanges)).toHaveLength(1);
+    expect(identityRuns(exchanges)).toHaveLength(1);
     expect(kmsCalls(exchanges).length).toBeGreaterThan(1); // observed SDK default; not an architectural count
   }, 30_000);
 
@@ -705,21 +743,21 @@ describe("default (non-diagnostic) callers: OPTION_ABSENT_USES_EXISTING_SDK_DEFA
     const world = kmsWorld();
     const fixture = await sealFixture(world);
     const env = useEnv(deployed(fixture.raw));
-    trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect((await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 })).plaintextMatches).toBe(true);
     vi.restoreAllMocks();
-    const exchanges = trapAws({ sts: stsOk, kms: () => kmsError("KMSInternalException", 500) });
+    const exchanges = trapAws({ identity: identityOk, kms: () => kmsError("KMSInternalException", 500) });
     await expect(open(env, fixture.envelope)).rejects.toBeDefined();
     expect(kmsCalls(exchanges).length).toBeGreaterThan(1);
   }, 30_000);
 
-  it("the default path still opens normally (one STS, one KMS on success)", async () => {
+  it("the default path still opens normally (one helper run, one KMS on success)", async () => {
     const world = kmsWorld();
     const fixture = await sealFixture(world);
     const env = useEnv(deployed(fixture.raw));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect(await open(env, fixture.envelope)).toBe(KMS_DIAGNOSTIC_CREDENTIAL_LABEL);
-    expect([stsCalls(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
+    expect([identityRuns(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
   });
 });
 
@@ -734,7 +772,7 @@ describe("the Trigger.dev task wrapper", () => {
   it("a refusal ends the run with the vendor abort carrying only the fixed code", async () => {
     const world = kmsWorld();
     useEnv(deployed((await sealFixture(world)).raw));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     await expect(run({ acknowledge: "wrong" }, ctx("PRODUCTION", RELEASE))).rejects.toThrow(new sdk.AbortTaskRunError("kms_diagnostic_input_refused"));
     await expect(run(ACK, ctx("DEVELOPMENT"))).rejects.toThrow(new sdk.AbortTaskRunError("kms_diagnostic_release_refused"));
     await expect(run(ACK, ctx("PRODUCTION"))).rejects.toThrow(new sdk.AbortTaskRunError("kms_diagnostic_release_refused"));
@@ -744,7 +782,7 @@ describe("the Trigger.dev task wrapper", () => {
   it("success returns the safe outcome (this process's real Node version); a digest mismatch aborts the run", async () => {
     const world = kmsWorld();
     useEnv(deployed((await sealFixture(world)).raw));
-    trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     const node22 = process.version.startsWith("v22.");
     if (node22) {
       expect(await run(ACK, ctx("PRODUCTION", RELEASE))).toEqual({ result: "KMS_WORKER_AUTH_DIAGNOSTIC_PASSED", nodeVersion: process.version, node22: true, contextEnv: "dev", plaintextMatches: true });
@@ -768,7 +806,7 @@ describe("plaintext handling (best effort; PLAINTEXT_MEMORY_ZEROIZATION = BEST_E
     const world = kmsWorld();
     const fixture = await sealFixture(world);
     const env = useEnv(deployed(fixture.raw));
-    trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     const written: string[] = [];
     const capture = (chunk: unknown): boolean => { written.push(text(chunk)); return true; };
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(capture);
@@ -802,7 +840,7 @@ describe("the existing integration tasks stay inert with APP_DEPLOYMENT_ENV=stag
     const world = kmsWorld();
     const fixture = await sealFixture(world);
     const env = useEnv(deployed(fixture.raw));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     const composition = composeJobProviders(env);
     for (const provider of ["tiktok", "simulator"] as const) expect(composition.providers.read(provider), provider).toBeUndefined();
     expect(composition.providers.read("meta")?.provider).toBe("meta");
@@ -819,7 +857,7 @@ describe("the existing integration tasks stay inert with APP_DEPLOYMENT_ENV=stag
       { workspaceId, connectionId: connection.id, outboxId: randomUUID(), correlationId },
     );
     await expect(run).rejects.toMatchObject({ code: "NOT_FOUND" });
-    // The credential was loaded but never opened: no AssumeRole, no Decrypt, no other request.
+    // The credential was loaded but never opened: no helper run, no Decrypt, no other request.
     expect(exchanges).toEqual([]);
   });
 
@@ -827,7 +865,7 @@ describe("the existing integration tasks stay inert with APP_DEPLOYMENT_ENV=stag
     const world = kmsWorld();
     const fixture = await sealFixture(world);
     const env = useEnv(deployed(fixture.raw, { CAPABILITY_PROVIDER_MODE: "staging_stub" }));
-    const exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     const composition = composeJobProviders(env);
     const workspaceId = parseWorkspaceId(KMS_DIAGNOSTIC_WORKSPACE_ID);
     if (workspaceId === undefined) throw new Error("synthetic id");
@@ -919,7 +957,7 @@ describe("cache isolation (Step 7E.7-B-R3): diagnostic bound vs the real jobs/co
     };
   }
 
-  it("cache isolation · ORDER A — default product composition first (real module cache), then the diagnostic keeps ONE STS and ONE KMS attempt", async () => {
+  it("cache isolation · ORDER A — default product composition first (real module cache), then the diagnostic keeps ONE helper run and ONE KMS attempt", async () => {
     const modules = await freshModules();
     const world = kmsWorld();
     const fixture = await sealFixture(world);
@@ -938,29 +976,29 @@ describe("cache isolation (Step 7E.7-B-R3): diagnostic bound vs the real jobs/co
     // 2. It is the normal product composition: the simulator read port (not the staging stub), default SDK retries.
     expect(first.providers.read("simulator")).toBeDefined();
     expect(calls.stagingStub).toBe(0);
-    let exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    let exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect(await openWith(first.access, fixture.envelope)).toBe(KMS_DIAGNOSTIC_CREDENTIAL_LABEL);
-    expect([stsCalls(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
+    expect([identityRuns(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
     vi.restoreAllMocks();
-    exchanges = trapAws({ sts: stsOk, kms: () => kmsError("KMSInternalException", 500) });
+    exchanges = trapAws({ identity: identityOk, kms: () => kmsError("KMSInternalException", 500) });
     await expect(openWith(first.access, fixture.envelope)).rejects.toBeDefined();
     expect(kmsCalls(exchanges).length).toBeGreaterThan(1); // the cached default composition retries (SDK default)
 
-    // 3. Diagnostic AFTER the cache exists: transient KMS fault → exactly 1 AssumeRole, 1 Decrypt.
+    // 3. Diagnostic AFTER the cache exists: transient KMS fault → exactly 1 helper run, 1 Decrypt.
     vi.restoreAllMocks();
-    exchanges = trapAws({ sts: stsOk, kms: () => kmsError("KMSInternalException", 500) });
+    exchanges = trapAws({ identity: identityOk, kms: () => kmsError("KMSInternalException", 500) });
     expect(await failureOf(diagnose(modules, env))).toBe("kms_diagnostic_keyring_unavailable");
-    expect([stsCalls(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
-    // 4. Diagnostic AFTER the cache exists: transient STS fault → exactly 1 AssumeRole, 0 Decrypt.
+    expect([identityRuns(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
+    // 4. Diagnostic AFTER the cache exists: transient identity fault → exactly 1 helper run, 0 Decrypt.
     vi.restoreAllMocks();
-    exchanges = trapAws({ sts: () => stsError("InternalFailure", 500), kms: (e) => world.decrypt(e) });
+    exchanges = trapAws({ identity: () => identityError("unavailable"), kms: (e) => world.decrypt(e) });
     expect(await failureOf(diagnose(modules, env))).toBe("kms_diagnostic_keyring_unavailable");
-    expect([stsCalls(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 0]);
+    expect([identityRuns(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 0]);
     // ...and the diagnostic still succeeds with exactly 1 + 1.
     vi.restoreAllMocks();
-    exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect((await diagnose(modules, env)).plaintextMatches).toBe(true);
-    expect([stsCalls(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
+    expect([identityRuns(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
 
     // 5. The cache was neither replaced nor re-composed nor narrowed by the diagnostic.
     const after = await productComposition(modules);
@@ -968,7 +1006,7 @@ describe("cache isolation (Step 7E.7-B-R3): diagnostic bound vs the real jobs/co
     expect(after.access).toBe(first.access);
     expect(after.providers).toBe(first.providers);
     vi.restoreAllMocks();
-    exchanges = trapAws({ sts: stsOk, kms: () => kmsError("KMSInternalException", 500) });
+    exchanges = trapAws({ identity: identityOk, kms: () => kmsError("KMSInternalException", 500) });
     await expect(openWith(after.access, fixture.envelope)).rejects.toBeDefined();
     expect(kmsCalls(exchanges).length).toBeGreaterThan(1);
 
@@ -986,13 +1024,13 @@ describe("cache isolation (Step 7E.7-B-R3): diagnostic bound vs the real jobs/co
     const noLeak = leakProbe();
 
     // 1. Diagnostic first, in the fresh module world: 1 + 1 on success and on a transient KMS fault.
-    let exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    let exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect((await diagnose(modules, env)).plaintextMatches).toBe(true);
-    expect([stsCalls(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
+    expect([identityRuns(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
     vi.restoreAllMocks();
-    exchanges = trapAws({ sts: stsOk, kms: () => kmsError("KMSInternalException", 500) });
+    exchanges = trapAws({ identity: identityOk, kms: () => kmsError("KMSInternalException", 500) });
     expect(await failureOf(diagnose(modules, env))).toBe("kms_diagnostic_keyring_unavailable");
-    expect([stsCalls(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
+    expect([identityRuns(exchanges).length, kmsCalls(exchanges).length]).toEqual([1, 1]);
     // The diagnostic never filled the module cache: no product composition was built.
     expect(calls.simulator).toBe(0);
 
@@ -1000,15 +1038,15 @@ describe("cache isolation (Step 7E.7-B-R3): diagnostic bound vs the real jobs/co
     const cached = await productComposition(modules);
     expect(calls.simulator).toBe(1);
     expect(cached.providers.read("simulator")).toBeDefined();
-    // 3. Its STS keeps the SDK default retries on a transient fault (and never reaches KMS)...
+    // 3. Its identity adapter makes ONE helper run on a transient fault (never retried here, never reaching KMS)...
     vi.restoreAllMocks();
-    exchanges = trapAws({ sts: () => stsError("InternalFailure", 500), kms: (e) => world.decrypt(e) });
+    exchanges = trapAws({ identity: () => identityError("unavailable"), kms: (e) => world.decrypt(e) });
     await expect(openWith(cached.access, fixture.envelope)).rejects.toBeDefined();
-    expect(stsCalls(exchanges).length).toBeGreaterThan(1);
+    expect(identityRuns(exchanges)).toHaveLength(1);
     expect(kmsCalls(exchanges)).toHaveLength(0);
     // ...and its KMS keeps the SDK default retries on a transient fault.
     vi.restoreAllMocks();
-    exchanges = trapAws({ sts: stsOk, kms: () => kmsError("KMSInternalException", 500) });
+    exchanges = trapAws({ identity: identityOk, kms: () => kmsError("KMSInternalException", 500) });
     await expect(openWith(cached.access, fixture.envelope)).rejects.toBeDefined();
     expect(kmsCalls(exchanges).length).toBeGreaterThan(1);
     // 4. The cache is stable afterwards (same objects on the next product run), and still opens normally.
@@ -1016,7 +1054,7 @@ describe("cache isolation (Step 7E.7-B-R3): diagnostic bound vs the real jobs/co
     expect(again.access).toBe(cached.access);
     expect(calls.simulator).toBe(1);
     vi.restoreAllMocks();
-    exchanges = trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     expect(await openWith(again.access, fixture.envelope)).toBe(KMS_DIAGNOSTIC_CREDENTIAL_LABEL);
 
     expect(capture.inScope).toBe(0);
@@ -1111,7 +1149,7 @@ describe("closed failure vocabulary (Step 7E.7-B-R4)", () => {
       vi.restoreAllMocks();
       const world = kmsWorld();
       const env = useEnv(deployed((await sealFixture(world, change.seal)).raw, change.env));
-      trapAws({ sts: stsOk, kms: change.kms ?? ((e) => world.decrypt(e)) });
+      trapAws({ identity: identityOk, kms: change.kms ?? ((e) => world.decrypt(e)) });
       emitted.add(await coreCode(runKmsWorkerAuthDiagnostic(change.payload ?? ACK, change.run ?? RUN, env, { nodeVersion: change.node ?? NODE_22, ...(change.compose === undefined ? {} : { composeAccess: change.compose }) })));
     };
     await core({ payload: { acknowledge: "wrong" } });
@@ -1132,7 +1170,7 @@ describe("closed failure vocabulary (Step 7E.7-B-R4)", () => {
     vi.restoreAllMocks();
     const world = kmsWorld();
     useEnv(deployed((await sealFixture(world, { fixture: { digest: "ef".repeat(32) } })).raw));
-    trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     if (process.version.startsWith("v22.")) emitted.add(await taskCode(ACK, PROD_CTX));
     else emitted.add("kms_diagnostic_plaintext_mismatch"); // this local runtime is not Node 22: the wrapper refuses earlier
     emitted.add(await taskCode(ACK, {}));
@@ -1142,7 +1180,7 @@ describe("closed failure vocabulary (Step 7E.7-B-R4)", () => {
   it("raw error text never escapes: an arbitrary failure becomes kms_diagnostic_failed, in the module and in the task", async () => {
     const world = kmsWorld();
     const env = useEnv(deployed((await sealFixture(world)).raw));
-    trapAws({ sts: stsOk, kms: (e) => world.decrypt(e) });
+    trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
     let caught: unknown;
     try {
       await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22, composeAccess: () => { throw new Error(AWS_MESSAGE); } });

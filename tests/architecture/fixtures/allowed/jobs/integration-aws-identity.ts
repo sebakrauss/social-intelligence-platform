@@ -1,3 +1,2 @@
-/** Allowed (Step 7E.4C): the integration worker's AWS identity adapter is the one STS client user. */
-import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
-export const workerIdentity: unknown[] = [AssumeRoleCommand, STSClient];
+/** Allowed (Step 7G-H5.6B): the integration worker's AWS identity adapter uses no AWS SDK client (Roles Anywhere helper). */
+export const workerIdentity = "integration-worker-identity";

@@ -31,17 +31,38 @@ describe("AWS runtime-identity contract", () => {
     expect(literals).toEqual(["platform/aws/identity.ts"]);
   });
 
-  it("STS is called only by the integration worker identity adapter (Step 7E.4C), and only AssumeRole", () => {
-    expect(findReferences(sourceFiles(RUNTIME_ROOTS).filter((file) => file !== WORKER_ADAPTER), [/AssumeRole/, /client-sts/, /STSClient/])).toEqual([]);
-    expect(findReferences(sourceFiles(RUNTIME_ROOTS), [/credential-provider-web-identity/, /\bfromWebToken\b|\bfromTokenFile\b/, /AssumeRoleWith(WebIdentity|SAML)/, /GetCallerIdentity|GetSessionToken|GetFederationToken|GetAccessKeyInfo/])).toEqual([]);
+  it("no first-party code calls STS (Step 7G-H5.6B): the worker's identity is Roles Anywhere through the official helper", () => {
+    expect(findReferences(sourceFiles(RUNTIME_ROOTS), [/AssumeRole/, /client-sts/, /STSClient/])).toEqual([]);
+    expect(findReferences(sourceFiles(RUNTIME_ROOTS), [/credential-provider-web-identity/, /\bfromWebToken\b|\bfromTokenFile\b|\bfromProcess\b/, /AssumeRoleWith(WebIdentity|SAML)/, /GetCallerIdentity|GetSessionToken|GetFederationToken|GetAccessKeyInfo/])).toEqual([]);
     const adapter = codeOf(WORKER_ADAPTER);
-    expect([...new Set([...adapter.matchAll(/\b([A-Z][A-Za-z]+)Command\b/g)].map((match) => match[1]))]).toEqual(["AssumeRole"]);
-    // The request carries exactly the role, the session name and the duration: no ExternalId, SourceIdentity, tags,
-    // session policies or MFA fields.
-    expect(adapter).toMatch(/new AssumeRoleCommand\(\{ RoleArn: identity\.roleArn, RoleSessionName: INTEGRATION_WORKER_ROLE_SESSION_NAME, DurationSeconds: INTEGRATION_WORKER_SESSION_SECONDS \}\)/);
-    expect(adapter).not.toMatch(/\b(ExternalId|SourceIdentity|Tags|TransitiveTagKeys|Policy|PolicyArns|SerialNumber|TokenCode|ProvidedContexts)\s*:/);
-    expect(adapter).not.toMatch(/process\.env\.|AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|REGION|DEFAULT_REGION|ROLE_ARN)\b/);
-    expect(adapter).toMatch(/ignoreConfiguredEndpointUrls: true/);
+    expect(adapter).not.toMatch(/process\.env\.|AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|REGION|DEFAULT_REGION|ROLE_ARN)\b|BOOTSTRAP|@aws-sdk/);
+  });
+
+  it("the credential helper runs with exactly credential-process, paths and non-secret identifiers — no endpoint, TLS, proxy or session-name override", () => {
+    const adapter = codeOf(WORKER_ADAPTER);
+    expect(adapter).toMatch(/"credential-process",\n {4}"--certificate", files\.certificate,\n {4}"--private-key", files\.privateKey,\n {4}"--trust-anchor-arn", identity\.trustAnchorArn,\n {4}"--profile-arn", identity\.profileArn,\n {4}"--role-arn", identity\.roleArn,\n {4}"--region", identity\.region,\n {4}"--session-duration", String\(INTEGRATION_WORKER_SESSION_SECONDS\),\n {2}\]/);
+    expect(adapter).not.toMatch(/--endpoint|--no-verify-ssl|--with-proxy|--role-session-name|--intermediates|--pkcs11|serve\b|update\b"/);
+    // The private key never travels as an argument or a log field: only the file path the adapter wrote.
+    expect(adapter).not.toMatch(/console\.|logger|\.log\(|privateKeyPem\s*\]/);
+  });
+
+  it("starting a process happens in exactly one module, without a shell and with an empty environment", () => {
+    const users = findReferences(sourceFiles(RUNTIME_ROOTS).filter((file) => !file.startsWith("tools/")), [/child_process/, /\bexecFile\b|\bexecSync\b|\bspawnSync\b|\bfork\(/]).map(([file]) => file);
+    expect([...new Set(users)]).toEqual(["jobs/aws-signing-helper-process.ts"]);
+    const runner = codeOf("jobs/aws-signing-helper-process.ts");
+    expect(runner).toMatch(/spawn\(executable, \[\.\.\.args\], \{ shell: false, env: EMPTY_ENVIRONMENT, stdio: \["ignore", "pipe", "pipe"\], windowsHide: true \}\)/);
+    expect(runner).toMatch(/const EMPTY_ENVIRONMENT = Object\.freeze\(\{\}\) as NodeJS\.ProcessEnv;/);
+    expect(runner).not.toMatch(/process\.env|shell: true|exec\(/);
+  });
+
+  it("the helper is the pinned official AWS build: exact version, exact AWS release URLs, SHA-256 per Linux architecture", () => {
+    const pins = codeOf("jobs/aws-signing-helper.ts");
+    expect(pins).toMatch(/export const AWS_SIGNING_HELPER_VERSION = "1\.8\.5";/);
+    expect([...pins.matchAll(/sha256: "([0-9a-f]+)"/g)].map((match) => match[1]?.length)).toEqual([64, 64]);
+    expect([...pins.matchAll(/url: `\$\{RELEASES\}\/([^`]+)`/g)].map((match) => match[1])).toEqual(["X86_64/Linux/Amzn2023/aws_signing_helper", "Aarch64/Linux/Amzn2023/aws_signing_helper"]);
+    expect(pins).toMatch(/const RELEASES = `https:\/\/rolesanywhere\.amazonaws\.com\/releases\/\$\{AWS_SIGNING_HELPER_VERSION\}`;/);
+    expect(pins).not.toMatch(/latest|http:\/\//i);
+    expect(pins).not.toMatch(/^import /m);
   });
 
   it("the audience exchange, the official provider and the request-token header live only in the Vercel identity adapter", () => {
@@ -148,19 +169,19 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
     expect(users(/\binterface AwsSingleAttempt\b/)).toEqual([KMS_CLIENT]);
     expect(codeOf(KMS_CLIENT)).toMatch(/export interface AwsSingleAttempt \{\n {2}readonly maxAttempts: 1;\n\}/);
     // Each factory adds exactly `maxAttempts: 1`, and only when the option is present; nothing else is configurable.
-    for (const file of [KMS_CLIENT, WORKER_ADAPTER]) {
-      expect(count(file, /\.\.\.\(attempts === undefined \? \{\} : \{ maxAttempts: 1 \}\),/), file).toBe(1);
-      expect(codeOf(file), file).not.toMatch(/attempts\.maxAttempts|\.\.\.attempts\b|\.\.\.options\b|retryStrategy|retryMode|requestHandler/);
-    }
+    expect(count(KMS_CLIENT, /\.\.\.\(attempts === undefined \? \{\} : \{ maxAttempts: 1 \}\),/)).toBe(1);
+    expect(codeOf(KMS_CLIENT)).not.toMatch(/attempts\.maxAttempts|\.\.\.attempts\b|\.\.\.options\b|retryStrategy|retryMode|requestHandler/);
+    // Step 7G-H5.6B: the worker identity adapter has no attempt option at all — it never retries.
+    expect(codeOf(WORKER_ADAPTER)).not.toMatch(/attempts|maxAttempts|AwsSingleAttempt|retry\(/);
     expect(codeOf(KMS_CLIENT)).toMatch(/new KMSClient\(\{\n {4}region,\n {4}credentials,\n {4}ignoreConfiguredEndpointUrls: true,\n {4}\.\.\.\(attempts === undefined \? \{\} : \{ maxAttempts: 1 \}\),\n {2}\}\);/);
   });
 
   it("only the diagnostic opts in; the product compositions (open and seal) never pass the option", () => {
     expect(users(/\bKMS_DIAGNOSTIC_AWS_ATTEMPTS\b/)).toEqual([DIAGNOSTIC]);
-    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([WORKER_ADAPTER, DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT].sort());
+    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT].sort());
     expect(codeOf(DIAGNOSTIC_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/); // the Trigger.dev task retry: a separate control
     expect(codeOf(DIAGNOSTIC)).toMatch(/export const KMS_DIAGNOSTIC_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
-    expect(count(DIAGNOSTIC, /composeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment, KMS_DIAGNOSTIC_AWS_ATTEMPTS\), KMS_DIAGNOSTIC_AWS_ATTEMPTS\)/)).toBe(1);
+    expect(count(DIAGNOSTIC, /composeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment\), KMS_DIAGNOSTIC_AWS_ATTEMPTS\)/)).toBe(1);
 
     // Exact call sites of every factory on the path.
     expect(users(/\bcreateKmsClient\(/)).toEqual([KMS_CLIENT, SEAL_COMPOSITION, COMPOSITION].sort());
@@ -170,8 +191,7 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
     expect(users(/\bintegrationWorkerAwsCredentials\(/)).toEqual([COMPOSITION, DIAGNOSTIC].sort());
     expect(users(/\bcomposeCredentialOpener\(/)).toEqual([COMPOSITION, DIAGNOSTIC].sort());
     expect(users(/\bcreateIntegrationWorkerAwsCredentials\(/)).toEqual([COMPOSITION, WORKER_ADAPTER].sort());
-    expect(count(COMPOSITION, /createIntegrationWorkerAwsCredentials\(kms, \{\}, attempts\)/)).toBe(1);
-    expect(count(WORKER_ADAPTER, /deps\.stsClient\(kms\.region, identity, attempts\)/)).toBe(1);
+    expect(count(COMPOSITION, /createIntegrationWorkerAwsCredentials\(kms\)/)).toBe(1);
     // The product task composition: no bound at all.
     const product = codeOf(COMPOSITION).split("export function composeJobProviders(")[1]?.split(/\nexport /)[0] ?? "";
     expect(product).toMatch(/composeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment\)\);/);

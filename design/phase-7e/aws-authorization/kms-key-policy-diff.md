@@ -24,7 +24,7 @@ This document describes the intended target only. It is not a statement about cu
 
 | Historical | Target | Artifact |
 |---|---|---|
-| Trust: account principal restricted to the TA-Q-07b operator role | Exact `<DEV_BOOTSTRAP_USER_ARN>`, `sts:RoleSessionName` = `integration-worker`, `aws:TokenIssueTime` absent | `artifacts/worker-trust-policy.json` |
+| Trust: account principal restricted to the TA-Q-07b operator role (later: the exact bootstrap user, Step 7E.6) | Roles Anywhere service principal; exact trust anchor (`aws:SourceArn`), subject CN and issuer CN (Step 7G-H5.6B) | `artifacts/worker-trust-policy.json` |
 | Inline guard: Deny all but Decrypt **and GenerateDataKey**; GenerateDataKey outside key A; Decrypt outside key A | Deny all but Decrypt; Decrypt outside `<DEV_KMS_KEY_ARN>` | `artifacts/worker-deny-guard.json` |
 | `MaxSessionDuration` 3600 | Unchanged (3600) | — |
 | No permissions boundary, no managed policies | Unchanged (no boundary) | — |
@@ -41,7 +41,7 @@ This document describes the intended target only. It is not a statement about cu
 | Worker | `kms:Encrypt` | Denied (key policy and guard) |
 | Worker | `kms:ReEncrypt*` | Denied (key policy and guard) |
 | Worker | `kms:CreateGrant` | Denied (`DenyGrantsToEveryone` and guard) |
-| Bootstrap user | Any KMS operation | Denied (boundary, plus key-policy Denies) |
+| Retired bootstrap user | Any KMS operation | Denied (retired boundary, plus key-policy Denies) until it is deleted |
 | Anyone | `kms:ReEncrypt*` | Granted to no principal. A future rotation principal is a separate operator design (TA §65, open) |
 
 The worker's GenerateDataKey must not come back through any other path:

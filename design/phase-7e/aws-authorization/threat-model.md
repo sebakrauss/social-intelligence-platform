@@ -1,52 +1,57 @@
 # Threat model notes (DEV / non-prod)
 
-Companion to `README.md`. This describes the semantics the artifacts rely on and their known limits.
+Companion to `README.md`. This describes the semantics the artifacts rely on and their known limits. The worker's
+identity is AWS IAM Roles Anywhere (Step 7G-H5.6B); the Step 7E.4C bootstrap IAM user is retired
+(`runbooks/bootstrap-retirement.md`).
 
-## 1. Exact-user trust is bound to the principal ID
+## 1. What the workload holds, and what it can do with it
 
-When a role trust policy names a specific IAM user ARN, IAM stores that user's unique principal ID. If the user is
-deleted and a user with the same name is recreated, the old trust **does not** apply to the new user. Trusting the
-new principal requires an intentional rewrite of `artifacts/worker-trust-policy.json` with the new user ARN. This is a
-safety property: never automate a silent re-trust of a same-name user.
+- The INTEGRATION Trigger.dev project holds one X.509 end-entity certificate and its private key (Secret variable).
+  Roles Anywhere is **not secretless**: the private key is long-lived identity material.
+- Its only use is `CreateSession` (Roles Anywhere) through the exact trust anchor and profile, for the one worker role.
+  The worker role can do nothing but `kms:Decrypt` on the DEV key with the exact six-key context.
+- A stolen key therefore yields at most what a running worker has: 900-second worker sessions, until the certificate
+  expires or the profile, the trust anchor or the trust is disabled. It never yields arbitrary account access.
+- The CA's private key never reaches Trigger.dev. A stolen leaf can't issue new identities; a stolen CA key could, and
+  is answered by disabling the trust anchor (`runbooks/workload-identity-compromise.md`).
 
-## 2. Derived IAM-user credentials (GetSessionToken)
+| Threat | Guardrail |
+|---|---|
+| Leaf private key or certificate copied from Trigger.dev | Worker sessions only (≤ 900 s each); short leaf validity; disable profile / anchor / trust; rotate (compromise runbook) |
+| CA certificate exposed | Harmless: it only verifies |
+| CA private key compromised | Disable the trust anchor at once; new CA, new anchor, new leaf |
+| Another certificate issued under the same CA | Trust requires the exact subject CN; the CA is offline and issues nothing else |
+| A profile that permits another role | The profile contract allows exactly the worker role (artifact test) |
+| A trust without `aws:SourceArn` or the subject/issuer CN conditions | All three are required in the artifact (artifact test); without them any anchor or any certificate of the CA would do |
+| An expired certificate | `CreateSession` is refused; the adapter refuses it before any request (`IDENTITY_ACCESS_DENIED`) |
+| A trust anchor or profile disabled | The intended kill switch: new sessions fail closed |
+| A tampered credential helper | The executable's SHA-256 is pinned in source and checked at build and before the first use |
+| The private key logged or leaked by the application | It is never an argument, never logged; it exists on disk only for one helper run (0600, then overwritten and removed) |
+| A DEV certificate used for another environment | The subject CN carries the env; the adapter requires `…-<context env>`; KMS context `env` is `dev` |
+| Material in a build artifact | Builds contain only the helper executables; certificate and key are runtime variables |
+| Many concurrent tasks on one identity | Acceptable in DEV: one session per resolution, attributed to the same certificate serial |
 
-**AWS_DOCUMENTATION_CONFLICT — ASSUME_WORST_CASE.**
+## 2. Retired: derived IAM-user credentials (historical)
 
-- The STS API reference and the IAM "Compare AWS STS credentials" table say GetSessionToken credentials may call
-  `AssumeRole` and `GetCallerIdentity`. The IAM "Permissions for GetSessionToken" page says they cannot call STS.
-  We follow the worst case: such credentials can attempt `AssumeRole`.
-- GetSessionToken cannot be denied by policy (it is an authentication operation). Its credentials last up to 36 hours
-  and carry the IAM user's permissions, which AWS evaluates on every request.
-- GetCallerIdentity also cannot be denied. It reveals only the caller's identity. Our application never calls it, so
-  any call is a high-signal alert (`cloudtrail-alerting.md`).
-
-Containment, independent layers:
-
-1. Boundary `DenyAllTemporaryUserCredentials`: denies every action when `aws:TokenIssueTime` is present. That key is
-   only in the request context when temporary credentials sign the request, never when long-term access keys do.
-2. Worker trust `Null aws:TokenIssueTime = "true"`: a temporary user session cannot satisfy the trust at all.
-3. Incident: `artifacts/emergency-deny-all.json` attached permanently to the compromised user. AWS documents that a
-   Deny on the user also covers sessions created with GetSessionToken.
-4. Recovery rewrites the trust to a NEW user (`runbooks/bootstrap-compromise.md`). The compromised principal then has
-   no trust grant at all.
-
-A single AWS page saying "no STS calls" is not a reason to drop any layer.
+The bootstrap design's worst-case analysis (**AWS_DOCUMENTATION_CONFLICT — ASSUME_WORST_CASE**: credentials derived
+from the user's long-term key with `GetSessionToken`) no longer applies to the worker path: the rewritten trust names no
+IAM principal. It still applies to the bootstrap user itself while it exists; it has no access key, and its retired
+boundary (`artifacts/retired/bootstrap-permissions-boundary.json`) stays attached until the retirement gate deletes it.
 
 ## 3. Role session lifetime
 
 | | Seconds | Enforced by |
 |---|---|---|
 | Role `MaxSessionDuration` | 3600 | IAM (the minimum IAM allows for a role's maximum) |
-| Application request (`DurationSeconds`) | 900 | Our source only (`INTEGRATION_WORKER_SESSION_SECONDS`) |
+| Profile `durationSeconds` | 900 | **Roles Anywhere**: `min(profile, request)` is what `CreateSession` asks AssumeRole for |
+| Application request (`--session-duration`) | 900 | Our source (`INTEGRATION_WORKER_SESSION_SECONDS`) |
+| Application acceptance | ≤ 900 + 60 s skew | Our source refuses longer credentials as misconfigured |
 | Application refresh window | 120 before expiry | Our source only (`INTEGRATION_WORKER_REFRESH_WINDOW_SECONDS`) |
 
-- **900 seconds is not an infrastructure-enforced maximum.** Anyone holding the long-lived bootstrap key can call
-  `AssumeRole` directly and request up to 3600 seconds.
-- No `sts:DurationSeconds` condition key applies to `AssumeRole`, so IAM cannot force 900 through the trust.
-- The infrastructure worst case for one role session is therefore **3600 seconds**.
-- Session duration does not contain a bootstrap-key compromise: a stolen long-lived key can mint new sessions until the
-  bootstrap path is denied (`runbooks/bootstrap-compromise.md`).
+- Unlike the retired bootstrap path, **900 seconds is now an infrastructure-enforced maximum** for sessions obtained
+  through the profile: whoever holds the certificate and key cannot ask Roles Anywhere for more.
+- Session duration does not contain a key compromise: a stolen key can mint new sessions until the certificate expires
+  or the profile, anchor or trust is disabled.
 
 ## 4. Encryption-context condition
 

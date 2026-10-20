@@ -10,6 +10,9 @@
 # Local certificates: the hosted CA is DATABASE_SSL_ROOT_CERT_PEM.
 /.local-certs
 
+# Fetched third-party executables for the INTEGRATION Trigger.dev build only (AWS Roles Anywhere credential helper).
+/vendor
+
 # Local build cache and review artifacts.
 /tsconfig.tsbuildinfo
 /step-1-final-review.zip

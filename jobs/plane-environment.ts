@@ -8,9 +8,14 @@
  *   TRIGGER_MAIN_RELAY_TRIGGER_KEY          integration → main: a named main-project key (Trigger only, restricted to
  *                                           outbox.relay) for the post-commit relay wake-up
  *
- *   INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID,     the integration worker's AWS bootstrap identity (Step 7E.4C; DEV/non-prod):
- *   INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY, an IAM user allowed only to assume INTEGRATION_AWS_WORKER_ROLE_ARN
- *   INTEGRATION_AWS_WORKER_ROLE_ARN              (jobs/integration-aws-identity.ts)
+ *   INTEGRATION_AWS_WORKER_ROLE_ARN,                  the integration worker's AWS identity: IAM Roles Anywhere (Step
+ *   INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN,  7G-H5.6B; DEV/non-prod; jobs/integration-aws-identity.ts) — the
+ *   INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN,       role, trust anchor and profile (non-secret), the workload
+ *   INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM,         certificate (confidential) and its private key (SECRET)
+ *   INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM
+ *
+ *   INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID,     RETIRED (the Step 7E.4C bootstrap IAM user's static key): read by no code,
+ *   INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY  refused by BOTH planes and the web, so it can never come back unnoticed
  *
  *   INTEGRATION_KMS_DIAGNOSTIC_FIXTURE           the synthetic envelope of the integration-only KMS worker-auth
  *                                                diagnostic (Step 7E.7-B; jobs/integration-kms-diagnostic.ts)
@@ -25,16 +30,30 @@
  * integration plane never holds the system database credential; the main plane still needs the worker one (Move saga).
  *
  * Deployed runs refuse a variable that belongs to the other plane, and the integration plane also refuses the standard
- * AWS credential-chain variables: its one AWS identity source is the explicit bootstrap above. Local development runs
+ * AWS credential-chain variables: its one AWS identity source is the workload certificate above. Local development runs
  * share one .env file across both `trigger dev` sessions, so the check applies to deployed runs only.
  */
 import { NonRetryableJobError, type ExecutionPlane, type JobRelease } from "@/platform/jobs";
 
 export const INTEGRATION_TASK_OPERATOR_KEY_ENV = "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY";
 export const MAIN_RELAY_TRIGGER_KEY_ENV = "TRIGGER_MAIN_RELAY_TRIGGER_KEY";
-export const INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID_ENV = "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID";
-export const INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY_ENV = "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY";
 export const INTEGRATION_AWS_WORKER_ROLE_ARN_ENV = "INTEGRATION_AWS_WORKER_ROLE_ARN";
+export const INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN_ENV = "INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN";
+export const INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN_ENV = "INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN";
+export const INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM_ENV = "INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM";
+export const INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM_ENV = "INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM";
+
+/** The integration worker's AWS identity configuration (Roles Anywhere): integration plane only. */
+export const INTEGRATION_AWS_IDENTITY_VARIABLES: readonly string[] = Object.freeze([
+  INTEGRATION_AWS_WORKER_ROLE_ARN_ENV,
+  INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN_ENV,
+  INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN_ENV,
+  INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM_ENV,
+  INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM_ENV,
+]);
+
+/** The retired bootstrap IAM user's static key (Step 7E.4C): no code reads it; every runtime refuses it. */
+export const RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES: readonly string[] = Object.freeze(["INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY"]);
 export const INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV = "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE";
 
 /** The standard AWS SDK credential-chain variables: never an identity source of the integration worker. */
@@ -47,13 +66,18 @@ const PROVIDER_META_APP_VARIABLES = ["PROVIDER_META_CLIENT_ID", "PROVIDER_META_C
 export const PLANE_FORBIDDEN_VARIABLES: Readonly<Record<ExecutionPlane, readonly string[]>> = Object.freeze({
   main: Object.freeze([
     MAIN_RELAY_TRIGGER_KEY_ENV,
-    INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID_ENV,
-    INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY_ENV,
-    INTEGRATION_AWS_WORKER_ROLE_ARN_ENV,
+    ...INTEGRATION_AWS_IDENTITY_VARIABLES,
+    ...RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES,
     INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV,
     ...PROVIDER_META_APP_VARIABLES,
   ]),
-  integration: Object.freeze(["DATABASE_SYSTEM_URL", INTEGRATION_TASK_OPERATOR_KEY_ENV, ...AWS_CREDENTIAL_CHAIN_VARIABLES, ...PROVIDER_META_APP_VARIABLES]),
+  integration: Object.freeze([
+    "DATABASE_SYSTEM_URL",
+    INTEGRATION_TASK_OPERATOR_KEY_ENV,
+    ...AWS_CREDENTIAL_CHAIN_VARIABLES,
+    ...RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES,
+    ...PROVIDER_META_APP_VARIABLES,
+  ]),
 });
 
 type Environment = Readonly<Record<string, string | undefined>>;

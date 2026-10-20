@@ -103,6 +103,9 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   // Jobs, executor port, adapters (TA §6.3 rules 3, 7; §15)
   ["jobs-no-business-logic", "jobs/run.ts", "modules/insights/domain/rule.ts"],
   ["jobs-are-entry-points", "server/handler.ts", "jobs/run.ts"],
+  // Step 7G-H5.6B: the helper fetch tool reads exactly the pins; no other tool reads them
+  ["jobs-are-entry-points", "tools/trigger/reads-helper-pins.ts", "jobs/aws-signing-helper.ts"],
+  ["aws-signing-helper-fetch-reads-pins-only", "tools/trigger/fetch-aws-signing-helper.ts", "jobs/connections.ts"],
   ["mutation-port-executor-only", "server/handler.ts", "integrations/providers/contract/mutation-port.ts"],
   ["provider-adapter-isolated", "integrations/providers/meta/adapter.ts", "modules/insights/index.ts"],
   // Job runtime boundary (Step 3): SDK and adapter behind the port; no direct enqueue, delivery or system scope
@@ -158,8 +161,8 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/auth/kms-diagnostic-target.ts"],
   ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/persistence/kms-diagnostic-target.ts"],
   ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/connections/kms-diagnostic-target.ts"],
-  // Integration worker AWS identity (Step 7E.4C): STS only in the adapter; the adapter only in the integration composition
-  ["aws-sts-sdk-only-in-integration-worker-identity", "server/assumes-role.ts", "../../../../node_modules/@aws-sdk/client-sts/dist-es/index.js"],
+  // Integration worker AWS identity (Step 7G-H5.6B): no first-party STS; the adapter only in the integration composition
+  ["no-first-party-sts", "server/assumes-role.ts", "../../../../node_modules/@aws-sdk/client-sts/dist-es/index.js"],
   ["integration-worker-identity-composition-only", "jobs/trigger/main/uses-worker-identity.ts", "jobs/integration-aws-identity.ts"],
   // Vercel OIDC web identity (Step 7E.3B): packages only in the adapter, no refresh helpers, composed by the web only
   ["vercel-oidc-only-in-web-identity-adapter", "server/reads-vercel-oidc.ts", "../../../../node_modules/@vercel/oidc/dist/index.js"],

@@ -22,8 +22,11 @@ Never print, store or commit secret values. Access-key metadata means IDs, statu
 - [ ] Role managed (attached) policies (expected: none)
 - [ ] Role permissions boundaries (expected: none)
 - [ ] Role `MaxSessionDuration` (expected: 3600)
-- [ ] Current IAM users (historical: none)
-- [ ] Current access-key metadata, including the root account (historical: none)
+- [ ] Current IAM users (expected: the retired bootstrap user only, with its inline policy and boundary)
+- [ ] Current access-key metadata, including the root account (expected: none — the bootstrap user has 0 access keys)
+- [ ] Roles Anywhere trust anchors, profiles and CRLs in `<DEV_KMS_REGION>` (expected before the Roles Anywhere gate:
+      none; after it: exactly the DEV anchor and profile, matching their artifacts)
+- [ ] Roles Anywhere subjects (expected: none before the first session)
 - [ ] CloudTrail trails, event selectors, KMS exclusion setting and logging status (historical: no trail)
 
 ## Compare
@@ -32,6 +35,8 @@ Never print, store or commit secret values. Access-key metadata means IDs, statu
 - [ ] Placeholders resolved from the capture: `<DEV_AWS_ACCOUNT_ID>`, `<DEV_AWS_PARTITION>`, `<DEV_KMS_REGION>`,
       `<DEV_KMS_KEY_ARN>`, `<DEV_WORKER_ROLE_NAME>`, `<DEV_WORKER_ROLE_ARN>`, `<DEV_WEB_ROLE_ARN>`,
       `<DEV_OPERATOR_ROLE_ARN>`, `<DEV_GUARD_POLICY_NAME>`
-- [ ] Planned target names reviewed (whether they already exist live is part of this capture; historical: no IAM users): `<DEV_BOOTSTRAP_USER_NAME>`, `<DEV_BOOTSTRAP_USER_ARN>`,
+- [ ] Planned target names reviewed: `<DEV_ROLES_ANYWHERE_TRUST_ANCHOR_NAME>`, `<DEV_ROLES_ANYWHERE_PROFILE_NAME>`,
+      `<DEV_WORKLOAD_CA_CN>`; `<DEV_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>` is resolved after the anchor exists
+- [ ] Retirement inventory resolved: `<DEV_BOOTSTRAP_USER_NAME>`, `<DEV_BOOTSTRAP_USER_ARN>`,
       `<DEV_BOOTSTRAP_BOUNDARY_POLICY_ARN>`
 - [ ] Rendered policies keep their reviewed structure (only placeholders substituted)

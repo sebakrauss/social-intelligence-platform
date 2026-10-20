@@ -4,7 +4,7 @@
  * provider-credential envelope through the SAME production path as discovery and capability evaluation:
  *
  *   createCredentialAccess(composeCredentialOpener(env, integrationWorkerAwsCredentials(env)))
- *     → envelope decoding → six-field context → worker identity (bootstrap user → worker role) → KMS Decrypt
+ *     → envelope decoding → six-field context → worker identity (Roles Anywhere → worker role) → KMS Decrypt
  *     → returned key checked against CREDENTIAL_KMS_ALLOWED_KEY_ARNS → AES-GCM → ProviderCredential codec
  *
  * It is NOT a product task: it is absent from the task registry (the outbox can never route to it), has no schedule
@@ -31,10 +31,11 @@
  * digest buffers are zeroed here, but the ProviderCredential codec materializes the synthetic secret as an immutable
  * JavaScript string that only the garbage collector reclaims. Nothing is logged, serialized or returned.
  *
- * AWS attempt counts (Step 7E.7-B-R1): three INDEPENDENT controls bound the run — the Trigger.dev task retry
- * (maxAttempts 1), the STS client (KMS_DIAGNOSTIC_AWS_ATTEMPTS: one AssumeRole attempt) and the KMS client
- * (KMS_DIAGNOSTIC_AWS_ATTEMPTS: one Decrypt attempt). The task retry alone would not stop SDK-internal retries. The
- * bound travels as an explicit argument of the production composition; the product tasks never pass it.
+ * AWS attempt counts (Step 7E.7-B-R1, Step 7G-H5.6B): the Trigger.dev task retry (maxAttempts 1), ONE run of the
+ * Roles Anywhere credential helper (the identity adapter never retries; a rejected CreateSession is one request, while
+ * the helper's own SDK retries up to 3 attempts on throttling, 5xx and network failures — AWS's behavior, not ours) and
+ * the KMS client (KMS_DIAGNOSTIC_AWS_ATTEMPTS: one Decrypt attempt). The task retry alone would not stop SDK-internal
+ * retries. The KMS bound travels as an explicit argument of the production composition; the product tasks never pass it.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { CredentialUnreadableError, encodeProviderCredential, type ProviderCredentialAccess } from "@/modules/connections";
@@ -121,7 +122,7 @@ export interface KmsDiagnosticRun {
   readonly release: JobRelease;
 }
 
-/** One attempt for each AWS client of the diagnostic (STS and KMS): no SDK retry, independent of the task retry. */
+/** One attempt for the diagnostic's KMS client: no SDK retry, independent of the task retry. */
 export const KMS_DIAGNOSTIC_AWS_ATTEMPTS = Object.freeze({ maxAttempts: 1 } as const);
 
 /** The composed production credential access, and the context env it seals/opens under. */
@@ -141,7 +142,7 @@ export interface KmsDiagnosticDependencies {
  * both AWS clients explicitly bounded to a single attempt.
  */
 export function productionDiagnosticAccess(environment: Environment): KmsDiagnosticAccess {
-  const opening = composeCredentialOpener(environment, integrationWorkerAwsCredentials(environment, KMS_DIAGNOSTIC_AWS_ATTEMPTS), KMS_DIAGNOSTIC_AWS_ATTEMPTS);
+  const opening = composeCredentialOpener(environment, integrationWorkerAwsCredentials(environment), KMS_DIAGNOSTIC_AWS_ATTEMPTS);
   return { access: createCredentialAccess(opening.opener, opening.contextEnv), contextEnv: opening.contextEnv };
 }
 

@@ -17,9 +17,12 @@
  *   TRIGGER_INTEGRATION_TASK_OPERATOR_KEY,         cross-project Trigger.dev orchestration keys of the jobs planes
  *   TRIGGER_MAIN_RELAY_TRIGGER_KEY                 (Step 7E.4B.3): the web knows only the MAIN project's key
  *   TRIGGER_INTEGRATION_PROJECT_REF                the integration plane's deploy/CLI configuration
- *   INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID,       the integration worker's AWS bootstrap identity (Step 7E.4C):
- *   INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY,   the web never holds the worker's decrypt path
- *   INTEGRATION_AWS_WORKER_ROLE_ARN
+ *   INTEGRATION_AWS_WORKER_ROLE_ARN,               the integration worker's AWS identity (Roles Anywhere, Step
+ *   INTEGRATION_AWS_ROLES_ANYWHERE_*_ARN,          7G-H5.6B): the web never holds the worker's decrypt path — least of
+ *   INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM,      all its workload private key
+ *   INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM
+ *   INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID,       the RETIRED Step 7E.4C bootstrap key: refused everywhere
+ *   INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY
  *   INTEGRATION_KMS_DIAGNOSTIC_FIXTURE             the integration-only KMS worker-auth diagnostic's synthetic
  *                                                  envelope (Step 7E.7-B)
  *
@@ -57,6 +60,10 @@ export const FORBIDDEN_WEB_VARIABLES = [
   "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID",
   "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY",
   "INTEGRATION_AWS_WORKER_ROLE_ARN",
+  "INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN",
+  "INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN",
+  "INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM",
+  "INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM",
   "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
 ] as const;
 

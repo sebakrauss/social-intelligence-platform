@@ -12,10 +12,12 @@
  *     outage propagates (retryable); a denied or misconfigured keyring is a non-retryable operational failure,
  *     never "credential unreadable" (Step 7D). Nothing is cached.
  *   - the opener is the local keyring's in development/test, the KMS Decrypt opener where KMS is configured
- *     (Step 7D), whose AWS identity is the integration worker's assumed role (Step 7E.4C: bootstrap IAM user →
- *     STS AssumeRole → temporary credentials, jobs/integration-aws-identity.ts) — Decrypt only, never sealing.
- *   - AWS retries (Step 7E.7-B-R1): the product tasks pass no attempt bound, so both clients keep the SDK's default
- *     retry behavior; only the KMS worker-auth diagnostic passes AwsSingleAttempt (one STS and one KMS attempt).
+ *     (Step 7D), whose AWS identity is the integration worker role through IAM Roles Anywhere (Step 7G-H5.6B: workload
+ *     certificate → CreateSession → 900 s temporary credentials, jobs/integration-aws-identity.ts) — Decrypt only,
+ *     never sealing.
+ *   - AWS retries (Step 7E.7-B-R1): the product tasks pass no attempt bound, so the KMS client keeps the SDK's default
+ *     retry behavior; only the KMS worker-auth diagnostic passes AwsSingleAttempt (one Decrypt attempt). The identity
+ *     adapter itself never retries (the credential helper's own SDK retries are AWS's).
  */
 import { randomUUID } from "node:crypto";
 import {
@@ -143,13 +145,13 @@ export function composeJobProviders(environment: Environment): JobComposition {
 
 /**
  * The integration worker's AWS credential provider where KMS is configured; undefined in local/test (the local keyring
- * needs none). Lazy: building it reads nothing and calls nothing — STS is first asked when the KMS opener needs
- * credentials. Missing bootstrap configuration then fails closed (KEYRING_MISCONFIGURED), never falling back.
- * `attempts` (optional, explicit): one STS attempt per AssumeRole; absent, the SDK default.
+ * needs none). Lazy: building it reads, writes and starts nothing — the Roles Anywhere credential helper runs first when
+ * the KMS opener needs credentials. Missing or invalid identity configuration then fails closed (KEYRING_MISCONFIGURED),
+ * never falling back. The adapter never retries; KMS attempts are bounded separately (composeCredentialOpener).
  */
-export function integrationWorkerAwsCredentials(environment: Environment, attempts?: AwsSingleAttempt): KmsCredentialSource | undefined {
+export function integrationWorkerAwsCredentials(environment: Environment): KmsCredentialSource | undefined {
   const kms = readKmsKeyringConfig(environment);
-  return kms === undefined ? undefined : createIntegrationWorkerAwsCredentials(kms, {}, attempts);
+  return kms === undefined ? undefined : createIntegrationWorkerAwsCredentials(kms);
 }
 
 export interface ComposedCredentialOpener {

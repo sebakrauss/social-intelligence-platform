@@ -1,231 +1,338 @@
 /**
- * The INTEGRATION worker's AWS identity (Step 7E.4C; TA §39, ADR-64) — DEV/non-prod only; production topology is open
- * (TA-Q-05). Composed only by the integration plane's credential-opening composition (jobs/connections.ts, dependency
- * rule): the main plane, the web and every shared module never reach it.
+ * The INTEGRATION worker's AWS identity: AWS IAM Roles Anywhere (Step 7G-H5.6B; TA §39, ADR-64) — DEV/non-prod; the
+ * production topology stays open (TA-Q-05). Composed only by the integration plane's credential-opening composition
+ * (jobs/connections.ts, dependency rule): the main plane, the web and every shared module never reach it. It replaces
+ * the temporary bootstrap IAM user (Step 7E.4C); there is no compatibility path for it.
  *
- *   INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID       long-lived IAM user access key id      (secret store, integration only)
- *   INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY   its secret                             (secret store, integration only)
- *   INTEGRATION_AWS_WORKER_ROLE_ARN               the ONE role that user may assume      (non-secret, integration only)
+ *   INTEGRATION_AWS_WORKER_ROLE_ARN                   the ONE role a session may be for              (non-secret)
+ *   INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN   the trust anchor of the workload CA            (non-secret)
+ *   INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN        the profile: exactly that role, 900 s          (non-secret)
+ *   INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM          the workload's X.509 end-entity certificate    (confidential)
+ *   INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM          its private key, unencrypted PKCS#8            (SECRET)
  *
- * Every credential resolution re-reads these three names (never the AWS default chain, never AWS_ACCESS_KEY_ID & co.),
- * checks the role against the validated KMS key (same partition and account; IAM role ARNs carry no region) and returns
- * TEMPORARY credentials of the assumed role: one STS AssumeRole per session — exact role, 900 s, a fixed session name,
- * nothing else — through an STSClient pinned to the KMS key's region with configured endpoint URLs ignored. The bootstrap
- * credential is never handed to KMS. Sessions are cached in this provider's closure only (never disk, logs or outputs),
- * refreshed when 120 s or less remain, refreshed with ONE request however many callers wait, and dropped as soon as the
- * configured identity changes — bootstrap access key id or worker role ARN (a rotated Trigger secret or a re-targeted
- * role takes effect without a redeploy). Every failure becomes an
- * AwsIdentityError carrying only its category: no message, key, role, response or cause.
+ * Every resolution re-reads and re-validates all five (a rotated certificate or a re-targeted ARN takes effect without
+ * a redeploy; withdrawn configuration fails closed even while a cached session would still be valid):
+ *   - ARNs: full shapes; the role in the KMS key's partition and account; trust anchor and profile in its partition,
+ *     account AND region (Roles Anywhere resources are regional and must share account and region);
+ *   - PEM: one value per variable, either multi-line or one line with literal "\n" sequences (normalized in memory
+ *     only); exactly one block of the expected type, base64 body, bounded size;
+ *   - certificate (public material, parsed with node:crypto): an end entity (CA:false), an ECDSA P-256 key with a
+ *     NAMED curve, checked in its DER (the helper's Go X.509 parser rejects explicit curve parameters, which
+ *     node:crypto silently normalizes — verified offline), subject CN exactly
+ *     `social-intelligence-platform-integration-<context env>`, inside its validity window (outside it → ACCESS_DENIED);
+ *   - private key: structure only (PKCS#8 PEM shape) — it is never parsed, logged or compared here.
  *
- * Retries (Step 7E.7-B-R1): by default the STS client keeps the SDK's default retry behavior, unchanged. A caller may
- * pass AwsSingleAttempt explicitly to bound it to ONE AssumeRole attempt — only the KMS worker-auth diagnostic does.
+ * A session comes from the official AWS credential helper (jobs/aws-signing-helper*.ts): `credential-process` with the
+ * three ARNs, the KMS key's region and 900 s. It cannot read the certificate or key from a pipe (it reads each file more
+ * than once — verified offline), so both are written for that ONE run to a fresh `mkdtemp` directory (0700) in the OS
+ * temp directory as 0600 files with fixed names, the key overwritten and the directory removed in `finally`, whatever
+ * happened. Nothing secret is in an argument; the helper runs without environment. Its standard credential_process
+ * output is parsed strictly (exactly Version 1, AccessKeyId, SecretAccessKey, SessionToken, Expiration) and the
+ * credentials must expire in the future and within SESSION + SKEW seconds; the profile enforces 900 s server side.
+ *
+ * Sessions are cached in this provider's closure only (never disk, logs or outputs), refreshed when 120 s or less remain,
+ * with ONE helper run however many callers wait, and dropped as soon as the identity changes (role, trust anchor,
+ * profile or certificate). Every failure is an AwsIdentityError carrying only its category — never stdout, stderr, a
+ * path, an ARN or any material. No fallback of any kind: not the AWS default chain, not static keys, not another runtime's
+ * identity. The helper's own SDK retries (up to 3 attempts for throttling, 5xx and network failures; one for a
+ * rejection — observed offline) are AWS's; this adapter never retries.
  */
-import { AssumeRoleCommand, STSClient, type AssumeRoleCommandOutput } from "@aws-sdk/client-sts";
+import { X509Certificate } from "node:crypto";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { AwsIdentityError, isIamRoleArn, type AwsCredentialProvider, type AwsIdentityFailure, type AwsTemporaryCredentials } from "@/platform/aws/identity";
-import type { AwsSingleAttempt } from "@/platform/crypto/credentials/aws-kms-client";
 import type { KmsKeyringConfig } from "@/platform/crypto/credentials/aws-kms-config";
-import { INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID_ENV, INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY_ENV, INTEGRATION_AWS_WORKER_ROLE_ARN_ENV } from "./plane-environment";
+import { deployedAwsSigningHelper, nodeSigningHelperProcess, type SigningHelperProcess, type SigningHelperRun } from "./aws-signing-helper-process";
+import {
+  INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN_ENV,
+  INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN_ENV,
+  INTEGRATION_AWS_WORKER_ROLE_ARN_ENV,
+  INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM_ENV,
+  INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM_ENV,
+} from "./plane-environment";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
-/** STS session length requested for the worker role. */
+/** Session length requested from Roles Anywhere; the profile enforces the same value. */
 export const INTEGRATION_WORKER_SESSION_SECONDS = 900;
-/** Stable, source-defined, non-secret session name (visible in CloudTrail as the assumed-role session). */
-export const INTEGRATION_WORKER_ROLE_SESSION_NAME = "integration-worker";
+/** Clock skew tolerated between AWS and this worker when checking the returned expiration. */
+export const INTEGRATION_WORKER_SESSION_SKEW_SECONDS = 60;
 /** A cached session with this little time left (or less) is replaced before it is served. */
 export const INTEGRATION_WORKER_REFRESH_WINDOW_SECONDS = 120;
+/** The whole helper run, its own SDK retries included (they back off for a few seconds at most). */
+export const SIGNING_HELPER_TIMEOUT_MS = 30_000;
+/** stdout and stderr are each bounded; a credential_process document is a few hundred bytes. */
+export const SIGNING_HELPER_MAX_OUTPUT_BYTES = 16 * 1024;
+/** The workload certificate's subject CN is this prefix plus the credential context env ("dev"). */
+export const INTEGRATION_WORKLOAD_SUBJECT_CN_PREFIX = "social-intelligence-platform-integration-";
 
-/** IAM access key ids: 16–128 word characters (IAM API constraint); no prefix is assumed. */
-const ACCESS_KEY_ID = /^\w{16,128}$/;
-/** A secret is opaque: printable, no whitespace, bounded. */
-const SECRET_ACCESS_KEY = /^[\x21-\x7E]{16,256}$/;
+const MAX_CERTIFICATE_PEM = 8 * 1024;
+const MAX_PRIVATE_KEY_PEM = 4 * 1024;
+const PEM_LINE = "[A-Za-z0-9+/=]{1,76}\\n";
+const CERTIFICATE_PEM = new RegExp(`^-----BEGIN CERTIFICATE-----\\n(?:${PEM_LINE})+-----END CERTIFICATE-----\\n$`);
+/** The unencrypted PKCS#8 PEM label (built from parts so no literal key-block marker exists in source: the secret scan forbids one). */
+const PKCS8_LABEL = ["PRIVATE", "KEY"].join(" ");
+const PRIVATE_KEY_PEM = new RegExp(`^-----BEGIN ${PKCS8_LABEL}-----\\n(?:${PEM_LINE})+-----END ${PKCS8_LABEL}-----\\n$`);
+/**
+ * DER prefix of a named-curve P-256 SubjectPublicKeyInfo: SEQUENCE(89) { SEQUENCE(19) { OID id-ecPublicKey, OID prime256v1 },
+ * BIT STRING(66) { 0x00, 0x04 (uncompressed point) … } }.
+ */
+const P256_NAMED_CURVE_SPKI_PREFIX = Buffer.from("3059301306072a8648ce3d020106082a8648ce3d030107034200 04".replace(/ /g, ""), "hex");
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const ROLES_ANYWHERE_ARN = new RegExp(`^arn:(aws(?:-[a-z]+)*):rolesanywhere:([a-z]{2}(?:-[a-z]+)+-\\d):(\\d{12}):(trust-anchor|profile)\\/(${UUID})$`);
 
-const misconfigured = (): never => {
-  throw new AwsIdentityError("IDENTITY_MISCONFIGURED");
+const fail = (failure: AwsIdentityFailure): never => {
+  throw new AwsIdentityError(failure);
 };
+const misconfigured = (): never => fail("IDENTITY_MISCONFIGURED");
 
-interface BootstrapIdentity {
-  readonly accessKeyId: string;
-  readonly secretAccessKey: string;
+export interface RolesAnywhereIdentity {
   readonly roleArn: string;
+  readonly trustAnchorArn: string;
+  readonly profileArn: string;
+  readonly region: string;
+  readonly certificatePem: string;
+  readonly privateKeyPem: string;
+  /** SHA-256 fingerprint of the certificate: the identity a session belongs to (never the key). */
+  readonly certificateFingerprint: string;
 }
 
-/** The principal an assumed-role session belongs to: bootstrap key id + assumed role. Never the secret. */
-interface SessionIdentity {
-  readonly accessKeyId: string;
-  readonly roleArn: string;
-}
-
-const sameIdentity = (a: SessionIdentity, b: SessionIdentity): boolean => a.accessKeyId === b.accessKeyId && a.roleArn === b.roleArn;
-
-/** `arn:<partition>:<service>:<region>:<account>:…` → partition and account (both already shape-validated). */
-const arnScope = (arn: string): { readonly partition: string; readonly account: string } => {
-  const [, partition = "", , , account = ""] = arn.split(":");
-  return { partition, account };
+/** `arn:<partition>:<service>:<region>:<account>:…` → partition, region and account (shapes already validated). */
+const arnScope = (arn: string): { readonly partition: string; readonly region: string; readonly account: string } => {
+  const [, partition = "", , region = "", account = ""] = arn.split(":");
+  return { partition, region, account };
 };
 
 /**
- * The bootstrap identity as configured NOW, or IDENTITY_MISCONFIGURED (missing, empty, padded or malformed; a role in
- * another partition or account than the KMS key). Values are never echoed.
+ * One PEM value as configured: multi-line, or a single line whose line breaks are literal "\n" sequences (the form a
+ * dashboard field keeps intact). Normalized in memory only; anything mixed, empty or oversized → undefined.
  */
-export function readBootstrapIdentity(environment: Environment, kms: Pick<KmsKeyringConfig, "currentKeyArn">): BootstrapIdentity {
-  const accessKeyId = environment[INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID_ENV];
-  const secretAccessKey = environment[INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY_ENV];
+export function normalizePem(value: string | undefined, maxLength: number): string | undefined {
+  if (value === undefined || value === "" || value.length > maxLength * 2) return undefined;
+  const real = value.includes("\n");
+  const literal = value.includes("\\n");
+  if (real && literal) return undefined;
+  const text = (literal ? value.replaceAll("\\n", "\n") : value.replaceAll("\r\n", "\n")).trim();
+  if (text === "" || text.length > maxLength) return undefined;
+  return `${text}\n`;
+}
+
+function certificateCommonNames(certificate: X509Certificate): readonly string[] {
+  return certificate.subject.split("\n").filter((line) => line.startsWith("CN=")).map((line) => line.slice(3));
+}
+
+/**
+ * The Roles Anywhere identity as configured NOW, or an AwsIdentityError: IDENTITY_MISCONFIGURED for anything missing,
+ * malformed or inconsistent, IDENTITY_ACCESS_DENIED for a certificate outside its validity window. Values are never echoed.
+ */
+export function readRolesAnywhereIdentity(environment: Environment, kms: Pick<KmsKeyringConfig, "currentKeyArn" | "region" | "contextEnv">, nowMs: number): RolesAnywhereIdentity {
   const roleArn = environment[INTEGRATION_AWS_WORKER_ROLE_ARN_ENV];
-  if (accessKeyId === undefined || !ACCESS_KEY_ID.test(accessKeyId)) return misconfigured();
-  if (secretAccessKey === undefined || !SECRET_ACCESS_KEY.test(secretAccessKey)) return misconfigured();
+  const trustAnchorArn = environment[INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN_ENV];
+  const profileArn = environment[INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN_ENV];
+  const key = arnScope(kms.currentKeyArn);
   if (!isIamRoleArn(roleArn)) return misconfigured();
   const role = arnScope(roleArn);
-  const key = arnScope(kms.currentKeyArn);
   if (role.partition !== key.partition || role.account !== key.account) return misconfigured();
-  return { accessKeyId, secretAccessKey, roleArn };
-}
+  for (const [arn, kind] of [[trustAnchorArn, "trust-anchor"], [profileArn, "profile"]] as const) {
+    const match = typeof arn === "string" ? ROLES_ANYWHERE_ARN.exec(arn) : null;
+    if (match?.[4] !== kind || match[1] !== key.partition || match[2] !== kms.region || match[3] !== key.account) return misconfigured();
+  }
 
-/** The one STS operation the bootstrap credential performs. */
-export interface AssumeRoleSender {
-  send(command: AssumeRoleCommand): Promise<AssumeRoleCommandOutput>;
-}
+  const certificatePem = normalizePem(environment[INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM_ENV], MAX_CERTIFICATE_PEM);
+  const privateKeyPem = normalizePem(environment[INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM_ENV], MAX_PRIVATE_KEY_PEM);
+  if (certificatePem === undefined || !CERTIFICATE_PEM.test(certificatePem)) return misconfigured();
+  if (privateKeyPem === undefined || !PRIVATE_KEY_PEM.test(privateKeyPem)) return misconfigured();
 
-/**
- * The real STS client for one bootstrap credential: explicit region (the KMS key's) and explicit static credentials
- * (no default chain, profile, IMDS/ECS, web identity or credential process), configured endpoint URLs ignored, no
- * FIPS/dual-stack variant picked up from the environment. With `attempts`, exactly one attempt (no SDK retry);
- * without it, the client is built exactly as before.
- */
-export function stsClientFor(region: string, credentials: { readonly accessKeyId: string; readonly secretAccessKey: string }, attempts?: AwsSingleAttempt): AssumeRoleSender {
-  return new STSClient({
-    region,
-    credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey },
-    ignoreConfiguredEndpointUrls: true,
-    useFipsEndpoint: false,
-    useDualstackEndpoint: false,
-    ...(attempts === undefined ? {} : { maxAttempts: 1 }),
+  let certificate: X509Certificate;
+  try {
+    certificate = new X509Certificate(certificatePem);
+  } catch {
+    return misconfigured();
+  }
+  if (certificate.ca) return misconfigured();
+  // node:crypto normalizes explicit curve parameters to "prime256v1", so the key is checked in the certificate's own
+  // DER: it must carry exactly the named-curve P-256 SubjectPublicKeyInfo (the only form the helper accepts).
+  if (!certificate.raw.includes(P256_NAMED_CURVE_SPKI_PREFIX)) return misconfigured();
+  const names = certificateCommonNames(certificate);
+  if (names.length !== 1 || names[0] !== `${INTEGRATION_WORKLOAD_SUBJECT_CN_PREFIX}${kms.contextEnv}`) return misconfigured();
+  const validFrom = Date.parse(certificate.validFrom);
+  const validTo = Date.parse(certificate.validTo);
+  if (Number.isNaN(validFrom) || Number.isNaN(validTo)) return misconfigured();
+  if (nowMs < validFrom || nowMs >= validTo) return fail("IDENTITY_ACCESS_DENIED");
+
+  return Object.freeze({
+    roleArn,
+    trustAnchorArn: trustAnchorArn as string,
+    profileArn: profileArn as string,
+    region: kms.region,
+    certificatePem,
+    privateKeyPem,
+    certificateFingerprint: certificate.fingerprint256,
   });
 }
 
-const FAILURES_BY_NAME: Readonly<Record<string, AwsIdentityFailure>> = Object.freeze({
-  AccessDenied: "IDENTITY_ACCESS_DENIED",
-  AccessDeniedException: "IDENTITY_ACCESS_DENIED",
-  InvalidClientTokenId: "IDENTITY_ACCESS_DENIED",
-  UnrecognizedClientException: "IDENTITY_ACCESS_DENIED",
-  SignatureDoesNotMatch: "IDENTITY_ACCESS_DENIED",
-  ExpiredToken: "IDENTITY_ACCESS_DENIED",
-  ExpiredTokenException: "IDENTITY_ACCESS_DENIED",
+/** The helper's exact argument array: paths and non-secret identifiers only. */
+export function signingHelperArguments(identity: RolesAnywhereIdentity, files: { readonly certificate: string; readonly privateKey: string }): readonly string[] {
+  return Object.freeze([
+    "credential-process",
+    "--certificate", files.certificate,
+    "--private-key", files.privateKey,
+    "--trust-anchor-arn", identity.trustAnchorArn,
+    "--profile-arn", identity.profileArn,
+    "--role-arn", identity.roleArn,
+    "--region", identity.region,
+    "--session-duration", String(INTEGRATION_WORKER_SESSION_SECONDS),
+  ]);
+}
 
-  Throttling: "IDENTITY_UNAVAILABLE",
-  ThrottlingException: "IDENTITY_UNAVAILABLE",
-  TooManyRequests: "IDENTITY_UNAVAILABLE",
-  TooManyRequestsException: "IDENTITY_UNAVAILABLE",
-  ServiceUnavailable: "IDENTITY_UNAVAILABLE",
-  ServiceUnavailableException: "IDENTITY_UNAVAILABLE",
-  InternalFailure: "IDENTITY_UNAVAILABLE",
-  InternalError: "IDENTITY_UNAVAILABLE",
-  InternalServerError: "IDENTITY_UNAVAILABLE",
-  RequestTimeout: "IDENTITY_UNAVAILABLE",
-  RequestTimeoutException: "IDENTITY_UNAVAILABLE",
-  TimeoutError: "IDENTITY_UNAVAILABLE",
-  // Clock skew on managed compute is an operational, time-source condition: retry rather than declare misconfiguration.
-  RequestTimeTooSkewed: "IDENTITY_UNAVAILABLE",
+/**
+ * The certificate and key as two 0600 files in a fresh 0700 directory for exactly the duration of `work`. The key file
+ * is overwritten with zeros before the directory is removed — in `finally`, on every path.
+ */
+export async function withEphemeralWorkloadMaterial<T>(
+  temporaryRoot: string,
+  identity: Pick<RolesAnywhereIdentity, "certificatePem" | "privateKeyPem">,
+  work: (files: { readonly certificate: string; readonly privateKey: string }) => Promise<T>,
+): Promise<T> {
+  const directory = await mkdtemp(path.join(temporaryRoot, "wrenkind-ra-"));
+  const files = { certificate: path.join(directory, "certificate.pem"), privateKey: path.join(directory, "private-key.pem") };
+  const keyBytes = Buffer.from(identity.privateKeyPem, "utf8");
+  try {
+    await writeFile(files.certificate, identity.certificatePem, { mode: 0o600, flag: "wx" });
+    await writeFile(files.privateKey, keyBytes, { mode: 0o600, flag: "wx" });
+    return await work(files);
+  } finally {
+    keyBytes.fill(0);
+    try {
+      const handle = await open(files.privateKey, "r+");
+      try {
+        await handle.write(Buffer.alloc(identity.privateKeyPem.length), 0, identity.privateKeyPem.length, 0);
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      // The key file was never written, or is already gone: nothing to overwrite.
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+}
 
-  RegionDisabledException: "IDENTITY_MISCONFIGURED",
-  MalformedPolicyDocument: "IDENTITY_MISCONFIGURED",
-  MalformedPolicyDocumentException: "IDENTITY_MISCONFIGURED",
-  PackedPolicyTooLarge: "IDENTITY_MISCONFIGURED",
-  PackedPolicyTooLargeException: "IDENTITY_MISCONFIGURED",
-  ValidationError: "IDENTITY_MISCONFIGURED",
-});
-
-const TRANSIENT_NETWORK_CODES: readonly string[] = ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"];
-
-/** The meaning of an STS failure. Unknown → IDENTITY_MISCONFIGURED (fail closed). Nothing of the error is kept. */
-export function stsIdentityFailure(error: unknown): AwsIdentityFailure {
-  if (error instanceof AwsIdentityError) return error.failure;
-  if (typeof error !== "object" || error === null) return "IDENTITY_MISCONFIGURED";
-  const record = error as Record<string, unknown>;
-  const name = typeof record["name"] === "string" ? record["name"] : "";
-  if (Object.hasOwn(FAILURES_BY_NAME, name)) return FAILURES_BY_NAME[name] ?? "IDENTITY_MISCONFIGURED";
-  const code = typeof record["code"] === "string" ? record["code"] : "";
-  const cause = record["cause"];
-  const causeCode = typeof cause === "object" && cause !== null && typeof (cause as Record<string, unknown>)["code"] === "string" ? String((cause as Record<string, unknown>)["code"]) : "";
-  if (TRANSIENT_NETWORK_CODES.includes(code) || TRANSIENT_NETWORK_CODES.includes(causeCode)) return "IDENTITY_UNAVAILABLE";
-  if (typeof record["$retryable"] === "object" && record["$retryable"] !== null) return "IDENTITY_UNAVAILABLE";
-  if (record["$fault"] === "server") return "IDENTITY_UNAVAILABLE";
+/** The meaning of a failed helper run, from its exit and stderr (classified, then dropped — never propagated). */
+export function signingHelperFailure(run: SigningHelperRun): AwsIdentityFailure {
+  if (run.spawnFailure !== null) return "IDENTITY_MISCONFIGURED";
+  if (run.overflow) return "IDENTITY_MISCONFIGURED";
+  if (run.timedOut) return "IDENTITY_UNAVAILABLE";
+  if (run.signal !== null) return "IDENTITY_UNAVAILABLE";
+  const stderr = run.stderr;
+  // The helper reports `operation error RolesAnywhere: CreateSession, … StatusCode: <n>, … <ExceptionName>: …`.
+  if (/StatusCode: 403\b|AccessDeniedException|UnauthorizedException/.test(stderr)) return "IDENTITY_ACCESS_DENIED";
+  if (/StatusCode: (?:429|5\d\d)\b|ThrottlingException|TooManyRequestsException|ServiceUnavailableException|InternalServerException|request send failed|i\/o timeout|connection reset|connection refused|no such host|TLS handshake timeout|context deadline exceeded/.test(stderr)) {
+    return "IDENTITY_UNAVAILABLE";
+  }
   return "IDENTITY_MISCONFIGURED";
 }
 
-const present = (value: unknown): value is string => typeof value === "string" && value !== "";
+const ACCESS_KEY_ID = /^\w{16,128}$/;
+const OPAQUE = (min: number, max: number) => new RegExp(`^[\\x21-\\x7E]{${String(min)},${String(max)}}$`);
+const SECRET_ACCESS_KEY = OPAQUE(16, 256);
+const SESSION_TOKEN = OPAQUE(16, 8192);
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+const CREDENTIAL_PROCESS_KEYS = ["AccessKeyId", "Expiration", "SecretAccessKey", "SessionToken", "Version"];
 
-/** Complete temporary credentials expiring in the future, or IDENTITY_MISCONFIGURED. */
-function temporaryCredentials(output: AssumeRoleCommandOutput, nowMs: number): AwsTemporaryCredentials {
-  const credentials = output.Credentials;
-  if (credentials === undefined) return misconfigured();
-  const { AccessKeyId, SecretAccessKey, SessionToken, Expiration } = credentials;
-  if (!present(AccessKeyId) || !present(SecretAccessKey) || !present(SessionToken)) return misconfigured();
-  if (!(Expiration instanceof Date) || Number.isNaN(Expiration.getTime()) || Expiration.getTime() <= nowMs) return misconfigured();
-  return Object.freeze({ accessKeyId: AccessKeyId, secretAccessKey: SecretAccessKey, sessionToken: SessionToken, expiration: Expiration });
+/** The helper's credential_process document → temporary credentials, or IDENTITY_MISCONFIGURED. Strict. */
+export function parseCredentialProcessOutput(stdout: string, nowMs: number): AwsTemporaryCredentials {
+  let document: unknown;
+  try {
+    document = JSON.parse(stdout);
+  } catch {
+    return misconfigured();
+  }
+  if (typeof document !== "object" || document === null || Array.isArray(document)) return misconfigured();
+  const record = document as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== CREDENTIAL_PROCESS_KEYS.join(",")) return misconfigured();
+  const { Version, AccessKeyId, SecretAccessKey, SessionToken, Expiration } = record;
+  if (Version !== 1) return misconfigured();
+  if (typeof AccessKeyId !== "string" || !ACCESS_KEY_ID.test(AccessKeyId)) return misconfigured();
+  if (typeof SecretAccessKey !== "string" || !SECRET_ACCESS_KEY.test(SecretAccessKey)) return misconfigured();
+  if (typeof SessionToken !== "string" || !SESSION_TOKEN.test(SessionToken)) return misconfigured();
+  if (typeof Expiration !== "string" || !ISO_INSTANT.test(Expiration)) return misconfigured();
+  const expiration = new Date(Expiration);
+  const expiresMs = expiration.getTime();
+  if (Number.isNaN(expiresMs) || expiresMs <= nowMs) return misconfigured();
+  if (expiresMs - nowMs > (INTEGRATION_WORKER_SESSION_SECONDS + INTEGRATION_WORKER_SESSION_SKEW_SECONDS) * 1000) return misconfigured();
+  return Object.freeze({ accessKeyId: AccessKeyId, secretAccessKey: SecretAccessKey, sessionToken: SessionToken, expiration });
 }
 
-/** Injection seam for offline tests; production re-reads process.env on every resolution and uses the real STS client. */
+/** Injection seam for offline tests; production re-reads process.env on every resolution. */
 export interface IntegrationAwsIdentityDependencies {
   readonly readEnvironment: () => Environment;
-  readonly stsClient: (region: string, credentials: { readonly accessKeyId: string; readonly secretAccessKey: string }, attempts?: AwsSingleAttempt) => AssumeRoleSender;
   readonly nowMs: () => number;
+  /** The digest-verified helper executable (production: the packaged build for this platform). */
+  readonly signingHelper: () => Promise<string>;
+  readonly process: SigningHelperProcess;
+  /** Where the per-run 0700 directory is created (production: the OS temp directory). */
+  readonly temporaryRoot: () => string;
 }
 
 const PRODUCTION: IntegrationAwsIdentityDependencies = Object.freeze({
   readEnvironment: () => process.env,
-  stsClient: stsClientFor,
   nowMs: () => Date.now(),
+  signingHelper: deployedAwsSigningHelper,
+  process: nodeSigningHelperProcess,
+  temporaryRoot: () => tmpdir(),
 });
+
+/** The identity a session belongs to: the three ARNs and the certificate. Never the private key. */
+type SessionIdentity = Pick<RolesAnywhereIdentity, "roleArn" | "trustAnchorArn" | "profileArn" | "certificateFingerprint">;
+
+const sameIdentity = (a: SessionIdentity, b: SessionIdentity): boolean =>
+  a.roleArn === b.roleArn && a.trustAnchorArn === b.trustAnchorArn && a.profileArn === b.profileArn && a.certificateFingerprint === b.certificateFingerprint;
 
 /**
  * The integration worker's AwsCredentialProvider for the given (validated) KMS keyring configuration. Lazy: nothing is
- * read or requested until the KMS opener asks for credentials. `attempts` (optional, explicit) bounds every STS client
- * it builds to one attempt; absent, the SDK default applies.
+ * read, written or started until the KMS opener asks for credentials.
  */
 export function createIntegrationWorkerAwsCredentials(
-  kms: Pick<KmsKeyringConfig, "currentKeyArn" | "region">,
+  kms: Pick<KmsKeyringConfig, "currentKeyArn" | "region" | "contextEnv">,
   overrides: Partial<IntegrationAwsIdentityDependencies> = {},
-  attempts?: AwsSingleAttempt,
 ): AwsCredentialProvider {
   const deps: IntegrationAwsIdentityDependencies = { ...PRODUCTION, ...overrides };
-  // Every session and every refresh carries the identity that produced it: the bootstrap principal's key id and the
-  // role it assumed (never the secret: AWS rotates a key by issuing a new key id, not by mutating its secret).
   let cached: { readonly identity: SessionIdentity; readonly credentials: AwsTemporaryCredentials } | undefined;
   let inflight: { readonly identity: SessionIdentity; readonly promise: Promise<AwsTemporaryCredentials> } | undefined;
 
-  const assume = async (identity: BootstrapIdentity): Promise<AwsTemporaryCredentials> => {
+  const createSession = async (identity: RolesAnywhereIdentity): Promise<AwsTemporaryCredentials> => {
     try {
-      const output = await deps.stsClient(kms.region, identity, attempts).send(
-        new AssumeRoleCommand({ RoleArn: identity.roleArn, RoleSessionName: INTEGRATION_WORKER_ROLE_SESSION_NAME, DurationSeconds: INTEGRATION_WORKER_SESSION_SECONDS }),
+      const executable = await deps.signingHelper();
+      const run = await withEphemeralWorkloadMaterial(deps.temporaryRoot(), identity, (files) =>
+        deps.process.run(executable, signingHelperArguments(identity, files), { timeoutMs: SIGNING_HELPER_TIMEOUT_MS, maxOutputBytes: SIGNING_HELPER_MAX_OUTPUT_BYTES }),
       );
-      return temporaryCredentials(output, deps.nowMs());
+      if (run.exitCode !== 0 || run.spawnFailure !== null || run.timedOut || run.overflow || run.signal !== null) return fail(signingHelperFailure(run));
+      return parseCredentialProcessOutput(run.stdout, deps.nowMs());
     } catch (error) {
-      throw new AwsIdentityError(stsIdentityFailure(error));
+      if (error instanceof AwsIdentityError) throw error;
+      // A temporary-directory or process-level failure: the identity can't be obtained here. Nothing of it is kept.
+      return misconfigured();
     }
   };
 
   return async () => {
-    // The CURRENT configuration is parsed and validated first, every time: a cache hit never bypasses it, and withdrawn
-    // or invalid configuration fails closed even while a cached session would still be valid.
-    const bootstrap = readBootstrapIdentity(deps.readEnvironment(), kms);
-    const identity: SessionIdentity = { accessKeyId: bootstrap.accessKeyId, roleArn: bootstrap.roleArn };
-    // A session is reused only while the configuration still targets the principal that produced it.
-    if (cached !== undefined && !sameIdentity(cached.identity, identity)) cached = undefined;
+    // The CURRENT configuration is parsed and validated first, every time: a cache hit never bypasses it.
+    const identity = readRolesAnywhereIdentity(deps.readEnvironment(), kms, deps.nowMs());
+    const key: SessionIdentity = { roleArn: identity.roleArn, trustAnchorArn: identity.trustAnchorArn, profileArn: identity.profileArn, certificateFingerprint: identity.certificateFingerprint };
+    if (cached !== undefined && !sameIdentity(cached.identity, key)) cached = undefined;
     const fresh = cached?.credentials.expiration;
     if (cached !== undefined && fresh !== undefined && fresh.getTime() - deps.nowMs() > INTEGRATION_WORKER_REFRESH_WINDOW_SECONDS * 1000) return cached.credentials;
-    if (inflight !== undefined && sameIdentity(inflight.identity, identity)) return inflight.promise;
+    if (inflight !== undefined && sameIdentity(inflight.identity, key)) return inflight.promise;
     const flight: { current?: { readonly identity: SessionIdentity; readonly promise: Promise<AwsTemporaryCredentials> } } = {};
-    const promise = assume(bootstrap).then((credentials) => {
-      // Installed only by the refresh that is still the current one: a refresh superseded by a newer identity (its
-      // configuration changed meanwhile) still answers its own caller but never becomes the cached session.
-      if (inflight === flight.current) cached = { identity, credentials };
+    const promise = createSession(identity).then((credentials) => {
+      // Installed only by the refresh that is still the current one (a superseded identity answers its own caller only).
+      if (inflight === flight.current) cached = { identity: key, credentials };
       return credentials;
     });
-    const current = { identity, promise };
+    const current = { identity: key, promise };
     flight.current = current;
     inflight = current;
-    // A settled refresh — success or failure — never stays in flight, so a failure is retried by the next caller.
     const settle = (): void => {
       if (inflight === current) inflight = undefined;
     };

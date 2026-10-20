@@ -5,8 +5,14 @@
  * integration and no automatic pull-request previews for this project. Used only by the Trigger.dev CLI
  * (`trigger deploy --config trigger.integration.config.ts --external-id <commit SHA>`, the same id as the main plane's
  * deployment of that commit). The project reference comes from the environment and is never committed.
+ *
+ * Step 7G-H5.6B: the ONLY build that packages the AWS IAM Roles Anywhere credential helper (the worker's AWS identity),
+ * through jobs/build/aws-signing-helper-extension.ts — pinned, fetched beforehand with
+ * tools/trigger/fetch-aws-signing-helper.ts, and enforced by an image-build integrity layer (a missing or altered build
+ * fails the image build). Deploy with `--depot-build` (the image context is the local build output).
  */
 import { defineConfig } from "@trigger.dev/sdk";
+import { awsSigningHelperExtension } from "./jobs/build/aws-signing-helper-extension";
 import { RETRY_POLICIES } from "./platform/jobs/registry";
 
 export default defineConfig({
@@ -15,6 +21,9 @@ export default defineConfig({
   project: process.env["TRIGGER_INTEGRATION_PROJECT_REF"] ?? "",
   dirs: ["./jobs/trigger/integration"],
   maxDuration: 300,
+  build: {
+    extensions: [awsSigningHelperExtension()],
+  },
   retries: {
     enabledInDev: true,
     default: {

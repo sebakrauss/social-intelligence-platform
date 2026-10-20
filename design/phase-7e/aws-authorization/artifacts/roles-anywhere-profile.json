@@ -1,0 +1,26 @@
+{
+  "name": "<DEV_ROLES_ANYWHERE_PROFILE_NAME>",
+  "enabled": true,
+  "roleArns": [
+    "<DEV_WORKER_ROLE_ARN>"
+  ],
+  "durationSeconds": 900,
+  "acceptRoleSessionName": false,
+  "requireInstanceProperties": false,
+  "managedPolicyArns": [],
+  "sessionPolicy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "SessionDecryptCredentialKeyOnly",
+        "Effect": "Allow",
+        "Action": [
+          "kms:Decrypt"
+        ],
+        "Resource": [
+          "<DEV_KMS_KEY_ARN>"
+        ]
+      }
+    ]
+  }
+}

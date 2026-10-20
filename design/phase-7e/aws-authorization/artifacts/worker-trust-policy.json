@@ -2,18 +2,23 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "BootstrapUserAssumesWorkerRole",
+      "Sid": "RolesAnywhereWorkloadAssumesWorkerRole",
       "Effect": "Allow",
       "Principal": {
-        "AWS": "<DEV_BOOTSTRAP_USER_ARN>"
+        "Service": "rolesanywhere.amazonaws.com"
       },
-      "Action": "sts:AssumeRole",
+      "Action": [
+        "sts:AssumeRole",
+        "sts:TagSession",
+        "sts:SetSourceIdentity"
+      ],
       "Condition": {
-        "StringEquals": {
-          "sts:RoleSessionName": "integration-worker"
+        "ArnEquals": {
+          "aws:SourceArn": "<DEV_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>"
         },
-        "Null": {
-          "aws:TokenIssueTime": "true"
+        "StringEquals": {
+          "aws:PrincipalTag/x509Subject/CN": "social-intelligence-platform-integration-dev",
+          "aws:PrincipalTag/x509Issuer/CN": "<DEV_WORKLOAD_CA_CN>"
         }
       }
     }

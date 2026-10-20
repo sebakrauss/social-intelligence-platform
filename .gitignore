@@ -24,6 +24,9 @@ npm-debug.log*
 # Local development certificates
 .local-certs/
 
+# Fetched third-party executables (pinned and digest-verified; tools/trigger/fetch-aws-signing-helper.ts)
+/vendor/
+
 # Local review artifacts
 step-1-final-review.zip
 .vercel

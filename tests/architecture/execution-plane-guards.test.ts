@@ -160,22 +160,48 @@ describe("cross-project credentials", () => {
     }
   });
 
-  it("the worker AWS identity (Step 7E.4C) lives only in the integration adapter; the jobs planes name its bootstrap only to refuse it", () => {
+  it("the worker AWS identity (Step 7G-H5.6B: Roles Anywhere) lives only in the integration adapter; the planes name the retired bootstrap key only to refuse it", () => {
     const jobs = sourceFiles(["jobs", "trigger.config.ts", "trigger.integration.config.ts"]);
     const users = (pattern: RegExp) => findReferences(jobs, [pattern]).map(([file]) => file);
-    expect(users(/AssumeRole|client-sts|STSClient/)).toEqual(["jobs/integration-aws-identity.ts"]);
+    expect(users(/AssumeRole|client-sts|STSClient/)).toEqual([]);
     // The names exist once, as constants of the per-plane contract; the adapter reads them only through those constants.
-    expect(users(/\bINTEGRATION_AWS_(BOOTSTRAP_ACCESS_KEY_ID|BOOTSTRAP_SECRET_ACCESS_KEY|WORKER_ROLE_ARN)\b/)).toEqual([PLANE_ENVIRONMENT_GUARD]);
+    expect(users(/\bINTEGRATION_AWS_(BOOTSTRAP_ACCESS_KEY_ID|BOOTSTRAP_SECRET_ACCESS_KEY|WORKER_ROLE_ARN|ROLES_ANYWHERE_TRUST_ANCHOR_ARN|ROLES_ANYWHERE_PROFILE_ARN|WORKLOAD_CERTIFICATE_PEM|WORKLOAD_PRIVATE_KEY_PEM)\b/)).toEqual([PLANE_ENVIRONMENT_GUARD]);
     expect(users(/\bINTEGRATION_AWS_[A-Z_]+_ENV\b/).sort()).toEqual(["jobs/integration-aws-identity.ts", PLANE_ENVIRONMENT_GUARD].sort());
+    // The private key's variable is read by exactly one module of the whole repository runtime: the identity adapter.
+    const keyReaders = findReferences(sourceFiles(["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "tools"]), [/\bINTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM_ENV\b/]).map(([file]) => file);
+    expect([...new Set(keyReaders)].sort()).toEqual(["jobs/integration-aws-identity.ts", PLANE_ENVIRONMENT_GUARD].sort());
     expect(users(/CREDENTIAL_KMS_WORKER|WORKER_BOOTSTRAP/i)).toEqual([]);
     expect(users(/\bAWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|WEB_IDENTITY_TOKEN_FILE)\b/)).toEqual([PLANE_ENVIRONMENT_GUARD]);
-    expect(/\bAWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|WEB_IDENTITY_TOKEN_FILE)\b|INTEGRATION_AWS_/.test(codeWithoutPlaneRefusals(PLANE_ENVIRONMENT_GUARD))).toBe(false);
+    expect(/\bAWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|WEB_IDENTITY_TOKEN_FILE)\b|INTEGRATION_AWS_[A-Z_]*"/.test(codeWithoutPlaneRefusals(PLANE_ENVIRONMENT_GUARD))).toBe(false);
   });
 
-  it("the worker identity is reachable only from the integration plane's task graph", async () => {
-    expect(await reachable(PLANE_DIRS.integration)).toContain("jobs/integration-aws-identity.ts");
-    expect(await reachable(PLANE_DIRS.main)).not.toContain("jobs/integration-aws-identity.ts");
+  it("the worker identity and the credential helper are reachable only from the integration plane's task graph", async () => {
+    const integration = await reachable(PLANE_DIRS.integration);
+    const main = await reachable(PLANE_DIRS.main);
+    for (const file of ["jobs/integration-aws-identity.ts", "jobs/aws-signing-helper-process.ts", "jobs/aws-signing-helper.ts"]) {
+      expect(integration, file).toContain(file);
+      expect(main, file).not.toContain(file);
+    }
   }, 60_000);
+
+  it("only the INTEGRATION build packages the credential helper; the main build and the web never do", () => {
+    expect(codeOf("trigger.integration.config.ts")).toMatch(/extensions: \[awsSigningHelperExtension\(\)\]/);
+    expect(codeOf("trigger.config.ts")).not.toMatch(/awsSigningHelper|aws-signing-helper|extensions/);
+    const users = findReferences(sourceFiles(["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "trigger.config.ts", "next.config.ts"]), [/awsSigningHelperExtension|aws-signing-helper-extension/]).map(([file]) => file);
+    expect([...new Set(users)]).toEqual(["jobs/build/aws-signing-helper-extension.ts"]);
+    expect(readFileSync(path.join(root, ".gitignore"), "utf8").split("\n")).toContain("/vendor/");
+    expect(readFileSync(path.join(root, ".vercelignore"), "utf8").split("\n")).toContain("/vendor");
+  });
+
+  it("Step 7G-H5.6B-C1: the image-build integrity layer is registered BEFORE staging, and onBuildComplete has no throw path (the CLI swallows it and drops the layer)", () => {
+    const extension = codeOf("jobs/build/aws-signing-helper-extension.ts");
+    const complete = /async onBuildComplete\([^)]*\): Promise<void> \{([\s\S]*?)\n {4}\},/.exec(extension)?.[1] ?? "";
+    expect(complete).toMatch(/^\s*if \(context\.target !== "deploy"\) return;\s*context\.addLayer\(\{ id: AWS_SIGNING_HELPER_LAYER_ID, commands: awsSigningHelperIntegrityCommands\(artifacts\) \}\);\s*await stageAwsSigningHelper\(context, manifest, artifacts\);\s*$/);
+    const staging = /export async function stageAwsSigningHelper\([\s\S]*?\n\}\n/.exec(extension)?.[0] ?? "";
+    expect(staging).toContain("} catch {");
+    expect(staging).not.toMatch(/\bthrow\b/);
+    expect(/export function awsSigningHelperIntegrityCommands\([\s\S]*?\n\}\n/.exec(extension)?.[0] ?? "").not.toMatch(/\bthrow\b|process\.env/);
+  });
 
   it("Step 7G-E: the Meta read port and its Graph transport are reachable only from the integration plane; the Meta authorization side from neither", async () => {
     const integration = await reachable(PLANE_DIRS.integration);

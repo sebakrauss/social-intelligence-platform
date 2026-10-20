@@ -1,10 +1,11 @@
 /**
- * Static checks for the Step 7E.5 AWS authorization artifacts (design/phase-7e/aws-authorization; DEV/non-prod target
- * design, nothing applied to AWS). They read the materialized JSON and documents, cross-check them against the source
- * contract, and evaluate an OFFLINE model of the policy conditions. The model encodes the AWS evaluation semantics the
- * design relies on — explicit Deny wins; C1_STRICT AssumeRole needs trust, identity and boundary Allows; a same-account
- * resource grant to a user ARN is not limited by the boundary's implicit deny; the worker role has no boundary — and
- * refuses any operator it does not model. It documents intent; it never proves AWS behavior (live validation is 7F).
+ * Static checks for the AWS authorization artifacts (design/phase-7e/aws-authorization; Step 7E.5, worker identity
+ * rewritten to IAM Roles Anywhere in Step 7G-H5.6B; DEV/non-prod target design, nothing applied to AWS). They read the
+ * materialized JSON and documents, cross-check them against the source contract, and evaluate an OFFLINE model of the
+ * policy conditions. The model encodes the AWS evaluation semantics the design relies on — explicit Deny wins; a role
+ * trust names its principal (an IAM ARN or a service) and its conditions must all hold; the retired C1_STRICT bootstrap
+ * user still needs trust, identity and boundary Allows; the worker role has no boundary — and refuses any operator it
+ * does not model. It documents intent; it never proves AWS behavior (live validation is a later gate).
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -30,26 +31,53 @@ const APPROVED_PLACEHOLDERS = [
   "<DEV_WEB_ROLE_ARN>",
   "<DEV_OPERATOR_ROLE_ARN>",
   "<DEV_GUARD_POLICY_NAME>",
+  "<DEV_ROLES_ANYWHERE_TRUST_ANCHOR_NAME>",
+  "<DEV_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>",
+  "<DEV_ROLES_ANYWHERE_PROFILE_NAME>",
+  "<DEV_WORKLOAD_CA_CN>",
+  "<DEV_WORKLOAD_CA_CERTIFICATE_PEM>",
   "<REVOCATION_CUTOFF_UTC>",
 ];
-/** Allowed in documents only: runbook key labels and the 7F-calibrated alert threshold. Never in a policy. */
-const DOCUMENT_ONLY_LABELS = ["<BOOTSTRAP_KEY_A_ID>", "<BOOTSTRAP_KEY_B_ID>", "<DECRYPT_HOURLY_CEILING>"];
+/** Allowed in documents only: runbook certificate labels and the live-calibrated alert threshold. Never in a policy. */
+const DOCUMENT_ONLY_LABELS = ["<WORKLOAD_CERTIFICATE_A_SERIAL>", "<WORKLOAD_CERTIFICATE_B_SERIAL>", "<DECRYPT_HOURLY_CEILING>"];
+
+/**
+ * The adapter's pinned values, read from its source: the adapter is composed only by jobs/connections.ts (boundary
+ * rule integration-worker-identity-composition-only), so this static check does not import it.
+ */
+function adapterConstant(name: string): string {
+  const match = new RegExp(`^export const ${name} = ([^;\\n]+);$`, "m").exec(codeOf("jobs/integration-aws-identity.ts"));
+  if (match?.[1] === undefined) throw new Error(`jobs/integration-aws-identity.ts no longer exports ${name} as a literal`);
+  return match[1];
+}
+const INTEGRATION_WORKER_SESSION_SECONDS = Number(adapterConstant("INTEGRATION_WORKER_SESSION_SECONDS"));
+const INTEGRATION_WORKER_REFRESH_WINDOW_SECONDS = Number(adapterConstant("INTEGRATION_WORKER_REFRESH_WINDOW_SECONDS"));
+const INTEGRATION_WORKLOAD_SUBJECT_CN_PREFIX = JSON.parse(adapterConstant("INTEGRATION_WORKLOAD_SUBJECT_CN_PREFIX")) as string;
 
 const WORKER_ROLE = "<DEV_WORKER_ROLE_ARN>";
 const BOOTSTRAP_USER = "<DEV_BOOTSTRAP_USER_ARN>";
 const KEY = "<DEV_KMS_KEY_ARN>";
 const WEB_ROLE = "<DEV_WEB_ROLE_ARN>";
+const TRUST_ANCHOR = "<DEV_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>";
+const CA_CN = "<DEV_WORKLOAD_CA_CN>";
+const ROLES_ANYWHERE = "rolesanywhere.amazonaws.com";
+/** The workload subject CN the source requires for the DEV context env. */
+const SUBJECT_CN = `${INTEGRATION_WORKLOAD_SUBJECT_CN_PREFIX}dev`;
 
 const ARTIFACT = {
-  identity: "bootstrap-identity-policy.json",
-  boundary: "bootstrap-permissions-boundary.json",
   trust: "worker-trust-policy.json",
   guard: "worker-deny-guard.json",
   workerKms: "kms-worker-decrypt-statement.json",
   dataKeyDeny: "kms-deny-data-keys-except-web.json",
-  emergency: "emergency-deny-all.json",
   revocation: "revoke-older-sessions.json",
+  profile: "roles-anywhere-profile.json",
+  trustAnchor: "roles-anywhere-trust-anchor.json",
+  identity: "retired/bootstrap-identity-policy.json",
+  boundary: "retired/bootstrap-permissions-boundary.json",
+  emergency: "retired/emergency-deny-all.json",
 } as const;
+/** Roles Anywhere resource contracts: their API fields, not IAM policy documents. */
+const CONTRACTS: readonly string[] = [ARTIFACT.profile, ARTIFACT.trustAnchor];
 /** Key-policy fragments are single statements; the rest are full policy documents. */
 const FRAGMENTS: readonly string[] = [ARTIFACT.workerKms, ARTIFACT.dataKeyDeny];
 
@@ -61,7 +89,7 @@ type Conditions = Readonly<Record<string, Readonly<Record<string, ConditionValue
 interface Statement {
   readonly Sid: string;
   readonly Effect: "Allow" | "Deny";
-  readonly Principal?: "*" | { readonly AWS: string };
+  readonly Principal?: "*" | { readonly AWS: string } | { readonly Service: string };
   readonly Action?: readonly string[];
   readonly NotAction?: readonly string[];
   readonly Resource?: readonly string[];
@@ -91,10 +119,11 @@ function conditionsOf(value: unknown, what: string): Conditions {
   return out;
 }
 
-function principalOf(value: unknown, what: string): "*" | { readonly AWS: string } {
+function principalOf(value: unknown, what: string): "*" | { readonly AWS: string } | { readonly Service: string } {
   if (value === "*") return "*";
   if (isRecord(value) && Object.keys(value).length === 1 && typeof value["AWS"] === "string") return { AWS: value["AWS"] };
-  throw new Error(`${what}: Principal must be "*" or { AWS: <one ARN> }`);
+  if (isRecord(value) && Object.keys(value).length === 1 && typeof value["Service"] === "string") return { Service: value["Service"] };
+  throw new Error(`${what}: Principal must be "*", { AWS: <one ARN> } or { Service: <one service> }`);
 }
 
 function statementOf(value: unknown, what: string): Statement {
@@ -149,7 +178,15 @@ const emergency = policy(ARTIFACT.emergency);
 const revocation = policy(ARTIFACT.revocation);
 const workerKms = fragment(ARTIFACT.workerKms);
 const dataKeyDeny = fragment(ARTIFACT.dataKeyDeny);
-const allStatements: readonly Statement[] = [...identity, ...boundary, ...trust, ...guard, ...emergency, ...revocation, workerKms, dataKeyDeny];
+const profileContract = parsed(ARTIFACT.profile) as Readonly<Record<string, unknown>>;
+const trustAnchorContract = parsed(ARTIFACT.trustAnchor) as Readonly<Record<string, unknown>>;
+/** The profile's session policy, validated as an IAM policy document. */
+const sessionPolicy: readonly Statement[] = (() => {
+  const value = profileContract["sessionPolicy"];
+  if (!isRecord(value) || value["Version"] !== "2012-10-17" || !Array.isArray(value["Statement"])) throw new Error("sessionPolicy: expected a policy document");
+  return (value["Statement"] as readonly unknown[]).map((statement, index) => statementOf(statement, `sessionPolicy#${String(index)}`));
+})();
+const allStatements: readonly Statement[] = [...identity, ...boundary, ...trust, ...guard, ...emergency, ...revocation, workerKms, dataKeyDeny, ...sessionPolicy];
 
 function filesUnder(relative: string): string[] {
   const absolute = path.join(REPOSITORY_ROOT, relative);
@@ -167,6 +204,8 @@ interface Request {
   readonly action: string;
   readonly resource: string;
   readonly principalArn: string;
+  /** For a service principal (a role trust assumed by Roles Anywhere). */
+  readonly principalService?: string;
   /** Request-context condition keys (aws:TokenIssueTime, sts:RoleSessionName, kms:EncryptionContext:*, ...). */
   readonly keys?: Readonly<Record<string, ConditionValue>>;
 }
@@ -197,6 +236,10 @@ function conditionHolds(operator: string, key: string, expected: ConditionValue,
   switch (operator) {
     case "StringEquals":
       return actual !== undefined && allowed.includes(single(actual));
+    case "ArnEquals":
+      // No wildcard in our artifacts: ArnEquals of a full ARN is an exact match.
+      if (allowed.some((value) => value.includes("*") || value.includes("?"))) throw new Error("ArnEquals wildcard not modeled");
+      return actual !== undefined && allowed.includes(single(actual));
     case "StringNotEquals":
       return actual === undefined || !allowed.includes(single(actual));
     case "StringLike":
@@ -220,7 +263,10 @@ function conditionHolds(operator: string, key: string, expected: ConditionValue,
 }
 
 function applies(statement: Statement, request: Request): boolean {
-  if (statement.Principal !== undefined && statement.Principal !== "*" && statement.Principal.AWS !== request.principalArn) return false;
+  if (statement.Principal !== undefined && statement.Principal !== "*") {
+    if ("AWS" in statement.Principal && statement.Principal.AWS !== request.principalArn) return false;
+    if ("Service" in statement.Principal && statement.Principal.Service !== request.principalService) return false;
+  }
   const actionMatches = (list: readonly string[]): boolean => list.some((pattern) => wildcard(pattern, request.action, true));
   if (statement.Action !== undefined && !actionMatches(statement.Action)) return false;
   if (statement.NotAction !== undefined && actionMatches(statement.NotAction)) return false;
@@ -260,14 +306,26 @@ function bootstrap(request: Request, options: BootstrapOptions = {}): Verdict {
 }
 
 /** A worker role session: inline guard (+ optional revocation) and, for the DEV key only, the key-policy target fragments. */
-function workerSession(request: Request, options: { readonly revoked?: boolean } = {}): Verdict {
+function workerSession(request: Request, options: { readonly revoked?: boolean; readonly session?: readonly Statement[] } = {}): Verdict {
   const identityPolicies = [...guard, ...(options.revoked === true ? revocation : [])];
   // A key policy governs only its own key; its "Resource": "*" means "this key".
   const keyPolicy = request.resource === KEY ? [workerKms, dataKeyDeny] : [];
   if (denies(identityPolicies, request) || denies(keyPolicy, request)) return "DENY";
-  // No permissions boundary and no session policy on the worker role: identity and key-policy Allows are a union.
-  return allows(identityPolicies, request) || allows(keyPolicy, request) ? "ALLOW" : "DENY";
+  // No permissions boundary on the worker role: identity and key-policy Allows are a union …
+  const granted = allows(identityPolicies, request) || allows(keyPolicy, request);
+  // … and a session policy (the Roles Anywhere profile's) can only narrow it: it must allow the request too.
+  return granted && (options.session === undefined || allows(options.session, request)) ? "ALLOW" : "DENY";
 }
+
+/** Roles Anywhere assuming the worker role on behalf of a certificate: the trust alone decides (a role has no identity policy for this). */
+const rolesAnywhereAssumes = (action: string, keys: Readonly<Record<string, ConditionValue>>): Verdict => {
+  const request: Request = { action, resource: WORKER_ROLE, principalArn: "", principalService: ROLES_ANYWHERE, keys };
+  return !denies(trust, request) && allows(trust, request) ? "ALLOW" : "DENY";
+};
+const certificateKeys = (overrides: Readonly<Record<string, string | undefined>> = {}): Record<string, string> => {
+  const base: Record<string, string | undefined> = { "aws:SourceArn": TRUST_ANCHOR, "aws:PrincipalTag/x509Subject/CN": SUBJECT_CN, "aws:PrincipalTag/x509Issuer/CN": CA_CN, ...overrides };
+  return Object.fromEntries(Object.entries(base).filter((entry): entry is [string, string] => entry[1] !== undefined));
+};
 
 // ── Synthetic request builders ────────────────────────────────────────────────────────────────────────────────────
 
@@ -316,19 +374,23 @@ const asWorker = (action: string, resource = KEY): Request => ({ action, resourc
 
 describe("AWS authorization artifacts — files, JSON and placeholders", () => {
   it("contains exactly the reviewed artifact set, documents and runbooks (no scripts or infrastructure code)", () => {
-    expect(readdirSync(path.join(REPOSITORY_ROOT, DIR, "artifacts")).sort()).toEqual(Object.values(ARTIFACT).sort());
+    const artifacts = filesUnder(path.join(DIR, "artifacts")).map((file) => path.relative(path.join(DIR, "artifacts"), file)).sort();
+    expect(artifacts).toEqual(Object.values(ARTIFACT).sort());
     expect(designFiles.every((file) => /\.(json|md)$/.test(file)), designFiles.join(", ")).toBe(true);
-    for (const required of ["README.md", "kms-key-policy-diff.md", "cloudtrail-alerting.md", "live-recapture-checklist.md", "threat-model.md", "runbooks/bootstrap-key-rotation.md", "runbooks/bootstrap-compromise.md"]) {
+    for (const required of ["README.md", "kms-key-policy-diff.md", "cloudtrail-alerting.md", "live-recapture-checklist.md", "threat-model.md", "runbooks/workload-certificate-rotation.md", "runbooks/workload-identity-compromise.md", "runbooks/bootstrap-retirement.md"]) {
       expect(designFiles).toContain(path.join(DIR, required));
     }
+    // The bootstrap runbooks are gone: no procedure provisions or rotates a static AWS key any more.
+    expect(designFiles.filter((file) => /bootstrap-(key-rotation|compromise)/.test(file))).toEqual([]);
   });
 
   it("every artifact parses; documents carry Version 2012-10-17; statements are well-formed with unique alphanumeric Sids", () => {
     for (const file of Object.values(ARTIFACT)) {
       if (FRAGMENTS.includes(file)) expect(() => fragment(file), file).not.toThrow();
+      else if (CONTRACTS.includes(file)) expect(isRecord(parsed(file)), file).toBe(true);
       else expect(policy(file).length, file).toBeGreaterThan(0);
     }
-    expect(allStatements).toHaveLength(12);
+    expect(allStatements).toHaveLength(13);
   });
 
   it("artifacts use only approved placeholders; runbook labels and thresholds never appear in a policy", () => {
@@ -370,85 +432,110 @@ describe("AWS authorization artifacts — files, JSON and placeholders", () => {
   });
 });
 
-describe("bootstrap user — C1_STRICT artifacts", () => {
-  it("identity policy: exactly one Allow, only sts:AssumeRole, only the exact worker role", () => {
-    expect(identity).toEqual([{ Sid: "AllowBootstrapAssumeWorkerRole", Effect: "Allow", Action: ["sts:AssumeRole"], Resource: [WORKER_ROLE] }]);
+describe("worker trust — IAM Roles Anywhere (Step 7G-H5.6B)", () => {
+  it("exactly the Roles Anywhere service principal, its three documented actions, and all three conditions — nothing else", () => {
+    expect(trust).toEqual([
+      {
+        Sid: "RolesAnywhereWorkloadAssumesWorkerRole",
+        Effect: "Allow",
+        Principal: { Service: ROLES_ANYWHERE },
+        Action: ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"],
+        Condition: {
+          ArnEquals: { "aws:SourceArn": TRUST_ANCHOR },
+          StringEquals: { "aws:PrincipalTag/x509Subject/CN": SUBJECT_CN, "aws:PrincipalTag/x509Issuer/CN": CA_CN },
+        },
+      },
+    ]);
+    // No IAM principal of any kind may assume the worker role any more (the retired bootstrap user included).
+    expect(rawArtifact(ARTIFACT.trust)).not.toMatch(/"AWS"|:root|"\*"|BOOTSTRAP|RoleSessionName|TokenIssueTime|ExternalId/);
   });
 
-  it("boundary: the exact Allow plus the three explicit Deny guards, nothing else", () => {
+  it("the trust follows the source contract: subject CN, 900 s sessions, 120 s refresh", () => {
+    expect(SUBJECT_CN).toBe("social-intelligence-platform-integration-dev");
+    expect(INTEGRATION_WORKER_SESSION_SECONDS).toBe(900);
+    expect(INTEGRATION_WORKER_REFRESH_WINDOW_SECONDS).toBe(120);
+    expect(codeOf("jobs/integration-aws-identity.ts")).not.toMatch(/RoleSessionName|INTEGRATION_WORKER_ROLE_SESSION_NAME|AssumeRole/);
+  });
+
+  it("offline model: only the exact certificate through the exact trust anchor assumes the role; every deviation is refused", () => {
+    for (const action of ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"]) expect(rolesAnywhereAssumes(action, certificateKeys()), action).toBe("ALLOW");
+    const deviations: [string, Record<string, string | undefined>][] = [
+      ["another trust anchor", { "aws:SourceArn": "<another-trust-anchor>" }],
+      ["no source ARN", { "aws:SourceArn": undefined }],
+      ["another subject CN (prod)", { "aws:PrincipalTag/x509Subject/CN": `${INTEGRATION_WORKLOAD_SUBJECT_CN_PREFIX}prod` }],
+      ["no subject CN", { "aws:PrincipalTag/x509Subject/CN": undefined }],
+      ["another issuer", { "aws:PrincipalTag/x509Issuer/CN": "<another-ca>" }],
+      ["no issuer", { "aws:PrincipalTag/x509Issuer/CN": undefined }],
+    ];
+    for (const [label, overrides] of deviations) expect(rolesAnywhereAssumes("sts:AssumeRole", certificateKeys(overrides)), label).toBe("DENY");
+    expect(rolesAnywhereAssumes("sts:AssumeRoleWithWebIdentity", certificateKeys())).toBe("DENY");
+    // Any IAM principal — the retired bootstrap user, an operator, a user — is not the trusted principal.
+    for (const principalArn of [BOOTSTRAP_USER, "<DEV_OPERATOR_ROLE_ARN>"]) {
+      expect(allows(trust, { action: "sts:AssumeRole", resource: WORKER_ROLE, principalArn, keys: certificateKeys() }), principalArn).toBe(false);
+    }
+  });
+});
+
+describe("Roles Anywhere profile and trust anchor contracts", () => {
+  it("profile: exactly the worker role, 900 s (= the source), no custom session name, no managed policy, enabled", () => {
+    expect(Object.keys(profileContract).sort()).toEqual(["acceptRoleSessionName", "durationSeconds", "enabled", "managedPolicyArns", "name", "requireInstanceProperties", "roleArns", "sessionPolicy"]);
+    expect(profileContract).toMatchObject({
+      name: "<DEV_ROLES_ANYWHERE_PROFILE_NAME>",
+      enabled: true,
+      roleArns: [WORKER_ROLE],
+      durationSeconds: INTEGRATION_WORKER_SESSION_SECONDS,
+      acceptRoleSessionName: false,
+      requireInstanceProperties: false,
+      managedPolicyArns: [],
+    });
+  });
+
+  it("session policy: only Decrypt on the DEV key — it can only narrow the worker role, never widen it", () => {
+    expect(sessionPolicy).toEqual([{ Sid: "SessionDecryptCredentialKeyOnly", Effect: "Allow", Action: ["kms:Decrypt"], Resource: [KEY] }]);
+    expect(workerSession(asWorker("kms:Decrypt"), { session: sessionPolicy })).toBe("ALLOW");
+    for (const action of ["kms:GenerateDataKey", "kms:Encrypt", "kms:ReEncryptTo", "kms:CreateGrant", "sts:AssumeRole", "s3:GetObject"]) {
+      expect(workerSession(asWorker(action), { session: sessionPolicy }), action).toBe("DENY");
+    }
+    // Even an accidental session-policy wildcard would not widen it: the guard and key policy still decide.
+    const wide: Statement = { Sid: "Wide", Effect: "Allow", Action: ["*"], Resource: ["*"] };
+    expect(workerSession(asWorker("kms:GenerateDataKey"), { session: [wide] })).toBe("DENY");
+  });
+
+  it("trust anchor: an external CA certificate bundle (the CA's PUBLIC certificate, entered at apply time), enabled", () => {
+    expect(trustAnchorContract).toEqual({
+      name: "<DEV_ROLES_ANYWHERE_TRUST_ANCHOR_NAME>",
+      enabled: true,
+      source: { sourceType: "CERTIFICATE_BUNDLE", sourceData: { x509CertificateData: "<DEV_WORKLOAD_CA_CERTIFICATE_PEM>" } },
+    });
+    for (const file of designFiles) expect(readFileSync(path.join(REPOSITORY_ROOT, file), "utf8"), file).not.toMatch(/-----BEGIN /);
+  });
+});
+
+describe("retired bootstrap user — deletion inventory (Step 7E.4C → 7G-H5.6B)", () => {
+  it("the retired artifacts are unchanged records of what still exists live", () => {
+    expect(identity).toEqual([{ Sid: "AllowBootstrapAssumeWorkerRole", Effect: "Allow", Action: ["sts:AssumeRole"], Resource: [WORKER_ROLE] }]);
     expect(boundary).toEqual([
       { Sid: "AllowExactWorkerRole", Effect: "Allow", Action: ["sts:AssumeRole"], Resource: [WORKER_ROLE] },
       { Sid: "DenyEverythingExceptAssumeRole", Effect: "Deny", NotAction: ["sts:AssumeRole"], Resource: ["*"] },
       { Sid: "DenyAssumeRoleExceptWorkerRole", Effect: "Deny", Action: ["sts:AssumeRole"], NotResource: [WORKER_ROLE] },
       { Sid: "DenyAllTemporaryUserCredentials", Effect: "Deny", Action: ["*"], Resource: ["*"], Condition: { Null: { "aws:TokenIssueTime": "false" } } },
     ]);
+    expect(emergency).toEqual([{ Sid: "EmergencyDenyAll", Effect: "Deny", Action: ["*"], Resource: ["*"] }]);
   });
 
-  it("worker trust: exact user principal, only AssumeRole, exact session name, long-term credentials only — nothing else", () => {
-    expect(trust).toEqual([
-      {
-        Sid: "BootstrapUserAssumesWorkerRole",
-        Effect: "Allow",
-        Principal: { AWS: BOOTSTRAP_USER },
-        Action: ["sts:AssumeRole"],
-        Condition: { StringEquals: { "sts:RoleSessionName": "integration-worker" }, Null: { "aws:TokenIssueTime": "true" } },
-      },
-    ]);
-    const text = rawArtifact(ARTIFACT.trust);
-    expect(text).not.toMatch(/:root|"\*"|PrincipalArn|ExternalId|SourceIdentity|TagSession|SetSourceIdentity|RequestTag|TransitiveTagKeys|SourceIp|MultiFactor/);
-  });
-
-  it("the trust's session name is the one the source requests (static contract: the adapter's import graph is confined to jobs/connections.ts)", () => {
-    const adapter = codeOf("jobs/integration-aws-identity.ts");
-    expect(adapter).toMatch(/export const INTEGRATION_WORKER_ROLE_SESSION_NAME = "integration-worker";/);
-    expect(adapter).toMatch(/export const INTEGRATION_WORKER_SESSION_SECONDS = 900;/);
-    expect(adapter).toMatch(/export const INTEGRATION_WORKER_REFRESH_WINDOW_SECONDS = 120;/);
-  });
-
-  it("long-term key: AssumeRole of the exact worker role with the source session name is the ONLY allowed request", () => {
-    expect(bootstrap(assumeRole(WORKER_ROLE, "integration-worker"))).toBe("ALLOW");
-    expect(bootstrap(assumeRole(WORKER_ROLE, "integration-worker-2"))).toBe("DENY");
-    expect(bootstrap(assumeRole(WORKER_ROLE, "Integration-Worker"))).toBe("DENY");
-    expect(bootstrap(assumeRole("other-role", "integration-worker"))).toBe("DENY");
-    for (const action of ["kms:Decrypt", "kms:GenerateDataKey", "kms:Encrypt", "kms:ReEncryptTo", "kms:CreateGrant", "s3:ListAllMyBuckets", "s3:GetObject", "iam:ListUsers", "iam:CreateAccessKey", "secretsmanager:GetSecretValue", "sts:GetFederationToken", "sts:TagSession"]) {
+  it("after the trust rewrite the retired user can assume nothing — even with every policy it still carries", () => {
+    expect(bootstrap(assumeRole(WORKER_ROLE, "integration-worker"))).toBe("DENY");
+    expect(bootstrap(assumeRole(WORKER_ROLE, "integration-worker", TEMPORARY), { withoutBoundary: true })).toBe("DENY");
+    for (const action of ["kms:Decrypt", "kms:GenerateDataKey", "s3:GetObject", "iam:CreateAccessKey", "secretsmanager:GetSecretValue"]) {
       expect(bootstrap(asBootstrap(action, action.startsWith("kms:") ? KEY : "*")), action).toBe("DENY");
     }
-  });
-
-  it("future accidental grants cannot widen it: identity Allow, resource-based Allow and another role's trust all lose to the boundary", () => {
     const wide: Statement = { Sid: "AccidentalAdmin", Effect: "Allow", Action: ["*"], Resource: ["*"] };
     expect(bootstrap(asBootstrap("secretsmanager:GetSecretValue"), { extraIdentity: [wide] })).toBe("DENY");
-    expect(bootstrap(asBootstrap("s3:GetObject"), { extraIdentity: [wide] })).toBe("DENY");
-    const grantToUser: Statement = { Sid: "ResourceGrant", Effect: "Allow", Principal: { AWS: BOOTSTRAP_USER }, Action: ["secretsmanager:GetSecretValue", "s3:GetObject"], Resource: ["*"] };
-    expect(bootstrap(asBootstrap("secretsmanager:GetSecretValue"), { resourcePolicy: [grantToUser] })).toBe("DENY");
-    expect(bootstrap(asBootstrap("s3:GetObject"), { resourcePolicy: [grantToUser] })).toBe("DENY");
-    const otherTrust: Statement = { Sid: "OtherRoleTrust", Effect: "Allow", Principal: { AWS: BOOTSTRAP_USER }, Action: ["sts:AssumeRole"] };
-    expect(bootstrap(assumeRole("other-role", "integration-worker"), { resourcePolicy: [otherTrust], extraIdentity: [wide] })).toBe("DENY");
-  });
-
-  it("the explicit Denies are what make it hold: without the boundary, a resource grant to the user would succeed (model sanity)", () => {
-    const grantToUser: Statement = { Sid: "ResourceGrant", Effect: "Allow", Principal: { AWS: BOOTSTRAP_USER }, Action: ["secretsmanager:GetSecretValue"], Resource: ["*"] };
-    expect(bootstrap(asBootstrap("secretsmanager:GetSecretValue"), { resourcePolicy: [grantToUser], withoutBoundary: true })).toBe("ALLOW");
-  });
-});
-
-describe("derived temporary user credentials (AWS_DOCUMENTATION_CONFLICT — ASSUME_WORST_CASE)", () => {
-  it("layer 1 — the boundary denies every request made with temporary user credentials", () => {
-    expect(denies(boundary, assumeRole(WORKER_ROLE, "integration-worker", TEMPORARY))).toBe(true);
-    expect(bootstrap(assumeRole(WORKER_ROLE, "integration-worker", TEMPORARY))).toBe("DENY");
-    expect(denies(boundary, assumeRole(WORKER_ROLE, "integration-worker"))).toBe(false);
-  });
-
-  it("layer 2 — the trust alone refuses temporary user credentials (holds even if the boundary were detached)", () => {
-    expect(allows(trust, assumeRole(WORKER_ROLE, "integration-worker", TEMPORARY))).toBe(false);
-    expect(bootstrap(assumeRole(WORKER_ROLE, "integration-worker", TEMPORARY), { withoutBoundary: true })).toBe("DENY");
-    expect(allows(trust, assumeRole(WORKER_ROLE, "integration-worker"))).toBe(true);
-  });
-
-  it("layer 3 — EmergencyDenyAll is a full Deny that blocks the long-term key and derived credentials alike", () => {
-    expect(emergency).toEqual([{ Sid: "EmergencyDenyAll", Effect: "Deny", Action: ["*"], Resource: ["*"] }]);
     expect(bootstrap(assumeRole(WORKER_ROLE, "integration-worker"), { emergencyDenyAll: true })).toBe("DENY");
-    expect(bootstrap(assumeRole(WORKER_ROLE, "integration-worker", TEMPORARY), { emergencyDenyAll: true, withoutBoundary: true })).toBe("DENY");
+  });
+
+  it("no source or runtime names the retired path except the refusal lists", () => {
+    expect(codeOf("jobs/integration-aws-identity.ts")).not.toMatch(/BOOTSTRAP|AssumeRole|client-sts|STSClient/);
   });
 });
 
@@ -565,8 +652,8 @@ describe("KMS target diff and web regression contract", () => {
 
   it("no artifact grants web anything, or anyone GenerateDataKey, Encrypt, ReEncrypt, CreateGrant or administration", () => {
     const allowsOf = allStatements.filter((s) => s.Effect === "Allow");
-    expect(allowsOf.filter((s) => s.Principal !== undefined && s.Principal !== "*" && s.Principal.AWS === WEB_ROLE)).toEqual([]);
-    expect(allowsOf.flatMap((s) => s.Action ?? []).sort()).toEqual(["kms:Decrypt", "sts:AssumeRole", "sts:AssumeRole", "sts:AssumeRole"]);
+    expect(allowsOf.filter((s) => s.Principal !== undefined && s.Principal !== "*" && "AWS" in s.Principal && s.Principal.AWS === WEB_ROLE)).toEqual([]);
+    expect(allowsOf.flatMap((s) => s.Action ?? []).sort()).toEqual(["kms:Decrypt", "kms:Decrypt", "sts:AssumeRole", "sts:AssumeRole", "sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"]);
     expect(allowsOf.filter((s) => s.NotAction !== undefined)).toEqual([]);
   });
 
@@ -582,71 +669,85 @@ describe("KMS target diff and web regression contract", () => {
 });
 
 describe("documents — required statements", () => {
-  it("README: authority model, no secrets, placeholders resolved from fresh state, production unresolved, artifacts referenced", () => {
+  it("README: authority model, Roles Anywhere not secretless, no secrets, placeholders resolved from fresh state, production unresolved, artifacts referenced", () => {
     const readme = doc("README.md");
-    for (const phrase of ["## State separation", "**UNVERIFIED UNTIL READ-ONLY RECAPTURE**", "never authorizes a live mutation", "## Authority model", "No artifact in this directory is a secret", "resolved from fresh read-only AWS state before any apply", "LIVE_POLICY_DIFF_PENDING_READ_ONLY_CAPTURE", "UNRESOLVED", "**No permissions boundary**", "required by our design"]) {
+    for (const phrase of ["## State separation", "**UNVERIFIED UNTIL READ-ONLY RECAPTURE**", "never authorizes a live mutation", "## Authority model", "No artifact in this directory is a secret", "resolved from fresh read-only AWS state before any apply", "LIVE_POLICY_DIFF_PENDING_READ_ONLY_CAPTURE", "UNRESOLVED", "**No permissions boundary**", "required by our design", "**not secretless**", "## Workload certificate contract", "**named curve**", "**retired**"]) {
       expect(readme, phrase).toContain(phrase);
     }
     for (const file of Object.values(ARTIFACT)) expect(readme, file).toContain(`artifacts/${file}`);
     expect(readme).not.toMatch(/"Statement"/);
   });
 
-  it("live recapture checklist: hard prerequisite, every required item, STOP on drift", () => {
+  it("README: the INTEGRATION deploy contract (Step 7G-H5.6B-C1) — supported --depot-build path, the image-build layer as the enforcement boundary", () => {
+    const readme = doc("README.md");
+    for (const phrase of ["## INTEGRATION deployment (credential helper)", "node tools/trigger/fetch-aws-signing-helper.ts", "trigger deploy --config trigger.integration.config.ts --external-id <commit SHA> --depot-build", "**The enforcement boundary**", "never throws (the CLI swallows that throw AND drops the extension's layers)", "not the supported path"]) {
+      expect(readme, phrase).toContain(phrase);
+    }
+  });
+
+  it("live recapture checklist: hard prerequisite, every required item (Roles Anywhere included), STOP on drift", () => {
     const checklist = doc("live-recapture-checklist.md");
     expect(checklist).toContain("LIVE_POLICY_DIFF_PENDING_READ_ONLY_CAPTURE");
     expect(checklist).toMatch(/If any drift exists: STOP before mutation and reconcile/);
-    for (const item of ["KMS key policy", "worker role trust", "web role trust", "inline policies", "managed (attached) policies", "permissions boundaries", "IAM users", "access-key metadata", "KMS grants", "keys B and C", "aliases", "CloudTrail trails, event selectors"]) {
+    for (const item of ["KMS key policy", "worker role trust", "web role trust", "inline policies", "managed (attached) policies", "permissions boundaries", "IAM users", "access-key metadata", "KMS grants", "keys B and C", "aliases", "CloudTrail trails, event selectors", "Roles Anywhere trust anchors, profiles and CRLs", "Roles Anywhere subjects"]) {
       expect(checklist, item).toContain(item);
     }
   });
 
-  it("threat model: worst-case derived credentials, UUID-shaped terminology, honest session lifetime", () => {
+  it("threat model: workload threats with guardrails, UUID-shaped terminology, honest session lifetime", () => {
     const threat = doc("threat-model.md");
+    expect(threat).toContain("**not secretless**");
     expect(threat).toContain("AWS_DOCUMENTATION_CONFLICT — ASSUME_WORST_CASE");
     expect(threat).toContain("UUID-SHAPED IDENTIFIER CONDITION");
     expect(threat).toMatch(/`\?` matches \*\*any one character\*\*/);
-    expect(threat).toContain("**900 seconds is not an infrastructure-enforced maximum.**");
+    expect(threat).toContain("**900 seconds is now an infrastructure-enforced maximum**");
     expect(threat).toMatch(/\| Role `MaxSessionDuration` \| 3600 \|/);
-    expect(threat).toMatch(/No `sts:DurationSeconds` condition key applies to `AssumeRole`/);
+    expect(threat).toMatch(/\| Profile `durationSeconds` \| 900 \|/);
+    for (const threatName of ["Leaf private key or certificate copied", "CA private key compromised", "A trust without `aws:SourceArn`", "A tampered credential helper", "A DEV certificate used for another environment", "Material in a build artifact"]) {
+      expect(threat, threatName).toContain(threatName);
+    }
     for (const file of designFiles.filter((f) => f.endsWith(".md"))) {
       expect(readFileSync(path.join(REPOSITORY_ROOT, file), "utf8"), file).not.toMatch(/UUID validation|validates? (canonical )?UUIDs? in IAM/i);
     }
   });
 
-  it("rotation runbook: lifecycle limits, our-own 30-day control, no transfer commands, atomicity open item", () => {
-    const rotation = doc("runbooks/bootstrap-key-rotation.md");
-    for (const phrase of ["at most **24 hours**", "up to **7 days**", "**30 days**", "**atomically**", "fail closed", "7E.6/7E.7"]) {
+  it("rotation runbook: lifecycle numbers as our own control, named curve, no secret handling in chat or source", () => {
+    const rotation = doc("runbooks/workload-certificate-rotation.md");
+    for (const phrase of ["about **90 days**", "around **day 60**", "**30 days**", "**named curve**", "**Secret** variable", "no redeploy is needed"]) {
       expect(rotation, phrase).toContain(phrase);
     }
-    expect(rotation).toMatch(/It is not an AWS\s+universal requirement/);
-    // No secret-transfer or AWS commands: those belong to 7E.6/7E.7 once the mechanism is selected.
-    expect(rotation).not.toMatch(/\baws\s+(iam|sts)\b|\bnpx\s+trigger|\bvercel\s+env\b|`[^`]*(create-access-key|update-access-key)[^`]*`/i);
+    expect(rotation).toMatch(/They are not an AWS requirement/);
+    expect(rotation).not.toMatch(/\baws\s+(iam|sts|rolesanywhere)\b|\bnpx\s+trigger|\bvercel\s+env\b|access[- ]key/i);
   });
 
-  it("compromise runbook: U1 never restored, worst-case derived credentials, explicit CLI/API cleanup before DeleteUser", () => {
-    const compromise = doc("runbooks/bootstrap-compromise.md");
-    for (const phrase of ["AWS_DOCUMENTATION_CONFLICT — ASSUME_WORST_CASE", "**U1 is never restored.**", "Never remove `EmergencyDenyAll` while U1 exists", "T2 + 36 hours + a safety margin", "iam:PutRolePolicy", "Create a NEW user U2", "Intentionally rewrite the worker trust"]) {
+  it("compromise runbook: disable profile (and anchor for a CA), revoke sessions, never weaken the trust", () => {
+    const compromise = doc("runbooks/workload-identity-compromise.md");
+    for (const phrase of ["**Disable the Roles Anywhere profile**", "**disable the trust anchor**", "**Revoke existing sessions**", "artifacts/revoke-older-sessions.json", "Never weaken the trust's three conditions"]) {
       expect(compromise, phrase).toContain(phrase);
     }
-    for (const api of ["DeleteAccessKey", "DeleteUserPolicy", "DetachUserPolicy", "RemoveUserFromGroup", "DeleteLoginProfile", "DeleteSigningCertificate", "DeleteSSHPublicKey", "DeleteServiceSpecificCredential", "DeactivateMFADevice", "DeleteUserPermissionsBoundary", "DeleteUser"]) {
-      expect(compromise, api).toContain(`\`${api}\``);
-    }
-    expect(compromise).toMatch(/Programmatic `DeleteUser` does \*\*not\*\* remove subordinate items/);
-    expect(compromise).not.toMatch(/automatically (remove|delete)s?/i);
   });
 
-  it("CloudTrail spec: KMS read events kept, durable retention, sensitive responseElements never forwarded, classified alerts", () => {
+  it("retirement runbook: only after live acceptance; explicit CLI/API cleanup before DeleteUser", () => {
+    const retirement = doc("runbooks/bootstrap-retirement.md");
+    expect(retirement).toContain("**Run only after the Roles Anywhere live acceptance has passed**");
+    for (const api of ["DeleteAccessKey", "DeleteUserPolicy", "DetachUserPolicy", "RemoveUserFromGroup", "DeleteLoginProfile", "DeleteSigningCertificate", "DeleteSSHPublicKey", "DeleteServiceSpecificCredential", "DeactivateMFADevice", "DeleteUserPermissionsBoundary", "DeleteUser"]) {
+      expect(retirement, api).toContain(`\`${api}\``);
+    }
+    expect(retirement).toMatch(/Programmatic `DeleteUser` does \*\*not\*\* remove subordinate items/);
+    expect(retirement).toContain("The worker role is **kept**");
+  });
+
+  it("CloudTrail spec: KMS read events kept, durable retention, sensitive responseElements never forwarded, Roles Anywhere signals, classified alerts", () => {
     const trail = doc("cloudtrail-alerting.md");
-    // Historical vs live (7E.5B-R1): the 2026-10-06 evidence is labeled historical; live trail state is never asserted.
     expect(trail).toMatch(/\*\*Historical evidence:\*\* the TA-Q-07b evidence captured on 2026-10-06 found no CloudTrail\s+trail/);
     expect(trail).toContain("**UNVERIFIED UNTIL READ-ONLY RECAPTURE**");
     expect(trail).toContain("LIVE_POLICY_DIFF_PENDING_READ_ONLY_CAPTURE");
-    expect(trail).toMatch(/must exist \*\*before the first bootstrap access key is\s+issued\*\*/);
+    expect(trail).toMatch(/\*\*before the first Roles Anywhere session\*\*/);
     expect(trail).not.toMatch(/No CloudTrail trail exists today|\bexists today\b/);
     for (const phrase of ["**multi-Region**", "**Read and Write**", "**Do not exclude `kms.amazonaws.com`.**", "integrity validation", "**distinct from** the provider-credential KMS key", "≥ 365 days", "S3 lifecycle", "**Event History alone is insufficient.**", "**SessionToken**", "`SecretAccessKey`", "must **never** forward complete raw `responseElements`", "### HIGH SIGNAL", "### ANOMALY / BASELINE", "### COMPLIANCE", "`<DECRYPT_HOURLY_CEILING>`", "Source IP is **detection only**"]) {
       expect(trail, phrase).toContain(phrase);
     }
-    for (const signal of ["`GetCallerIdentity`", "`GetSessionToken`", "Two **active** bootstrap access keys for more than 24 hours", "temporary (`ASIA…`) credentials", "older than 30 days"]) {
+    for (const signal of ["`CreateSession`", "`additionalEventData`", "**hex-encoded serial number**", "**observed, not assumed**", "Any event by the retired bootstrap user", "`GetCallerIdentity`", "`GetSessionToken`", "within 30 days of expiry"]) {
       expect(trail, signal).toContain(signal);
     }
   });

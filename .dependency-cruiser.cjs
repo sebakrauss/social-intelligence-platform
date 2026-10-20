@@ -365,8 +365,15 @@ module.exports = {
       name: "jobs-are-entry-points",
       severity: "error",
       comment: "Nothing imports jobs/.",
-      from: { pathNot: "^(jobs|tests)/" },
+      from: { pathNot: "^(jobs/|tests/|tools/trigger/fetch-aws-signing-helper\\.ts$)" },
       to: { path: "^jobs/" },
+    },
+    {
+      name: "aws-signing-helper-fetch-reads-pins-only",
+      severity: "error",
+      comment: "Step 7G-H5.6B: the operator fetch tool reads exactly the import-free helper pins (jobs/aws-signing-helper.ts), so the pinned version, URLs and SHA-256 digests have one source. It imports nothing else from jobs/.",
+      from: { path: "^tools/trigger/fetch-aws-signing-helper\\.ts$" },
+      to: { path: "^jobs/", pathNot: "^jobs/aws-signing-helper\\.ts$" },
     },
     {
       name: "jobs-no-business-logic",
@@ -526,15 +533,15 @@ module.exports = {
     {
       name: "aws-sdk-only-client-kms",
       severity: "error",
-      comment: "Step 7C: no other AWS SDK package is adopted — no credential providers, default provider chain or Smithy internals. STS (client-sts) is confined separately to the integration worker identity adapter (Step 7E.4C).",
+      comment: "Step 7C: no other AWS SDK package is adopted — no credential providers, default provider chain or Smithy internals. STS (client-sts) is forbidden separately (Step 7G-H5.6B).",
       from: {},
       to: { path: "(^|/)node_modules/(@aws-sdk/(?!client-kms/|client-sts/)[^/]+|@smithy/[^/]+)/" },
     },
     {
-      name: "aws-sts-sdk-only-in-integration-worker-identity",
+      name: "no-first-party-sts",
       severity: "error",
-      comment: "Step 7E.4C: the STS client is imported only by the integration worker's AWS identity adapter (jobs/integration-aws-identity.ts: bootstrap IAM user → AssumeRole) and its unit test. No other module talks to STS.",
-      from: { pathNot: "^(jobs/integration-aws-identity\\.ts|tests/unit/jobs/integration-aws-identity\\.test\\.ts)$" },
+      comment: "Step 7G-H5.6B: no first-party module talks to STS. The bootstrap IAM user → AssumeRole path is retired; the integration worker's sessions come from AWS IAM Roles Anywhere through the official credential helper (jobs/integration-aws-identity.ts), and the web's from the Vercel OIDC provider.",
+      from: {},
       to: { path: npmPackage(["@aws-sdk/client-sts"]) },
     },
     {

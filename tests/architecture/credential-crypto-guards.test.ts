@@ -81,10 +81,10 @@ describe("credential crypto boundary", () => {
     const all = { ...manifest.dependencies, ...manifest.devDependencies };
     expect(Object.keys(all).filter((name) => name.startsWith("@aws-sdk/") || name.startsWith("@smithy/"))).toEqual(["@aws-sdk/client-kms", "@aws-sdk/client-sts"]);
     expect(manifest.dependencies?.["@aws-sdk/client-kms"]).toBe("3.1146.0");
-    // Step 7E.4C: STS is a separate, exactly pinned client confined to the integration worker identity adapter.
+    // Step 7G-H5.6B: STS stays an exactly pinned declared dependency (removal is a separate dependency gate), but no first-party module imports it.
     expect(manifest.dependencies?.["@aws-sdk/client-sts"]).toBe("3.1146.0");
     expect(others.test("node_modules/@aws-sdk/client-sts/dist-cjs/index.js")).toBe(false);
-    expect(ruleNamed("aws-sts-sdk-only-in-integration-worker-identity")?.from.pathNot).toBe("^(jobs/integration-aws-identity\\.ts|tests/unit/jobs/integration-aws-identity\\.test\\.ts)$");
+    expect(ruleNamed("no-first-party-sts")?.from).toEqual({});
     expect(sources).not.toContain("aws-kms.ts");
     for (const file of ["aws-kms-common.ts", "aws-kms-config.ts", "aws-kms-sealer.ts", "aws-kms-opener.ts", ...KMS_SDK_FILES]) expect(sources).toContain(file);
   });
@@ -129,9 +129,9 @@ describe("credential crypto boundary", () => {
       expect(pattern.test(codeWithoutForbiddenList(WEB_ENVIRONMENT_GUARD)), pattern.source).toBe(false);
       expect(pattern.test(codeWithoutPlaneRefusals(PLANE_ENVIRONMENT_GUARD)), pattern.source).toBe(false);
     }
-    // The worker adapter (Step 7E.4C) uses exactly STS (client-sts), its bootstrap names and AssumeRole — never a
-    // credential provider package, the default chain or another federation.
-    expect(findReferences([WORKER_IDENTITY_ADAPTER], patterns).map(([, pattern]) => pattern)).toEqual([patterns[0]?.source, patterns[2]?.source, patterns[3]?.source]);
+    // The worker adapter (Step 7G-H5.6B: Roles Anywhere through the official helper) uses none of them: no STS, no
+    // credential provider package, no default chain, no bootstrap key, no role assumption of its own.
+    expect(findReferences([WORKER_IDENTITY_ADAPTER], patterns)).toEqual([]);
     expect(codeOf(WORKER_IDENTITY_ADAPTER)).not.toMatch(/credential-provider|fromNodeProviderChain|defaultProvider|fromTemporaryCredentials|fromWebToken|fromEnv|fromIni|fromContainerMetadata|fromInstanceMetadata|AssumeRoleWith/);
     // The adapter's exemption is exactly the Vercel OIDC packages and its request-token header — no AWS provider, chain,
     // STS, worker bootstrap or role assumption (aws-identity-guards.test.ts pins the rest of its shape).
@@ -187,6 +187,6 @@ describe("credential crypto boundary", () => {
     // Step 7E.7-B: the KMS worker-auth diagnostic names exactly the composition (to reuse it), never an opening primitive.
     const diagnostic = codeOf("jobs/integration-kms-diagnostic.ts");
     expect([...new Set([...diagnostic.matchAll(new RegExp(OPENING.source, "g"))].map((match) => match[0]))]).toEqual(["composeCredentialOpener"]);
-    expect(diagnostic.match(/\bcomposeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment, KMS_DIAGNOSTIC_AWS_ATTEMPTS\), KMS_DIAGNOSTIC_AWS_ATTEMPTS\)/g)).toHaveLength(1);
+    expect(diagnostic.match(/\bcomposeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment\), KMS_DIAGNOSTIC_AWS_ATTEMPTS\)/g)).toHaveLength(1);
   });
 });
