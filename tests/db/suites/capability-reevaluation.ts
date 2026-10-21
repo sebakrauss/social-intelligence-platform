@@ -28,6 +28,7 @@ import { runTenantStepJob, type TenantStepJobContext } from "@/platform/jobs";
 import { relayPass, sweepRunOutcomes, type DeliveryConfig, type DeliveryDependencies } from "@/platform/outbox/delivery";
 import { createLogger, type Logger } from "@/platform/observability";
 import { createConnectedAccountCommands } from "@/server/commands/connected-accounts";
+import { requestCapabilityRecheck, resolveConnectionSettings } from "@/server/connections/settings";
 import { createPostgresUnitOfWork } from "@/server/persistence/postgres-unit-of-work";
 import { createActionPipeline, type ActionPipeline, type UnitOfWork } from "@/server/pipeline";
 import { FakeJobRuntime, type FakeHandler } from "../../support/fake-job-runtime";
@@ -562,6 +563,84 @@ export function defineCapabilityReevaluationSuite(getTarget: () => DbTarget): vo
       expect(results.filter((result) => result.status === "ok" && result.value.requested).length).toBe(1);
       expect(results.filter((result) => result.status === "ok" && !result.value.requested && result.value.reason === "REEVALUATION_TOO_SOON").length).toBe(3);
       expect(await reevalRequests(t.workspaceId)).toHaveLength(1);
+    });
+  });
+
+  describe("Step 7G-H5.5-P2-B2: the Connections read model's re-check offer and the surface's outcome mapping", () => {
+    /** The offer the real settings view gives one account (connections.settings.view through the pipeline). */
+    const offerFor = async (t: Tenant, as: string, account: string) => {
+      const state = await resolveConnectionSettings(pipelineFor(as), t.workspaceId);
+      if (state.kind !== "ready") return state.kind;
+      return state.manageableAssets.find((asset) => asset.connectedAccountId === account)?.capabilityReevaluation;
+    };
+
+    it("eligible states are offered with availability's reasons; current / newer / unmanaged are not; reading writes nothing", async () => {
+      const t = await tenant();
+      const none = await seedAccount(t);
+      const stale = await seedAccount(t);
+      await writeProfile(t, stale.id, { ...PLATFORM_CATALOG, revision: PLATFORM_CATALOG.revision - 1, label: "platform-catalog-older" }, AVAILABLE());
+      const unusable = await seedAccount(t);
+      await writeProfile(t, unusable.id, PLATFORM_CATALOG, UNAVAILABLE());
+      const current = await seedAccount(t);
+      await writeProfile(t, current.id, PLATFORM_CATALOG, AVAILABLE());
+      const newer = await seedAccount(t);
+      await writeProfile(t, newer.id, { ...PLATFORM_CATALOG, revision: PLATFORM_CATALOG.revision + 1, label: "platform-catalog-future" }, UNAVAILABLE());
+      const inactive = await seedAccount(t, { status: "INACTIVE" });
+
+      expect(await offerFor(t, t.members.OWNER, none.id)).toEqual({ allowed: true, reason: "PROFILE_NOT_EVALUATED" });
+      expect(await offerFor(t, t.members.ADMIN, stale.id)).toEqual({ allowed: true, reason: "PROFILE_STALE" });
+      expect(await offerFor(t, t.members.OWNER, unusable.id)).toEqual({ allowed: true, reason: "ACCOUNT_FACTS_UNAVAILABLE" });
+      expect(await offerFor(t, t.members.OWNER, current.id)).toEqual({ allowed: false, reason: "PROFILE_CURRENT" });
+      expect(await offerFor(t, t.members.OWNER, newer.id)).toEqual({ allowed: false, reason: "PROFILE_NEWER_THAN_CODE" });
+      // An INACTIVE account is not managed: the asset carries no account and no offer.
+      expect(await offerFor(t, t.members.OWNER, inactive.id)).toBeUndefined();
+      await nothingWritten(t.workspaceId);
+    });
+
+    it("an actor without connections.manage gets no read model at all (no offer, no action)", async () => {
+      const t = await tenant();
+      const { id } = await seedAccount(t);
+      for (const role of ["MANAGER", "RESPONDER", "ANALYST_VIEWER"] as const) expect(await offerFor(t, t.members[role], id)).toBe("not_allowed");
+    });
+
+    it("a non-ACTIVE connection lists no managed accounts, so it offers nothing", async () => {
+      const t = await tenant();
+      const { id } = await seedAccount(t, { connectionStatus: "DEGRADED" });
+      expect(await offerFor(t, t.members.OWNER, id)).toBeUndefined();
+    });
+
+    it("request → capability_recheck_requested; the view then shows REEVALUATION_TOO_SOON; a stale tab's second click → capability_recheck_too_soon (one authority)", async () => {
+      const t = await tenant();
+      const { id } = await seedAccount(t);
+      const surface = (as: string, connectedAccountId: unknown) => requestCapabilityRecheck(pipelineFor(as), { workspaceId: t.workspaceId, connectedAccountId });
+      expect(await surface(t.members.OWNER, id)).toEqual({ kind: "status", status: "capability_recheck_requested" });
+      expect(await offerFor(t, t.members.OWNER, id)).toEqual({ allowed: false, reason: "REEVALUATION_TOO_SOON" });
+      expect(await surface(t.members.ADMIN, id)).toEqual({ kind: "status", status: "capability_recheck_too_soon" });
+      expect(await reevalRequests(t.workspaceId)).toHaveLength(1);
+      advance(COOLDOWN);
+      expect(await offerFor(t, t.members.OWNER, id)).toEqual({ allowed: true, reason: "PROFILE_NOT_EVALUATED" });
+    });
+
+    it("typed refusals, permission, isolation and malformed ids map to closed statuses; nothing is written", async () => {
+      const t = await tenant();
+      const other = await tenant();
+      const current = await seedAccount(t);
+      await writeProfile(t, current.id, PLATFORM_CATALOG, AVAILABLE());
+      const newer = await seedAccount(t);
+      await writeProfile(t, newer.id, { ...PLATFORM_CATALOG, revision: PLATFORM_CATALOG.revision + 1, label: "platform-catalog-future" }, AVAILABLE());
+      const inactive = await seedAccount(t, { status: "INACTIVE" });
+      const degraded = await seedAccount(t, { connectionStatus: "DEGRADED" });
+      const foreign = await seedAccount(other);
+      const surface = (as: string, connectedAccountId: unknown) => requestCapabilityRecheck(pipelineFor(as), { workspaceId: t.workspaceId, connectedAccountId });
+      expect(await surface(t.members.OWNER, current.id)).toEqual({ kind: "status", status: "capability_recheck_not_needed" });
+      expect(await surface(t.members.OWNER, newer.id)).toEqual({ kind: "status", status: "capability_recheck_newer_version" });
+      expect(await surface(t.members.OWNER, inactive.id)).toEqual({ kind: "status", status: "capability_recheck_account_inactive" });
+      expect(await surface(t.members.OWNER, degraded.id)).toEqual({ kind: "status", status: "capability_recheck_connection_not_active" });
+      expect(await surface(t.members.OWNER, foreign.id)).toEqual({ kind: "status", status: "capability_recheck_not_found" });
+      expect(await surface(t.members.OWNER, "not-a-uuid")).toEqual({ kind: "status", status: "capability_recheck_not_found" });
+      expect(await surface(t.members.MANAGER, current.id)).toEqual({ kind: "status", status: "not_allowed" });
+      await nothingWritten(t.workspaceId);
+      await nothingWritten(other.workspaceId);
     });
   });
 

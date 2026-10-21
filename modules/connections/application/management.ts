@@ -10,8 +10,10 @@
  * before the removal can complete after it. REMOVED is terminal: nothing reactivates it.
  */
 import { AppError } from "@/domain/errors";
+import type { CapabilityReadStore } from "@/modules/capability";
 import { blocksFreshConnection, isSingleConnectionProvider, type Connection, type ConnectionProvider, type DiscoveredAsset } from "../domain/model";
 import type { WorkspaceScope } from "./authorization";
+import { capabilityReevaluationView, type CapabilityReevaluationView } from "./capability-reevaluation-view";
 import { isManageableAsset } from "./linking";
 import type { ConnectionStore } from "./ports";
 
@@ -114,21 +116,41 @@ export interface ManageableAsset {
   readonly platform: DiscoveredAsset["platform"];
   readonly displayName: string;
   readonly managed: boolean;
+  /** Step 7G-H5.5-P2-B2: the managed (ACTIVE) Connected Account of this asset; null when it isn't managed. */
+  readonly connectedAccountId: string | null;
+  /**
+   * Step 7G-H5.5-P2-B2: whether to OFFER "Re-check capabilities" for that account (presentation only; the command
+   * decides again). Null when the asset isn't managed: there is no account to re-check.
+   */
+  readonly capabilityReevaluation: CapabilityReevaluationView | null;
 }
 
-export async function viewConnectionSettings(store: ConnectionStore): Promise<ConnectionSettings> {
+/**
+ * The settings read model. `reevaluation` supplies the read-only capability header store and the server instant the
+ * re-check offer is derived with (Step 7G-H5.5-P2-B2); nothing is locked or written.
+ */
+export async function viewConnectionSettings(
+  store: ConnectionStore,
+  reevaluation: { readonly capability: Pick<CapabilityReadStore, "header">; readonly now: Date },
+): Promise<ConnectionSettings> {
   const connections = await store.connections.list();
   const accounts = await store.connectedAccounts.list();
   const manageableAssets: ManageableAsset[] = [];
   for (const connection of connections.filter((c) => c.provider === "meta" && c.status === "ACTIVE")) {
-    const managed = new Set(accounts.filter((a) => a.connectionId === connection.id && a.status === "ACTIVE").map((a) => `${a.platform}:${a.providerAssetId}`));
+    const managed = new Map(accounts.filter((a) => a.connectionId === connection.id && a.status === "ACTIVE").map((a) => [`${a.platform}:${a.providerAssetId}`, a]));
     for (const asset of (await store.discoveredAssets.list(connection.id)).filter(isManageableAsset)) {
+      const account = managed.get(`${asset.platform}:${asset.providerAssetId}`);
       manageableAssets.push({
         connectionId: connection.id,
         discoveredAssetId: asset.id,
         platform: asset.platform,
         displayName: asset.displayName,
-        managed: managed.has(`${asset.platform}:${asset.providerAssetId}`),
+        managed: account !== undefined,
+        connectedAccountId: account?.id ?? null,
+        capabilityReevaluation:
+          account === undefined
+            ? null
+            : await capabilityReevaluationView({ accountEvents: store.accountEvents, capability: reevaluation.capability }, { account, connection, now: reevaluation.now }),
       });
     }
   }

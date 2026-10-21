@@ -12,15 +12,19 @@
  *   - Manage accounts (Step 7G-H5) saves which of an ACTIVE Meta connection's discovered Facebook Pages and Instagram
  *     professional accounts this workspace manages: connections.account.save_selection, the whole desired set at once,
  *     with the expected provider FIXED to "meta". Local only: no provider, KMS or job.
+ *   - Re-check capabilities (Step 7G-H5.5-P2-B2) REQUESTS a new capability evaluation of one managed account:
+ *     connections.account.request_capability_reevaluation, with the routed account id as its only input. Whether the
+ *     page offers it is presentation (the read model's re-check offer); the command decides again under the account's
+ *     row lock (permission, lifecycle, profile, cooldown). It never waits for, polls or promises the evaluation.
  *   - Outcomes are closed codes: nothing from an error, a provider or the database reaches a URL or the page. A
  *     workspace that doesn't exist, isn't the caller's, or isn't a UUID is the same `workspace_not_found`; a connection
  *     that doesn't exist, isn't this workspace's, isn't Meta's or isn't a UUID is the same `connection_not_found`.
  */
 import { isUuid, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
 import type { MessageKey } from "@/domain/i18n/message-keys";
-import type { ConnectionProvider, ConnectionSettings, ConnectionSummary } from "@/modules/connections";
+import type { ConnectionProvider, ConnectionSettings, ConnectionSummary, ReevaluationOfferReason, ReevaluationRefusal } from "@/modules/connections";
 import type { ConnectionStatus } from "@/domain/connections";
-import { SELECTION_MAX_ASSETS, connectedAccountSelectionCommand } from "@/server/commands/connected-accounts";
+import { SELECTION_MAX_ASSETS, connectedAccountSelectionCommand, createConnectedAccountCommands } from "@/server/commands/connected-accounts";
 import { connectionRemoveCommand, connectionSettingsViewCommand } from "@/server/commands/connections";
 import type { ActionPipeline } from "@/server/pipeline";
 import { startConnectionAuthorization, type ConnectionAuthorizationDependencies, type StartResult } from "./authorization";
@@ -54,6 +58,13 @@ export const CONNECT_STATUSES = [
   "accounts_not_found",
   "accounts_conflict",
   "connection_not_ready",
+  "capability_recheck_requested",
+  "capability_recheck_too_soon",
+  "capability_recheck_not_needed",
+  "capability_recheck_newer_version",
+  "capability_recheck_account_inactive",
+  "capability_recheck_connection_not_active",
+  "capability_recheck_not_found",
   "unavailable",
 ] as const;
 export type ConnectStatus = (typeof CONNECT_STATUSES)[number];
@@ -72,6 +83,13 @@ export const CONNECT_STATUS_MESSAGES: { readonly [S in ConnectStatus]: MessageKe
   accounts_not_found: "connections.status.accounts_not_found",
   accounts_conflict: "connections.status.accounts_conflict",
   connection_not_ready: "connections.status.connection_not_ready",
+  capability_recheck_requested: "connections.status.capability_recheck_requested",
+  capability_recheck_too_soon: "connections.status.capability_recheck_too_soon",
+  capability_recheck_not_needed: "connections.status.capability_recheck_not_needed",
+  capability_recheck_newer_version: "connections.status.capability_recheck_newer_version",
+  capability_recheck_account_inactive: "connections.status.capability_recheck_account_inactive",
+  capability_recheck_connection_not_active: "connections.status.capability_recheck_connection_not_active",
+  capability_recheck_not_found: "connections.status.capability_recheck_not_found",
   unavailable: "connections.settings.unavailable",
 };
 
@@ -97,6 +115,14 @@ export const ASSET_PLATFORM_MESSAGES: { readonly [P in ManageableAssetView["plat
   facebook: "connections.accounts.platform.facebook",
   instagram: "connections.accounts.platform.instagram",
   tiktok: "connections.accounts.platform.tiktok",
+};
+
+/** Why a managed account is offered a re-check (or was re-checked recently): presentation copy only. */
+export const CAPABILITY_RECHECK_OFFER_MESSAGES: { readonly [R in ReevaluationOfferReason | "REEVALUATION_TOO_SOON"]: MessageKey } = {
+  PROFILE_NOT_EVALUATED: "connections.recheck.reason.not_evaluated",
+  PROFILE_STALE: "connections.recheck.reason.stale",
+  ACCOUNT_FACTS_UNAVAILABLE: "connections.recheck.reason.facts_unavailable",
+  REEVALUATION_TOO_SOON: "connections.recheck.reason.too_soon",
 };
 
 export function parseConnectStatus(value: unknown): ConnectStatus | undefined {
@@ -213,6 +239,41 @@ export async function saveManagedAccounts(
       // The connection isn't ACTIVE (any more): checked under the row lock, and again by each activation.
       if (result.error.code === "STALE_STATE" || result.error.code === "CONNECTION_PROBLEM") return { kind: "status", status: "connection_not_ready" };
       if (result.error.code === "CONFLICT") return { kind: "status", status: "accounts_conflict" };
+      return { kind: "status", status: "unavailable" };
+  }
+}
+
+/** The registered command (B1), from its registry: this surface never reaches the recovery service directly. */
+const { requestCapabilityReevaluation } = createConnectedAccountCommands();
+
+/** Typed refusals of the command → closed page statuses (none reads as success; nothing internal is carried). */
+export const CAPABILITY_RECHECK_REFUSALS: { readonly [R in ReevaluationRefusal]: ConnectStatus } = {
+  REEVALUATION_TOO_SOON: "capability_recheck_too_soon",
+  PROFILE_CURRENT: "capability_recheck_not_needed",
+  PROFILE_NEWER_THAN_CODE: "capability_recheck_newer_version",
+  ACCOUNT_INACTIVE: "capability_recheck_account_inactive",
+  CONNECTION_NOT_ACTIVE: "capability_recheck_connection_not_active",
+};
+
+/**
+ * Request a capability re-check of one Connected Account. The browser routes the workspace id and the account id
+ * (untrusted: parsed here, resolved live by the pipeline and RLS); nothing else is sent — no provider, eligibility,
+ * cooldown or key. Exactly one command run; a refusal (including REEVALUATION_TOO_SOON after a race) is shown, never
+ * retried. Success means REQUESTED: the evaluation runs later in the job runtime and is not awaited.
+ */
+export async function requestCapabilityRecheck(pipeline: ActionPipeline, input: { readonly workspaceId: unknown; readonly connectedAccountId: unknown }): Promise<RemoveOutcome> {
+  if (!isUuid(input.connectedAccountId)) return { kind: "status", status: "capability_recheck_not_found" };
+  const result = await pipeline.run(requestCapabilityReevaluation, { workspaceId: input.workspaceId, input: { connectedAccountId: input.connectedAccountId } });
+  switch (result.status) {
+    case "ok":
+      return { kind: "status", status: result.value.requested ? "capability_recheck_requested" : CAPABILITY_RECHECK_REFUSALS[result.value.reason] };
+    case "unauthenticated":
+      return { kind: "signed_out" };
+    case "verification_required":
+      return { kind: "verification_required" };
+    case "error":
+      if (result.error.code === "NOT_FOUND" || result.error.code === "INVALID_INPUT") return { kind: "status", status: "capability_recheck_not_found" };
+      if (result.error.code === "PERMISSION_DENIED") return { kind: "status", status: "not_allowed" };
       return { kind: "status", status: "unavailable" };
   }
 }

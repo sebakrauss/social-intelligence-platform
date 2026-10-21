@@ -102,6 +102,21 @@ export const MESSAGE_KEYS = [
   "connections.accounts.platform.tiktok",
   "connections.accounts.save",
   "connections.accounts.saving",
+  "connections.recheck.heading",
+  "connections.recheck.explainer",
+  "connections.recheck.submit",
+  "connections.recheck.submitting",
+  "connections.recheck.reason.not_evaluated",
+  "connections.recheck.reason.stale",
+  "connections.recheck.reason.facts_unavailable",
+  "connections.recheck.reason.too_soon",
+  "connections.status.capability_recheck_requested",
+  "connections.status.capability_recheck_too_soon",
+  "connections.status.capability_recheck_not_needed",
+  "connections.status.capability_recheck_newer_version",
+  "connections.status.capability_recheck_account_inactive",
+  "connections.status.capability_recheck_connection_not_active",
+  "connections.status.capability_recheck_not_found",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

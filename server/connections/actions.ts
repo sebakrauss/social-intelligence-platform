@@ -9,6 +9,9 @@
  *   remove    reads the routed workspace id, the connection id and the visible acknowledgement. No external redirect.
  *   accounts  reads the routed workspace id, the connection id and the checked discovered-asset ids. No external
  *             redirect; no provider, KMS or job is reached.
+ *   recheck   reads the routed workspace id and ONE connected account id (Step 7G-H5.5-P2-B2): it requests a capability
+ *             re-evaluation through the registered command. No external redirect; no provider, KMS, job or outbox write
+ *             of its own; the evaluation itself is never awaited.
  *
  * No form field chooses a destination: every other outcome returns to a fixed internal path built from the parsed
  * workspace id. Nothing internal is logged or returned, and no form payload is logged.
@@ -20,7 +23,7 @@ import { createLogger, stdoutSink } from "@/platform/observability";
 import { requestAuth } from "@/server/auth/request-auth";
 import { workspaceConnectionsPath } from "@/server/routes";
 import { connectionAuthorizationRuntime } from "./runtime";
-import { connectMeta, removeMeta, saveManagedAccounts, type ConnectOutcome } from "./settings";
+import { connectMeta, removeMeta, requestCapabilityRecheck, saveManagedAccounts, type ConnectOutcome } from "./settings";
 import { connectionSettingsPipeline } from "./settings-runtime";
 
 const log = createLogger({ sink: stdoutSink, base: { module: "server.connections" } });
@@ -74,4 +77,12 @@ export async function saveManagedAccountsAction(form: FormData): Promise<void> {
   redirect(
     destination(await run("save_managed_accounts", (auth) => saveManagedAccounts(connectionSettingsPipeline(auth), { workspaceId, connectionId, discoveredAssetIds })), workspaceId),
   );
+}
+
+export async function requestCapabilityRecheckAction(form: FormData): Promise<void> {
+  const workspaceId = parseWorkspaceId(form.get("workspaceId"));
+  if (workspaceId === undefined) redirect("/onboarding");
+  const connectedAccountId = form.get("connectedAccountId");
+  // A request, not a platform mutation: the plain settings pipeline (web unit of work) runs it; the redirect re-renders the page.
+  redirect(destination(await run("request_capability_recheck", (auth) => requestCapabilityRecheck(connectionSettingsPipeline(auth), { workspaceId, connectedAccountId })), workspaceId));
 }

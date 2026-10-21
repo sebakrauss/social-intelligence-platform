@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
-import { removeMetaConnectionAction, saveManagedAccountsAction, startMetaConnectionAction } from "@/server/connections/actions";
+import { removeMetaConnectionAction, requestCapabilityRecheckAction, saveManagedAccountsAction, startMetaConnectionAction } from "@/server/connections/actions";
 import {
   ASSET_PLATFORM_MESSAGES,
+  CAPABILITY_RECHECK_OFFER_MESSAGES,
   CONNECTION_PROVIDER_MESSAGES,
   CONNECTION_STATUS_MESSAGES,
   CONNECT_STATUS_MESSAGES,
@@ -27,6 +28,11 @@ export const dynamic = "force-dynamic";
  * professional accounts (never a live Meta read) with what this workspace manages now, kept visibly apart from the
  * provider connection's own status: authorizing Meta manages nothing by itself. Nothing is preselected beyond what is
  * already managed, and nothing changes until Save posts the whole checked set.
+ *
+ * Capability re-check (Step 7G-H5.5-P2-B2): a managed account whose capabilities aren't evaluated, are out of date or
+ * rest on facts that couldn't be read is offered ONE "Re-check capabilities" form posting the workspace and account
+ * ids. The offer comes from the server read model and is UX only — the command decides again. A recent request shows
+ * as a note without a button; current, newer-than-this-code or unmanaged accounts show nothing. Requested ≠ done.
  */
 export default async function WorkspaceConnectionsPage({
   params,
@@ -121,8 +127,42 @@ function ManagedAccounts({ workspaceId, connectionId, assets }: { readonly works
             </ul>
             <PendingSubmitButton label={t("connections.accounts.save")} pendingLabel={t("connections.accounts.saving")} />
           </form>
+          <CapabilityRecheck workspaceId={workspaceId} assets={assets} />
         </>
       )}
+    </section>
+  );
+}
+
+/**
+ * The managed accounts the read model offers a capability re-check for (or that were re-checked recently). One form
+ * per offered account, outside the Save form; the button is disabled while its request is in flight.
+ */
+function CapabilityRecheck({ workspaceId, assets }: { readonly workspaceId: string; readonly assets: readonly ManageableAssetView[] }) {
+  const rows = assets.filter((asset) => asset.connectedAccountId !== null && (asset.capabilityReevaluation?.allowed === true || asset.capabilityReevaluation?.reason === "REEVALUATION_TOO_SOON"));
+  if (rows.length === 0) return null;
+  return (
+    <section>
+      <h3>{t("connections.recheck.heading")}</h3>
+      <p>{t("connections.recheck.explainer")}</p>
+      <ul>
+        {rows.map((asset) => {
+          const offer = asset.capabilityReevaluation;
+          if (offer === null || asset.connectedAccountId === null) return null;
+          return (
+            <li key={asset.connectedAccountId}>
+              {asset.displayName} · {t(ASSET_PLATFORM_MESSAGES[asset.platform])}: {offer.allowed ? t(CAPABILITY_RECHECK_OFFER_MESSAGES[offer.reason]) : t(CAPABILITY_RECHECK_OFFER_MESSAGES.REEVALUATION_TOO_SOON)}
+              {offer.allowed ? (
+                <form action={requestCapabilityRecheckAction}>
+                  <input name="workspaceId" type="hidden" value={workspaceId} />
+                  <input name="connectedAccountId" type="hidden" value={asset.connectedAccountId} />
+                  <PendingSubmitButton label={t("connections.recheck.submit")} pendingLabel={t("connections.recheck.submitting")} />
+                </form>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }

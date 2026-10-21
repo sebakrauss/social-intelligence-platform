@@ -48,13 +48,17 @@ describe("Connect Meta surface (Step 7G-F4)", () => {
     const removeAndAfter = actions.slice(actions.indexOf("export async function removeMetaConnectionAction"));
     const fields = (code: string): (string | undefined)[] => [...code.matchAll(/form\.get\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1]);
     expect(fields(connect)).toEqual(["workspaceId"]);
-    const accounts = actions.slice(actions.indexOf("export async function saveManagedAccountsAction"));
+    const accounts = actions.slice(actions.indexOf("export async function saveManagedAccountsAction"), actions.indexOf("export async function requestCapabilityRecheckAction"));
+    const recheck = actions.slice(actions.indexOf("export async function requestCapabilityRecheckAction"));
     const remove = removeAndAfter.slice(0, removeAndAfter.indexOf("export async function saveManagedAccountsAction"));
     expect(fields(remove)).toEqual(["workspaceId", "connectionId", "acknowledgement"]);
     // Managed accounts: the routed ids plus the checked discovered-asset ids, nothing else.
     expect(fields(accounts)).toEqual(["workspaceId", "connectionId"]);
     expect([...accounts.matchAll(/form\.getAll\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1])).toEqual(["discoveredAssetId"]);
-    expect(fields(actions)).toHaveLength(6);
+    // Capability re-check (Step 7G-H5.5-P2-B2): the routed workspace id and ONE connected account id, nothing else.
+    expect(fields(recheck)).toEqual(["workspaceId", "connectedAccountId"]);
+    expect(recheck).toMatch(/requestCapabilityRecheck\(connectionSettingsPipeline\(auth\), \{ workspaceId, connectedAccountId \}\)/);
+    expect(fields(actions)).toHaveLength(8);
     expect([...actions.matchAll(/form\.getAll\(/g)]).toHaveLength(1);
     expect(actions).not.toMatch(/form\.(entries|keys|values|has)\(|Object\.fromEntries/);
     expect(codeOf(SETTINGS)).toMatch(/input: \{ connectionId: input\.connectionId, expectedProvider: "meta", discoveredAssetIds \}/);
@@ -63,12 +67,20 @@ describe("Connect Meta surface (Step 7G-F4)", () => {
     for (const file of SURFACE) expect(codeOf(file), file).not.toMatch(/reconnectConnectionId|provider: "simulator"/);
   });
 
-  it("the page renders and reads only; exactly three forms: Connect Meta, the per-connection Remove and Managed accounts", () => {
+  it("the page renders and reads only; exactly four forms: Connect Meta, the per-connection Remove, Managed accounts and the per-account capability re-check", () => {
     const page = codeOf(PAGE);
     expect(page).not.toMatch(/"use client"|connectMeta|removeMeta\(|startConnectionAuthorization|connectionAuthorizationRuntime|recoverStale|\.start\b|onClick|confirm\(/);
     expect(page).toMatch(/export const dynamic = "force-dynamic"/);
-    expect([...page.matchAll(/<form action=\{(\w+)\}>/g)].map((match) => match[1])).toEqual(["removeMetaConnectionAction", "startMetaConnectionAction", "saveManagedAccountsAction"]);
-    expect([...page.matchAll(/<form\b/g)]).toHaveLength(3);
+    expect([...page.matchAll(/<form action=\{(\w+)\}>/g)].map((match) => match[1])).toEqual([
+      "removeMetaConnectionAction",
+      "startMetaConnectionAction",
+      "saveManagedAccountsAction",
+      "requestCapabilityRecheckAction",
+    ]);
+    expect([...page.matchAll(/<form\b/g)]).toHaveLength(4);
+    // The re-check form posts only the workspace and account ids, and only when the server read model offers it.
+    expect(page).toMatch(/\{offer\.allowed \? \(\s*<form action=\{requestCapabilityRecheckAction\}>/);
+    expect(page).toMatch(/name="connectedAccountId" type="hidden" value=\{asset\.connectedAccountId\}/);
     // Managed accounts only for an ACTIVE Meta connection; checked = already managed, never preselected otherwise.
     expect(page).toMatch(/connection\.provider === "meta" && connection\.status === "ACTIVE"/);
     expect(page).toMatch(/name="discoveredAssetId" type="checkbox" value=\{asset\.discoveredAssetId\} defaultChecked=\{asset\.managed\}/);

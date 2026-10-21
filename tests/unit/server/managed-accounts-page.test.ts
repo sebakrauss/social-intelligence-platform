@@ -29,7 +29,17 @@ const { default: Page } = await import("@/app/workspaces/[workspaceId]/settings/
 const { PendingSubmitButton } = await import("@/ui/connections/pending-submit-button");
 
 type Ready = Extract<ConnectionSettingsState, { kind: "ready" }>;
-const ready = (managed: { facebook?: boolean; instagram?: boolean } | null, status = "ACTIVE" as Ready["connections"][number]["status"]): Ready => ({
+type Offer = Ready["manageableAssets"][number]["capabilityReevaluation"];
+const FACEBOOK_ACCOUNT = "2c3d4e5f-6a7b-4c8d-9e0f-a0b1c2d3e4f5";
+const INSTAGRAM_ACCOUNT = "3d4e5f6a-7b8c-4d9e-8f0a-b1c2d3e4f5a6";
+/** A managed asset's account and re-check offer (default: a current, usable profile — nothing offered). */
+const managedFields = (managed: boolean | undefined, account: string, offer: Offer = { allowed: false, reason: "PROFILE_CURRENT" }) =>
+  managed === true ? { managed: true, connectedAccountId: account, capabilityReevaluation: offer } : { managed: false, connectedAccountId: null, capabilityReevaluation: null };
+const ready = (
+  managed: { facebook?: boolean; instagram?: boolean } | null,
+  status = "ACTIVE" as Ready["connections"][number]["status"],
+  offers: { facebook?: Offer; instagram?: Offer } = {},
+): Ready => ({
   kind: "ready",
   workspaceId: WS as never,
   connections: [{ id: CONNECTION, provider: "meta", status } as Ready["connections"][number]],
@@ -38,8 +48,8 @@ const ready = (managed: { facebook?: boolean; instagram?: boolean } | null, stat
     managed === null
       ? []
       : [
-          { connectionId: CONNECTION, discoveredAssetId: FACEBOOK, platform: "facebook", displayName: "Synthetic Page", managed: managed.facebook ?? false },
-          { connectionId: CONNECTION, discoveredAssetId: INSTAGRAM, platform: "instagram", displayName: "synthetic.ig", managed: managed.instagram ?? false },
+          { connectionId: CONNECTION, discoveredAssetId: FACEBOOK, platform: "facebook", displayName: "Synthetic Page", ...managedFields(managed.facebook, FACEBOOK_ACCOUNT, offers.facebook) },
+          { connectionId: CONNECTION, discoveredAssetId: INSTAGRAM, platform: "instagram", displayName: "synthetic.ig", ...managedFields(managed.instagram, INSTAGRAM_ACCOUNT, offers.instagram) },
         ],
 });
 
@@ -129,5 +139,100 @@ describe("Managed accounts on the Connections page", () => {
     expect(renderToStaticMarkup(createElement(PendingSubmitButton, props))).toBe(`<button type="submit" aria-disabled="false">${t("connections.accounts.save")}</button>`);
     env.pending = true;
     expect(renderToStaticMarkup(createElement(PendingSubmitButton, props))).toBe(`<button type="submit" disabled="" aria-disabled="true">${t("connections.accounts.saving")}</button>`);
+  });
+});
+
+describe("Capability re-check on the Connections page (Step 7G-H5.5-P2-B2)", () => {
+  const recheckForms = (html: string): string[] => [...html.matchAll(/<form[^>]*>(?:(?!<\/form>)[\s\S])*name="connectedAccountId"(?:(?!<\/form>)[\s\S])*<\/form>/g)].map((match) => match[0]);
+  const button = `>${text(t("connections.recheck.submit"))}</button>`;
+
+  it.each([
+    ["PROFILE_NOT_EVALUATED", "connections.recheck.reason.not_evaluated"],
+    ["PROFILE_STALE", "connections.recheck.reason.stale"],
+    ["ACCOUNT_FACTS_UNAVAILABLE", "connections.recheck.reason.facts_unavailable"],
+  ] as const)("%s: the managed account is offered ONE re-check form with only the workspace and account ids", async (reason, message) => {
+    const html = await render(ready({ facebook: true, instagram: true }, "ACTIVE", { facebook: { allowed: true, reason } }));
+    expect(html).toContain(text(t("connections.recheck.heading")));
+    expect(html).toContain(text(t("connections.recheck.explainer")));
+    expect(html).toContain(text(t(message)));
+    const forms = recheckForms(html);
+    expect(forms).toHaveLength(1);
+    const [form] = forms;
+    expect(form).toContain(`name="connectedAccountId" value="${FACEBOOK_ACCOUNT}"`);
+    expect(form).toContain(`name="workspaceId" value="${WS}"`);
+    expect([...(form ?? "").matchAll(/<input[^>]*name="([^"]+)"/g)].map((match) => match[1])).toEqual(["workspaceId", "connectedAccountId"]);
+    expect(form).toContain(button);
+    expect(html).not.toContain(INSTAGRAM_ACCOUNT); // current profile: nothing offered
+  });
+
+  it.each([
+    ["usable current profile", { allowed: false, reason: "PROFILE_CURRENT" }],
+    ["profile newer than this code", { allowed: false, reason: "PROFILE_NEWER_THAN_CODE" }],
+    ["inactive account", { allowed: false, reason: "ACCOUNT_INACTIVE" }],
+    ["connection not active", { allowed: false, reason: "CONNECTION_NOT_ACTIVE" }],
+  ] as const)("%s: no re-check section, no button", async (_label, offer) => {
+    const html = await render(ready({ facebook: true }, "ACTIVE", { facebook: offer }));
+    expect(html).not.toContain(button);
+    expect(html).not.toContain(text(t("connections.recheck.heading")));
+    expect(recheckForms(html)).toEqual([]);
+  });
+
+  it("an unmanaged asset (no account) and an empty connection offer nothing", async () => {
+    expect(await render(ready({}))).not.toContain(button);
+    expect(await render(ready(null))).not.toContain(button);
+  });
+
+  it("re-checked recently: a note, no button (the command would refuse REEVALUATION_TOO_SOON anyway)", async () => {
+    const html = await render(ready({ facebook: true }, "ACTIVE", { facebook: { allowed: false, reason: "REEVALUATION_TOO_SOON" } }));
+    expect(html).toContain(text(t("connections.recheck.reason.too_soon")));
+    expect(html).not.toContain(button);
+    expect(recheckForms(html)).toEqual([]);
+  });
+
+  it("not allowed / not found / unavailable states render no Managed accounts and no re-check at all", async () => {
+    for (const state of [{ kind: "not_allowed" }, { kind: "workspace_not_found" }, { kind: "unavailable" }, { kind: "verification_required" }] as const) {
+      const html = await render(state);
+      expect(html, state.kind).not.toContain(button);
+      expect(html, state.kind).not.toContain('name="connectedAccountId"');
+    }
+  });
+
+  it("success says REQUESTED (not completed, not enabled); every refusal says nothing was requested, without internals", async () => {
+    const requested = t("connections.status.capability_recheck_requested");
+    expect(requested).toMatch(/requested/i);
+    expect(requested).not.toMatch(/\b(completed|finished|enabled|fixed|authori[sz]ed|available now)\b/i);
+    expect(requested).toMatch(/doesn't mean any capability is available/);
+    expect(t("connections.recheck.explainer")).toMatch(/doesn't enable anything, fix the connection or change the provider's authorization/);
+    expect(await render(ready({ facebook: true }), "capability_recheck_requested")).toContain(text(requested));
+    for (const status of [
+      "capability_recheck_too_soon",
+      "capability_recheck_not_needed",
+      "capability_recheck_newer_version",
+      "capability_recheck_account_inactive",
+      "capability_recheck_connection_not_active",
+      "capability_recheck_not_found",
+    ] as const) {
+      const message = t(`connections.status.${status}`);
+      expect(message, status).toMatch(/^No (new )?re-check was requested/);
+      expect(message, status).not.toMatch(/REEVALUATION|PROFILE_|dispatch|outbox|trigger|meta|run_|\bSQL\b|error code/i);
+      const html = await render(ready({ facebook: true }), status);
+      expect(html, status).toContain(text(message));
+      expect(html, status).not.toContain(text(requested));
+    }
+  });
+
+  it("the re-check button is disabled, saying so, while its request is in flight (no double submit)", () => {
+    const props = { label: t("connections.recheck.submit"), pendingLabel: t("connections.recheck.submitting") };
+    expect(renderToStaticMarkup(createElement(PendingSubmitButton, props))).toBe(`<button type="submit" aria-disabled="false">${t("connections.recheck.submit")}</button>`);
+    env.pending = true;
+    expect(renderToStaticMarkup(createElement(PendingSubmitButton, props))).toBe(`<button type="submit" disabled="" aria-disabled="true">${t("connections.recheck.submitting")}</button>`);
+  });
+
+  it("display names in the re-check list are text, never markup", async () => {
+    const state = ready({ facebook: true }, "ACTIVE", { facebook: { allowed: true, reason: "PROFILE_STALE" } });
+    const hostile: Ready = { ...state, manageableAssets: state.manageableAssets.map((asset) => ({ ...asset, displayName: "<b onclick=x>n</b>" })) };
+    const html = await render(hostile);
+    expect(html).not.toContain("<b onclick");
+    expect(html).toContain("&lt;b onclick=x&gt;n&lt;/b&gt;");
   });
 });

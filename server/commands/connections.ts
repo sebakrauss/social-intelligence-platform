@@ -59,7 +59,8 @@ export const connectionSettingsViewCommand: WorkspaceCommand<Record<string, neve
   permission: "connections.manage",
   requiresStandardMode: false,
   validate: object({}),
-  execute: (_context, _input, tx) => viewConnectionSettings(tx.connections),
+  // The capability header store is read only; the re-check offer it feeds is presentation, never authority (B2).
+  execute: (_context, _input, tx, env) => viewConnectionSettings(tx.connections, { capability: tx.capability, now: env.now }),
   audit: () => undefined,
   respond: (settings) => settings,
 };

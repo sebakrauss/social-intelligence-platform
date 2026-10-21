@@ -95,6 +95,12 @@ export {
   type ReevaluationRefusal,
 } from "./application/capability-reevaluation";
 export {
+  REEVALUATION_OFFER_REASONS,
+  capabilityReevaluationView,
+  type CapabilityReevaluationView,
+  type ReevaluationOfferReason,
+} from "./application/capability-reevaluation-view";
+export {
   isManageableAsset,
   linkAccount,
   listConnectedAccounts,

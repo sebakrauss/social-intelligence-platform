@@ -14,6 +14,7 @@ const REQUEST = "modules/connections/application/capability-request.ts";
 const COMMANDS = "server/commands/connected-accounts.ts";
 const STORE = "modules/connections/persistence/store.ts";
 const MODULE_INDEX = "modules/connections/index.ts";
+const SETTINGS = "server/connections/settings.ts";
 const PRODUCTION_ROOTS = ["app", "server", "modules", "domain", "platform", "integrations", "jobs", "mutations", "ai", "ui"];
 const WORKER_PATH = ["jobs", "modules/connections/application/capability-refresh.ts", "modules/capability", "platform/outbox", "platform/jobs", "platform/db"];
 
@@ -94,7 +95,11 @@ describe("no automatic recovery, no scheduler or reconcile wiring", () => {
   });
 
   it("the service is reached only through the registered command; the command only from its registry", () => {
-    expect(referencing(/\brequestCapabilityReevaluation\b/)).toEqual([MODULE_INDEX, COMMANDS, SERVICE].sort());
+    // Step 7G-H5.5-P2-B2: the Settings surface names the COMMAND (taken from the registry), never the service.
+    expect(referencing(/\brequestCapabilityReevaluation\b/)).toEqual([MODULE_INDEX, COMMANDS, SERVICE, SETTINGS].sort());
+    expect(codeOf(SETTINGS)).toMatch(/const \{ requestCapabilityReevaluation \} = createConnectedAccountCommands\(\);/);
+    expect(codeOf(SETTINGS)).toMatch(/import type \{[^}]*\} from "@\/modules\/connections";/);
+    expect(codeOf(SETTINGS)).not.toMatch(/import \{[^}]*\} from "@\/modules\/connections";/);
     expect(referencing(/request_capability_reevaluation|requestCapabilityReevaluationCommand|\.requestCapabilityReevaluation\b/)).toEqual([COMMANDS]);
   });
 
