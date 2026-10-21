@@ -6,7 +6,7 @@
  * outside the closed vocabularies is treated as corruption, never passed on. Credentials are reached only
  * through the credential definer functions, as EnvelopeV1 bytes.
  */
-import { and, asc, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, max, sql } from "drizzle-orm";
 import { isConnectionStatus } from "@/domain/connections";
 import { AppError } from "@/domain/errors";
 import { parseOrganizationId, parseUserId, parseWorkspaceId } from "@/domain/ids";
@@ -520,10 +520,19 @@ export function createPostgresConnectionStore(tx: DatabaseTransaction): Connecti
         }
         return rows.length;
       },
+      lock: (id) => getConnectedAccount(tx, id, true),
     },
     accountEvents: {
       async append(event) {
         await tx.insert(connectedAccountEvents).values(accountEventRow(event));
+      },
+      async latestOccurredAt(connectedAccountId, eventTypes) {
+        if (eventTypes.length === 0) return undefined;
+        const rows = await tx
+          .select({ at: max(connectedAccountEvents.occurredAt) })
+          .from(connectedAccountEvents)
+          .where(and(eq(connectedAccountEvents.connectedAccountId, connectedAccountId), inArray(connectedAccountEvents.eventType, [...eventTypes])));
+        return rows[0]?.at ?? undefined;
       },
     },
     discoveredAssets: {

@@ -13,6 +13,7 @@ import type { AuditLog } from "@/modules/audit";
 import type { ProviderAuthorizationPort, ProviderCredential, ProviderReadPort } from "@/integrations/providers/contract";
 import type { OutboxMessage, OutboxWriter } from "@/platform/outbox";
 import type {
+  AccountEventType,
   AssetClass,
   AssetPlatform,
   AttemptStatus,
@@ -128,8 +129,17 @@ export interface ConnectionStore {
     unlink(id: string, now: Date): Promise<boolean>;
     /** Deactivates every ACTIVE connected account of a connection (with history). Returns how many. */
     deactivateForConnection(connectionId: string, reason: "DISCONNECTED" | "REMOVED", now: Date, actor: UserId, newId: () => string): Promise<number>;
+    /**
+     * Row-locked read (FOR UPDATE; RLS: Owner/Admin of the bound workspace) that serializes every request about this
+     * account until THIS transaction ends (Step 7G-H5.5-P2-B1): a concurrent writer waits, then re-reads.
+     */
+    lock(id: string): Promise<ConnectedAccount | undefined>;
   };
-  readonly accountEvents: { append(event: ConnectedAccountEvent): Promise<void> };
+  readonly accountEvents: {
+    append(event: ConnectedAccountEvent): Promise<void>;
+    /** The latest occurred_at among the account's events of these types (undefined: none recorded). */
+    latestOccurredAt(connectedAccountId: string, eventTypes: readonly AccountEventType[]): Promise<Date | undefined>;
+  };
   readonly discoveredAssets: {
     list(connectionId: string): Promise<readonly DiscoveredAsset[]>;
     get(id: string): Promise<DiscoveredAsset | undefined>;

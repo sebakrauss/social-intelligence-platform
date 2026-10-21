@@ -112,11 +112,18 @@ describe("Managed accounts (Step 7G-H5): local configuration only", () => {
     expect(command.replace("tx.outbox, context", "")).not.toMatch(/outbox|CAPABILITY_EVALUATION_TOPIC|providers?\b\.|sealing|secrets|credential|deactivated\.map\([^)]*requestEvaluation/i);
   });
 
-  it("one primitive builds every capability-evaluation request: activation (link, selection, Move) and reconciliation", () => {
+  it("one primitive builds every capability-evaluation request: activation (link, selection, Move), reconciliation and explicit re-evaluation", () => {
     const builders = sourceFiles(PRODUCTION_ROOTS).filter((file) => /CAPABILITY_EVALUATION_TOPIC/.test(codeOf(file)));
     expect(builders.sort()).toEqual(["modules/connections/application/capability-request.ts", "modules/connections/domain/model.ts", "modules/connections/index.ts"]);
     const callers = sourceFiles(PRODUCTION_ROOTS).filter((file) => /capabilityEvaluationRequest\(/.test(codeOf(file)));
-    expect(callers.sort()).toEqual(["modules/connections/application/capability-reconcile.ts", "modules/connections/application/capability-request.ts", "modules/connections/application/moves.ts", COMMAND]);
+    expect(callers.sort()).toEqual([
+      "modules/connections/application/capability-reconcile.ts",
+      // Step 7G-H5.5-P2-B1: the explicit recovery request (reason reevaluation, keyed by its REEVALUATION_REQUESTED event).
+      "modules/connections/application/capability-reevaluation.ts",
+      "modules/connections/application/capability-request.ts",
+      "modules/connections/application/moves.ts",
+      COMMAND,
+    ]);
     const commands = codeOf(COMMAND);
     expect([...commands.matchAll(/capabilityEvaluationRequest\(/g)]).toHaveLength(1);
     expect([...commands.matchAll(/await requestEvaluation\(/g)]).toHaveLength(2);

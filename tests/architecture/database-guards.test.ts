@@ -43,7 +43,9 @@ const sqlSources = (): { name: string; sql: string }[] => [
 
 /**
  * Closed-vocabulary CHECK constraints that may only ever be WIDENED: the audit vocabulary (TA §41), the
- * connect-attempt state machine (Step 5D, 0008) and the product capability keys (Step 7G-H5.5, 0013: read_content). PostgreSQL can't alter a CHECK expression in place, so widening
+ * connect-attempt state machine (Step 5D, 0008), the product capability keys (Step 7G-H5.5, 0013: read_content) and the
+ * Connected Account history vocabulary (Step 7G-H5.5-P2-B1, 0014: REEVALUATION_REQUESTED / USER_REQUESTED_REEVALUATION).
+ * PostgreSQL can't alter a CHECK expression in place, so widening
  * is, in ONE migration and as top-level statements in this order:
  *   alter table <table> drop constraint <name>;
  *   alter table <table> add constraint <name> check (<column> in ('…', …)) not valid;
@@ -58,6 +60,8 @@ const WIDENABLE_CHECKS: Readonly<Record<string, { readonly table: string; readon
   audit_events_action_check: { table: "audit.audit_events", column: "action" },
   audit_events_target_type_check: { table: "audit.audit_events", column: "target_type" },
   connect_attempts_status_check: { table: "connections.connect_attempts", column: "status" },
+  connected_account_events_event_type_check: { table: "connections.connected_account_events", column: "event_type" },
+  connected_account_events_reason_code_check: { table: "connections.connected_account_events", column: "reason_code" },
   profile_entries_capability_check: { table: "capability.profile_entries", column: "capability" },
 };
 
@@ -315,7 +319,14 @@ describe("migration lint", () => {
       // The lint can't evaluate SQL semantics (e.g. string literals that mimic statements). The DB suites check the
       // live constraints after migrating (validated, closed vocabulary equal to the application's) — see
       // tests/db/suites/connections.ts "the audit vocabulary constraints are validated and match the application".
-      expect(Object.keys(WIDENABLE_CHECKS).sort()).toEqual(["audit_events_action_check", "audit_events_target_type_check", "connect_attempts_status_check", "profile_entries_capability_check"]);
+      expect(Object.keys(WIDENABLE_CHECKS).sort()).toEqual([
+        "audit_events_action_check",
+        "audit_events_target_type_check",
+        "connect_attempts_status_check",
+        "connected_account_events_event_type_check",
+        "connected_account_events_reason_code_check",
+        "profile_entries_capability_check",
+      ]);
     });
   });
 

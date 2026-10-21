@@ -15,6 +15,7 @@ import {
   capabilityEvaluationRequest,
   linkAccount,
   listConnectedAccounts,
+  requestCapabilityReevaluation,
   requestMove,
   retryMove,
   saveManagedSelection,
@@ -23,6 +24,8 @@ import {
   type ConnectedAccountSummary,
   type LinkOutput,
   type MoveRequestOutput,
+  type ReevaluationOutput,
+  type ReevaluationRefusal,
   type SelectionOutput,
   type SingleWorkspaceRule,
   type UnlinkOutput,
@@ -208,7 +211,33 @@ export function createConnectedAccountCommands() {
     respond: (output) => output,
   };
 
-  return { link, unlink, list, requestMove: requestMoveCommand, retry };
+  /**
+   * Explicit capability re-evaluation (Step 7G-H5.5-P2-B1): the routed account id is the only input — no provider,
+   * asset or client idempotency key (an unknown field is INVALID_INPUT), so the authority is always chosen server side
+   * (a NEW key per accepted request, from its REEVALUATION_REQUESTED event). Configuration, not platform mutation: it
+   * works in Monitor-only too. Eligibility and the 30-minute cooldown are decided in the transaction, never by the UI;
+   * a refusal is a typed result that wrote nothing (no event, request or audit record). No provider is reached here.
+   */
+  const requestCapabilityReevaluationCommand: WorkspaceCommand<{ readonly connectedAccountId: string }, ReevaluationOutput, CapabilityReevaluationResult> = {
+    scope: "workspace",
+    name: "connections.account.request_capability_reevaluation",
+    permission: "connections.manage",
+    requiresStandardMode: false,
+    validate: object({ connectedAccountId: uuid }),
+    execute: (context, input, tx, env) =>
+      requestCapabilityReevaluation(
+        { connections: tx.connections, capability: tx.capability, outbox: tx.outbox },
+        { scope: scopeOf(context), connectedAccountId: input.connectedAccountId, correlationId: env.correlationId, now: env.now, newId: env.newId },
+      ),
+    audit: (output) =>
+      output.kind === "requested" ? { action: "connected_account.capability_reevaluation_requested", targetType: "connected_account", targetId: output.connectedAccountId } : undefined,
+    respond: (output) => (output.kind === "requested" ? { requested: true } : { requested: false, reason: output.reason }),
+  };
+
+  return { link, unlink, list, requestMove: requestMoveCommand, retry, requestCapabilityReevaluation: requestCapabilityReevaluationCommand };
 }
+
+/** What the caller learns about a re-evaluation request: accepted, or the one typed reason it was refused. */
+export type CapabilityReevaluationResult = { readonly requested: true } | { readonly requested: false; readonly reason: ReevaluationRefusal };
 
 export type ConnectedAccountCommands = ReturnType<typeof createConnectedAccountCommands>;

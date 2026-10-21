@@ -15,17 +15,25 @@
  *                    activation event (rows that predate the event history).
  *   catalog change   capability.evaluate_account:{account}:{catalog}.r{revision} — a profile resting on another
  *                    catalog or an older revision: one request per (account, target catalog revision).
+ *   re-evaluation    capability.evaluate_account:{account}:reeval.{event} — an Owner/Admin's explicit recovery request
+ *                    (Step 7G-H5.5-P2-B1): {event} is the id of the REEVALUATION_REQUESTED account event written in the
+ *                    same transaction, so every accepted request is a NEW authority under a NEW key; a consumed one
+ *                    (any run outcome) is never re-armed or reused. At most 27 + 1 + 36 + 1 + 7 + 36 = 108 characters,
+ *                    inside system.outbox's dispatch_key contract (^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$).
  *
  * Reconciliation recomputes the activation key from the account's latest activation event, so it and the activation
  * can never request the same evaluation twice: the second writer finds the key taken.
  */
+import { isUuid } from "@/domain/ids";
 import type { OutboxMessage } from "@/platform/outbox";
 import { CAPABILITY_EVALUATION_TOPIC } from "../domain/model";
 
 export type EvaluationReason =
   | { readonly kind: "activation"; readonly activationId: string }
   | { readonly kind: "unrecorded" }
-  | { readonly kind: "catalog"; readonly catalogId: string; readonly catalogRevision: number };
+  | { readonly kind: "catalog"; readonly catalogId: string; readonly catalogRevision: number }
+  /** An explicit recovery request: `eventId` is its REEVALUATION_REQUESTED account event (a UUID). */
+  | { readonly kind: "reevaluation"; readonly eventId: string };
 
 function reasonRef(reason: EvaluationReason): string {
   switch (reason.kind) {
@@ -35,6 +43,10 @@ function reasonRef(reason: EvaluationReason): string {
       return "initial";
     case "catalog":
       return `${reason.catalogId}.r${String(reason.catalogRevision)}`;
+    case "reevaluation":
+      // Fail closed: only an event id (canonical UUID) can name a recovery authority.
+      if (!isUuid(reason.eventId)) throw new TypeError("reevaluation eventId must be a UUID");
+      return `reeval.${reason.eventId}`;
   }
 }
 

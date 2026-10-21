@@ -82,6 +82,19 @@ export { refreshAccountCapabilities, type CapabilityRefreshDependencies, type Ca
 export { capabilityEvaluationDispatchKey, capabilityEvaluationRequest, type EvaluationReason } from "./application/capability-request";
 export { CAPABILITY_RECONCILE_MAX_BATCH, requestCapabilityReevaluations, type CapabilityReconcileOutcome } from "./application/capability-reconcile";
 export {
+  CAPABILITY_REEVALUATION_COOLDOWN_MS,
+  REEVALUATION_COOLDOWN_EVENTS,
+  REEVALUATION_REFUSALS,
+  profileEligibility,
+  requestCapabilityReevaluation,
+  withinReevaluationCooldown,
+  type CapabilityReevaluationStores,
+  type ProfileEligibility,
+  type ReevaluationBasis,
+  type ReevaluationOutput,
+  type ReevaluationRefusal,
+} from "./application/capability-reevaluation";
+export {
   isManageableAsset,
   linkAccount,
   listConnectedAccounts,

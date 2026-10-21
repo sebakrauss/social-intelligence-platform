@@ -59,6 +59,8 @@ export const AUDIT_ACTIONS = [
   "connected_account.moved_in",
   "connected_account.move_failed",
   "connected_account.move_rejected",
+  // Step 7G-H5.5-P2-B1 (migration 0014): an explicit capability re-evaluation request
+  "connected_account.capability_reevaluation_requested",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

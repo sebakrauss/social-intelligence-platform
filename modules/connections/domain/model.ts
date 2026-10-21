@@ -155,9 +155,14 @@ export interface ConnectedAccount {
   readonly moveId: string | null;
 }
 
-export const ACCOUNT_EVENT_TYPES = ["LINKED", "UNLINKED", "MOVED_OUT", "MOVED_IN", "DEACTIVATED"] as const;
+/**
+ * 0014 (Step 7G-H5.5-P2-B1): REEVALUATION_REQUESTED records an Owner/Admin's explicit request for a NEW capability
+ * evaluation of an ACTIVE account; it changes no lifecycle. The database admits it only as a user's event with reason
+ * USER_REQUESTED_REEVALUATION and no move (connected_account_events_reevaluation_check).
+ */
+export const ACCOUNT_EVENT_TYPES = ["LINKED", "UNLINKED", "MOVED_OUT", "MOVED_IN", "DEACTIVATED", "REEVALUATION_REQUESTED"] as const;
 export type AccountEventType = (typeof ACCOUNT_EVENT_TYPES)[number];
-export const ACCOUNT_EVENT_REASONS = ["USER_LINKED", "USER_UNLINKED", "MOVE", "CONNECTION_DISCONNECTED", "CONNECTION_REMOVED"] as const;
+export const ACCOUNT_EVENT_REASONS = ["USER_LINKED", "USER_UNLINKED", "MOVE", "CONNECTION_DISCONNECTED", "CONNECTION_REMOVED", "USER_REQUESTED_REEVALUATION"] as const;
 export type AccountEventReason = (typeof ACCOUNT_EVENT_REASONS)[number];
 
 /** Append-only link/move history (connected_account_events). Workers record as `system`; web as the user. */
