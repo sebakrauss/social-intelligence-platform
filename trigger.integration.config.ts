@@ -2,14 +2,14 @@
  * Trigger.dev deployment configuration for the jobs unit's INTEGRATION execution plane (Step 7E.4B.3): ONLY the tasks
  * that open a provider credential (connections.discover_assets, capability.evaluate_account). A separate Trigger.dev
  * project, so its environment — and later its AWS worker identity — never reaches a main-plane task. No Vercel
- * integration and no automatic pull-request previews for this project. Used only by the Trigger.dev CLI
- * (`trigger deploy --config trigger.integration.config.ts --external-id <commit SHA>`, the same id as the main plane's
- * deployment of that commit). The project reference comes from the environment and is never committed.
+ * integration and no automatic pull-request previews for this project. Used only by the Trigger.dev CLI, through the
+ * paired release `npm run trigger:release` (tools/trigger/deploy-release-pair.ts), which deploys this plane FIRST and
+ * then the main plane, both with the same `--external-id`. The project reference is never committed.
  *
  * Step 7G-H5.6B: the ONLY build that packages the AWS IAM Roles Anywhere credential helper (the worker's AWS identity),
  * through jobs/build/aws-signing-helper-extension.ts — pinned, fetched beforehand with
  * tools/trigger/fetch-aws-signing-helper.ts, and enforced by an image-build integrity layer (a missing or altered build
- * fails the image build). Deploy with `--depot-build` (the image context is the local build output).
+ * fails the image build). The paired release deploys it with `--depot-build` (the image context is the local build output).
  */
 import { defineConfig } from "@trigger.dev/sdk";
 import { awsSigningHelperExtension } from "./jobs/build/aws-signing-helper-extension";

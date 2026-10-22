@@ -3,8 +3,9 @@
  * relay and sweepers and the Move saga steps — every task that never opens a provider credential. The integration plane
  * is a separate project and deployment (trigger.integration.config.ts); the two discover disjoint task directories.
  * Used only by the Trigger.dev CLI, which is NOT a repository dependency: it runs as a pinned, ephemeral tool (see
- * README › Jobs). The project reference comes from the environment and is never committed. Both planes are deployed
- * from the same commit with the same `--external-id` (version-skew protection across planes).
+ * README › Jobs). The project reference is never committed. Both planes are released TOGETHER from the same commit with
+ * the same `--external-id` (version-skew protection across planes), only through `npm run trigger:release`
+ * (tools/trigger/deploy-release-pair.ts: INTEGRATION first, then this plane).
  */
 import { defineConfig } from "@trigger.dev/sdk";
 import { RETRY_POLICIES } from "./platform/jobs/registry";

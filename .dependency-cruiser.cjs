@@ -365,7 +365,7 @@ module.exports = {
       name: "jobs-are-entry-points",
       severity: "error",
       comment: "Nothing imports jobs/.",
-      from: { pathNot: "^(jobs/|tests/|tools/trigger/fetch-aws-signing-helper\\.ts$)" },
+      from: { pathNot: "^(jobs/|tests/|tools/trigger/fetch-aws-signing-helper\\.ts$|tools/trigger/release-pair\\.ts$)" },
       to: { path: "^jobs/" },
     },
     {
@@ -373,6 +373,13 @@ module.exports = {
       severity: "error",
       comment: "Step 7G-H5.6B: the operator fetch tool reads exactly the import-free helper pins (jobs/aws-signing-helper.ts), so the pinned version, URLs and SHA-256 digests have one source. It imports nothing else from jobs/.",
       from: { path: "^tools/trigger/fetch-aws-signing-helper\\.ts$" },
+      to: { path: "^jobs/", pathNot: "^jobs/aws-signing-helper\\.ts$" },
+    },
+    {
+      name: "release-pair-reads-pins-only",
+      severity: "error",
+      comment: "Step 7G-H5.5-P2-F2: the paired release planner prechecks the INTEGRATION image's signing-helper builds against the SAME pins (jobs/aws-signing-helper.ts, import-free). It imports nothing else from jobs/; the executor (deploy-release-pair.ts) imports no jobs/ module at all.",
+      from: { path: "^tools/trigger/release-pair\\.ts$" },
       to: { path: "^jobs/", pathNot: "^jobs/aws-signing-helper\\.ts$" },
     },
     {

@@ -90,8 +90,14 @@ the INTEGRATION image only. Supported operator path, from the repository root:
 
 ```
 node tools/trigger/fetch-aws-signing-helper.ts
-trigger deploy --config trigger.integration.config.ts --external-id <commit SHA> --depot-build
+npm run trigger:release -- --cli … --integration-project-ref … --main-project-ref …
 ```
+
+The INTEGRATION image is never deployed alone: `npm run trigger:release` (root README › Jobs) deploys INTEGRATION and
+then MAIN from one captured commit with the same external id, both with `--depot-build`. Before anything is deployed it
+verifies the pinned helper builds (presence and SHA-256 against `jobs/aws-signing-helper.ts`) and stops with the fetch
+instruction if one is missing or altered; the image-build layer below remains the enforcement boundary. Roles Anywhere,
+the worker identity and the build extension are unchanged by the paired release.
 
 | Layer | What it does | Guarantee |
 |---|---|---|

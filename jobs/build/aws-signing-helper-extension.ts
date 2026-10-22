@@ -19,8 +19,10 @@
  * `onBuildStart` is an early, operator-visible preflight only (the CLI does not catch it): a deploy whose helper builds
  * are missing or wrong stops before bundling, with the fetch instruction. It is not the security property.
  *
- * Supported operator path: `trigger deploy --config trigger.integration.config.ts … --depot-build` (the image context is
- * the local build output). The deployed runtime verifies the digest again before the first use (aws-signing-helper-process.ts).
+ * Supported operator path: the paired production release `npm run trigger:release` (tools/trigger/deploy-release-pair.ts,
+ * README › Jobs): INTEGRATION first, then MAIN, both with the same captured release SHA as external id and `--depot-build`
+ * (the image context is the local build output); it verifies these helper builds before deploying anything. The deployed
+ * runtime verifies the digest again before the first use (aws-signing-helper-process.ts).
  * `trigger dev` (local keyring, no KMS, no helper) is untouched. No material of any kind — certificate, key or
  * credential — is ever part of a build.
  */

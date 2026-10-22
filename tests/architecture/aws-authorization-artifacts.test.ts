@@ -680,7 +680,7 @@ describe("documents — required statements", () => {
 
   it("README: the INTEGRATION deploy contract (Step 7G-H5.6B-C1) — supported --depot-build path, the image-build layer as the enforcement boundary", () => {
     const readme = doc("README.md");
-    for (const phrase of ["## INTEGRATION deployment (credential helper)", "node tools/trigger/fetch-aws-signing-helper.ts", "trigger deploy --config trigger.integration.config.ts --external-id <commit SHA> --depot-build", "**The enforcement boundary**", "never throws (the CLI swallows that throw AND drops the extension's layers)", "not the supported path"]) {
+    for (const phrase of ["## INTEGRATION deployment (credential helper)", "node tools/trigger/fetch-aws-signing-helper.ts", "npm run trigger:release -- --cli … --integration-project-ref … --main-project-ref …", "The INTEGRATION image is never deployed alone", "**The enforcement boundary**", "never throws (the CLI swallows that throw AND drops the extension's layers)", "not the supported path"]) {
       expect(readme, phrase).toContain(phrase);
     }
   });

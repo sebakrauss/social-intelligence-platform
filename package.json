@@ -21,6 +21,7 @@
     "db:provision-roles": "node tools/db/provision-roles.ts",
     "ops:switch": "node tools/ops/switch.ts",
     "secret-scan": "node tools/secret-scan/cli.ts",
+    "trigger:release": "node tools/trigger/deploy-release-pair.ts",
     "audit": "npm audit",
     "verify": "npm run secret-scan && npm run audit && npm run lint && npm run typecheck && npm run boundaries && npm run test && npm run test:db && npm run build"
   },

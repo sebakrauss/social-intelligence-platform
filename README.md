@@ -80,10 +80,29 @@ recorded and surfaced, never blindly re-dispatched). Effects are protected by do
   dispatch, recovery and run lookup. Main reaches integration only with `TRIGGER_INTEGRATION_TASK_OPERATOR_KEY`
   (Task operator, the two integration tasks); integration wakes main's relay only with
   `TRIGGER_MAIN_RELAY_TRIGGER_KEY` (Trigger only, `outbox.relay`). The web knows only the main project.
-- Both planes deploy **from the same commit with the same external id**:
-  `deploy --config trigger.config.ts --external-id <sha>` and
-  `deploy --config trigger.integration.config.ts --external-id <sha>`. Cross-plane triggers are pinned to the
-  running release, so they never reach another version (they wait while it builds and expire if it never lands).
+- **Trigger.dev releases are paired** (Step 7G-H5.5-P2-F2): both planes are ONE release unit, deployed from the same
+  commit with the same external id, because cross-plane triggers are pinned to the running release (MAIN → INTEGRATION
+  dispatch and INTEGRATION → MAIN relay wake-ups; they wait while that release builds and expire if it never lands).
+  The only supported production path is `npm run trigger:release` (`tools/trigger/deploy-release-pair.ts`):
+  - **dry run by default**; deploying needs `--execute --confirm-paired-release`;
+  - git identity first: canonical repository root, clean worktree, `git fetch origin main`, HEAD unchanged and equal to
+    `origin/main` → `RELEASE_SHA`, captured once and never recalculated; re-checked (fresh fetch) before each plane;
+  - **INTEGRATION first, then MAIN**, both with `--env prod --external-id <RELEASE_SHA> --depot-build`, an empty env file
+    the tool creates, `--skip-update-check --skip-sync-env-vars --skip-telemetry`; project refs are flags
+    (`--integration-project-ref`, `--main-project-ref`), never committed or read from an env file; the CLI is the
+    pinned executable given as `--cli <absolute path>` and runs with only `PATH`, `HOME`, `TERM`, `CI`, `NO_COLOR`;
+  - a plane passes only with exit code 0, a reported version and exactly its task count (INTEGRATION 3, MAIN 6);
+    INTEGRATION must pass before MAIN starts;
+  - **partial failure is never repaired automatically** (no retry, rollback or redeploy): `STOP_INTEGRATION_FAILED`,
+    `STOP_MAIN_FAILED` (INTEGRATION may already run the new release while MAIN still pins the old one — fix the cause and
+    re-run the tool for the same commit), `STOP_VERIFICATION_UNKNOWN`, `STOP_GIT_DRIFT`, `INTERRUPTED`;
+  - one create-exclusive evidence record per executed release in `.wrenkind-local/evidence/trigger-release-pair/`
+    (operator-local; git- and Vercel-excluded; redacted, no secret);
+  - `ALIGNED` means one captured SHA, both argv built from it, both planes passed, git identity unchanged. The external
+    id Trigger.dev stores is not re-readable with this tooling, so it is never claimed as read back.
+
+  A Trigger.dev release is needed only when job code changes: a web-only commit leaves both planes on their (still
+  mutually aligned) release, and nothing compares a deployed release with the current git HEAD.
   Before removing a task from a plane, `retirementReadiness` must report no delivery bound to it that can still run
   it there (claimable, or dispatched and awaiting an outcome); outcomes and `OBSERVATION_EXHAUSTED` are terminal.
 - Five priority lanes, each its own bounded queue (`platform/jobs/lanes.ts`), plus a system delivery queue.
@@ -93,10 +112,12 @@ recorded and surfaced, never blindly re-dispatched). Effects are protected by do
 | Command | What it does |
 |---|---|
 | `npm run ops:switch -- set\|clear --key … --scope … [--qualifier …] [--value '{…}'] --operator <id> --reason <code> [--apply]` | Audited operator change to one switch on the configured development project. |
+| `npm run trigger:release -- --cli <absolute path> --integration-project-ref <proj_…> --main-project-ref <proj_…> [--execute --confirm-paired-release]` | The paired Trigger.dev production release (INTEGRATION, then MAIN, one captured commit). Dry run unless `--execute --confirm-paired-release`. |
 | `npm run test:jobs:managed` | T-27 managed leg on the Trigger.dev **DEVELOPMENT** environment (crash → R7 → new run → one effect). Reports **NOT RUN** (exit 2) without `TRIGGER_SECRET_KEY` / `TRIGGER_PROJECT_REF`; refuses non-`tr_dev_` keys. |
 
 The Trigger.dev **CLI is not a repository dependency**. Run it only as a pinned, ephemeral tool
-(`npx trigger.dev@4.7.2 …`), e.g. `npx trigger.dev@4.7.2 login` once for your own CLI session. The repository
+(`npx trigger.dev@4.7.2 …`), e.g. `npx trigger.dev@4.7.2 login` once for your own CLI session; a paired release
+receives the pinned executable's absolute path as `--cli`. The repository
 itself must stay `npm audit` clean; a guard fails CI if the CLI enters the dependency tree or if any resolved
 `ws` is below 8.21.0 (pinned through `overrides`).
 
@@ -342,7 +363,9 @@ points temporarily at `social-intelligence-dev-v2`, with `APP_DEPLOYMENT_ENV=pre
 
 These are operating rules for a short window, not a product feature: there is no lock or schema support for them.
 
-**CLI** (pinned `trigger.dev@4.7.2`, operator login profile, never a repository dependency):
+**CLI** (pinned `trigger.dev@4.7.2`, operator login profile, never a repository dependency). A Preview validation
+deploy is the documented exception to the paired release and is NOT a production release: it targets one Preview
+branch, never the `prod` environment and never an external id (an unpinned Preview run refuses cross-plane triggers).
 - deploy: `deploy --env preview --branch <name>` (build from the local checkout; no git push);
 - variables: `env list --env preview --branch <name>` lists names only unless `--show-values` is passed;
 - archive: `preview archive --branch <name>`.

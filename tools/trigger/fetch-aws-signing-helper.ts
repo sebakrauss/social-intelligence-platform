@@ -1,7 +1,7 @@
 /**
  * Fetches the pinned official AWS IAM Roles Anywhere credential helper builds (jobs/aws-signing-helper.ts) into the
  * git-ignored helper directory, for the INTEGRATION deployment's build extension (Step 7G-H5.6B). Operator tooling, run
- * before `trigger deploy --config trigger.integration.config.ts`:
+ * before the paired release (`npm run trigger:release`, which verifies these builds before deploying anything):
  *
  *   node tools/trigger/fetch-aws-signing-helper.ts
  *

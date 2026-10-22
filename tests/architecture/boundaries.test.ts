@@ -106,6 +106,9 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   // Step 7G-H5.6B: the helper fetch tool reads exactly the pins; no other tool reads them
   ["jobs-are-entry-points", "tools/trigger/reads-helper-pins.ts", "jobs/aws-signing-helper.ts"],
   ["aws-signing-helper-fetch-reads-pins-only", "tools/trigger/fetch-aws-signing-helper.ts", "jobs/connections.ts"],
+  // Step 7G-H5.5-P2-F2: the paired-release planner reads exactly the pins; the executor reads no jobs/ module
+  ["release-pair-reads-pins-only", "tools/trigger/release-pair.ts", "jobs/connections.ts"],
+  ["jobs-are-entry-points", "tools/trigger/deploy-release-pair.ts", "jobs/aws-signing-helper.ts"],
   ["mutation-port-executor-only", "server/handler.ts", "integrations/providers/contract/mutation-port.ts"],
   ["provider-adapter-isolated", "integrations/providers/meta/adapter.ts", "modules/insights/index.ts"],
   // Job runtime boundary (Step 3): SDK and adapter behind the port; no direct enqueue, delivery or system scope
