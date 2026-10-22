@@ -626,7 +626,9 @@ It writes nothing (no capability profile, catalog, outbox, ingestion, audit or e
 authority. Output (closed values only): result class, `positiveEvidenceEligible`, authorization class, Graph version,
 window days, stages, the implemented Meta request count, list success / item count / in-window count / content-kind
 histogram / pagination `more|end` / correlation booleans / error class, getContent attempted / succeeded / correlation
-booleans / error class. Never: Page or post ids, refs, tokens, captions, names, cursors, URLs, raw responses, AWS
+booleans / error class, and `get.selectedContentKind` (Step 7G-H5.5-P5-C0): the canonical `ContentKind` of the exact
+listed item whose ref getContent read back (null when not attempted), with `get.contentKindMatchesListed` = re-read kind
+=== that selected kind — so a positive run proves which kind getContent was validated on. Never: Page or post ids, refs, tokens, captions, names, cursors, URLs, raw responses, AWS
 material (architecture- and unit-tested).
 
 | Run | Meta GETs (implemented) |

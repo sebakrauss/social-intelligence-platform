@@ -27,6 +27,10 @@
  * the post) — never an arbitrary target. Meta GETs: 4 with an item, 2 without. A run without an item is never
  * positive evidence (`positiveEvidenceEligible` false).
  *
+ * Output names the selected item's normalized kind (`get.selectedContentKind`, closed ContentKind) so a positive run proves
+ * WHICH kind getContent was validated on (Step 7G-H5.5-P5-C0); `get.contentKindMatchesListed` then says whether the
+ * authoritative re-read preserved it.
+ *
  * Writes NOTHING: no capability profile, catalog, outbox, ingestion, audit or effect claim (the lookup is read-only and
  * its write dependencies refuse). Provider errors are reported as closed classes, never thrown provider prose; the
  * output carries no Page/post id, ref, token, caption, name, cursor, URL or raw response. Retry: ONE task attempt and
@@ -165,8 +169,15 @@ export interface ReadContentValidationOutcome {
   readonly get: {
     readonly attempted: boolean;
     readonly succeeded: boolean | null;
+    /**
+     * The normalized kind of the EXACT listed item whose ref was passed to getContent (the first in-window item) — set
+     * whenever getContent is attempted, null when it is not. Read from that same selected object, never from the
+     * histogram or the getContent answer (Step 7G-H5.5-P5-C0).
+     */
+    readonly selectedContentKind: ContentKind | null;
     readonly refMatchesListed: boolean | null;
     readonly accountMatchesManagedPage: boolean | null;
+    /** getContent's kind === selectedContentKind (the selected item's own kind); null when nothing was read back. */
     readonly contentKindMatchesListed: boolean | null;
     readonly error: ReadContentErrorClass | null;
   };
@@ -365,10 +376,12 @@ export async function runReadContentValidation(
           stages: Object.freeze(stages),
           expectedMetaRequests: READ_CONTENT_VALIDATION_META_REQUESTS.withoutItem,
           list,
-          get: Object.freeze({ attempted: false, succeeded: null, refMatchesListed: null, accountMatchesManagedPage: null, contentKindMatchesListed: null, error: null }),
+          get: Object.freeze({ attempted: false, succeeded: null, selectedContentKind: null, refMatchesListed: null, accountMatchesManagedPage: null, contentKindMatchesListed: null, error: null }),
         } satisfies ReadContentValidationOutcome);
       }
 
+      // ONE selected object supplies both the ref read back and the kind reported for it.
+      const selectedContentKind: ContentKind = first.contentKind;
       stages.push("get_content");
       let got: ContentDto | undefined;
       let getError: ReadContentErrorClass | null = null;
@@ -380,7 +393,7 @@ export async function runReadContentValidation(
       }
       const refMatchesListed = got === undefined ? null : sameProviderObject(got.ref, first.ref);
       const accountMatchesManagedPage = got === undefined ? null : sameProviderObject(got.account, managed);
-      const contentKindMatchesListed = got === undefined ? null : got.contentKind === first.contentKind;
+      const contentKindMatchesListed = got === undefined ? null : got.contentKind === selectedContentKind;
       const correlated = refMatchesListed === true && accountMatchesManagedPage === true && list.allItemsFromManagedPage === true;
       const result: ReadContentValidationResult = got === undefined ? "READ_CONTENT_GET_FAILED" : correlated ? "READ_CONTENT_LIST_AND_GET_SUCCEEDED" : "READ_CONTENT_GET_NOT_CORRELATED";
       return Object.freeze({
@@ -393,7 +406,7 @@ export async function runReadContentValidation(
         stages: Object.freeze(stages),
         expectedMetaRequests: READ_CONTENT_VALIDATION_META_REQUESTS.withItem,
         list,
-        get: Object.freeze({ attempted: true, succeeded: got !== undefined, refMatchesListed, accountMatchesManagedPage, contentKindMatchesListed, error: getError }),
+        get: Object.freeze({ attempted: true, succeeded: got !== undefined, selectedContentKind, refMatchesListed, accountMatchesManagedPage, contentKindMatchesListed, error: getError }),
       } satisfies ReadContentValidationOutcome);
     });
   } catch (error) {

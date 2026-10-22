@@ -111,3 +111,24 @@ describe("dispatch path", () => {
     expect(users(/\btags:/)).toEqual(["platform/jobs/trigger-dev.ts", "platform/outbox/delivery.ts"]);
   });
 });
+
+describe("read_content validation diagnostic: the selected getContent kind (Step 7G-H5.5-P5-C0)", () => {
+  const MODULE = "jobs/integration-read-content-validation.ts";
+
+  it("selectedContentKind is the canonical provider-contract ContentKind (never a string or a local vocabulary)", () => {
+    const code = codeOf(MODULE);
+    expect(code).toMatch(/readonly selectedContentKind: ContentKind \| null;/);
+    expect(code).toMatch(/type ContentKind,[\s\S]*\} from "@\/integrations\/providers\/contract";/);
+    expect(code).not.toMatch(/selectedContentKind: string|type \w*ContentKind\w* =|"post" \| "video"/);
+  });
+
+  it("the kind and the ref read back come from the SAME selected object; the match compares against that kind", () => {
+    const code = codeOf(MODULE);
+    expect(code.match(/const first = items\[0\];/g)).toHaveLength(1);
+    expect(code).toMatch(/const selectedContentKind: ContentKind = first\.contentKind;/);
+    expect(code).toMatch(/read\.getContent\(providerAccess, first\.ref\)/);
+    expect(code).toMatch(/const contentKindMatchesListed = got === undefined \? null : got\.contentKind === selectedContentKind;/);
+    // Never derived from the histogram or the getContent answer.
+    expect(code).not.toMatch(/selectedContentKind[^;\n]*(histogram|contentKinds|got\.)/);
+  });
+});

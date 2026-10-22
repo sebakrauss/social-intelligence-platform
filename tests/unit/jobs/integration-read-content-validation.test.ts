@@ -168,8 +168,9 @@ async function refused(promise: Promise<unknown>): Promise<ReadContentValidation
 /** The ONLY keys an outcome may carry (output schema). */
 const OUTCOME_KEYS = ["authorization", "expectedMetaRequests", "get", "graphVersion", "list", "maxListPages", "positiveEvidenceEligible", "result", "stages", "windowDays"];
 const LIST_KEYS = ["allItemsFromManagedPage", "allSourcesUnknown", "contentKinds", "error", "inWindowItemCount", "itemCount", "pagination", "succeeded"];
-const GET_KEYS = ["accountMatchesManagedPage", "attempted", "contentKindMatchesListed", "error", "refMatchesListed", "succeeded"];
+const GET_KEYS = ["accountMatchesManagedPage", "attempted", "contentKindMatchesListed", "error", "refMatchesListed", "selectedContentKind", "succeeded"];
 const CLOSED_STRINGS = new Set<string>([
+  ...CONTENT_KINDS,
   "READ_CONTENT_LIST_AND_GET_SUCCEEDED", "READ_CONTENT_LIST_SUCCEEDED_NO_ITEMS", "READ_CONTENT_LIST_FAILED", "READ_CONTENT_GET_FAILED", "READ_CONTENT_GET_NOT_CORRELATED",
   "AUTHORIZED_READS_OBSERVED", "PERMISSION_MISSING_OBSERVED", "CREDENTIAL_INVALID_OBSERVED", "NOT_DETERMINED", "v25.0", "list_content", "get_content", "more", "end",
   "rate_limited", "transient", "permission_missing", "target_not_found", "target_not_eligible", "credential_invalid", "permanent_rejected", "outcome_unknown",
@@ -332,7 +333,7 @@ describe("the provider sequence: listContent, then getContent of the FIRST liste
         allSourcesUnknown: true,
         error: null,
       },
-      get: { attempted: true, succeeded: true, refMatchesListed: true, accountMatchesManagedPage: true, contentKindMatchesListed: true, error: null },
+      get: { attempted: true, succeeded: true, selectedContentKind: "post", refMatchesListed: true, accountMatchesManagedPage: true, contentKindMatchesListed: true, error: null },
     } satisfies ReadContentValidationOutcome);
     expectOutcomeSchema(outcome);
   });
@@ -355,7 +356,7 @@ describe("the provider sequence: listContent, then getContent of the FIRST liste
       stages: ["list_content"],
       expectedMetaRequests: 2,
       list: { succeeded: true, itemCount: 0, pagination: "end" },
-      get: { attempted: false, succeeded: null, refMatchesListed: null, error: null },
+      get: { attempted: false, succeeded: null, selectedContentKind: null, refMatchesListed: null, contentKindMatchesListed: null, error: null },
     });
     expectOutcomeSchema(outcome);
   });
@@ -435,6 +436,55 @@ describe("credential-access failures before the provider call are fixed codes", 
     const broken: ProviderReadPort = { ...world.read, listContent: () => Promise.reject(new TypeError(`${BODY_MARKER} ${PAGE}`)) };
     const h = harness({}, { compose: () => ({ access: lendingAccess().access, read: broken }) });
     expect(await refused(h.run())).toBe("read_content_validation_failed");
+  });
+});
+
+describe("P5-C0: the output names the kind of the EXACT item getContent was validated on", () => {
+  it("a selected post: selectedContentKind = post, read back from that same ref, kinds match", async () => {
+    const h = harness({ list: { data: [post(POST_A), post(POST_B, { status_type: "added_video" })] }, get: post(POST_A) });
+    const outcome = await h.run();
+    expect(h.world.calls[3]?.pathname).toBe(`/v25.0/${POST_A}`);
+    expect(outcome.get).toMatchObject({ attempted: true, succeeded: true, selectedContentKind: "post", contentKindMatchesListed: true, refMatchesListed: true });
+    expectOutcomeSchema(outcome);
+  });
+
+  it("a selected video: selectedContentKind = video, even though the page also lists posts", async () => {
+    const h = harness({ list: { data: [post(POST_B, { status_type: "added_video" }), post(POST_A)] }, get: post(POST_B, { status_type: "added_video" }) });
+    const outcome = await h.run();
+    expect(h.world.calls[3]?.pathname).toBe(`/v25.0/${POST_B}`);
+    expect(outcome.list.contentKinds).toMatchObject({ post: 1, video: 1 });
+    expect(outcome.get).toMatchObject({ attempted: true, succeeded: true, selectedContentKind: "video", contentKindMatchesListed: true });
+    expect(outcome.result).toBe("READ_CONTENT_LIST_AND_GET_SUCCEEDED");
+    expectOutcomeSchema(outcome);
+  });
+
+  it("zero eligible items: getContent not attempted and selectedContentKind null", async () => {
+    const h = harness({ list: { data: [post(POST_A, { created_time: "2020-01-01T00:00:00+0000" })] } });
+    const outcome = await h.run();
+    expect(h.world.calls).toHaveLength(2);
+    expect(outcome.get).toEqual({ attempted: false, succeeded: null, selectedContentKind: null, refMatchesListed: null, accountMatchesManagedPage: null, contentKindMatchesListed: null, error: null });
+  });
+
+  it("a re-read of a different kind: contentKindMatchesListed = false, selectedContentKind stays the LISTED kind", async () => {
+    const h = harness({ list: { data: [post(POST_A)] }, get: post(POST_A, { status_type: "added_video" }) });
+    const outcome = await h.run();
+    expect(outcome.get).toMatchObject({ attempted: true, succeeded: true, selectedContentKind: "post", contentKindMatchesListed: false, refMatchesListed: true });
+    expectOutcomeSchema(outcome);
+  });
+
+  it("a failed getContent still names the selected kind (it was attempted), with no match verdict", async () => {
+    const h = harness({ list: { data: [post(POST_B, { status_type: "added_video" })] }, get: { error: { code: 100, error_subcode: 33, message: BODY_MARKER } }, getStatus: 400 });
+    const outcome = await h.run();
+    expect(outcome.get).toMatchObject({ attempted: true, succeeded: false, selectedContentKind: "video", contentKindMatchesListed: null, error: { kind: "target_not_found" } });
+    expectOutcomeSchema(outcome);
+  });
+
+  it("the selected kind is a canonical ContentKind and is set iff getContent was attempted (every outcome above and below)", async () => {
+    for (const graph of [{}, { list: { data: [] } }, { list: { error: { code: 10, message: BODY_MARKER } }, listStatus: 403 }] as Graph[]) {
+      const outcome = await harness(graph).run();
+      expect(outcome.get.selectedContentKind === null, JSON.stringify(outcome.get)).toBe(!outcome.get.attempted);
+      if (outcome.get.selectedContentKind !== null) expect(CONTENT_KINDS).toContain(outcome.get.selectedContentKind);
+    }
   });
 });
 
