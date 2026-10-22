@@ -160,6 +160,9 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
   const COMPOSITION = "jobs/connections.ts";
   const DIAGNOSTIC = "jobs/integration-kms-diagnostic.ts";
   const DIAGNOSTIC_TASK = "jobs/trigger/integration/kms-worker-auth-diagnostic.ts";
+  /** Step 7G-H5.5-P5-B: the read_content validation diagnostic also opts in (one KMS attempt), through the composition. */
+  const READ_DIAGNOSTIC = "jobs/integration-read-content-validation.ts";
+  const READ_DIAGNOSTIC_TASK = "jobs/trigger/integration/read-content-validation.ts";
   const SEAL_COMPOSITION = "server/connections/credential-crypto.ts";
   const runtime = sourceFiles(RUNTIME_ROOTS);
   const users = (pattern: RegExp): string[] => findReferences(runtime, [pattern]).map(([file]) => file).sort();
@@ -176,9 +179,15 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
     expect(codeOf(KMS_CLIENT)).toMatch(/new KMSClient\(\{\n {4}region,\n {4}credentials,\n {4}ignoreConfiguredEndpointUrls: true,\n {4}\.\.\.\(attempts === undefined \? \{\} : \{ maxAttempts: 1 \}\),\n {2}\}\);/);
   });
 
-  it("only the diagnostic opts in; the product compositions (open and seal) never pass the option", () => {
+  it("only the diagnostics opt in; the product compositions (open and seal) never pass the option", () => {
     expect(users(/\bKMS_DIAGNOSTIC_AWS_ATTEMPTS\b/)).toEqual([DIAGNOSTIC]);
-    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT].sort());
+    expect(users(/\bREAD_CONTENT_VALIDATION_AWS_ATTEMPTS\b/)).toEqual([READ_DIAGNOSTIC]);
+    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT, READ_DIAGNOSTIC, READ_DIAGNOSTIC_TASK].sort());
+    expect(codeOf(READ_DIAGNOSTIC_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/);
+    expect(codeOf(READ_DIAGNOSTIC)).toMatch(/export const READ_CONTENT_VALIDATION_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
+    expect(count(READ_DIAGNOSTIC, /composeReadContentValidation\(environment, READ_CONTENT_VALIDATION_AWS_ATTEMPTS\)/)).toBe(1);
+    expect(users(/\bcomposeReadContentValidation\(/)).toEqual([COMPOSITION, READ_DIAGNOSTIC].sort());
+    expect(count(COMPOSITION, /composeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment\), attempts\)/)).toBe(1);
     expect(codeOf(DIAGNOSTIC_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/); // the Trigger.dev task retry: a separate control
     expect(codeOf(DIAGNOSTIC)).toMatch(/export const KMS_DIAGNOSTIC_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
     expect(count(DIAGNOSTIC, /composeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment\), KMS_DIAGNOSTIC_AWS_ATTEMPTS\)/)).toBe(1);
@@ -204,12 +213,13 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
     expect(findReferences(runtime, [/AWS_MAX_ATTEMPTS|AWS_RETRY_MODE|\bmax_attempts\b|\bretry_mode\b|\bretryMode\b|\bretryStrategy\b|\bStandardRetryStrategy\b|\bConfiguredRetryStrategy\b/])).toEqual([]);
     // Module-level mutable state: none, except the pre-existing lazy product composition cache in jobs/connections.ts.
     expect(codeOf(COMPOSITION).match(/^(?:export\s+)?(?:let|var)\s.*$/gm)).toEqual(["let composition: JobComposition | undefined;"]);
-    for (const file of [KMS_CLIENT, WORKER_ADAPTER, COMPOSITION, DIAGNOSTIC]) {
+    for (const file of [KMS_CLIENT, WORKER_ADAPTER, COMPOSITION, DIAGNOSTIC, READ_DIAGNOSTIC]) {
       if (file !== COMPOSITION) expect(codeOf(file), file).not.toMatch(/^(?:export\s+)?(?:let|var)\s/m);
       expect(codeOf(file), file).not.toMatch(/process\.env(\.\w+|\[[^\]]+\])\s*(=(?!=)|\?\?=|\|\|=)|delete\s+process\.env|Object\.assign\(\s*process\.env/);
     }
     expect(codeOf(KMS_CLIENT)).not.toMatch(/process\.env/);
     expect(codeOf(DIAGNOSTIC)).not.toMatch(/process\.env/);
+    expect(codeOf(READ_DIAGNOSTIC)).not.toMatch(/process\.env/);
   });
 });
 

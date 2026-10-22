@@ -23,29 +23,33 @@ import {
 import {
   AUTHORIZATION_SEMANTICS,
   FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED,
+  CAPABILITY_REQUIRED_OPERATIONS,
   IMPLEMENTED_PLATFORM_OPERATIONS,
+  OFFLINE_IMPLEMENTED_OPERATIONS,
+  READ_CONTENT_REQUIRED_OPERATIONS,
   apiValidationRecordViolations,
   platformCatalogViolations,
   platformEntryViolations,
   type ApiValidationRecord,
   type CatalogContractContext,
   type ImplementedOperation,
+  type OperationSetRegistration,
 } from "@/modules/capability/domain/catalog-contract";
 
-const EVIDENCE = "api-validation:meta.facebook.read_interactions.20261101-01";
+const EVIDENCE = "api-validation:meta.facebook.read_content.20261101-01";
 const RECORD: ApiValidationRecord = Object.freeze({
   id: EVIDENCE,
   provider: "meta",
   platform: "facebook",
   assetClass: "content_bearing",
   accountKind: "facebook_page",
-  capability: "read_interactions",
+  capability: "read_content",
   contentKind: ANY,
   source: ANY,
-  operation: "listInteractions",
+  operations: READ_CONTENT_REQUIRED_OPERATIONS,
   validatedOn: "2026-11-01",
   sourceRevision: "a".repeat(40),
-  requiredPermissions: Object.freeze(["synthetic_read_comments"]),
+  requiredPermissions: Object.freeze(["synthetic_read_posts"]),
   scenario: "Synthetic fixture scenario: one controlled read of a test asset.",
   observedResult: "Synthetic fixture result: the read returned the documented shape.",
   polarity: "positive",
@@ -56,19 +60,20 @@ const RECORD: ApiValidationRecord = Object.freeze({
 const ENTRY: CatalogEntry = Object.freeze({
   platform: "facebook",
   assetClass: "content_bearing",
-  capability: "read_interactions",
+  capability: "read_content",
   contentKind: ANY,
   source: ANY,
   state: "SUPPORTED",
   limitation: null,
-  requiredPermissions: Object.freeze(["synthetic_read_comments"]),
+  requiredPermissions: Object.freeze(["synthetic_read_posts"]),
   validation: "validated",
   evidence: EVIDENCE,
 });
-const IMPLEMENTED: ImplementedOperation = Object.freeze({ provider: "meta", platform: "facebook", capability: "read_interactions", operation: "listInteractions", evidence: EVIDENCE });
-/** A hypothetical future in which the semantics are resolved and the operation is registered: proves satisfiability. */
-const RESOLVED: CatalogContractContext = { records: [RECORD], implementedOperations: [IMPLEMENTED], authorizationSemantics: "RESOLVED" };
-const TODAY: CatalogContractContext = { records: [], implementedOperations: IMPLEMENTED_PLATFORM_OPERATIONS, authorizationSemantics: AUTHORIZATION_SEMANTICS };
+const IMPLEMENTED: ImplementedOperation = Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS, evidence: EVIDENCE });
+const OFFLINE: OperationSetRegistration = Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS });
+/** A hypothetical future in which both operations are implemented AND validated live: proves satisfiability. */
+const RESOLVED: CatalogContractContext = { records: [RECORD], offlineImplementations: [OFFLINE], implementedOperations: [IMPLEMENTED], authorizationSemantics: "RESOLVED" };
+const TODAY: CatalogContractContext = { records: [], offlineImplementations: OFFLINE_IMPLEMENTED_OPERATIONS, implementedOperations: IMPLEMENTED_PLATFORM_OPERATIONS, authorizationSemantics: AUTHORIZATION_SEMANTICS };
 
 const violations = (entry: Partial<CatalogEntry>, context: Partial<CatalogContractContext> = {}) => platformEntryViolations({ ...ENTRY, ...entry }, { ...RESOLVED, ...context });
 
@@ -121,7 +126,7 @@ describe("positive entries (SUPPORTED / AVAILABLE_WITH_LIMITATION) fail closed",
   });
 
   it("every required permission must be explicitly named, distinct and equal to the record's (never the simulator's)", () => {
-    for (const bad of [[""], ["Read Comments"], ["sim.read_interactions"], ["synthetic_read_comments", "synthetic_read_comments"]]) {
+    for (const bad of [[""], ["Read Comments"], ["sim.read_content"], ["synthetic_read_posts", "synthetic_read_posts"]]) {
       expect(violations({ requiredPermissions: bad })).toContain("REQUIRED_PERMISSION_UNNAMED");
     }
     expect(violations({ requiredPermissions: ["synthetic_other"] })).toContain("EVIDENCE_PERMISSIONS_MISMATCH");
@@ -129,7 +134,7 @@ describe("positive entries (SUPPORTED / AVAILABLE_WITH_LIMITATION) fail closed",
 
   it("validation must be 'validated' and the evidence an accepted api-validation record of the exact scope", () => {
     expect(violations({ validation: "not_validated" })).toContain("NOT_VALIDATED");
-    for (const evidence of [null, "simulator:contract-v1", "api-validation:", "api-validation:meta.facebook.read_interactions"]) {
+    for (const evidence of [null, "simulator:contract-v1", "api-validation:", "api-validation:meta.facebook.read_content"]) {
       expect(violations({ evidence })).toContain("EVIDENCE_NOT_API_VALIDATION");
     }
     expect(violations({}, { records: [] })).toContain("EVIDENCE_RECORD_MISSING");
@@ -145,11 +150,12 @@ describe("positive entries (SUPPORTED / AVAILABLE_WITH_LIMITATION) fail closed",
   it("G2: without implementation evidence, or with mismatched or infrastructure evidence, the entry fails", () => {
     expect(violations({}, { implementedOperations: [] })).toContain("IMPLEMENTATION_EVIDENCE_MISSING");
     expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, platform: "instagram" }] })).toContain("IMPLEMENTATION_EVIDENCE_MISSING");
-    expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, operation: "getInteraction" }] })).toContain("IMPLEMENTATION_EVIDENCE_MISMATCH");
-    expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, evidence: "api-validation:meta.facebook.read_interactions.20261102-01" }] })).toContain("IMPLEMENTATION_EVIDENCE_MISMATCH");
+    expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, operations: ["getInteraction"] }] })).toContain("IMPLEMENTATION_EVIDENCE_MISMATCH");
+    expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, evidence: "api-validation:meta.facebook.read_content.20261102-01" }] })).toContain("IMPLEMENTATION_EVIDENCE_MISMATCH");
     // describeAccount (P3's live-validated read) is account infrastructure: never evidence for any capability.
-    const infra = { ...RECORD, operation: "describeAccount" };
-    expect(violations({}, { records: [infra], implementedOperations: [{ ...IMPLEMENTED, operation: "describeAccount" }] })).toContain("INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE");
+    const infra = { ...RECORD, operations: ["describeAccount"] };
+    expect(violations({}, { records: [infra], implementedOperations: [{ ...IMPLEMENTED, operations: ["describeAccount"] }] })).toContain("INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE");
+    expect(violations({}, { offlineImplementations: [{ ...OFFLINE, operations: ["describeAccount", "getContent", "listContent"] }] })).toContain("INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE");
   });
 
   it("a wildcard platform, an UNKNOWN entry, a limitation mismatch and a duplicate scope all fail", () => {
@@ -162,8 +168,55 @@ describe("positive entries (SUPPORTED / AVAILABLE_WITH_LIMITATION) fail closed",
   });
 });
 
+describe("P5-B: read_content requires the exact operation SET listContent + getContent, implemented AND validated live", () => {
+  it("the declared sets: read_content = getContent + listContent; no other capability declares one (no name inference)", () => {
+    expect(READ_CONTENT_REQUIRED_OPERATIONS).toEqual(["getContent", "listContent"]);
+    expect(CAPABILITY_REQUIRED_OPERATIONS).toEqual({ read_content: ["getContent", "listContent"] });
+    for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content")) {
+      // Even a fully evidenced entry of another capability is refused: its operation set is undeclared.
+      const other = `api-validation:meta.facebook.${capability}.20261101-01`;
+      const record = { ...RECORD, id: other, capability };
+      const v = platformEntryViolations({ ...ENTRY, capability, evidence: other }, { ...RESOLVED, records: [record], offlineImplementations: [{ ...OFFLINE, capability }], implementedOperations: [{ ...IMPLEMENTED, capability, evidence: other }] });
+      expect(v, capability).toContain("REQUIRED_OPERATIONS_UNDEFINED");
+    }
+  });
+
+  it("offline implementation (A) and live validation (B) are distinct: today Facebook read_content is implemented offline, validated live NOWHERE", () => {
+    expect(OFFLINE_IMPLEMENTED_OPERATIONS).toEqual([{ provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"] }]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([]);
+    // Today: A holds, B does not — and no accepted record exists.
+    const today = platformEntryViolations({ ...ENTRY, contentKind: "post", source: "organic" }, TODAY);
+    expect(today).not.toContain("IMPLEMENTATION_INCOMPLETE");
+    expect(today).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+    // Even with a (hypothetical) accepted record, the missing live registration still refuses it.
+    expect(platformEntryViolations(ENTRY, { ...TODAY, records: [RECORD] })).toEqual(["IMPLEMENTATION_EVIDENCE_MISSING"]);
+    // Offline registrations are never evidence: offline-only (no live registration) is refused; live without offline too.
+    expect(violations({}, { implementedOperations: [] })).toEqual(["IMPLEMENTATION_EVIDENCE_MISSING"]);
+    expect(violations({}, { offlineImplementations: [] })).toEqual(["IMPLEMENTATION_INCOMPLETE"]);
+  });
+
+  it("one of the two operations is never enough — offline, in the record, or in the live registration", () => {
+    for (const one of [["listContent"], ["getContent"]]) {
+      expect(violations({}, { offlineImplementations: [{ ...OFFLINE, operations: one }] }), one.join()).toContain("IMPLEMENTATION_INCOMPLETE");
+      expect(violations({}, { records: [{ ...RECORD, operations: one }] }), one.join()).toContain("EVIDENCE_OPERATIONS_INCOMPLETE");
+      expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, operations: one }] }), one.join()).toContain("IMPLEMENTATION_EVIDENCE_MISMATCH");
+    }
+    expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, operations: ["listContent"] }, { ...IMPLEMENTED, operations: ["getContent"] }] })).toContain("IMPLEMENTATION_EVIDENCE_MISMATCH");
+    // A superset is not the exact set.
+    expect(violations({}, { records: [{ ...RECORD, operations: ["getContent", "getCurrentState", "listContent"] }] })).toContain("EVIDENCE_OPERATIONS_INCOMPLETE");
+    expect(violations({}, { offlineImplementations: [{ ...OFFLINE, platform: "instagram" }] })).toContain("IMPLEMENTATION_INCOMPLETE");
+  });
+
+  it("a record's operations are a non-empty, sorted, distinct set of operation names", () => {
+    for (const bad of [[], ["listContent", "getContent"], ["getContent", "getContent"], ["get content"], ["GetContent"]]) {
+      expect(apiValidationRecordViolations({ ...RECORD, operations: bad }), bad.join("|")).toContain("OPERATIONS_MALFORMED");
+    }
+    expect(apiValidationRecordViolations(RECORD)).toEqual([]);
+  });
+});
+
 describe("UNSUPPORTED entries need authoritative negative evidence", () => {
-  const NEGATIVE: ApiValidationRecord = { ...RECORD, id: "api-validation:meta.facebook.read_interactions.20261101-02", requiredPermissions: [], polarity: "authoritative_negative", negativeBasis: "provider_documentation" };
+  const NEGATIVE: ApiValidationRecord = { ...RECORD, id: "api-validation:meta.facebook.read_content.20261101-02", requiredPermissions: [], polarity: "authoritative_negative", negativeBasis: "provider_documentation" };
   const unsupported = (patch: Partial<CatalogEntry> = {}, context: Partial<CatalogContractContext> = {}) =>
     platformEntryViolations({ ...ENTRY, state: "UNSUPPORTED", requiredPermissions: [], evidence: NEGATIVE.id, ...patch }, { ...RESOLVED, records: [NEGATIVE], ...context });
 
@@ -179,7 +232,7 @@ describe("UNSUPPORTED entries need authoritative negative evidence", () => {
     expect(unsupported({}, { records: [] })).toContain("EVIDENCE_RECORD_MISSING");
     expect(unsupported({ evidence: RECORD.id }, { records: [RECORD] })).toContain("EVIDENCE_POLARITY_MISMATCH");
     // "Unsupported because a permission is absent" is the forbidden shape: a negative entry names no permission.
-    expect(unsupported({ requiredPermissions: ["synthetic_read_comments"] })).toContain("UNSUPPORTED_NAMES_PERMISSIONS");
+    expect(unsupported({ requiredPermissions: ["synthetic_read_posts"] })).toContain("UNSUPPORTED_NAMES_PERMISSIONS");
     expect(apiValidationRecordViolations({ ...NEGATIVE, negativeBasis: null })).toContain("POLARITY_BASIS_INCONSISTENT");
     for (const basis of ["permission_absent", "operation_not_implemented", "facts_unavailable", "provider_read_failed", "catalog_has_no_rule"]) {
       expect(apiValidationRecordViolations({ ...NEGATIVE, negativeBasis: basis as never })).toContain("POLARITY_BASIS_INCONSISTENT");
@@ -189,8 +242,8 @@ describe("UNSUPPORTED entries need authoritative negative evidence", () => {
 
 describe("evidence records carry no identifying or secret material", () => {
   it("ids, dates, revisions, permissions and free text are validated; long digit runs and links are refused", () => {
-    expect(apiValidationRecordViolations({ ...RECORD, id: "api-validation:meta.facebook.read_interactions.20261102-01" })).toContain("ID_FIELD_MISMATCH");
-    expect(apiValidationRecordViolations({ ...RECORD, platform: "tiktok", id: "api-validation:meta.tiktok.read_interactions.20261101-01" })).toContain("PROVIDER_PLATFORM_MISMATCH");
+    expect(apiValidationRecordViolations({ ...RECORD, id: "api-validation:meta.facebook.read_content.20261102-01" })).toContain("ID_FIELD_MISMATCH");
+    expect(apiValidationRecordViolations({ ...RECORD, platform: "tiktok", id: "api-validation:meta.tiktok.read_content.20261101-01" })).toContain("PROVIDER_PLATFORM_MISMATCH");
     expect(apiValidationRecordViolations({ ...RECORD, validatedOn: "2026-13-01" })).toContain("DATE_MALFORMED");
     expect(apiValidationRecordViolations({ ...RECORD, requiredPermissions: ["b_scope", "a_scope"] })).toContain("PERMISSIONS_NOT_NAMED");
     expect(apiValidationRecordViolations({ ...RECORD, scenario: "Page 123456789012345 replied" })).toContain("TEXT_SUSPECTED_IDENTIFIER");
@@ -219,7 +272,7 @@ describe("G3 — LIVE-shaped P3 facts produce no SUPPORTED and no UNSUPPORTED (f
     const unsafe: CatalogEntry = { ...ENTRY, platform: "facebook", requiredPermissions: [], evidence: null, validation: "validated" };
     const hypothetical: CapabilityCatalog = { id: "platform", revision: 2, label: "hypothetical", entries: [unsafe] };
     const profile = evaluateProfile({ catalog: hypothetical, platform: "facebook", assetClass: "content_bearing", facts: liveFacts, observations: [], evaluatedAt: new Date() });
-    expect(profile.entries.find((e) => e.capability === "read_interactions")?.state).toBe("SUPPORTED");
+    expect(profile.entries.find((e) => e.capability === "read_content")?.state).toBe("SUPPORTED");
     expect(platformCatalogViolations(hypothetical, TODAY)[0]?.violations).toEqual(expect.arrayContaining(["EVIDENCE_NOT_API_VALIDATION", "REQUIRED_PERMISSIONS_EMPTY", "IMPLEMENTATION_EVIDENCE_MISSING"]));
   });
 });
@@ -231,9 +284,9 @@ describe("authorization semantics guardrail: a missing permission is never prese
 
   it("a missing permission is stored as NOT_AUTHORIZED / ACCOUNT_PERMISSION_MISSING and presented as ACCOUNT_PERMISSION_MISSING + REAUTHORIZE, never CAPABILITY_UNSUPPORTED / OPEN_ON_PLATFORM", () => {
     const profile = evaluateProfile({ catalog: permissioned, platform: "facebook", assetClass: "content_bearing", facts: factsWith(["pages_show_list"]), observations: [], evaluatedAt: new Date("2026-10-22T12:01:00Z") });
-    const row = resolveEntry(profile.entries, "read_interactions", ANY, ANY);
+    const row = resolveEntry(profile.entries, "read_content", ANY, ANY);
     expect(row).toMatchObject({ state: "NOT_AUTHORIZED", reasons: ["ACCOUNT_PERMISSION_MISSING"], evidence: ENTRY.evidence });
-    const shown = effectiveAvailability(row, "ACTIVE", "read_interactions", profile.evaluatedAt);
+    const shown = effectiveAvailability(row, "ACTIVE", "read_content", profile.evaluatedAt);
     expect(shown).toMatchObject({ state: "UNAVAILABLE", reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE" });
     expect([shown.reason, shown.recovery]).not.toContain("CAPABILITY_UNSUPPORTED");
     expect([shown.reason, shown.recovery]).not.toContain("OPEN_ON_PLATFORM");
@@ -241,10 +294,10 @@ describe("authorization semantics guardrail: a missing permission is never prese
 
   it("an observed PermissionMissing is presented the same way (authorization, not platform)", () => {
     const later = new Date("2026-10-22T12:05:00Z");
-    const profile = evaluateProfile({ catalog: permissioned, platform: "facebook", assetClass: "content_bearing", facts: factsWith(["synthetic_read_comments"]), observations: [{ kind: "permission_missing", capability: "read_interactions", observedAt: later, ref: "obs-1" }], evaluatedAt: later });
-    const row = resolveEntry(profile.entries, "read_interactions", ANY, ANY);
+    const profile = evaluateProfile({ catalog: permissioned, platform: "facebook", assetClass: "content_bearing", facts: factsWith(["synthetic_read_posts"]), observations: [{ kind: "permission_missing", capability: "read_content", observedAt: later, ref: "obs-1" }], evaluatedAt: later });
+    const row = resolveEntry(profile.entries, "read_content", ANY, ANY);
     expect(row).toMatchObject({ state: "NOT_AUTHORIZED", reasons: ["OBSERVED_PERMISSION_MISSING"], observationRefs: ["obs-1"] });
-    const shown = effectiveAvailability(row, "ACTIVE", "read_interactions", later);
+    const shown = effectiveAvailability(row, "ACTIVE", "read_content", later);
     expect(shown).toMatchObject({ state: "UNAVAILABLE", reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE" });
   });
 });

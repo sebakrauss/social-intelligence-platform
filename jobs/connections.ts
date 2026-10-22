@@ -44,7 +44,7 @@ import type { CredentialOpener } from "@/platform/crypto/credentials/open";
 import { parseCorrelationId } from "@/domain/correlation";
 import { parseWorkspaceId } from "@/domain/ids";
 import { NonRetryableJobError, type TenantStepJobContext } from "@/platform/jobs";
-import { providerCredential } from "@/integrations/providers/contract";
+import { providerCredential, type ProviderReadPort } from "@/integrations/providers/contract";
 import { createMetaReadPort } from "@/integrations/providers/meta/read-port";
 import { createStagingStubReadPort } from "@/integrations/providers/staging-stub";
 import { readKmsKeyringConfig, selectCredentialCrypto } from "@/server/connections/environment";
@@ -169,6 +169,17 @@ export function composeCredentialOpener(environment: Environment, awsCredentials
   const selection = selectCredentialCrypto(environment);
   if (selection.kind === "local") return { opener: localCredentialOpenerFromEnvironment(environment), contextEnv: selection.contextEnv };
   return { opener: kmsCredentialOpener(createKmsClient(selection.config, awsCredentials, attempts), selection.config), contextEnv: selection.config.contextEnv };
+}
+
+/**
+ * The read_content validation diagnostic's composition (Step 7G-H5.5-P5-B; jobs/integration-read-content-validation.ts):
+ * exactly this plane's opener and worker identity with ONE KMS attempt, and the Meta read port — the only place besides
+ * composeJobProviders that builds it. No simulator, no staging stub, no fallback.
+ */
+export function composeReadContentValidation(environment: Environment, attempts: AwsSingleAttempt): { readonly access: ProviderCredentialAccess; readonly read: ProviderReadPort } {
+  assertNoLocalKeyringOutsideLocal(environment);
+  const opening = composeCredentialOpener(environment, integrationWorkerAwsCredentials(environment), attempts);
+  return { access: createCredentialAccess(opening.opener, opening.contextEnv), read: createMetaReadPort() };
 }
 
 /** Discovery dependencies for one run: the composed access/providers and this run's scoped steps. */

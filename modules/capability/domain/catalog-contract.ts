@@ -10,9 +10,13 @@
  *     capability, content kind, source) — provider support alone is never enough;
  *   - a non-empty set of explicitly named required permissions, identical to the record's (no implicit support from an
  *     empty permission set);
- *   - implementation evidence: an explicit IMPLEMENTED_PLATFORM_OPERATIONS registration of the Wrenkind provider
- *     operation for that (platform, capability), resting on the same accepted record. Nothing is inferred from names;
- *     account infrastructure (discoverAssets, describeAccount) is never evidence for any capability.
+ *   - implementation evidence (Step 7G-H5.5-P5-B: exact operation SETS): the capability's explicitly declared
+ *     CAPABILITY_REQUIRED_OPERATIONS set, and
+ *       A. an OFFLINE_IMPLEMENTED_OPERATIONS registration covering exactly that set (adapter code, offline tests), and
+ *       B. an IMPLEMENTED_PLATFORM_OPERATIONS (= LIVE-VALIDATED) registration of exactly that set, resting on the
+ *          same accepted record, whose `operations` are exactly that set too.
+ *     A capability with no declared set can't be positive. Nothing is inferred from names; account infrastructure
+ *     (discoverAssets, describeAccount) is never evidence for any capability.
  * An UNSUPPORTED entry needs an accepted record of AUTHORITATIVE NEGATIVE evidence (provider documentation, or a real
  * provider operation's non-eligibility observation). A missing or unrequested permission, an unimplemented operation,
  * unavailable facts, a failed provider read or the catalog lacking a rule are NOT negative evidence: those stay UNKNOWN.
@@ -42,16 +46,43 @@ export const PLATFORM_PROVIDERS: Readonly<Record<PlatformKey, string>> = Object.
 export const ACCOUNT_INFRASTRUCTURE_OPERATIONS: readonly string[] = Object.freeze(["discoverAssets", "describeAccount"]);
 
 /**
- * Implementation evidence: the Wrenkind provider operation that performs a capability on one platform, registered
- * explicitly by the gate that implemented AND validated it. Empty: no operation has been validated for any of the ten
- * capabilities, so every positive platform entry is refused (IMPLEMENTATION_EVIDENCE_MISSING).
+ * read_content = BOTH provider-contract reads (TL decision, Step 7G-H5.5-P5-B): listing a Page's content and the
+ * authoritative single-content read. A read_content verdict may never rest on only one of them.
  */
-export interface ImplementedOperation {
+export const READ_CONTENT_REQUIRED_OPERATIONS: readonly string[] = Object.freeze(["getContent", "listContent"]);
+
+/**
+ * The EXACT provider-contract operation set (sorted) each capability's verdict rests on — declared, never inferred
+ * from names. Only read_content is declared (P5-B); every other capability has no set, so no positive entry is
+ * admissible for it (REQUIRED_OPERATIONS_UNDEFINED) until a gate declares one.
+ */
+export const CAPABILITY_REQUIRED_OPERATIONS: Readonly<Partial<Record<CapabilityKey, readonly string[]>>> = Object.freeze({ read_content: READ_CONTENT_REQUIRED_OPERATIONS });
+
+/** One registration of a capability's operations on one platform (operations: provider contract names, sorted). */
+export interface OperationSetRegistration {
   readonly provider: string;
   readonly platform: PlatformKey;
   readonly capability: CapabilityKey;
-  /** A provider contract operation name (READ_OPERATIONS / MUTATION_OPERATIONS), checked by the architecture guard. */
-  readonly operation: string;
+  /** Provider contract operation names (READ_OPERATIONS / MUTATION_OPERATIONS), checked by the architecture guard. */
+  readonly operations: readonly string[];
+}
+
+/**
+ * IMPLEMENTED OFFLINE: the adapter implements these operations and offline tests cover them; NOT validated against
+ * the live provider, so never evidence by itself (requirement A only). The architecture guard proves each one is
+ * actually implemented by the adapter. Step 7G-H5.5-P5-B: Facebook Page read_content (listContent + getContent).
+ */
+export const OFFLINE_IMPLEMENTED_OPERATIONS: readonly OperationSetRegistration[] = Object.freeze([
+  Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS }),
+]);
+
+/**
+ * LIVE-VALIDATED implementation evidence (requirement B): the operations that perform a capability on one platform,
+ * registered explicitly by the gate that implemented AND validated them live, with the accepted positive record.
+ * Empty (LIVE_VALIDATED_OPERATIONS = none): nothing has been validated live for any of the ten capabilities, so every
+ * positive platform entry is refused (IMPLEMENTATION_EVIDENCE_MISSING).
+ */
+export interface ImplementedOperation extends OperationSetRegistration {
   /** The accepted positive record proving it. */
   readonly evidence: string;
 }
@@ -84,7 +115,8 @@ export interface ApiValidationRecord {
   readonly capability: CapabilityKey;
   readonly contentKind: ScopeKind;
   readonly source: ScopeSource;
-  readonly operation: string;
+  /** The provider contract operations exercised: sorted, distinct; for a positive record, the capability's exact set. */
+  readonly operations: readonly string[];
   /** YYYY-MM-DD, equal to the id's date. */
   readonly validatedOn: string;
   /** The 40-hex commit the validated code ran from. */
@@ -110,6 +142,7 @@ export type RecordViolation =
   | "DATE_MALFORMED"
   | "SOURCE_REVISION_MALFORMED"
   | "PERMISSIONS_NOT_NAMED"
+  | "OPERATIONS_MALFORMED"
   | "POLARITY_BASIS_INCONSISTENT"
   | "TEXT_MISSING_OR_OVERSIZED"
   | "TEXT_SUSPECTED_IDENTIFIER"
@@ -130,6 +163,9 @@ export type EntryViolation =
   | "REQUIRED_PERMISSIONS_EMPTY"
   | "REQUIRED_PERMISSION_UNNAMED"
   | "EVIDENCE_PERMISSIONS_MISMATCH"
+  | "REQUIRED_OPERATIONS_UNDEFINED"
+  | "IMPLEMENTATION_INCOMPLETE"
+  | "EVIDENCE_OPERATIONS_INCOMPLETE"
   | "IMPLEMENTATION_EVIDENCE_MISSING"
   | "IMPLEMENTATION_EVIDENCE_MISMATCH"
   | "INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE"
@@ -139,6 +175,9 @@ export type EntryViolation =
 
 export interface CatalogContractContext {
   readonly records: readonly ApiValidationRecord[];
+  /** Requirement A: OFFLINE_IMPLEMENTED_OPERATIONS. */
+  readonly offlineImplementations: readonly OperationSetRegistration[];
+  /** Requirement B: IMPLEMENTED_PLATFORM_OPERATIONS (live-validated). */
   readonly implementedOperations: readonly ImplementedOperation[];
   readonly authorizationSemantics: AuthorizationSemantics;
 }
@@ -146,6 +185,10 @@ export interface CatalogContractContext {
 const isNamedPermissionSet = (permissions: readonly string[]): boolean =>
   permissions.every((p) => PERMISSION_NAME.test(p)) && new Set(permissions).size === permissions.length;
 const sameSet = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && [...a].sort().every((p, i) => p === [...b].sort()[i]);
+/** A provider contract operation name (camelCase identifier); membership in the contract is the guard's check. */
+const OPERATION_NAME = /^[a-z][A-Za-z]{1,63}$/;
+const isOperationSet = (operations: readonly string[]): boolean =>
+  operations.length > 0 && operations.every((op) => OPERATION_NAME.test(op)) && operations.every((op, i, all) => i === 0 || (all[i - 1] ?? "") < op);
 /** Free text must not carry provider/account ids (long digit runs) or links (which may embed them). */
 const textOk = (value: string): boolean => value.trim().length > 0 && value.length <= SHORT_TEXT_MAX;
 const textSuspicious = (value: string): boolean => /\d{8,}/.test(value) || /:\/\//.test(value);
@@ -163,10 +206,11 @@ export function apiValidationRecordViolations(record: ApiValidationRecord): read
   if (!validDate(record.validatedOn)) out.add("DATE_MALFORMED");
   if (!/^[0-9a-f]{40}$/.test(record.sourceRevision)) out.add("SOURCE_REVISION_MALFORMED");
   if (!isNamedPermissionSet(record.requiredPermissions) || record.requiredPermissions.some((p, i, all) => i > 0 && (all[i - 1] ?? "") > p)) out.add("PERMISSIONS_NOT_NAMED");
+  if (!Array.isArray(record.operations) || !isOperationSet(record.operations)) out.add("OPERATIONS_MALFORMED");
   const negative = record.polarity === "authoritative_negative";
   if (!(RECORD_POLARITIES as readonly string[]).includes(record.polarity)) out.add("POLARITY_BASIS_INCONSISTENT");
   else if (negative ? record.negativeBasis === null || !(NEGATIVE_BASES as readonly string[]).includes(record.negativeBasis) : record.negativeBasis !== null) out.add("POLARITY_BASIS_INCONSISTENT");
-  const texts = [record.accountKind, record.operation, record.scenario, record.observedResult, record.reviewer];
+  const texts = [record.accountKind, record.scenario, record.observedResult, record.reviewer];
   if (!texts.every(textOk)) out.add("TEXT_MISSING_OR_OVERSIZED");
   if (texts.some(textSuspicious)) out.add("TEXT_SUSPECTED_IDENTIFIER");
   if (!(RECORD_STATUSES as readonly string[]).includes(record.status)) out.add("STATUS_UNKNOWN");
@@ -200,12 +244,21 @@ export function platformEntryViolations(entry: CatalogEntry, context: CatalogCon
     if (entry.requiredPermissions.length === 0) out.add("REQUIRED_PERMISSIONS_EMPTY");
     if (!isNamedPermissionSet(entry.requiredPermissions)) out.add("REQUIRED_PERMISSION_UNNAMED");
     if (record !== undefined && !sameSet(record.requiredPermissions, entry.requiredPermissions)) out.add("EVIDENCE_PERMISSIONS_MISMATCH");
-    const implemented = context.implementedOperations.filter((op) => entry.platform !== ANY && op.platform === entry.platform && op.capability === entry.capability && op.provider === PLATFORM_PROVIDERS[entry.platform]);
+    const required = CAPABILITY_REQUIRED_OPERATIONS[entry.capability];
+    if (required === undefined) out.add("REQUIRED_OPERATIONS_UNDEFINED");
+    const sameScope = (op: OperationSetRegistration): boolean => entry.platform !== ANY && op.platform === entry.platform && op.capability === entry.capability && op.provider === PLATFORM_PROVIDERS[entry.platform];
+    const exactlyRequired = (operations: readonly string[]): boolean => required !== undefined && sameSet(operations, required);
+    // A: implemented — an offline registration of exactly the required set.
+    const offline = context.offlineImplementations.filter(sameScope);
+    if (!offline.some((op) => exactlyRequired(op.operations))) out.add("IMPLEMENTATION_INCOMPLETE");
+    // B: validated live — the accepted record exercised exactly the required set, and a live registration of exactly
+    // that set rests on that same record.
+    if (record !== undefined && !exactlyRequired(record.operations)) out.add("EVIDENCE_OPERATIONS_INCOMPLETE");
+    const implemented = context.implementedOperations.filter(sameScope);
     if (implemented.length === 0) out.add("IMPLEMENTATION_EVIDENCE_MISSING");
-    else if (!implemented.some((op) => op.evidence === entry.evidence && record !== undefined && op.operation === record.operation)) out.add("IMPLEMENTATION_EVIDENCE_MISMATCH");
-    if (implemented.some((op) => ACCOUNT_INFRASTRUCTURE_OPERATIONS.includes(op.operation)) || (record !== undefined && ACCOUNT_INFRASTRUCTURE_OPERATIONS.includes(record.operation))) {
-      out.add("INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE");
-    }
+    else if (!implemented.some((op) => op.evidence === entry.evidence && record !== undefined && exactlyRequired(op.operations) && sameSet(op.operations, record.operations))) out.add("IMPLEMENTATION_EVIDENCE_MISMATCH");
+    const named = [...(required ?? []), ...offline.flatMap((op) => op.operations), ...implemented.flatMap((op) => op.operations), ...(record?.operations ?? [])];
+    if (named.some((op) => ACCOUNT_INFRASTRUCTURE_OPERATIONS.includes(op))) out.add("INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE");
     if ((entry.state === "AVAILABLE_WITH_LIMITATION") !== (entry.limitation !== null)) out.add("LIMITATION_INCONSISTENT");
   } else if (entry.state === "UNSUPPORTED") {
     // Never "unsupported because a permission is absent": an authoritative negative names no permission.

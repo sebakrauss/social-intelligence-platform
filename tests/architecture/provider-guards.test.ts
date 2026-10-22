@@ -188,7 +188,7 @@ describe("Meta authorization adapter (Step 7G-D): offline, authorization only", 
   });
 });
 
-describe("Meta read port (Step 7G-E): discoverAssets only, the contained query-token Graph transport", () => {
+describe("Meta read port (Step 7G-E; P5-B read_content): the contained query-token Graph transport", () => {
   const RUNTIME = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "proxy.ts", "next.config.ts", "trigger.config.ts", "trigger.integration.config.ts"];
   const META = "integrations/providers/meta";
   const READ = [`${META}/read-port.ts`, `${META}/graph-transport.ts`];
@@ -197,9 +197,28 @@ describe("Meta read port (Step 7G-E): discoverAssets only, the contained query-t
   it("the access token is unwrapped only where the Graph request is built, and placed exactly once, as the documented query parameter", () => {
     const real = sourceFiles(RUNTIME).filter((file) => !file.startsWith("integrations/providers/simulator/"));
     expect(findReferences(real, [/\btoken\.expose\(\)/]).map(([file]) => file)).toEqual([`${META}/graph-transport.ts`]);
-    expect(transport().match(/access_token/g)).toHaveLength(1);
+    // Step 7G-H5.5-P5-B: besides the query parameter, `access_token` names exactly the derived Page token's field
+    // request and its one parser read; doc comments aside (stripped), nothing else in the transport mentions it.
+    expect(transport().match(/access_token/g)).toHaveLength(3);
     expect(transport()).toMatch(/\["access_token", token\.expose\(\)\]/);
+    expect(transport()).toMatch(/get\(\[pageId\], \[\["fields", "access_token"\]\], userToken, /);
+    expect(transport()).toMatch(/const token = root\["access_token"\];\n {2}return typeof token === "string" && PAGE_ACCESS_TOKEN\.test\(token\) \? new SecretValue\(token\) : undefined;/);
     expect(codeOf(`${META}/read-port.ts`)).not.toMatch(/\.expose\(|access_token/);
+  });
+
+  it("P5-B: the derived Page Access Token is a SecretValue local to one read-port call — never stored, returned or serialized", () => {
+    const readPort = codeOf(`${META}/read-port.ts`);
+    // Derived inside the call, handed straight to the one content read; no module or closure state keeps it.
+    expect(readPort).toMatch(/const token = await pageToken\(transport, access, page, "listContent"\);/);
+    expect(readPort).toMatch(/const token = await pageToken\(transport, access, page, "getContent"\);/);
+    expect(readPort.match(/\bpageToken\(/g)).toHaveLength(3); // the helper + its two call sites
+    expect(readPort).toMatch(/transport\.listPublishedPosts\(token, page, after\)/);
+    expect(readPort).toMatch(/transport\.getPost\(token, postId\)/);
+    expect(readPort).not.toMatch(/new Map<[^>]*SecretValue|cache|memo|WeakMap|globalThis/i);
+    // The DTO mapper never sees a token; nothing persists, logs or emits anything from the provider layer.
+    const mapper = readPort.slice(readPort.indexOf("function contentOf("), readPort.indexOf("function windowBounds("));
+    expect(mapper).not.toMatch(/token|secret|credential/i);
+    for (const file of READ) expect(codeOf(file), file).not.toMatch(/console\.|logger|\.log\(|writeFile|insert\(|telemetry|posthog|Sentry/i);
   });
 
   it("the Graph transport never uses a header token, the provider URL or anything of the app's secrets", () => {
@@ -210,11 +229,19 @@ describe("Meta read port (Step 7G-E): discoverAssets only, the contained query-t
     expect(transport()).toMatch(/headers: \{ accept: "application\/json" \}/);
   });
 
-  it("only documented reads: /me/accounts with id,name (no limit), the Page's instagram_business_account and the IG account's id,username; describeAccount's Page id,name and me/permissions", () => {
+  it("only documented reads: /me/accounts with id,name (no limit), the Page's instagram_business_account and the IG account's id,username; describeAccount's Page id,name and me/permissions; P5-B's Page token, published_posts and post reads", () => {
     expect(transport()).toMatch(/\["me", "accounts"\]/);
     expect(transport()).toMatch(/\["me", "permissions"\]/);
-    expect([...transport().matchAll(/\["fields", "([^"]+)"\]/g)].map((match) => match[1]).sort()).toEqual(["id,name", "id,name", "id,name", "id,username", "instagram_business_account", "permission,status"]);
-    expect(transport()).not.toMatch(/"limit"|\{[a-z_,]+\}|\.limit\(/);
+    expect([...transport().matchAll(/\["fields", "([^"]+)"\]/g)].map((match) => match[1]).sort()).toEqual(["access_token", "id,name", "id,name", "id,name", "id,username", "instagram_business_account", "permission,status"]);
+    // P5-B: the post fields are ONE whitelist constant, used by published_posts and the post read only; never /feed.
+    expect(transport()).toMatch(/export const META_POST_FIELDS = "id,from,message,created_time,updated_time,status_type";/);
+    expect(transport().match(/\["fields", META_POST_FIELDS\]/g)).toHaveLength(2);
+    expect(transport()).toMatch(/get\(\[pageId, "published_posts"\]/);
+    expect(transport()).not.toMatch(/"feed"|\/feed|attachments|full_picture|permalink_url|insights|"story"|pages_read_user_content/);
+    // The one fixed page size travels with published_posts only; /me/accounts stays limit-free; no field expansion.
+    expect(transport().match(/\["limit", String\(META_PUBLISHED_POSTS_PAGE_LIMIT\)\]/g)).toHaveLength(1);
+    expect(transport()).toMatch(/export const META_PUBLISHED_POSTS_PAGE_LIMIT = 10;/);
+    expect(transport()).not.toMatch(/\.limit\(|"fields", "[^"]*\{/);
   });
 
   it("the read side holds no Meta app configuration and no state", () => {

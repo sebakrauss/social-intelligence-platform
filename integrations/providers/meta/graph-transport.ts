@@ -1,29 +1,36 @@
 /**
  * The Meta Graph READ transport for discoverAssets (Step 7G-E; design/phase-7g/meta-provider/README.md, E1 — the
- * implementation authority) and describeAccount (Step 7G-H5.5, contract H55). Five typed operations, nothing else:
+ * implementation authority), describeAccount (Step 7G-H5.5, contract H55) and Facebook Page read_content (Step
+ * 7G-H5.5-P5-B, README › read_content). Eight typed operations, nothing else:
  *
  *   listPages            GET https://graph.facebook.com/v25.0/me/accounts?fields=id,name[&after={cursor}]
  *   getPageInstagram     GET https://graph.facebook.com/v25.0/{page-id}?fields=instagram_business_account
  *   getInstagramAccount  GET https://graph.facebook.com/v25.0/{ig-user-id}?fields=id,username
  *   getPage              GET https://graph.facebook.com/v25.0/{page-id}?fields=id,name
  *   listPermissions      GET https://graph.facebook.com/v25.0/me/permissions?fields=permission,status
+ *   getPageAccessToken   GET https://graph.facebook.com/v25.0/{page-id}?fields=access_token            (User token)
+ *   listPublishedPosts   GET https://graph.facebook.com/v25.0/{page-id}/published_posts?fields=META_POST_FIELDS
+ *                            &limit=META_PUBLISHED_POSTS_PAGE_LIMIT[&after={cursor}]                  (Page token)
+ *   getPost              GET https://graph.facebook.com/v25.0/{post-id}?fields=META_POST_FIELDS        (Page token)
  *
  * Callers name an operation and pass a SecretValue token plus validated provider ids or a validated cursor — never a
- * URL. Meta documents the User Access Token as the `access_token` query parameter for these exact endpoints, so the
+ * URL. Meta documents the access token as the `access_token` query parameter for these exact endpoints, so the
  * request URL is sensitive: this is the approved, documented provider exception (QUERY_PARAMETER, Meta Graph reads
  * only). The URL is built here, handed to `fetch`, and never logged, thrown, returned or serialized; `response.url`,
  * raw fetch errors and raw bodies never leave this module. Each operation makes exactly ONE request: no retry, no
  * redirect (`manual`, any 3xx refused), no cookies, no Authorization header, a finite timeout over the whole exchange
  * and a bounded body. Never the App Secret, the Client Token or appsecret_proof.
  *
- * Bodies are parsed here by whitelist into closed results; only the fields the contract maps are read (no Page
- * access token is ever read or returned). A provider id is used in a later path only after the provider-id rule,
+ * Bodies are parsed here by whitelist into closed results; only the fields the contract maps are read. The ONE
+ * exception is getPageAccessToken: its `access_token` is read into a SecretValue (never a plain string field of any
+ * result) and handed to the caller for the immediately following content read inside the same credential use; every
+ * other operation ignores a stray `access_token`. A provider id is used in a later path only after the provider-id rule,
  * as one encoded path segment. Results: the parsed value, the closed fields of a Graph error, `transient` (no
  * response, timeout, or a 5xx without a Graph error — reads have no effect, so these are retryable by the task) or
  * `unreadable` (redirect, oversized, not UTF-8 JSON, or a body that is not the documented shape).
  */
-import type { SecretValue } from "../contract/credential";
-import { parseProviderObjectId, type ProviderObjectId } from "../contract/identity";
+import { SecretValue } from "../contract/credential";
+import { isoInstant, parseProviderObjectId, type IsoInstant, type ProviderObjectId } from "../contract/identity";
 import { META_GRAPH_ORIGIN, META_GRAPH_VERSION } from "./endpoints";
 import { graphErrorFields, type MetaGraphErrorFields } from "./errors";
 
@@ -58,6 +65,35 @@ export interface MetaPageList {
   readonly after: MetaGraphCursor | null;
 }
 
+/**
+ * The minimum Page-post fields Facebook read_content maps (P5-A/P5-B; README › read_content): never `attachments`,
+ * `full_picture`, `permalink_url`, `story`, insights or metrics. `from` is read for its `id` only (its `name` is never
+ * kept).
+ */
+export const META_POST_FIELDS = "id,from,message,created_time,updated_time,status_type";
+/** One provider page of `published_posts`: fixed, small enough that ordinary posts fit the 64 KiB body bound. */
+export const META_PUBLISHED_POSTS_PAGE_LIMIT = 10;
+
+/** One Page post exactly as the whitelist reads it: closed fields, nothing else from the body. */
+export interface MetaPost {
+  readonly id: ProviderObjectId;
+  /** `from.id`: the publishing identity (the read port requires it to be the managed Page). */
+  readonly fromId: ProviderObjectId;
+  /** `message` as reported; null when absent. Untrusted text. */
+  readonly message: string | null;
+  readonly createdTime: IsoInstant;
+  /** null when absent. */
+  readonly updatedTime: IsoInstant | null;
+  /** `status_type` as reported (a bounded lower-case token), null when absent; classified by the read port only. */
+  readonly statusType: string | null;
+}
+
+export interface MetaPostList {
+  readonly posts: readonly MetaPost[];
+  /** The next page's cursor, or null when the provider reports no next page (`paging.next` absent). */
+  readonly after: MetaGraphCursor | null;
+}
+
 export interface MetaGraphTransport {
   listPages(token: SecretValue, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaPageList>>;
   /** The linked Instagram professional account id, or null when the Page has none. */
@@ -68,6 +104,15 @@ export interface MetaGraphTransport {
   getPage(token: SecretValue, pageId: ProviderObjectId): Promise<MetaGraphOutcome<{ readonly name: string }>>;
   /** The permissions the user granted to the app: only `status = "granted"` entries, sorted and distinct. */
   listPermissions(token: SecretValue): Promise<MetaGraphOutcome<readonly string[]>>;
+  /**
+   * The Page Access Token derived from the User Access Token (P5-B): a NEW SecretValue, never persisted, cached,
+   * logged or serialized; an echoed `id`, when present, must be the requested Page.
+   */
+  getPageAccessToken(userToken: SecretValue, pageId: ProviderObjectId): Promise<MetaGraphOutcome<SecretValue>>;
+  /** ONE page of the Page's published posts (Page token); the `next` URL is never fetched. */
+  listPublishedPosts(pageToken: SecretValue, pageId: ProviderObjectId, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaPostList>>;
+  /** One post node (Page token), its echoed id checked. */
+  getPost(pageToken: SecretValue, postId: ProviderObjectId): Promise<MetaGraphOutcome<MetaPost>>;
 }
 
 /** A Meta permission name: lower-case identifier, bounded. Anything else is an unreadable response, never kept. */
@@ -209,6 +254,86 @@ function permissionsOf(body: unknown): readonly string[] | undefined {
   return Object.freeze([...granted].sort());
 }
 
+/** A Page Access Token as reported: printable ASCII, no whitespace, bounded. Anything else is unreadable. */
+const PAGE_ACCESS_TOKEN = /^[\x21-\x7E]{1,4096}$/;
+
+/** `{page-id}?fields=access_token`: a non-empty token; an echoed id, when present, must be the requested Page. */
+function pageAccessTokenOf(body: unknown, pageId: ProviderObjectId): SecretValue | undefined {
+  const root = record(body);
+  if (root === undefined) return undefined;
+  if (root["id"] !== undefined && root["id"] !== pageId) return undefined;
+  const token = root["access_token"];
+  return typeof token === "string" && PAGE_ACCESS_TOKEN.test(token) ? new SecretValue(token) : undefined;
+}
+
+/** A Graph `status_type`: a bounded lower-case token (classification is the read port's, against a closed table). */
+const STATUS_TYPE = /^[a-z][a-z_]{0,63}$/;
+/** Graph's default datetime form (`2026-10-01T12:00:00+0000`); a colon offset or `Z` is accepted, nothing else. */
+const GRAPH_DATETIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:Z|([+-])(\d{2}):?(\d{2}))$/;
+
+/** A Graph datetime as a UTC instant, or undefined when it is not a real calendar instant of that form. */
+export function parseGraphDatetime(value: unknown): IsoInstant | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = GRAPH_DATETIME.exec(value);
+  if (match === null) return undefined;
+  // An unmatched optional group (the `Z` form has no offset) is undefined at runtime.
+  const [, y, mo, d, h, mi, s, sign, oh, om] = Array.from(match, (part: string | undefined) => part ?? "");
+  const [year, month, day, hour, minute, second] = [y, mo, d, h, mi, s].map(Number) as [number, number, number, number, number, number];
+  const offsetMinutes = sign === "" ? 0 : (sign === "-" ? -1 : 1) * (Number(oh) * 60 + Number(om));
+  if (hour > 23 || minute > 59 || second > 59 || Number(oh) > 23 || Number(om) > 59) return undefined;
+  const local = Date.UTC(year, month - 1, day, hour, minute, second);
+  const check = new Date(local);
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return undefined;
+  return isoInstant(new Date(local - offsetMinutes * 60_000));
+}
+
+/** One post node by whitelist: id, from.id, message, created_time, updated_time, status_type. */
+function postOf(value: unknown): MetaPost | undefined {
+  const post = record(value);
+  if (post === undefined) return undefined;
+  const id = parseProviderObjectId(post["id"]);
+  const fromId = parseProviderObjectId(record(post["from"])?.["id"]);
+  const message = post["message"] === undefined ? null : typeof post["message"] === "string" ? post["message"] : undefined;
+  const createdTime = parseGraphDatetime(post["created_time"]);
+  const updatedTime = post["updated_time"] === undefined ? null : parseGraphDatetime(post["updated_time"]);
+  const statusType = post["status_type"] === undefined ? null : typeof post["status_type"] === "string" && STATUS_TYPE.test(post["status_type"]) ? post["status_type"] : undefined;
+  if (id === undefined || fromId === undefined || message === undefined || createdTime === undefined || updatedTime === undefined || statusType === undefined) return undefined;
+  return Object.freeze({ id, fromId, message, createdTime, updatedTime, statusType });
+}
+
+/**
+ * `{page-id}/published_posts`: `data[]` of posts (whitelist), `paging.next` (presence only) and `paging.cursors.after`.
+ * More entries than the requested limit is not the documented shape. `next` present without a valid `after` fails.
+ */
+function postListOf(body: unknown): MetaPostList | undefined {
+  const root = record(body);
+  if (root === undefined || !Array.isArray(root["data"])) return undefined;
+  const data = root["data"] as readonly unknown[];
+  if (data.length > META_PUBLISHED_POSTS_PAGE_LIMIT) return undefined;
+  const posts: MetaPost[] = [];
+  for (const item of data) {
+    const post = postOf(item);
+    if (post === undefined) return undefined;
+    posts.push(post);
+  }
+  const paging = root["paging"];
+  if (paging === undefined) return Object.freeze({ posts: Object.freeze(posts), after: null });
+  const pagingRecord = record(paging);
+  if (pagingRecord === undefined) return undefined;
+  const next = pagingRecord["next"];
+  if (next === undefined) return Object.freeze({ posts: Object.freeze(posts), after: null });
+  // `next` only signals that another page exists; it is never read as a URL or fetched.
+  if (typeof next !== "string" || next === "") return undefined;
+  const after = parseMetaGraphCursor(record(pagingRecord["cursors"])?.["after"]);
+  return after === undefined ? undefined : Object.freeze({ posts: Object.freeze(posts), after });
+}
+
+/** `{post-id}?fields=…`: the echoed id must be the requested one. */
+function singlePostOf(body: unknown, postId: ProviderObjectId): MetaPost | undefined {
+  const post = postOf(body);
+  return post?.id === postId ? post : undefined;
+}
+
 export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}): MetaGraphTransport {
   const fetchImpl: MetaGraphFetch = options.fetch ?? ((url, init) => fetch(url, init));
   const timeoutMs = options.timeoutMs ?? META_GRAPH_TIMEOUT_MS;
@@ -266,6 +391,16 @@ export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}
     },
     listPermissions(token) {
       return get(["me", "permissions"], [["fields", "permission,status"]], token, permissionsOf);
+    },
+    getPageAccessToken(userToken, pageId) {
+      return get([pageId], [["fields", "access_token"]], userToken, (body) => pageAccessTokenOf(body, pageId));
+    },
+    listPublishedPosts(pageToken, pageId, after) {
+      const query: [string, string][] = [["fields", META_POST_FIELDS], ["limit", String(META_PUBLISHED_POSTS_PAGE_LIMIT)]];
+      return get([pageId, "published_posts"], after === null ? query : [...query, ["after", after]], pageToken, postListOf);
+    },
+    getPost(pageToken, postId) {
+      return get([postId], [["fields", META_POST_FIELDS]], pageToken, (body) => singlePostOf(body, postId));
     },
   };
 }

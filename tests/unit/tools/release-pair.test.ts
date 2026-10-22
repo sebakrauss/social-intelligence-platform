@@ -45,7 +45,7 @@ const synthetic = {
 describe("the closed release table", () => {
   it("is exactly INTEGRATION then MAIN, with their configs and exact task counts", () => {
     expect(RELEASE_PLANES.map((definition) => [definition.plane, definition.config, definition.expectedTasks])).toEqual([
-      ["integration", "trigger.integration.config.ts", 3],
+      ["integration", "trigger.integration.config.ts", 4],
       ["main", "trigger.config.ts", 6],
     ]);
     expect(Object.isFrozen(RELEASE_PLANES)).toBe(true);

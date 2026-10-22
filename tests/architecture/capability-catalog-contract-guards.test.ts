@@ -22,7 +22,9 @@ import {
   API_VALIDATION_EVIDENCE_ID,
   AUTHORIZATION_SEMANTICS,
   FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED,
+  CAPABILITY_REQUIRED_OPERATIONS,
   IMPLEMENTED_PLATFORM_OPERATIONS,
+  OFFLINE_IMPLEMENTED_OPERATIONS,
   apiValidationRecordViolations,
   platformCatalogViolations,
   type ApiValidationRecord,
@@ -114,7 +116,7 @@ describe("evidence records and implementation evidence", () => {
   });
 
   it("the real platform catalog is admissible against the records on disk, the registered implementations and today's semantics", () => {
-    expect(platformCatalogViolations(PLATFORM_CATALOG, { records, implementedOperations: IMPLEMENTED_PLATFORM_OPERATIONS, authorizationSemantics: AUTHORIZATION_SEMANTICS })).toEqual([]);
+    expect(platformCatalogViolations(PLATFORM_CATALOG, { records, offlineImplementations: OFFLINE_IMPLEMENTED_OPERATIONS, implementedOperations: IMPLEMENTED_PLATFORM_OPERATIONS, authorizationSemantics: AUTHORIZATION_SEMANTICS })).toEqual([]);
   });
 
   it("G2 (static): registered implementation evidence names a real, implemented, non-infrastructure operation with an accepted positive record", () => {
@@ -122,20 +124,45 @@ describe("evidence records and implementation evidence", () => {
     const readPort = codeOf("integrations/providers/meta/read-port.ts");
     const metaMutationPort = existsSync(path.join(REPOSITORY_ROOT, "integrations/providers/meta/mutation-port.ts"));
     for (const op of IMPLEMENTED_PLATFORM_OPERATIONS) {
-      expect(ACCOUNT_INFRASTRUCTURE_OPERATIONS).not.toContain(op.operation);
-      if (op.provider === "meta") expect(metaOperationImplemented(op.operation, readPort, metaMutationPort), op.operation).toBe(true);
+      for (const name of op.operations) {
+        expect(ACCOUNT_INFRASTRUCTURE_OPERATIONS).not.toContain(name);
+        if (op.provider === "meta") expect(metaOperationImplemented(name, readPort, metaMutationPort), name).toBe(true);
+      }
       const record = records.find((r) => r.id === op.evidence);
       expect(record?.status).toBe("accepted");
       expect(record?.polarity).toBe("positive");
-      expect(record?.operation).toBe(op.operation);
+      expect(record?.operations).toEqual(op.operations);
     }
     expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([]);
   });
 
-  it("the implementation checker reads the adapter as it is: describeAccount implemented; capability reads refused; no Meta mutation port", () => {
+  it("P5-B (A, static): every OFFLINE registration names contract operations the adapter actually implements — the exact declared set", () => {
     const readPort = codeOf("integrations/providers/meta/read-port.ts");
-    expect(metaOperationImplemented("describeAccount", readPort, false)).toBe(true);
-    for (const op of ["listContent", "listInteractions", "getInteraction", "getContent", "getCurrentState", "retrievePaidContext"]) expect(metaOperationImplemented(op, readPort, false), op).toBe(false);
+    expect(OFFLINE_IMPLEMENTED_OPERATIONS).toHaveLength(1);
+    for (const op of OFFLINE_IMPLEMENTED_OPERATIONS) {
+      expect(op.operations).toEqual(CAPABILITY_REQUIRED_OPERATIONS[op.capability]);
+      for (const name of op.operations) {
+        expect([...READ_OPERATIONS, ...MUTATION_OPERATIONS] as readonly string[], name).toContain(name);
+        expect(ACCOUNT_INFRASTRUCTURE_OPERATIONS).not.toContain(name);
+        if (op.provider === "meta") expect(metaOperationImplemented(name, readPort, false), name).toBe(true);
+      }
+    }
+    // Every declared set names real contract operations.
+    for (const [capability, operations] of Object.entries(CAPABILITY_REQUIRED_OPERATIONS)) for (const name of operations) expect([...READ_OPERATIONS] as readonly string[], `${capability}:${name}`).toContain(name);
+  });
+
+  it("P5-B: read_content cannot yet produce a real platform catalog SUPPORTED entry (offline-implemented, validated live nowhere)", () => {
+    const candidate = { platform: "facebook", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "organic", state: "SUPPORTED", limitation: null,
+      requiredPermissions: ["pages_read_engagement", "pages_show_list"], validation: "validated", evidence: "api-validation:meta.facebook.read_content.20261101-01" } as const;
+    const violations = platformCatalogViolations({ ...PLATFORM_CATALOG, entries: [candidate] }, { records, offlineImplementations: OFFLINE_IMPLEMENTED_OPERATIONS, implementedOperations: IMPLEMENTED_PLATFORM_OPERATIONS, authorizationSemantics: AUTHORIZATION_SEMANTICS });
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.violations).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+  });
+
+  it("the implementation checker reads the adapter as it is: describeAccount, listContent, getContent implemented; other capability reads refused; no Meta mutation port", () => {
+    const readPort = codeOf("integrations/providers/meta/read-port.ts");
+    for (const op of ["describeAccount", "listContent", "getContent"]) expect(metaOperationImplemented(op, readPort, false), op).toBe(true);
+    for (const op of ["listInteractions", "getInteraction", "getCurrentState", "retrievePaidContext"]) expect(metaOperationImplemented(op, readPort, false), op).toBe(false);
     expect(existsSync(path.join(REPOSITORY_ROOT, "integrations/providers/meta/mutation-port.ts"))).toBe(false);
     for (const op of MUTATION_OPERATIONS) expect(metaOperationImplemented(op, readPort, false)).toBe(false);
     expect(metaOperationImplemented("notAnOperation", readPort, true)).toBe(false);
@@ -145,7 +172,7 @@ describe("evidence records and implementation evidence", () => {
 describe("documents state the contract", () => {
   it("the evidence contract README defines the record fields, the forbidden content and the blocker", () => {
     const doc = raw(`${EVIDENCE_DIR}/README.md`);
-    for (const field of ["`id`", "`provider`", "`platform`", "`assetClass`", "`accountKind`", "`capability`", "`contentKind`, `source`", "`operation`", "`validatedOn`", "`sourceRevision`", "`requiredPermissions`", "`scenario`", "`observedResult`", "`polarity`", "`negativeBasis`", "`reviewer`", "`status`"]) {
+    for (const field of ["`id`", "`provider`", "`platform`", "`assetClass`", "`accountKind`", "`capability`", "`contentKind`, `source`", "`operations`", "`validatedOn`", "`sourceRevision`", "`requiredPermissions`", "`scenario`", "`observedResult`", "`polarity`", "`negativeBasis`", "`reviewer`", "`status`"]) {
       expect(doc, field).toContain(field);
     }
     for (const phrase of ["api-validation:{provider}.{platform}.{capability}.{YYYYMMDD}-{NN}", "Never in a record: access tokens", "FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = NO", "never an entry: it is the catalog default", "never an entry: it is a profile-only state"]) {
@@ -174,6 +201,41 @@ describe("documents state the contract", () => {
     // Sanitized: no long numeric provider ids or UUIDs in the P3 section.
     const p3 = doc.slice(doc.indexOf("**First live capability evaluations"), doc.indexOf("**H6 readiness contract.**"));
     expect(p3).not.toMatch(/\d{8,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|proj_|arn:aws|dpl_|run_/);
+  });
+});
+
+describe("P5-B documents: Facebook read_content implemented offline, validated live nowhere", () => {
+  it("the Meta README states the P5-B status, the operations, the requests, the token model, the scope and the unresolved items", () => {
+    const doc = raw(META_README);
+    for (const phrase of [
+      "## Facebook Page read_content (Step 7G-H5.5-P5-B) — IMPLEMENTED_OFFLINE_NOT_LIVE_VALIDATED",
+      "`READ_CONTENT_REQUIRED_OPERATIONS = [listContent, getContent]`",
+      "`GET /v25.0/{page-id}?fields=access_token`",
+      "`GET /v25.0/{page-id}/published_posts?fields=id,from,message,created_time,updated_time,status_type&limit=10[&after={cursor}]`",
+      "`GET /v25.0/{post-id}?fields=id,from,message,created_time,updated_time,status_type`",
+      "**`/published_posts`, never `/feed`**",
+      "`pages_read_user_content` is NOT added",
+      "**First catalog scope: PROPOSED, not accepted**",
+      "| LIVE_VALIDATED_OPERATIONS (`IMPLEMENTED_PLATFORM_OPERATIONS`) | none |",
+      "| API_VALIDATION_RECORD_COUNT | 0 |",
+      "**Unresolved (to be established LIVE; none is a validated fact):**",
+      "pagination ordering of `/published_posts`",
+      "the future `organic` classification of Page-published content",
+      "Page role / task behavior",
+      "the Page Access Token derivation's LIVE behavior",
+      "INTEGRATION now discovers 4 tasks (2 product + 2 diagnostics); MAIN stays at 6.",
+    ]) {
+      expect(doc, phrase).toContain(phrase);
+    }
+    const section = doc.slice(doc.indexOf("## Facebook Page read_content (Step 7G-H5.5-P5-B)"));
+    expect(section).not.toMatch(/\d{8,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|proj_|arn:aws|dpl_|run_[a-z0-9]{6,}|https?:\/\//);
+  });
+
+  it("the evidence contract defines the future read_content record shape without any record existing", () => {
+    const doc = raw(`${EVIDENCE_DIR}/README.md`);
+    expect(doc).toContain("## Facebook read_content (Step 7G-H5.5-P5-B): expected future evidence shape");
+    expect(doc).toContain("**no record exists — not even a draft**");
+    expect(recordFiles()).toEqual([]);
   });
 });
 

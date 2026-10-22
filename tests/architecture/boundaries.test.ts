@@ -164,6 +164,21 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/auth/kms-diagnostic-target.ts"],
   ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/persistence/kms-diagnostic-target.ts"],
   ["kms-diagnostic-no-provider-db-outbox", "jobs/integration-kms-diagnostic.ts", "server/connections/kms-diagnostic-target.ts"],
+  // read_content validation diagnostic (Step 7G-H5.5-P5-B): reached only by its own task file; thin task; reads only
+  ["read-content-validation-module-task-only", "jobs/trigger/integration/connections-uses-read-content-validation.ts", "jobs/integration-read-content-validation.ts"],
+  ["read-content-validation-module-task-only", "jobs/trigger/main/uses-read-content-validation.ts", "jobs/integration-read-content-validation.ts"],
+  ["read-content-validation-module-task-only", "server/uses-read-content-validation.ts", "jobs/integration-read-content-validation.ts"],
+  ["jobs-are-entry-points", "server/uses-read-content-validation.ts", "jobs/integration-read-content-validation.ts"],
+  ["read-content-validation-task-thin", "jobs/trigger/integration/read-content-validation.ts", "jobs/connections.ts"],
+  ["read-content-validation-task-thin", "jobs/trigger/integration/read-content-validation.ts", "integrations/providers/meta/read-port.ts"],
+  ["read-content-validation-reads-only", "jobs/integration-read-content-validation.ts", "modules/capability/index.ts"],
+  ["read-content-validation-reads-only", "jobs/integration-read-content-validation.ts", "jobs/moves.ts"],
+  ["plane-integration-no-delivery", "jobs/integration-read-content-validation.ts", "jobs/moves.ts"],
+  ["read-content-validation-reads-only", "jobs/integration-read-content-validation.ts", "mutations/executor.ts"],
+  ["read-content-validation-reads-only", "jobs/integration-read-content-validation.ts", "integrations/providers/meta/oauth-transport.ts"],
+  ["meta-authorization-web-composition-only", "jobs/integration-read-content-validation.ts", "integrations/providers/meta/oauth-transport.ts"],
+  ["meta-read-integration-composition-only", "jobs/trigger/integration/read-content-validation.ts", "integrations/providers/meta/read-port.ts"],
+  ["read-content-validation-reads-only", "jobs/integration-read-content-validation.ts", "integrations/providers/contract/mutation-port.ts"],
   // Integration worker AWS identity (Step 7G-H5.6B): no first-party STS; the adapter only in the integration composition
   ["no-first-party-sts", "server/assumes-role.ts", "../../../../node_modules/@aws-sdk/client-sts/dist-es/index.js"],
   ["integration-worker-identity-composition-only", "jobs/trigger/main/uses-worker-identity.ts", "jobs/integration-aws-identity.ts"],
@@ -204,6 +219,68 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["staging-stub-no-io", "integrations/providers/staging-stub/uses-network.ts", "http"],
   ["staging-stub-jobs-composition-only", "server/composes-staging-stub.ts", "integrations/providers/staging-stub/index.ts"],
 ];
+
+describe("read_content validation diagnostic dependency depth (Step 7G-H5.5-P5-B): reads only, denied by subtree", () => {
+  const rule = config.forbidden.find((candidate) => candidate.name === "read-content-validation-reads-only") as { readonly from?: { readonly path?: string }; readonly to?: { readonly path?: string } } | undefined;
+  const denied = new RegExp(rule?.to?.path ?? "^$");
+
+  it("applies to the diagnostic module only", () => {
+    expect(rule?.from?.path).toBe("^jobs/integration-read-content-validation\\.ts$");
+  });
+
+  it.each([
+    "server/commands/connections.ts",
+    "server/persistence/capability.ts",
+    "server/persistence/connections.ts.bak",
+    "server/connections/runtime.ts",
+    "server/any-new-subtree/file.ts",
+    "jobs/registry.ts",
+    "jobs/moves.ts",
+    "jobs/main-runtime.ts",
+    "jobs/integration-kms-diagnostic.ts",
+    "jobs/trigger/define.ts",
+    "integrations/providers/meta/oauth-transport.ts",
+    "integrations/providers/meta/authorization.ts",
+    "integrations/providers/meta/read-port.ts",
+    "integrations/providers/meta/graph-transport.ts",
+    "integrations/providers/contract/mutation-port.ts",
+    "integrations/providers/simulator/read-port.ts",
+    "integrations/providers/staging-stub/index.ts",
+    "modules/capability/index.ts",
+    "modules/connections/application/capability-refresh.ts",
+    "modules/audit/index.ts",
+    "platform/outbox/index.ts",
+    "platform/outbox/delivery.ts",
+    "platform/db/outbox.ts",
+    "platform/db/system-scope.ts",
+    "platform/jobs/registry.ts",
+    "mutations/executor.ts",
+    "ai/gateway/index.ts",
+    "db/schema/index.ts",
+    "app/page.tsx",
+    "ui/inbox.tsx",
+  ])("denies %s", (target) => {
+    expect(denied.test(target)).toBe(true);
+  });
+
+  it.each([
+    "server/connections/environment.ts",
+    "server/connections/provider-mode.ts",
+    "server/persistence/connections.ts",
+    "jobs/connections.ts",
+    "jobs/plane-environment.ts",
+    "jobs/runtime.ts",
+    "integrations/providers/contract/index.ts",
+    "integrations/providers/meta/endpoints.ts",
+    "modules/connections/index.ts",
+    "platform/db/index.ts",
+    "platform/jobs/index.ts",
+    "platform/crypto/credentials/errors.ts",
+    "domain/ids.ts",
+  ])("allows exactly the required %s", (target) => {
+    expect(denied.test(target)).toBe(false);
+  });
+});
 
 describe("KMS diagnostic dependency depth (Step 7E.7-B-R4): denied by subtree, so later files stay denied", () => {
   const rule = config.forbidden.find((candidate) => candidate.name === "kms-diagnostic-no-provider-db-outbox") as { readonly from?: { readonly path?: string }; readonly to?: { readonly path?: string } } | undefined;

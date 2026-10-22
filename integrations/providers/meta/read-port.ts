@@ -1,6 +1,6 @@
 /**
- * Meta implementation of the provider READ port — `discoverAssets` only (Step 7G-E; design/phase-7g/meta-provider/
- * README.md, E1 — the implementation authority). Composed only by the integration worker (jobs/connections.ts), with
+ * Meta implementation of the provider READ port — `discoverAssets`, `describeAccount` and Facebook Page
+ * `listContent` / `getContent` (Step 7G-E; design/phase-7g/meta-provider/README.md, E1 — the implementation authority). Composed only by the integration worker (jobs/connections.ts), with
  * the credential the worker opened for this one call: no Meta app configuration, no App Secret, no KMS, no state.
  *
  * Discovery, sequential and deterministic, only documented requests (./graph-transport):
@@ -25,18 +25,46 @@
  * Facts: content-bearing; the identity the account posts as is the asset itself; no linked ad accounts (no ads
  * permission is requested, so none is claimed). Any other platform is refused (invalid_request) before any request;
  * any failure fails the whole description — the evaluator then records "facts unavailable" (UNKNOWN, never SUPPORTED).
+ *
+ * read_content, Facebook Pages only (Step 7G-H5.5-P5-B; README › read_content — IMPLEMENTED_OFFLINE_NOT_LIVE_VALIDATED):
+ * READ_CONTENT_REQUIRED_OPERATIONS = listContent + getContent (modules/capability/domain/catalog-contract.ts), both here. Each call derives a Page Access Token from
+ * the sealed User Access Token it was handed (`{page-id}?fields=access_token`) and uses it for exactly ONE content
+ * read in the same call; the derived token is a SecretValue local to that call — never persisted, cached, returned,
+ * logged or placed in a DTO, error or raw reference. Two Graph GETs per call:
+ *   listContent  token derivation, then ONE page of `{page-id}/published_posts` (never `/feed`). The caller iterates:
+ *                `more` carries the opaque `after` cursor (rebuilt against the fixed endpoint; the `next` URL is never
+ *                fetched), `end` means `paging.next` was absent. A cursor returned equal to the one sent, or a next
+ *                page without a valid cursor, fails closed. The window [from, to) is applied CLIENT-SIDE to
+ *                `created_time` (no server bounding is claimed, and no ordering is assumed: pagination never stops
+ *                early on a date), so a page may be empty and still report `more`.
+ *   getContent   token derivation, then `{post-id}` (echoed id checked).
+ * Every returned post must have `from.id` = the managed Page, else the WHOLE page (or the single read) fails closed —
+ * never a partial page; `from.name` is never read. `status_type` is classified by a CLOSED table (added_video →
+ * video; mobile_status_update, added_photos, shared_story → post); anything else, or none, fails closed (no
+ * fallback). `reportedSource` is always "unknown": `/published_posts` says who published, not organic vs paid.
+ * Errors: the shared Graph read mapping (permission → PermissionMissing(read_content), never non-support), plus ONE
+ * getContent-only case: code 100 / subcode 33 on the post read is TargetNotFound — ambiguous (missing, inaccessible
+ * or unsupported), so it is never an eligibility or support observation.
  * Every other read operation is refused (permanent).
  */
 import type { ProviderCredential } from "../contract/credential";
-import { PermanentRejectedError, TransientError, type PermissionCapability, type ReadOperation } from "../contract/errors";
-import type { AccountDescriptionDto, ProviderAccess, SocialAssetDto } from "../contract/dto";
-import { isoInstant, providerObjectRef, rawReference, type ProviderObjectId, type ProviderObjectRef } from "../contract/identity";
-import { BUDGET_NOT_REPORTED } from "../contract/pagination";
+import { PermanentRejectedError, TargetNotFoundError, TransientError, type PermissionCapability, type ReadOperation } from "../contract/errors";
+import type { AccountDescriptionDto, ContentDto, ContentKind, ProviderAccess, SocialAssetDto } from "../contract/dto";
+import { isoInstant, parseIsoInstant, parseProviderObjectId, providerObjectRef, rawReference, type ProviderObjectId, type ProviderObjectRef } from "../contract/identity";
+import { BUDGET_NOT_REPORTED, parsePageCursor, type Page, type PageCursor, type TimeWindow } from "../contract/pagination";
 import type { ProviderReadPort } from "../contract/read-port";
 import { WebhookRejectedError } from "../contract/webhooks";
 import { META_GRAPH_VERSION } from "./endpoints";
 import { metaGraphReadError } from "./errors";
-import { createMetaGraphTransport, type MetaGraphCursor, type MetaGraphOutcome, type MetaGraphTransport, type MetaPageList } from "./graph-transport";
+import {
+  createMetaGraphTransport,
+  parseMetaGraphCursor,
+  type MetaGraphCursor,
+  type MetaGraphOutcome,
+  type MetaGraphTransport,
+  type MetaPageList,
+  type MetaPost,
+} from "./graph-transport";
 
 /** The most /me/accounts pages one discovery reads. Fixed (never configuration); revised only with evidence. */
 export const DISCOVER_ASSETS_MAX_PAGES = 20;
@@ -50,11 +78,28 @@ export interface MetaReadPortOptions {
 const OPERATION = "discoverAssets";
 const DESCRIBE = "describeAccount";
 
+/**
+ * The CLOSED `status_type` → content-kind table (P5-B). Only Graph Page-post types that unambiguously denote an
+ * ordinary post or a video; everything else (created_event, created_note, wall_post, app_created_story,
+ * published_story, tagged_in_photo, approved_friend, created_group, any new value) and a missing status_type are
+ * unreadable. Reels, stories and carousels are out of scope.
+ */
+export const META_STATUS_TYPE_CONTENT_KINDS: Readonly<Record<string, ContentKind>> = Object.freeze({
+  added_video: "video",
+  mobile_status_update: "post",
+  added_photos: "post",
+  shared_story: "post",
+});
+
+/** Graph code 100 / subcode 33: "object does not exist, cannot be loaded due to missing permissions, or does not support this operation". */
+const AMBIGUOUS_OBJECT_CODE = 100;
+const AMBIGUOUS_OBJECT_SUBCODE = 33;
+
 /** Code-unit order: deterministic, locale-independent. */
 const byId = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** The value of a successful outcome; every failure becomes one normalized provider error of `operation`. */
-function outcomeValue<T>(outcome: MetaGraphOutcome<T>, operation: typeof OPERATION | typeof DESCRIBE, capability: PermissionCapability): T {
+function outcomeValue<T>(outcome: MetaGraphOutcome<T>, operation: ReadOperation, capability: PermissionCapability): T {
   switch (outcome.kind) {
     case "ok":
       return outcome.value;
@@ -89,6 +134,77 @@ async function describe(transport: MetaGraphTransport, access: ProviderAccess, n
     describedAt: isoInstant(now),
     rawReference: rawReference("meta", META_GRAPH_VERSION, platform === "facebook" ? `facebook:page:${id}` : `instagram:account:${id}`),
   });
+}
+
+type ContentOperation = "listContent" | "getContent";
+
+/** The managed Facebook Page of `access`, or a refusal before any request (Instagram/TikTok read_content: not here). */
+function managedPage(access: ProviderAccess, operation: ContentOperation): ProviderObjectId {
+  const { platform, kind, id } = access.account;
+  const page = parseProviderObjectId(id);
+  // The kind is re-checked at runtime: a caller's ref is data, whatever its static type says.
+  if (platform !== "facebook" || (kind as string) !== "asset" || page === undefined) throw new PermanentRejectedError(operation, "invalid_request");
+  return page;
+}
+
+/** A post as a ContentDto: correlated to the managed Page, classified by the closed table, else unreadable. */
+function contentOf(post: MetaPost, page: ProviderObjectId, operation: ContentOperation): ContentDto {
+  if (post.fromId !== page) throw new PermanentRejectedError(operation, "unknown");
+  const contentKind = post.statusType === null ? undefined : META_STATUS_TYPE_CONTENT_KINDS[post.statusType];
+  if (contentKind === undefined) throw new PermanentRejectedError(operation, "unknown");
+  return Object.freeze({
+    ref: providerObjectRef("facebook", "content", post.id),
+    account: providerObjectRef("facebook", "asset", page),
+    contentKind,
+    reportedSource: "unknown",
+    caption: post.message,
+    publishedAt: post.createdTime,
+    availability: "available",
+    timestamps: Object.freeze({ createdAt: post.createdTime, updatedAt: post.updatedTime }),
+    rawReference: rawReference("meta", META_GRAPH_VERSION, `facebook:post:${post.id}`),
+  });
+}
+
+/** [from, to) as epoch milliseconds, refused (before any request) unless both ends are instants and from < to. */
+function windowBounds(window: TimeWindow): { readonly from: number; readonly to: number } {
+  const from = parseIsoInstant(window.from);
+  const to = parseIsoInstant(window.to);
+  if (from === undefined || to === undefined || Date.parse(from) >= Date.parse(to)) throw new PermanentRejectedError("listContent", "invalid_request");
+  return { from: Date.parse(from), to: Date.parse(to) };
+}
+
+/** The Page Access Token for one content read, derived from the sealed User Access Token. Never kept. */
+async function pageToken(transport: MetaGraphTransport, access: ProviderAccess, page: ProviderObjectId, operation: ContentOperation) {
+  return outcomeValue(await transport.getPageAccessToken(access.credential.secret, page), operation, "read_content");
+}
+
+async function listPublished(transport: MetaGraphTransport, access: ProviderAccess, window: TimeWindow, cursor: PageCursor | null): Promise<Page<ContentDto>> {
+  const page = managedPage(access, "listContent");
+  const bounds = windowBounds(window);
+  // The caller's cursor is the opaque `after` a previous page returned: re-validated, never a URL.
+  const after: MetaGraphCursor | null | undefined = cursor === null ? null : parsePageCursor(cursor) === undefined ? undefined : parseMetaGraphCursor(cursor);
+  if (after === undefined) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  const token = await pageToken(transport, access, page, "listContent");
+  const list = outcomeValue(await transport.listPublishedPosts(token, page, after), "listContent", "read_content");
+  // Map EVERY post first (one mismatch fails the whole page), then filter the window client-side.
+  const items = list.posts.map((post) => contentOf(post, page, "listContent")).filter((item) => {
+    const at = Date.parse(item.publishedAt ?? "");
+    return at >= bounds.from && at < bounds.to;
+  });
+  if (list.after === null) return Object.freeze({ items: Object.freeze(items), next: Object.freeze({ kind: "end" as const }) });
+  const next = parsePageCursor(list.after);
+  if (next === undefined || next === cursor) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  return Object.freeze({ items: Object.freeze(items), next: Object.freeze({ kind: "more" as const, cursor: next }) });
+}
+
+async function getPublished(transport: MetaGraphTransport, access: ProviderAccess, ref: ProviderObjectRef<"content">): Promise<ContentDto> {
+  const page = managedPage(access, "getContent");
+  const postId = parseProviderObjectId(ref.id);
+  if (ref.platform !== "facebook" || (ref.kind as string) !== "content" || postId === undefined) throw new PermanentRejectedError("getContent", "invalid_request");
+  const token = await pageToken(transport, access, page, "getContent");
+  const outcome = await transport.getPost(token, postId);
+  if (outcome.kind === "graph_error" && outcome.error.code === AMBIGUOUS_OBJECT_CODE && outcome.error.subcode === AMBIGUOUS_OBJECT_SUBCODE) throw new TargetNotFoundError("getContent");
+  return contentOf(outcomeValue(outcome, "getContent", "read_content"), page, "getContent");
 }
 
 async function discover(transport: MetaGraphTransport, credential: ProviderCredential): Promise<readonly SocialAssetDto[]> {
@@ -153,7 +269,7 @@ async function discover(transport: MetaGraphTransport, credential: ProviderCrede
 export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderReadPort {
   const transport = options.transport ?? createMetaGraphTransport();
   const clock = options.clock ?? (() => new Date());
-  const refuse = (operation: Exclude<ReadOperation, "discoverAssets" | "describeAccount" | "parseWebhook">): Promise<never> =>
+  const refuse = (operation: Exclude<ReadOperation, "discoverAssets" | "describeAccount" | "listContent" | "getContent" | "parseWebhook">): Promise<never> =>
     Promise.reject(new PermanentRejectedError(operation, "invalid_request"));
 
   return Object.freeze({
@@ -166,10 +282,15 @@ export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderR
     async describeAccount(access) {
       return Object.freeze({ data: await describe(transport, access, clock()), budget: BUDGET_NOT_REPORTED });
     },
-    listContent: () => refuse("listContent"),
+    async listContent(access, window, cursor) {
+      return Object.freeze({ data: await listPublished(transport, access, window, cursor), budget: BUDGET_NOT_REPORTED });
+    },
+
+    async getContent(access, ref) {
+      return Object.freeze({ data: await getPublished(transport, access, ref), budget: BUDGET_NOT_REPORTED });
+    },
     listInteractions: () => refuse("listInteractions"),
     getInteraction: () => refuse("getInteraction"),
-    getContent: () => refuse("getContent"),
     getCurrentState: () => refuse("getCurrentState"),
     retrievePaidContext: () => refuse("retrievePaidContext"),
     parseWebhook: () => Promise.reject(new WebhookRejectedError("invalid_signature")),

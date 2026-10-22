@@ -17,7 +17,7 @@ no accepted record and no registered implementation evidence, no platform entry 
 
 | Entry state | Requires |
 |---|---|
-| SUPPORTED / AVAILABLE_WITH_LIMITATION | `validation: "validated"`; `evidence` = the id of an **accepted, positive** record for the exact (provider, platform, asset class, capability, content kind, source); a **non-empty** `requiredPermissions` set, each permission explicitly named, equal to the record's; an explicit `IMPLEMENTED_PLATFORM_OPERATIONS` registration of the Wrenkind provider operation for that (platform, capability) resting on the same record; a named platform (never `any`); a limitation exactly when the state is AVAILABLE_WITH_LIMITATION |
+| SUPPORTED / AVAILABLE_WITH_LIMITATION | `validation: "validated"`; `evidence` = the id of an **accepted, positive** record for the exact (provider, platform, asset class, capability, content kind, source); a **non-empty** `requiredPermissions` set, each permission explicitly named, equal to the record's; the capability's **declared exact operation set** (`CAPABILITY_REQUIRED_OPERATIONS`; only `read_content` = `getContent` + `listContent` is declared) — (A) implemented: an `OFFLINE_IMPLEMENTED_OPERATIONS` registration of exactly that set, and (B) validated live: the record's `operations` are exactly that set and an `IMPLEMENTED_PLATFORM_OPERATIONS` registration of exactly that set rests on the same record; a named platform (never `any`); a limitation exactly when the state is AVAILABLE_WITH_LIMITATION |
 | UNSUPPORTED | `validation: "validated"`; `evidence` = the id of an **accepted, authoritative-negative** record of the exact scope, whose basis is `provider_documentation` or `provider_non_eligibility_observation`; **no** required permissions; no limitation |
 | NOT_AUTHORIZED | never an entry: it is a profile-only state (an account's missing authorization) |
 | UNKNOWN_NOT_VALIDATED | never an entry: it is the catalog default |
@@ -42,7 +42,7 @@ CHECK admits only `^[a-z][a-z0-9_.:-]{0,127}$`; guard-tested).
 | `accountKind` | the account TYPE validated, e.g. `facebook_page`, `instagram_professional_account` — never an account |
 | `capability` | one of the ten capability keys |
 | `contentKind`, `source` | the exact scope (`any` allowed) |
-| `operation` | the Wrenkind provider contract operation exercised (`READ_OPERATIONS` / `MUTATION_OPERATIONS`) |
+| `operations` | the Wrenkind provider contract operations exercised (`READ_OPERATIONS` / `MUTATION_OPERATIONS`), sorted and distinct; for a positive record, exactly the capability's declared set (Step 7G-H5.5-P5-B: `read_content` → `["getContent", "listContent"]`, never one of them alone) |
 | `validatedOn` | `YYYY-MM-DD`, equal to the id's date |
 | `sourceRevision` | the 40-hex commit of the code that ran |
 | `requiredPermissions` | sorted, distinct, explicitly named permissions/scopes the operation needed |
@@ -57,6 +57,19 @@ Never in a record: access tokens or any credential; Meta (or any provider) ids o
 apps; workspace, connection, account or credential ids; AWS ids, ARNs, session or request ids; secrets; raw provider
 responses or any user data; URLs (they embed ids). The contract refuses free text with long digit runs or links, and the
 guard runs the shared secret scan over every record.
+
+## Facebook read_content (Step 7G-H5.5-P5-B): expected future evidence shape
+
+P5-B implemented Facebook Page `listContent` and `getContent` **offline only** (`OFFLINE_IMPLEMENTED_OPERATIONS`); nothing
+is validated live (`IMPLEMENTED_PLATFORM_OPERATIONS` stays empty) and **no record exists — not even a draft**. A future
+P5-C record would be, if and only if the operator diagnostic `integration.read_content_validation` lists at least one
+in-window item AND reads that same item back with full correlation: `provider` `meta`, `platform` `facebook`,
+`assetClass` `content_bearing`, `accountKind` `facebook_page`, `capability` `read_content`, `operations`
+`["getContent", "listContent"]`, `requiredPermissions` exactly as observed LIVE (expected, not established:
+`pages_read_engagement`, `pages_show_list`), the proposed scope (`contentKind` `post`, `source` `organic` — PROPOSED,
+not accepted), `polarity` `positive`, `status` `draft` until the TL accepts it. A zero-item run, a failed or uncorrelated
+getContent, or a single operation is never positive evidence; a LIVE authorization rejection is `NOT_AUTHORIZED`
+evidence, never an authoritative negative.
 
 ## Process
 

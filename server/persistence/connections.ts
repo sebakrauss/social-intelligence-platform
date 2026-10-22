@@ -6,9 +6,9 @@
 import { createPostgresAuditLog } from "@/modules/audit/persistence";
 import type { CapabilityProfileStore } from "@/modules/capability";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
-import type { CapabilityReconcileStore, ConnectionWorkerStore } from "@/modules/connections";
+import type { CapabilityReconcileStore, ConnectedAccount, Connection, ConnectionWorkerStore } from "@/modules/connections";
 import { createPostgresCapabilityReconcileStore, createPostgresConnectionWorkerStore } from "@/modules/connections/persistence";
-import { appendOutboxOnce, createPostgresOutbox } from "@/platform/db";
+import { appendOutboxOnce, createPostgresOutbox, type DatabaseTransaction } from "@/platform/db";
 import type { TenantJobScope } from "@/platform/jobs";
 import type { OutboxWriter } from "@/platform/outbox";
 
@@ -56,4 +56,33 @@ export function capabilityReconcileStores(scope: TenantJobScope): { readonly acc
     }),
     capability: createPostgresCapabilityStore(scope.tx),
   };
+}
+
+/**
+ * The READ-ONLY lookup of the INTEGRATION read_content validation diagnostic (Step 7G-H5.5-P5-B;
+ * jobs/integration-read-content-validation.ts), over one worker transaction bound to the payload's workspace: the
+ * Connected Account, its Connection and the stored credential envelope — reads only. The store's write dependencies
+ * refuse (no audit, no outbox, no effect claim), and only the three reads are exposed, so the diagnostic cannot write.
+ */
+export interface ReadContentValidationLookup {
+  account(id: string): Promise<ConnectedAccount | undefined>;
+  connection(id: string): Promise<Connection | undefined>;
+  credential(id: string): Promise<{ readonly connectionId: string; readonly envelope: Uint8Array } | undefined>;
+}
+
+const refuseWrite = (): never => {
+  throw new Error("read_content validation lookup is read-only");
+};
+
+export function readContentValidationLookup(tx: DatabaseTransaction): ReadContentValidationLookup {
+  const store = createPostgresConnectionWorkerStore(tx, {
+    audit: { append: refuseWrite },
+    outbox: { append: refuseWrite, routed: refuseWrite },
+    claimEffect: refuseWrite,
+  });
+  return Object.freeze({
+    account: (id: string) => store.connectedAccounts.get(id),
+    connection: (id: string) => store.connections.get(id),
+    credential: (id: string) => store.credentials.load(id),
+  });
 }

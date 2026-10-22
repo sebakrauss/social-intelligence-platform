@@ -179,7 +179,8 @@ IG_FIELD_EXPANSION_FROM_ME_ACCOUNTS = DEFERRED_7G_H.
   access token"; R2's sample response). The explicit `fields=id,name` selection excludes it (R3).
 - The parser whitelists only the fields it maps. An `access_token` that arrives anyway is ignored at once. It is
   never wrapped as a credential, never mapped, persisted or logged, never in errors or `rawReference`, and only a
-  synthetic placeholder in fixtures.
+  synthetic placeholder in fixtures. (Discovery only. Facebook `read_content` derives a Page token through its own
+  dedicated request: see › Facebook Page read_content, Step 7G-H5.5-P5-B.)
 
 **Access-token transport: QUERY_PARAMETER, a deliberate documented-provider exception (TL decision).**
 
@@ -497,14 +498,18 @@ the catalog keeps four:
 `api-validation/README.md`:
 - **Positive entries** (SUPPORTED, AVAILABLE_WITH_LIMITATION) need all of: an accepted positive `api-validation:` record
   of the exact scope; a non-empty, explicitly named `requiredPermissions` equal to the record's; and registered
-  implementation evidence.
+  implementation evidence for the capability's EXACT operation set (Step 7G-H5.5-P5-B): (A) an
+  `OFFLINE_IMPLEMENTED_OPERATIONS` registration of exactly that set, and (B) an `IMPLEMENTED_PLATFORM_OPERATIONS`
+  (live-validated) registration of exactly that set resting on the same accepted record, whose `operations` are that set.
 - **UNSUPPORTED entries** need an accepted authoritative-negative record and name no permission.
 - **Never from absence.** A missing or unrequested permission, an unimplemented operation, unavailable facts, a failed
   read or a missing rule never yield UNSUPPORTED: those stay UNKNOWN.
-- **No inferred mappings.** No capability-to-operation mapping is inferred from names, and `describeAccount` is never
-  evidence.
-- **Nothing passes today.** No accepted record and no registered implementation evidence exist, so no entry is admissible
-  and `platform.entries` is `[]` — even though the P4-B authorization-semantics blocker itself is lifted (P4-C).
+- **No inferred mappings.** No capability-to-operation mapping is inferred from names: the sets are declared in
+  `CAPABILITY_REQUIRED_OPERATIONS`, and only `read_content` = {`getContent`, `listContent`} is declared (P5-B); a
+  capability without a declared set can't be positive. `describeAccount` is never evidence.
+- **Nothing passes today.** No accepted record and no live-validated implementation evidence exist, so no entry is
+  admissible and `platform.entries` is `[]` — even though the P4-B authorization-semantics blocker itself is lifted (P4-C)
+  and Facebook `read_content` is now implemented offline (P5-B).
 
 **Catalog version and re-evaluation.**
 - **P4-B:** `platform` stays revision 2 (`platform-catalog-r2`) and the LIVE profiles stay current and untouched.
@@ -533,3 +538,119 @@ AVAILABLE (or AVAILABLE_WITH_LIMITATION, honoring the limitation) for EXACTLY th
 H6 consumes the resolver; it never infers a capability from the Meta authorization, the granted permissions, the
 discovery result or the data it sees. Today that means: the simulator for development; real Meta only after the
 live capability-validation gate.
+
+## Facebook Page read_content (Step 7G-H5.5-P5-B) — IMPLEMENTED_OFFLINE_NOT_LIVE_VALIDATED
+
+P5-B implements the provider side of `read_content` for Facebook Pages **offline only**. Nothing here is a validated
+fact about the live Graph API: no catalog entry, no accepted (or draft) `api-validation:` record, no catalog revision
+bump, no LIVE profile change. The platform catalog stays `platform` r2 with zero entries, and Facebook `read_content`
+still evaluates UNKNOWN_NOT_VALIDATED.
+
+**Semantics (TL decision).** `READ_CONTENT_REQUIRED_OPERATIONS = [listContent, getContent]`: the existing provider
+contract's two content reads. A catalog `SUPPORTED` verdict for `read_content` may never rest on only one of them — the
+entry contract refuses it (`IMPLEMENTATION_INCOMPLETE`, `EVIDENCE_OPERATIONS_INCOMPLETE`, `IMPLEMENTATION_EVIDENCE_MISMATCH`).
+The capability is not redefined.
+
+| Registry | State after P5-B |
+|---|---|
+| OFFLINE_IMPLEMENTED_OPERATIONS | meta · facebook · `read_content` · {`getContent`, `listContent`} (adapter code + offline tests; guard-checked against the adapter) |
+| LIVE_VALIDATED_OPERATIONS (`IMPLEMENTED_PLATFORM_OPERATIONS`) | none |
+| API_VALIDATION_RECORD_COUNT | 0 |
+| PLATFORM_CATALOG | `platform` r2, entries `[]` |
+
+**Requests (Graph `v25.0`, unchanged; all GET, the existing transport: `redirect: "manual"`, 10 s, 64 KiB, whitelist
+parsing, one request per operation step, no retry).**
+
+| Step | Request | Token |
+|---|---|---|
+| Page token derivation | `GET /v25.0/{page-id}?fields=access_token` | the sealed User Access Token |
+| listContent | `GET /v25.0/{page-id}/published_posts?fields=id,from,message,created_time,updated_time,status_type&limit=10[&after={cursor}]` | the derived Page Access Token |
+| getContent | `GET /v25.0/{post-id}?fields=id,from,message,created_time,updated_time,status_type` | the derived Page Access Token |
+
+- **`/published_posts`, never `/feed`**: the product means content published by the managed Page, not visitor or
+  user-generated Page content. Never requested: `attachments`, `full_picture`, `permalink_url`, `story`, insights,
+  metrics.
+- **Page token model**: each `listContent` / `getContent` call derives a Page Access Token from the sealed User Access
+  Token and uses it for exactly one content read in the same call. The derived token is a `SecretValue` local to that
+  call, inside the credential-use boundary: never persisted, cached, written to the database, logged, returned, placed
+  in a DTO, error, raw reference or telemetry. An echoed `id`, when present, must be the managed Page; a missing, empty
+  or malformed `access_token` is unreadable. Tests use synthetic markers only.
+- **Expected permissions (to validate LIVE, not established)**: `pages_read_engagement`, `pages_show_list`.
+  `pages_read_user_content` is NOT added. A LIVE authorization rejection is P5-C evidence for `NOT_AUTHORIZED`, never
+  `UNSUPPORTED`.
+
+**Mapping into ContentDto.** `ref` = facebook content `{post id}`; `account` = the managed Page; `caption` = `message`
+(null when absent; untrusted); `publishedAt` = `created_time`; `timestamps` = `created_time` / `updated_time` (null when
+absent); `availability` = `available`; `rawReference` = `facebook:post:{id}` (`meta`, `v25.0`).
+- **Identity**: every post's `from.id` must equal the managed Page, else the whole page (or the single read) fails
+  closed — never a partial page. `from.name` is never read.
+- **`reportedSource` = `unknown`**: `/published_posts` says who published, not organic vs paid. The provider DTO never
+  manufactures `organic`; a future catalog scope `source = organic` needs P5-C/product evidence first.
+- **Content kind — a CLOSED `status_type` table**: `added_video` → `video`; `mobile_status_update`, `added_photos`,
+  `shared_story` → `post`. Every other value (e.g. `created_event`, `created_note`, `wall_post`, `app_created_story`,
+  `published_story`, `tagged_in_photo`, `approved_friend`, `created_group`, any new value) and a missing `status_type`
+  fail closed (unreadable). No catch-all fallback. Reels, Stories and Carousel stay out of scope.
+
+**Pagination and window.**
+- One `listContent` call = ONE provider page. `paging.cursors.after` + `paging.next` → `{kind: "more", cursor}`;
+  `paging.next` absent → `{kind: "end"}`. The `next` URL is presence-only and never fetched; the cursor is rebuilt
+  against the fixed endpoint. A malformed or oversized cursor, a next page without a valid cursor, or a returned cursor
+  equal to the one sent fails closed. Cursors are never stored by the provider. The caller controls iteration; there is
+  no "fetch entire history".
+- The window `[from, to)` is applied CLIENT-SIDE to `created_time`. No server-side bounding is claimed (no
+  `since`/`until`), and pagination never stops early on an assumed ordering, so a page may be empty and still `more`.
+  `read_history` stays a separate capability.
+
+**Errors (P4-C semantics preserved).** Graph codes 10 / 200–299 and subcode 492 → `PermissionMissing(read_content)`
+(an authorization observation, never UNSUPPORTED); 190 / 102 / OAuthException → `CredentialInvalid`; 4 / 17 / 32 / 341 /
+613 / 8000x → `RateLimited`; 1 / 2, 5xx and network → `Transient`; a malformed schema or an identity mismatch →
+`PermanentRejected` (unreadable), with no unsupported observation. **getContent only:** code 100 / subcode 33 on the
+post read is `TargetNotFound` — Meta's text covers "does not exist, cannot be loaded due to missing permissions, or does
+not support this operation", so it is ambiguous and is never evidence for UNSUPPORTED, `TargetNotEligible` or
+`OBSERVED_NOT_ELIGIBLE`. On `listContent` (and on the token derivation) it stays a permanent rejection. No Graph code is
+mapped to `TargetNotEligible`.
+
+**Validation vehicle: `integration.read_content_validation` (INTEGRATION only, operator-only).** `jobs/integration-read-
+content-validation.ts` + the thin task `jobs/trigger/integration/read-content-validation.ts`. Not a product task: absent
+from the task registry and outbox routes, no schedule, no hook, no product UI; one task attempt, one KMS attempt, its
+own queue of one, 120 s. Payload: exactly `{acknowledge: "INTEGRATION_READ_CONTENT_VALIDATION_V1", workspace_id,
+connected_account_id}` (internal UUIDs, no provider id, no token). Guards before anything provider- or AWS-capable: a
+pinned Trigger.dev PRODUCTION run; the integration plane's environment contract; `APP_DEPLOYMENT_ENV = staging`;
+Node 22; no `CAPABILITY_PROVIDER_MODE`; the KMS keyring. Then a READ-ONLY lookup (one worker transaction in the
+payload's workspace; the store's write dependencies refuse): an ACTIVE, content-bearing Facebook Page of an unremoved
+Meta connection with its active credential. Then ONE credential opening (Roles Anywhere → KMS Decrypt) in which:
+1. `listContent` over `[now − 30 days, now)`, first page only;
+2. only if it returned at least one in-window item: `getContent(first listed ref)` — never an arbitrary target.
+
+It writes nothing (no capability profile, catalog, outbox, ingestion, audit or effect claim) and has no capability
+authority. Output (closed values only): result class, `positiveEvidenceEligible`, authorization class, Graph version,
+window days, stages, the implemented Meta request count, list success / item count / in-window count / content-kind
+histogram / pagination `more|end` / correlation booleans / error class, getContent attempted / succeeded / correlation
+booleans / error class. Never: Page or post ids, refs, tokens, captions, names, cursors, URLs, raw responses, AWS
+material (architecture- and unit-tested).
+
+| Run | Meta GETs (implemented) |
+|---|---|
+| with ≥ 1 in-window item | 4: derive + `published_posts`, derive + `{post-id}` |
+| zero in-window items | 2: derive + `published_posts`; no getContent |
+
+The Page token is derived once per operation rather than shared across the two calls: sharing it would mean changing
+the public `ProviderReadPort` contract, which P5-B does not do. A zero-item run can never become accepted positive
+capability evidence. INTEGRATION now discovers 4 tasks (2 product + 2 diagnostics); MAIN stays at 6.
+
+**Expected LIVE validation sequence (P5-C, not executed; a later gate authorizes it).** Paired release carrying P5-B →
+one operator run of `integration.read_content_validation` for the managed Facebook Page → logical run and task
+attempts counted separately (one attempt by design) → CloudTrail (one CreateSession, one Decrypt) → a `draft` record
+only if both operations succeeded with correlation → TL review → `accepted` → a later gate registers the live
+implementation evidence and decides the catalog revision and the first entry.
+**First catalog scope: PROPOSED, not accepted** — `facebook` · `content_bearing` · `read_content` · `contentKind = post` ·
+`source = organic`.
+
+**Unresolved (to be established LIVE; none is a validated fact):**
+- the exact permission behavior of `/published_posts` LIVE (whether `pages_read_engagement` + `pages_show_list` suffice);
+- Page role / task behavior (which Page tasks the user needs for the token derivation and the reads);
+- pagination ordering of `/published_posts`;
+- the future `organic` classification of Page-published content;
+- the Page Access Token derivation's LIVE behavior (presence of `access_token`, echoed `id`);
+- whether real Page-post `status_type` values (or their absence) and real bodies fit the closed table and the 64 KiB
+  bound with a page of 10.

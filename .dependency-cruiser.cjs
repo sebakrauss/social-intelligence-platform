@@ -432,7 +432,7 @@ module.exports = {
       name: "plane-opener-integration-only",
       severity: "error",
       comment: "Only the integration plane's task directory reaches the CredentialOpener composition (jobs/connections.ts): the main plane — outbox relay and sweepers, the Move saga, every shared jobs module — never does.",
-      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|integration-kms-diagnostic\\.ts$|trigger/integration/)" },
+      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|integration-kms-diagnostic\\.ts$|integration-read-content-validation\\.ts$|trigger/integration/)" },
       to: { path: "^jobs/connections\\.ts$" },
     },
     {
@@ -446,7 +446,7 @@ module.exports = {
       name: "plane-integration-no-delivery",
       severity: "error",
       comment: "The integration plane never runs outbox delivery, system scope or the Move saga: it only executes its two tasks and wakes MAIN's relay.",
-      from: { path: "^jobs/(trigger/integration/|connections\\.ts$)" },
+      from: { path: "^jobs/(trigger/integration/|connections\\.ts$|integration-read-content-validation\\.ts$)" },
       to: { path: "^(platform/outbox/delivery\\.ts|platform/db/(system-scope|outbox-delivery)\\.ts|jobs/moves\\.ts|jobs/trigger/main/)" },
     },
     {
@@ -470,6 +470,29 @@ module.exports = {
       from: { path: "^jobs/integration-kms-diagnostic\\.ts$" },
       to: {
         path: "^(server/(?!connections/(environment|provider-mode)\\.ts$)|jobs/(?!(connections|plane-environment)\\.ts$)|integrations/|modules/(?!connections/index\\.ts$)|platform/(db|outbox)/|platform/jobs/(?!index\\.ts$)|db/|ai/|mutations/|app/|ui/)|(^|/)node_modules/(@trigger\\.dev|trigger\\.dev|@aws-sdk|@smithy|pg|drizzle-orm|@supabase)/",
+      },
+    },
+    {
+      name: "read-content-validation-module-task-only",
+      severity: "error",
+      comment: "Step 7G-H5.5-P5-B: the read_content validation diagnostic module is reached only by its own integration task file (and its unit test) — never by the product tasks, the main plane, the web or any shared module.",
+      from: { pathNot: "^(jobs/trigger/integration/read-content-validation\\.ts|tests/unit/jobs/integration-read-content-validation\\.test\\.ts)$" },
+      to: { path: "^jobs/integration-read-content-validation\\.ts$" },
+    },
+    {
+      name: "read-content-validation-task-thin",
+      severity: "error",
+      comment: "Step 7G-H5.5-P5-B: the diagnostic task file depends only on the Trigger.dev SDK, the job release (platform/jobs) and the diagnostic module.",
+      from: { path: "^jobs/trigger/integration/read-content-validation\\.ts$" },
+      to: { path: "^(jobs/(?!integration-read-content-validation\\.ts$)|platform/(?!jobs/index\\.ts$)|server/|modules/|integrations/|domain/|db/|app/|ui/)" },
+    },
+    {
+      name: "read-content-validation-reads-only",
+      severity: "error",
+      comment: "Step 7G-H5.5-P5-B: the diagnostic reads one account and calls the Meta READ port — nothing that writes. DENY by subtree: every server/ path except the two configuration readers and the read-only lookup's owner (server/persistence/connections.ts); every jobs/ path except the opener composition, the per-plane contract and the worker database; every provider path except the contract and the Meta endpoints (the Meta read port comes from the composition); the capability module (no profile, catalog or authority), every other module except the connections public API; outbox, system scope and delivery; task registry/scheduler; AI, mutations, UI, db/.",
+      from: { path: "^jobs/integration-read-content-validation\\.ts$" },
+      to: {
+        path: "^(server/(?!(connections/(environment|provider-mode)|persistence/connections)\\.ts$)|jobs/(?!(connections|plane-environment|runtime)\\.ts$)|integrations/(?!providers/(contract/(?!mutation-port)|meta/endpoints\\.ts$))|modules/(?!connections/index\\.ts$)|platform/(outbox|db/(?!index\\.ts$))|platform/jobs/(?!index\\.ts$)|db/|ai/|mutations/|app/|ui/)",
       },
     },
     {
