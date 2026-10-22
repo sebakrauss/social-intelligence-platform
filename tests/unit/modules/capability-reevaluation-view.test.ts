@@ -87,6 +87,19 @@ describe("the re-check offer (view model)", () => {
     expect(reads).toEqual(["header", "latest:LINKED,MOVED_IN,REEVALUATION_REQUESTED"]);
   });
 
+  it("the cooldown note's single reason covers every source event: LINKED, MOVED_IN and REEVALUATION_REQUESTED (others don't start it)", async () => {
+    const byType = (type: string) => ({
+      capability: { header: () => Promise.resolve(undefined) },
+      accountEvents: {
+        latestOccurredAt: (_id: string, types: readonly string[]) => Promise.resolve(types.includes(type) ? T0 : undefined),
+      },
+    });
+    const at = (type: string) =>
+      capabilityReevaluationView(byType(type), { account: { id: randomUUID(), status: "ACTIVE" }, connection: { provider: "meta", status: "ACTIVE" }, now: new Date(T0.getTime() + 5 * MIN) });
+    for (const type of ["LINKED", "MOVED_IN", "REEVALUATION_REQUESTED"]) expect(await at(type), type).toEqual({ allowed: false, reason: "REEVALUATION_TOO_SOON" });
+    for (const type of ["UNLINKED", "MOVED_OUT", "DEACTIVATED"]) expect(await at(type), type).toEqual({ allowed: true, reason: "PROFILE_NOT_EVALUATED" });
+  });
+
   it("provider-neutral: the same answers for any provider of the platform catalog", async () => {
     for (const provider of ["meta", "tiktok"] as const) {
       expect((await view(undefined, { provider })).result).toEqual({ allowed: true, reason: "PROFILE_NOT_EVALUATED" });

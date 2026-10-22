@@ -189,6 +189,16 @@ describe("Capability re-check on the Connections page (Step 7G-H5.5-P2-B2)", () 
     expect(recheckForms(html)).toEqual([]);
   });
 
+  it("the cooldown note is true whatever started it (activation, move-in or re-check): it names an EVALUATION request, never a past re-check", () => {
+    // One view reason (REEVALUATION_TOO_SOON) covers LINKED, MOVED_IN and REEVALUATION_REQUESTED, so one copy must fit all three.
+    const note = t("connections.recheck.reason.too_soon");
+    expect(note).toBe("A capability evaluation was requested recently. You can request a re-check 30 minutes after the last evaluation request.");
+    expect(note).not.toMatch(/re-check was requested|re-checked/i);
+    expect(note).toMatch(/30 minutes/);
+    // The refusal shown after a stale-tab click keeps its own (already accurate) wording.
+    expect(t("connections.status.capability_recheck_too_soon")).toMatch(/re-checked or activated less than 30 minutes ago/);
+  });
+
   it("not allowed / not found / unavailable states render no Managed accounts and no re-check at all", async () => {
     for (const state of [{ kind: "not_allowed" }, { kind: "workspace_not_found" }, { kind: "unavailable" }, { kind: "verification_required" }] as const) {
       const html = await render(state);
