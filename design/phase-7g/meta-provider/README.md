@@ -420,13 +420,80 @@ failure fails the whole description. Same transport containment as E1. No scope 
 
 Live uncertainties (to be proven in a live capability gate): whether the Page node read needs more than
 `pages_show_list`; whether `me/permissions` under Facebook Login for Business lists the configuration's permissions;
-whether it is ever paginated for one app grant.
+whether it is ever paginated for one app grant. Observed in P3 (2026-10-22, one grant): the Page and Instagram account
+reads succeeded with the configuration's grants, and `me/permissions` listed them in one unpaginated page.
 
 | Item | State |
 |---|---|
-| META_DESCRIBE_ACCOUNT | IMPLEMENTED_OFFLINE (fake transport only; never executed live) |
+| META_DESCRIBE_ACCOUNT | VALIDATED_LIVE (Step 7G-H5.5-P3: Facebook Page and Instagram professional account; account description only, no capability) |
 | CAPABILITY_CATALOG_META | BLOCKED_ON_API_VALIDATION_EVIDENCE: the platform catalog holds NO entry. Every Meta capability, `read_content` and `read_interactions` included, evaluates UNKNOWN_NOT_VALIDATED until a live API-validation gate records `api-validation:` evidence for an exact (platform, asset class, capability, scope, required permissions) entry |
-| LIVE_EVALUATION_BLOCKER | the permanent Integration workload authentication (no static AWS key; separate infrastructure gate) and a live capability-validation gate |
+| LIVE_EVALUATION_BLOCKER | RESOLVED for account description (Roles Anywhere workload identity, Step 7G-H5.6; first live evaluations, P3). Capability validation remains blocked: see Capability catalog contract (Step 7G-H5.5-P4-B) |
+
+**First live capability evaluations (Steps 7G-H5.5-P3-B / P3-C, 2026-10-22).** One Facebook Page and one Instagram
+professional account were each activated once through Save managed accounts. Each produced exactly one evaluation,
+delivered by the outbox to the integration plane:
+- AWS: one Roles Anywhere session for the worker role and one KMS Decrypt under the exact six-field context.
+- Meta: two read-only Graph GETs, the asset itself (id echoed and matched) and `me/permissions`.
+- Facts: available, account identity known, five granted permissions, no linked ad accounts.
+- Profile: platform catalog r2, revision 1, ten rows per account, all `UNKNOWN_NOT_VALIDATED` / `CATALOG_NOT_VALIDATED`.
+
+The connection and credential were unchanged. P3 validated **account description only**: identity and granted-permission
+retrieval through the real credential path (`describeAccount`, i.e. `read_account`). It did **NOT** validate any of the
+ten product capabilities, and no mutation capability was tested. The catalog stayed empty.
+
+## Capability catalog contract (Step 7G-H5.5-P4-B)
+
+**The question.** The capability system answers: "Can Wrenkind perform X now for this connected account?" Four
+dimensions stay distinct:
+
+| # | Dimension | Where it lives |
+|---|---|---|
+| 1 | the provider/account supports the operation | a validated catalog entry (evidence record) |
+| 2 | Wrenkind is authorized for it (granted permissions) | account facts (`describeAccount`) and observations |
+| 3 | Wrenkind implements the operation | `IMPLEMENTED_PLATFORM_OPERATIONS` (explicit, evidence-backed; empty today) |
+| 4 | the product exposes/enables it | role, workspace mode, availability resolver (TA §16.6) and future UI/action gates |
+
+A capability-profile `SUPPORTED` requires dimensions 1–3 proven. Dimension 4 is a product/exposure concern: it is never
+inferred from provider support, and future UI/action availability may impose an additional product gate.
+
+**Authorization semantics — OPEN (`AUTHORIZATION_SEMANTICS_OPEN_BEFORE_FIRST_VALIDATED_ENTRY`).**
+`ACCOUNT_PERMISSION_MISSING` is an authorization condition, not proof of intrinsic provider/platform non-support. The
+evaluator's stored `UNSUPPORTED / ACCOUNT_PERMISSION_MISSING` (and `OBSERVED_PERMISSION_MISSING`) is historical/technical
+behavior. It MUST be interpreted together with its reason code, and the availability overlay presents it as
+`ACCOUNT_PERMISSION_MISSING` + `REAUTHORIZE`, never as "the platform doesn't offer it" (`CAPABILITY_UNSUPPORTED` /
+`OPEN_ON_PLATFORM`). The approved documents define Unsupported as platform non-support (TA §16.2, Model §6.2). P4-B does
+not reconcile this: no new state, reason code, migration or evaluator change.
+`FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = YES`.
+
+**Entry contract.** `modules/capability/domain/catalog-contract.ts` (development/test-time only) and the evidence schema
+`api-validation/README.md`:
+- **Positive entries** (SUPPORTED, AVAILABLE_WITH_LIMITATION) need all of: an accepted positive `api-validation:` record
+  of the exact scope; a non-empty, explicitly named `requiredPermissions` equal to the record's; and registered
+  implementation evidence.
+- **UNSUPPORTED entries** need an accepted authoritative-negative record and name no permission.
+- **Never from absence.** A missing or unrequested permission, an unimplemented operation, unavailable facts, a failed
+  read or a missing rule never yield UNSUPPORTED: those stay UNKNOWN.
+- **No inferred mappings.** No capability-to-operation mapping is inferred from names, and `describeAccount` is never
+  evidence.
+- **Nothing passes today.** No capability passes, so `platform.entries` is `[]`.
+
+**Catalog version and re-evaluation.**
+- **P4-B:** `platform` stays revision 2 (`platform-catalog-r2`) and the LIVE profiles stay current and untouched.
+- **First validated entry:** requires a deliberate catalog version/revision decision. When the catalog revision in code
+  changes, every existing profile becomes `PROFILE_STALE`.
+- **Re-evaluation path:** the supported path is an Owner/Admin's manual Re-check. No automatic reconcile is enabled.
+- **Deployment order for a future catalog change:**
+  1. the canonical paired Trigger release (`npm run trigger:release`, INTEGRATION then MAIN);
+  2. verify both workers;
+  3. web deploy;
+  4. manual Re-check of the target account(s).
+
+| Item | State |
+|---|---|
+| PLATFORM_CATALOG | `platform` r2, entries `[]` (frozen, guard-tested) |
+| CATALOG_ENTRY_CONTRACT | G1 non-empty named permissions; G2 registered implementation evidence (none registered → every positive entry refused); UNSUPPORTED only from authoritative negative evidence; G3 LIVE-shaped facts → 0 SUPPORTED, 0 UNSUPPORTED, 10 UNKNOWN per account |
+| FIRST_VALIDATED_PLATFORM_ENTRY | BLOCKED until the authorization semantics are resolved |
+| REEVALUATION | manual Re-check only; no automatic reconcile |
 
 **H6 readiness contract.** H6 may ingest for a Connected Account only when, at the moment of ingestion:
 the account is ACTIVE; its connection is ACTIVE with a valid credential pointer; and `capabilityAvailability` answers

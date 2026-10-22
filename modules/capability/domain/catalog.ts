@@ -63,7 +63,12 @@ export interface CapabilityCatalog {
   readonly entries: readonly CatalogEntry[];
 }
 
-/** Real platforms: empty until API validation produces evidence-backed entries. */
+/**
+ * Real platforms: empty until API validation produces evidence-backed entries. Frozen at r2 with zero entries (Step
+ * 7G-H5.5-P4-B). Every future entry must satisfy the entry contract in ./catalog-contract.ts (api-validation evidence
+ * record, named permissions, registered implementation evidence). The FIRST entry is blocked until the authorization
+ * semantics are resolved (AUTHORIZATION_SEMANTICS_OPEN_BEFORE_FIRST_VALIDATED_ENTRY).
+ */
 export const PLATFORM_CATALOG: CapabilityCatalog = Object.freeze({ id: "platform", revision: 2, label: "platform-catalog-r2", entries: Object.freeze([]) });
 
 const SIM_EVIDENCE = "simulator:contract-v1";
