@@ -26,6 +26,7 @@ import {
   WebhookRejectedError,
   isDefiniteFailure,
   parseIsoInstant,
+  PAGE_CURSOR_MAX_LENGTH,
   parsePageCursor,
   parseProviderObjectId,
   providerCredential,
@@ -66,7 +67,12 @@ describe("identity", () => {
   it("page cursors are bounded opaque tokens", () => {
     expect(parsePageCursor("sim1.eyJvIjoibGlzdCJ9")).toBe("sim1.eyJvIjoibGlzdCJ9");
     expect(parsePageCursor("bad cursor")).toBeUndefined();
-    expect(parsePageCursor("x".repeat(513))).toBeUndefined();
+    // Step 7G-H5.5-P5-C7: capacity 2048 for an adapter's encoded continuation state; alphabet unchanged.
+    expect(PAGE_CURSOR_MAX_LENGTH).toBe(2048);
+    expect(parsePageCursor("x".repeat(PAGE_CURSOR_MAX_LENGTH))).toBe("x".repeat(PAGE_CURSOR_MAX_LENGTH));
+    expect(parsePageCursor("x".repeat(PAGE_CURSOR_MAX_LENGTH + 1))).toBeUndefined();
+    for (const bad of ["", "a+b", "a/b", "a b", "a\nb", "a#b", "a?b", "a&b", "a%2Fb"]) expect(parsePageCursor(bad), bad).toBeUndefined();
+    for (const good of ["meta1.QVFIUmFmdGVy", "sim1.eyJvIjoibGlzdCJ9", "a_b-c.d:e=f"]) expect(parsePageCursor(good), good).toBe(good);
   });
 });
 

@@ -10,6 +10,7 @@
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
+  PAGE_CURSOR_MAX_LENGTH,
   ProviderError,
   parsePageCursor,
   providerCredential,
@@ -19,8 +20,8 @@ import {
   type ProviderErrorKind,
   type TimeWindow,
 } from "@/integrations/providers/contract";
-import { META_POST_FIELDS, META_PUBLISHED_POSTS_PAGE_LIMIT, createMetaGraphTransport, parseGraphDatetime, type MetaGraphFetch } from "@/integrations/providers/meta/graph-transport";
-import { META_STATUS_TYPE_CONTENT_KINDS, createMetaReadPort } from "@/integrations/providers/meta/read-port";
+import { META_GRAPH_CURSOR_MAX_LENGTH, META_POST_FIELDS, META_PUBLISHED_POSTS_PAGE_LIMIT, createMetaGraphTransport, parseGraphDatetime, type MetaGraphFetch } from "@/integrations/providers/meta/graph-transport";
+import { META_PAGE_CURSOR_PREFIX, META_STATUS_TYPE_CONTENT_KINDS, createMetaReadPort } from "@/integrations/providers/meta/read-port";
 import { expectContent, expectResult } from "../contract/assertions";
 
 const USER_TOKEN = "synthetic-meta-user-token-marker";
@@ -114,6 +115,9 @@ async function failure(promise: Promise<unknown>): Promise<ProviderError> {
   }
   throw new Error(`expected a provider failure, it resolved (${typeof settled})`);
 }
+
+/** The expected Meta envelope of a raw Graph cursor (computed independently of the adapter's helper). */
+const envelope = (raw: string): PageCursor => `meta1.${Buffer.from(raw, "latin1").toString("base64url")}` as PageCursor;
 
 const ONE_PAGE = { "": { data: [post(POST_A), post(POST_B, { status_type: "added_video", message: undefined, updated_time: undefined })] } };
 
@@ -296,7 +300,7 @@ describe("time window [from, to): client-side on created_time, never a server bo
 
   it("a page whose items all fall outside the window is empty yet still reports `more` (no stop on ordering)", async () => {
     const { list } = portWith(graphOf({ pages: { "": { data: [post(POST_A, { created_time: "2020-01-01T00:00:00+0000" })], paging: { cursors: { after: "QVFIUmN1cnNvcg" }, next: HOSTILE_NEXT } } } }));
-    expect((await list()).data).toEqual({ items: [], next: { kind: "more", cursor: "QVFIUmN1cnNvcg" } });
+    expect((await list()).data).toEqual({ items: [], next: { kind: "more", cursor: envelope("QVFIUmN1cnNvcg") } });
   });
 
   it.each([
@@ -317,19 +321,52 @@ describe("time window [from, to): client-side on created_time, never a server bo
   });
 });
 
-describe("pagination: ONE provider page per call; opaque `after` cursor; `next` is never fetched", () => {
+describe("pagination: ONE provider page per call; the Graph `after` cursor in a `meta1.` envelope; `next` is never fetched", () => {
   const cursorPage = (after: unknown, next: unknown = HOSTILE_NEXT) => ({ data: [post(POST_A)], paging: { cursors: { before: "QVFIUmJlZm9yZQ", after }, next } });
-
-  it("a valid after + next → more (the cursor rebuilt against the fixed endpoint); next absent → end", async () => {
-    const { list, calls } = portWith(graphOf({ pages: { "": cursorPage("QVFIUmFmdGVy"), QVFIUmFmdGVy: { data: [post(POST_B)], paging: { cursors: { after: "QVFIUmxhc3Q" } } } } }));
+  /** What a page with continuation `raw` must hand back, and what a second page must request (Graph sees `raw`). */
+  async function roundTrip(raw: string) {
+    const { list, calls } = portWith(graphOf({ pages: { "": cursorPage(raw), [raw]: { data: [post(POST_B)] } } }));
     const first = (await list()).data;
-    expect(first.next).toEqual({ kind: "more", cursor: "QVFIUmFmdGVy" });
-    const second = (await list(first.next.kind === "more" ? first.next.cursor : null)).data;
+    const cursor = first.next.kind === "more" ? first.next.cursor : null;
+    const second = (await list(cursor)).data;
+    return { first, second, cursor, sentAfter: calls[3]?.url.searchParams.get("after"), calls };
+  }
+
+  it("next + a valid after → more with the deterministic `meta1.` envelope; the next page sends the RAW after; next absent → end", async () => {
+    const { first, second, sentAfter, calls } = await roundTrip("QVFIUmFmdGVy");
+    expect(first.next).toEqual({ kind: "more", cursor: envelope("QVFIUmFmdGVy") });
+    expect(META_PAGE_CURSOR_PREFIX).toBe("meta1.");
     expect(second.next).toEqual({ kind: "end" });
-    // Exactly one content page per call; the follow-up went to the fixed endpoint with the cursor, never to `next`.
+    // Exactly one content page per call; the follow-up went to the fixed endpoint with the decoded cursor, never to `next`.
     expect(calls.map((call) => call.url.pathname)).toEqual([`/v25.0/${PAGE}`, `/v25.0/${PAGE}/published_posts`, `/v25.0/${PAGE}`, `/v25.0/${PAGE}/published_posts`]);
-    expect(calls[3]?.url.searchParams.get("after")).toBe("QVFIUmFmdGVy");
-    for (const call of calls) expect(call.url.origin).toBe("https://graph.facebook.com");
+    expect(sentAfter).toBe("QVFIUmFmdGVy");
+    for (const call of calls) {
+      expect(call.url.origin).toBe("https://graph.facebook.com");
+      expect(call.url.href).not.toContain("meta1.");
+      expect(call.url.href).not.toContain("attacker");
+    }
+  });
+
+  it.each([
+    ["a `+`", "QVFI+UmFmdGVy"],
+    ["a `/`", "QVFI/UmFmdGVy"],
+    ["`=` padding", "QVFIUmFmdGVy=="],
+    ["every printable ASCII symbol", "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"],
+    ["1023 characters", "Q".repeat(1023)],
+    ["exactly the 1024-character raw maximum", "/".repeat(META_GRAPH_CURSOR_MAX_LENGTH)],
+  ])("a raw cursor with %s is accepted, enveloped within capacity, and sent back to Graph byte-for-byte", async (_label, raw) => {
+    const { first, cursor, sentAfter } = await roundTrip(raw);
+    expect(first.next).toEqual({ kind: "more", cursor: envelope(raw) });
+    expect(cursor?.length).toBeLessThanOrEqual(PAGE_CURSOR_MAX_LENGTH);
+    expect(parsePageCursor(cursor)).toBe(cursor);
+    expect(sentAfter).toBe(raw);
+  });
+
+  it("the envelope is deterministic: the same raw cursor always yields the same PageCursor", async () => {
+    const a = await roundTrip("QVFI+UmFmdGVy/x");
+    const b = await roundTrip("QVFI+UmFmdGVy/x");
+    expect(a.cursor).not.toBeNull();
+    expect(a.cursor).toBe(b.cursor);
   });
 
   it("a page without paging, or with paging but no next, ends", async () => {
@@ -344,30 +381,54 @@ describe("pagination: ONE provider page per call; opaque `after` cursor; `next` 
     ["a non-string cursor", cursorPage(42)],
     ["an empty cursor", cursorPage("")],
     ["a cursor with whitespace", cursorPage("abc def")],
-    ["an oversized cursor", cursorPage("Q".repeat(1025))],
+    ["a cursor with a control character", cursorPage("abc\ndef")],
+    ["an oversized (1025-character) cursor", cursorPage("Q".repeat(META_GRAPH_CURSOR_MAX_LENGTH + 1))],
     ["an empty next", cursorPage("QVFIUmFmdGVy", "")],
     ["a non-object paging", { data: [], paging: "next" }],
-  ])("%s fails closed", async (_label, body) => {
+  ])("%s from Graph fails closed as an unreadable response (never invalid_cursor, never a page)", async (_label, body) => {
     const { list } = portWith(graphOf({ pages: { "": body } }));
-    expect((await failure(list())).kind).toBe("permanent_rejected");
-  });
-
-  it("a cursor outside the contract's PageCursor alphabet (or > 512) is refused as invalid_cursor, never returned", async () => {
-    for (const after of ["QVFI+UmFmdGVy/x", "Q".repeat(513)]) {
-      const { list } = portWith(graphOf({ pages: { "": cursorPage(after) } }));
-      expect((await failure(list())).toJSON().details).toEqual({ reasonCode: "invalid_cursor" });
-    }
+    expect((await failure(list())).toJSON().details).toEqual({ reasonCode: "unknown" });
   });
 
   it("a returned cursor equal to the one sent (a repeat) fails closed", async () => {
     const { list } = portWith(graphOf({ pages: { QVFIUmFmdGVy: cursorPage("QVFIUmFmdGVy") } }));
-    expect((await failure(list(parsePageCursor("QVFIUmFmdGVy") ?? null))).toJSON()).toEqual({ kind: "permanent_rejected", operation: "listContent", retry: "never", details: { reasonCode: "invalid_cursor" } });
+    expect((await failure(list(envelope("QVFIUmFmdGVy")))).toJSON()).toEqual({ kind: "permanent_rejected", operation: "listContent", retry: "never", details: { reasonCode: "invalid_cursor" } });
   });
 
-  it("a malformed input cursor is refused before any request", async () => {
+  const b64 = (bytes: number[] | string): string => (typeof bytes === "string" ? Buffer.from(bytes, "latin1") : Buffer.from(bytes)).toString("base64url");
+  it.each([
+    ["a raw Graph cursor (no envelope)", "QVFIUmFmdGVy"],
+    ["an empty envelope", "meta1."],
+    ["the simulator's prefix", `sim1.${b64("QVFIUmFmdGVy")}`],
+    ["another version", `meta2.${b64("QVFIUmFmdGVy")}`],
+    ["an uppercase prefix", `META1.${b64("QVFIUmFmdGVy")}`],
+    ["a padded payload", "meta1.QUJD=="],
+    ["a payload with `+`", "meta1.QU+JD"],
+    ["a payload with `/`", "meta1.QU/JD"],
+    ["a payload with a space", "meta1.QU JD"],
+    ["a payload with `.`", "meta1.QU.JD"],
+    ["a payload with `:`", "meta1.QU:JD"],
+    ["a non-canonical payload (non-zero trailing bits)", "meta1.QUJ"],
+    ["a non-canonical payload (impossible length)", "meta1.QUJDR"],
+    ["a payload decoding to a control character", `meta1.${b64([0x0a, 0x41])}`],
+    ["a payload decoding to a space", `meta1.${b64("A B")}`],
+    ["a payload decoding to a non-ASCII byte", `meta1.${b64([0x41, 0xc3, 0xa9])}`],
+    ["a payload decoding to an over-long raw cursor", `meta1.${b64("Q".repeat(META_GRAPH_CURSOR_MAX_LENGTH + 1))}`],
+    ["a cursor over the PageCursor capacity", `meta1.${"Q".repeat(PAGE_CURSOR_MAX_LENGTH)}`],
+  ])("an incoming PageCursor that is %s is refused (invalid_cursor) before any request, without echoing it", async (_label, cursor) => {
     const { list, calls } = portWith(graphOf({ pages: ONE_PAGE }));
-    expect((await failure(list("bad cursor" as PageCursor))).toJSON().details).toEqual({ reasonCode: "invalid_cursor" });
+    const error = await failure(list(cursor as PageCursor));
+    expect(error.toJSON()).toEqual({ kind: "permanent_rejected", operation: "listContent", retry: "never", details: { reasonCode: "invalid_cursor" } });
     expect(calls).toHaveLength(0);
+    if (cursor.length > 6) expectNoneOf(error, [cursor, cursor.slice(6)]);
+  });
+
+  it("neither the raw nor the enveloped cursor appears in any error or rendering", async () => {
+    const RAW = "QVFIcmF3Q3Vyc29yTWFya2Vy";
+    // A repeat (the error path that has both in hand) and a page that fails after the cursor was parsed.
+    const repeat = await failure(portWith(graphOf({ pages: { [RAW]: cursorPage(RAW) } })).list(envelope(RAW)));
+    const later = await failure(portWith(graphOf({ pages: { "": { data: [post(POST_A, { status_type: "created_event" })], paging: { cursors: { after: RAW }, next: HOSTILE_NEXT } } } })).list());
+    for (const error of [repeat, later]) expectNoneOf(error, [RAW, envelope(RAW), envelope(RAW).slice(6), "meta1.", "attacker"]);
   });
 });
 

@@ -32,9 +32,11 @@
  * read in the same call; the derived token is a SecretValue local to that call — never persisted, cached, returned,
  * logged or placed in a DTO, error or raw reference. Two Graph GETs per call:
  *   listContent  token derivation, then ONE page of `{page-id}/published_posts` (never `/feed`). The caller iterates:
- *                `more` carries the opaque `after` cursor (rebuilt against the fixed endpoint; the `next` URL is never
- *                fetched), `end` means `paging.next` was absent. A cursor returned equal to the one sent, or a next
- *                page without a valid cursor, fails closed. The window [from, to) is applied CLIENT-SIDE to
+ *                `more` carries the Graph `after` cursor wrapped in the versioned envelope `meta1.<base64url>` (Step
+ *                7G-H5.5-P5-C7: the raw Graph cursor never crosses the port; it is decoded back and sent as `after`
+ *                against the fixed endpoint; the `next` URL is never fetched), `end` means `paging.next` was absent.
+ *                A cursor returned equal to the one sent, a next page without a valid cursor, or a malformed,
+ *                non-canonical or foreign envelope fails closed (invalid_cursor) before any request. The window [from, to) is applied CLIENT-SIDE to
  *                `created_time` (no server bounding is claimed, and no ordering is assumed: pagination never stops
  *                early on a date), so a page may be empty and still report `more`.
  *   getContent   token derivation, then `{post-id}` (echoed id checked).
@@ -90,6 +92,35 @@ export const META_STATUS_TYPE_CONTENT_KINDS: Readonly<Record<string, ContentKind
   added_photos: "post",
   shared_story: "post",
 });
+
+/**
+ * The Meta continuation envelope (Step 7G-H5.5-P5-C7): `meta1.` + the raw Graph cursor as unpadded base64url. Private
+ * to this adapter; deterministic (same raw cursor → same PageCursor), carries no id, time or randomness, never stored.
+ */
+export const META_PAGE_CURSOR_PREFIX = "meta1.";
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+
+/** A validated raw Graph cursor as the opaque PageCursor handed to callers. */
+function encodeMetaPageCursor(raw: MetaGraphCursor): PageCursor {
+  const cursor = parsePageCursor(META_PAGE_CURSOR_PREFIX + Buffer.from(raw, "latin1").toString("base64url"));
+  if (cursor === undefined) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  return cursor;
+}
+
+/**
+ * A caller's PageCursor back to the raw Graph cursor, fail closed: exact prefix, non-empty STRICT base64url payload,
+ * canonical (re-encoding the bytes reproduces the payload — Node's decoder is permissive), and the decoded value must
+ * again be a valid raw Graph cursor. The value never appears in the error.
+ */
+function decodeMetaPageCursor(cursor: PageCursor): MetaGraphCursor {
+  const value: string = cursor;
+  const payload = value.startsWith(META_PAGE_CURSOR_PREFIX) ? value.slice(META_PAGE_CURSOR_PREFIX.length) : "";
+  if (!BASE64URL.test(payload)) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  const bytes = Buffer.from(payload, "base64url");
+  const raw = bytes.toString("base64url") === payload ? parseMetaGraphCursor(bytes.toString("latin1")) : undefined;
+  if (raw === undefined) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  return raw;
+}
 
 /** Graph code 100 / subcode 33: "object does not exist, cannot be loaded due to missing permissions, or does not support this operation". */
 const AMBIGUOUS_OBJECT_CODE = 100;
@@ -181,9 +212,9 @@ async function pageToken(transport: MetaGraphTransport, access: ProviderAccess, 
 async function listPublished(transport: MetaGraphTransport, access: ProviderAccess, window: TimeWindow, cursor: PageCursor | null): Promise<Page<ContentDto>> {
   const page = managedPage(access, "listContent");
   const bounds = windowBounds(window);
-  // The caller's cursor is the opaque `after` a previous page returned: re-validated, never a URL.
-  const after: MetaGraphCursor | null | undefined = cursor === null ? null : parsePageCursor(cursor) === undefined ? undefined : parseMetaGraphCursor(cursor);
-  if (after === undefined) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  // The caller's cursor is the envelope a previous page returned: re-validated and decoded to the raw `after`, never a URL.
+  if (cursor !== null && parsePageCursor(cursor) === undefined) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  const after: MetaGraphCursor | null = cursor === null ? null : decodeMetaPageCursor(cursor);
   const token = await pageToken(transport, access, page, "listContent");
   const list = outcomeValue(await transport.listPublishedPosts(token, page, after), "listContent", "read_content");
   // Map EVERY post first (one mismatch fails the whole page), then filter the window client-side.
@@ -192,8 +223,9 @@ async function listPublished(transport: MetaGraphTransport, access: ProviderAcce
     return at >= bounds.from && at < bounds.to;
   });
   if (list.after === null) return Object.freeze({ items: Object.freeze(items), next: Object.freeze({ kind: "end" as const }) });
-  const next = parsePageCursor(list.after);
-  if (next === undefined || next === cursor) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  // Deterministic envelope: the same raw cursor yields the same PageCursor, so a repeat is detected here.
+  const next = encodeMetaPageCursor(list.after);
+  if (next === cursor) throw new PermanentRejectedError("listContent", "invalid_cursor");
   return Object.freeze({ items: Object.freeze(items), next: Object.freeze({ kind: "more" as const, cursor: next }) });
 }
 

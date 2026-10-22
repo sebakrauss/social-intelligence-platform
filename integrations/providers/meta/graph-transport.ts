@@ -41,7 +41,9 @@ export const META_GRAPH_RESPONSE_MAX_BYTES = 64 * 1024;
 declare const cursorBrand: unique symbol;
 /** An opaque Graph pagination cursor: printable ASCII without whitespace, bounded. Never a URL, never stored. */
 export type MetaGraphCursor = string & { readonly [cursorBrand]: true };
-const CURSOR = /^[\x21-\x7E]{1,1024}$/;
+/** The longest raw Graph cursor accepted (printable ASCII, no whitespace). */
+export const META_GRAPH_CURSOR_MAX_LENGTH = 1024;
+const CURSOR = new RegExp(`^[\\x21-\\x7E]{1,${String(META_GRAPH_CURSOR_MAX_LENGTH)}}$`);
 
 export function parseMetaGraphCursor(value: unknown): MetaGraphCursor | undefined {
   return typeof value === "string" && CURSOR.test(value) ? (value as MetaGraphCursor) : undefined;

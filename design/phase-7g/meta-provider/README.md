@@ -593,10 +593,11 @@ absent); `availability` = `available`; `rawReference` = `facebook:post:{id}` (`m
 
 **Pagination and window.**
 - One `listContent` call = ONE provider page. `paging.cursors.after` + `paging.next` → `{kind: "more", cursor}`;
-  `paging.next` absent → `{kind: "end"}`. The `next` URL is presence-only and never fetched; the cursor is rebuilt
-  against the fixed endpoint. A malformed or oversized cursor, a next page without a valid cursor, or a returned cursor
-  equal to the one sent fails closed. Cursors are never stored by the provider. The caller controls iteration; there is
-  no "fetch entire history".
+  `paging.next` absent → `{kind: "end"}`. The `next` URL is presence-only and never fetched; the raw `after` is sent
+  back against the fixed endpoint. The `cursor` handed to callers is the `meta1.` envelope of that raw cursor (Step
+  7G-H5.5-P5-C7, below), never the raw Graph value. A malformed or oversized cursor, a next page without a valid
+  cursor, or a returned cursor equal to the one sent fails closed. Cursors are never stored by the provider. The caller
+  controls iteration; there is no "fetch entire history".
 - The window `[from, to)` is applied CLIENT-SIDE to `created_time`. No server-side bounding is claimed (no
   `since`/`until`), and pagination never stops early on an assumed ordering, so a page may be empty and still `more`.
   `read_history` stays a separate capability.
@@ -656,3 +657,34 @@ implementation evidence and decides the catalog revision and the first entry.
 - the Page Access Token derivation's LIVE behavior (presence of `access_token`, echoed `id`);
 - whether real Page-post `status_type` values (or their absence) and real bodies fit the closed table and the 64 KiB
   bound with a page of 10.
+
+## Pagination cursor envelope (Step 7G-H5.5-P5-C7) — IMPLEMENTED, NOT YET LIVE-VALIDATED
+
+**Why.** LIVE diagnostic run #4 (after a fresh Page post) got a successful `/published_posts` page WITH continuation.
+Its raw `paging.cursors.after` passed the transport's raw-cursor rule but not the provider-neutral `PageCursor`
+(`^[A-Za-z0-9_.:=-]{1,512}$`), because the read port passed the raw Graph cursor straight through as a `PageCursor`.
+listContent failed closed (`permanent_rejected / invalid_cursor`, whole page rejected) and getContent never ran. The
+raw cursor was never logged, so whether its alphabet, its length or both failed is unknown, and it is not recovered.
+Runs #2/#3 returned no posts, so Graph sent no `next` and the cursor was never checked.
+
+**Design (P5-C7-A, Fable review).**
+- `PageCursor` stays a Wrenkind-owned, opaque continuation token, valid only for the operation and scope that produced
+  it. Its alphabet is unchanged; its capacity is `PAGE_CURSOR_MAX_LENGTH = 2048` (was 512).
+- The raw Graph cursor contract is unchanged: printable ASCII without whitespace, 1–`META_GRAPH_CURSOR_MAX_LENGTH`
+  (1024) characters, validated in the transport.
+- The Meta adapter owns a versioned envelope, private to `integrations/providers/meta/read-port.ts`:
+  `meta1.<raw cursor as unpadded base64url>`. It is deterministic (the same raw cursor always gives the same
+  `PageCursor`, so the repeated-cursor check still holds) and carries no id, time or randomness. The simulator's
+  `sim1.` envelope already followed this pattern.
+- Decoding is fail-closed, before any request: exact `meta1.` prefix; non-empty payload of the strict base64url
+  alphabet (`^[A-Za-z0-9_-]+$`, no `=`, `+`, `/` or whitespace); canonical (re-encoding the decoded bytes must reproduce
+  the payload, because Node's decoder is permissive); the decoded value must again be a valid raw Graph cursor. Any
+  failure is `permanent_rejected / invalid_cursor`, and a foreign (`sim1.`, other version) cursor is refused the same way.
+- Graph receives only the decoded raw cursor as `after` (query-encoded); the envelope never reaches Meta.
+- Capacity: `6 + ceil(4 × 1024 / 3) = 1372 ≤ 2048` (architecture-guarded from the exported constants).
+- Unchanged: `paging.next` is never followed; cursors are never persisted or logged and never appear in errors, the
+  diagnostic output or evidence; no DB, env, KMS, task topology, catalog or UI change; every content, getContent,
+  Page-token, window and error mapping rule above is unchanged.
+
+**Next.** Rollout (commit → CI → paired Trigger release → web alignment), then exactly one controlled LIVE run #5,
+reusing the fresh Page test post if it is still available. Facebook read_content is NOT LIVE-validated until then.

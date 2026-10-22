@@ -9,9 +9,16 @@
 import type { IsoInstant } from "./identity";
 
 declare const cursorBrand: unique symbol;
+/**
+ * A Wrenkind-owned opaque continuation token. Consumers never know or rely on a provider's raw cursor syntax: an
+ * adapter encodes its provider continuation state into this alphabet (typically a versioned, provider-prefixed
+ * envelope) and decodes it when the cursor comes back to the same adapter (Step 7G-H5.5-P5-C7).
+ */
 export type PageCursor = string & { readonly [cursorBrand]: true };
 
-const CURSOR = /^[A-Za-z0-9_.:=-]{1,512}$/;
+/** Capacity for an adapter's encoded continuation state (e.g. Meta's 1024-char raw cursor as base64url plus prefix). */
+export const PAGE_CURSOR_MAX_LENGTH = 2048;
+const CURSOR = new RegExp(`^[A-Za-z0-9_.:=-]{1,${String(PAGE_CURSOR_MAX_LENGTH)}}$`);
 
 export function parsePageCursor(value: unknown): PageCursor | undefined {
   return typeof value === "string" && CURSOR.test(value) ? (value as PageCursor) : undefined;

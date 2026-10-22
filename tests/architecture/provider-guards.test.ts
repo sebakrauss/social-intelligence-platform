@@ -17,6 +17,7 @@ import {
   AUTHORIZATION_OPERATIONS,
   INTERACTION_KINDS,
   MUTATION_OPERATIONS,
+  PAGE_CURSOR_MAX_LENGTH,
   READ_OPERATIONS,
   type AuthorizationOperation,
   type MutationOperation,
@@ -25,6 +26,8 @@ import {
   type ReadOperation,
 } from "@/integrations/providers/contract";
 import type { ProviderMutationPort } from "@/integrations/providers/contract/mutation-port";
+import { META_GRAPH_CURSOR_MAX_LENGTH } from "@/integrations/providers/meta/graph-transport";
+import { META_PAGE_CURSOR_PREFIX } from "@/integrations/providers/meta/read-port";
 import { PLANE_ENVIRONMENT_GUARD, codeOf, codeWithoutPlaneRefusals, findReferences, sourceFiles } from "../support/source-scan";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -255,6 +258,56 @@ describe("Meta read port (Step 7G-E; P5-B read_content): the contained query-tok
   it("the integration worker's composition is the read port's only composer", () => {
     expect(findReferences(sourceFiles(RUNTIME), [/\bcreateMetaReadPort\(/]).map(([file]) => file)).toEqual(["integrations/providers/meta/read-port.ts", "jobs/connections.ts"]);
     expect(codeOf("jobs/connections.ts")).toMatch(/provider === "meta" \? meta : undefined/);
+  });
+});
+
+describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cursor never crosses the port", () => {
+  const META = "integrations/providers/meta";
+  const readPort = () => codeOf(`${META}/read-port.ts`);
+  const PRODUCTION = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "ai", "mutations", "jobs", "db", "tools"];
+
+  it("the PageCursor capacity covers the envelope of the longest accepted raw Graph cursor (prefix + unpadded base64url)", () => {
+    const required = META_PAGE_CURSOR_PREFIX.length + Math.ceil((4 * META_GRAPH_CURSOR_MAX_LENGTH) / 3);
+    expect([META_GRAPH_CURSOR_MAX_LENGTH, META_PAGE_CURSOR_PREFIX.length, required]).toEqual([1024, 6, 1372]);
+    expect(PAGE_CURSOR_MAX_LENGTH).toBeGreaterThanOrEqual(required);
+    // The validators are built from the exported constants (no duplicated literal).
+    expect(codeOf("integrations/providers/contract/pagination.ts")).toMatch(/\{1,\$\{String\(PAGE_CURSOR_MAX_LENGTH\)\}\}/);
+    expect(codeOf(`${META}/graph-transport.ts`)).toMatch(/\{1,\$\{String\(META_GRAPH_CURSOR_MAX_LENGTH\)\}\}/);
+  });
+
+  it("the envelope prefix is provider-specific and versioned, distinct from the simulator's", () => {
+    expect(META_PAGE_CURSOR_PREFIX).toMatch(/^meta[0-9]+\.$/);
+    expect(codeOf("integrations/providers/simulator/read-port.ts")).toMatch(/`sim1\./);
+    expect(codeOf("integrations/providers/simulator/read-port.ts")).not.toMatch(/meta1/);
+  });
+
+  it("outgoing continuation goes ONLY through the envelope; the raw Graph cursor is never offered as a PageCursor", () => {
+    const code = readPort();
+    expect(code).not.toMatch(/parsePageCursor\(list\.after\)/);
+    expect(code).toMatch(/const next = encodeMetaPageCursor\(list\.after\);/);
+    // parsePageCursor appears exactly twice: inside the encoder (over the prefixed payload) and as the input check.
+    expect(code.match(/parsePageCursor\(/g)).toHaveLength(2);
+    expect(code).toMatch(/parsePageCursor\(META_PAGE_CURSOR_PREFIX \+ Buffer\.from\(raw, "latin1"\)\.toString\("base64url"\)\)/);
+    // Incoming cursors are decoded (strict alphabet, canonical re-encode, raw re-validation) before any request.
+    expect(code).toMatch(/const after: MetaGraphCursor \| null = cursor === null \? null : decodeMetaPageCursor\(cursor\);/);
+    expect(code).toMatch(/bytes\.toString\("base64url"\) === payload \? parseMetaGraphCursor\(bytes\.toString\("latin1"\)\) : undefined/);
+    // The helpers stay private to the adapter.
+    expect(code).not.toMatch(/export function (encode|decode)MetaPageCursor/);
+  });
+
+  it("paging.next is never followed: neither the adapter nor its transport reads it as a URL", () => {
+    expect(readPort()).not.toMatch(/paging|\.next\b(?!\.kind)|fetch\(/);
+    expect(codeOf(`${META}/graph-transport.ts`)).not.toMatch(/new URL\(next|fetchImpl\(next|paging\.next/);
+  });
+
+  it("no cursor is persisted or exposed: PageCursor lives only in provider adapters and the contract", () => {
+    const users = findReferences(sourceFiles(PRODUCTION), [/\bPageCursor\b|\bparsePageCursor\b|META_PAGE_CURSOR_PREFIX|MetaGraphCursor/]).map(([file]) => file);
+    expect(users.filter((file) => !file.startsWith("integrations/providers/"))).toEqual([]);
+    expect(findReferences(sourceFiles(["db"]), [/cursor/i])).toEqual([]);
+    // The diagnostic reports only the pagination kind, never a cursor.
+    const diagnostic = codeOf("jobs/integration-read-content-validation.ts");
+    expect(diagnostic).toMatch(/readonly pagination: "more" \| "end" \| null;/);
+    expect(diagnostic).not.toMatch(/\bcursor\s*:|next\.cursor/);
   });
 });
 
