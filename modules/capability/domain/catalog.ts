@@ -22,6 +22,11 @@
  * capability vocabulary they are evaluated over. Revision 2 (Step 7G-H5.5) adds `read_content` to the vocabulary, so
  * every revision-1 profile lacks a row for it and is stale by revision: availability refuses it (PROFILE_STALE) and
  * reconciliation requests its re-evaluation. The platform catalog still holds no entry.
+ *
+ * The PROFILE state vocabulary is not part of a revision's content: Step 7G-H5.5-P4-C added NOT_AUTHORIZED (a missing
+ * authorization, previously stored as UNSUPPORTED) without changing any entry, capability key or scope, so neither
+ * catalog revision moved. Migration 0015's state↔reason CHECK refuses to validate while any stored row still carries
+ * the old UNSUPPORTED + permission shape, so no such row can silently survive the change.
  */
 import type { PlatformKey } from "@/domain/platforms";
 import {
@@ -29,7 +34,7 @@ import {
   CAPABILITY_KEYS,
   type CapabilityAssetClass,
   type CapabilityKey,
-  type CapabilityState,
+  type CatalogState,
   type Limitation,
   type ScopeKind,
   type ScopeSource,
@@ -45,7 +50,7 @@ export interface CatalogEntry {
   readonly capability: CapabilityKey;
   readonly contentKind: ScopeKind;
   readonly source: ScopeSource;
-  readonly state: CapabilityState;
+  readonly state: CatalogState;
   readonly limitation: Limitation | null;
   /** Provider permission identifiers the account must hold (opaque; interpreted only here). */
   readonly requiredPermissions: readonly string[];
@@ -66,8 +71,9 @@ export interface CapabilityCatalog {
 /**
  * Real platforms: empty until API validation produces evidence-backed entries. Frozen at r2 with zero entries (Step
  * 7G-H5.5-P4-B). Every future entry must satisfy the entry contract in ./catalog-contract.ts (api-validation evidence
- * record, named permissions, registered implementation evidence). The FIRST entry is blocked until the authorization
- * semantics are resolved (AUTHORIZATION_SEMANTICS_OPEN_BEFORE_FIRST_VALIDATED_ENTRY).
+ * record, named permissions, registered implementation evidence). The authorization semantics are resolved (Step
+ * 7G-H5.5-P4-C: a missing authorization is the PROFILE state NOT_AUTHORIZED, never a catalog verdict), which is a
+ * profile-output vocabulary change only: no entry, capability key or scope changed, so neither catalog revision moves.
  */
 export const PLATFORM_CATALOG: CapabilityCatalog = Object.freeze({ id: "platform", revision: 2, label: "platform-catalog-r2", entries: Object.freeze([]) });
 
@@ -75,7 +81,7 @@ const SIM_EVIDENCE = "simulator:contract-v1";
 const sim = (
   assetClass: CapabilityAssetClass,
   capability: CapabilityKey,
-  state: CapabilityState,
+  state: CatalogState,
   options: { readonly contentKind?: ScopeKind; readonly source?: ScopeSource; readonly limitation?: Limitation; readonly permissions?: readonly string[] } = {},
 ): CatalogEntry =>
   Object.freeze({
@@ -115,7 +121,7 @@ export const SIMULATOR_CATALOG: CapabilityCatalog = Object.freeze({
 export interface CatalogResult {
   readonly catalogId: CatalogId;
   readonly catalogRevision: number;
-  readonly state: CapabilityState;
+  readonly state: CatalogState;
   readonly limitation: Limitation | null;
   readonly requiredPermissions: readonly string[];
   readonly validation: ValidationStatus;

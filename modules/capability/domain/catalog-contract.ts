@@ -18,22 +18,22 @@
  * unavailable facts, a failed provider read or the catalog lacking a rule are NOT negative evidence: those stay UNKNOWN.
  * UNKNOWN_NOT_VALIDATED is the catalog default and is never written as an entry.
  *
- * AUTHORIZATION SEMANTICS — OPEN (AUTHORIZATION_SEMANTICS_OPEN_BEFORE_FIRST_VALIDATED_ENTRY): the evaluator stores a
- * missing Wrenkind authorization as UNSUPPORTED / ACCOUNT_PERMISSION_MISSING (profile.ts), while the approved documents
- * define UNSUPPORTED as provider/platform non-support (TA §16.2, Model §6.2). That stored row is historical/technical
- * behavior and must always be read together with its reason code (the availability overlay presents it as
- * ACCOUNT_PERMISSION_MISSING + REAUTHORIZE, never as platform non-support). Until a later gate resolves it, EVERY
- * platform entry is refused (FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).
+ * AUTHORIZATION SEMANTICS — RESOLVED (Step 7G-H5.5-P4-C): a missing provider authorization is the PROFILE-ONLY state
+ * NOT_AUTHORIZED (reasons ACCOUNT_PERMISSION_MISSING / OBSERVED_PERMISSION_MISSING; availability UNAVAILABLE /
+ * ACCOUNT_PERMISSION_MISSING / REAUTHORIZE), never UNSUPPORTED, which stays reserved for authoritative provider/platform
+ * non-support (TA §16.2, Model §6.2). A catalog entry can't carry NOT_AUTHORIZED (CatalogState; refused here too), so
+ * the blanket P4-B blocker is lifted. Every other requirement stands: with no accepted record and no registered
+ * implementation evidence, NO real platform entry is admissible yet.
  */
 import type { PlatformKey } from "@/domain/platforms";
 import type { CapabilityCatalog, CatalogEntry } from "./catalog";
-import { ANY, CAPABILITY_ASSET_CLASSES, CAPABILITY_KEYS, type CapabilityAssetClass, type CapabilityKey, type ScopeKind, type ScopeSource } from "./vocabulary";
+import { ANY, CAPABILITY_ASSET_CLASSES, CAPABILITY_KEYS, CATALOG_STATES, type CapabilityAssetClass, type CapabilityKey, type ScopeKind, type ScopeSource } from "./vocabulary";
 
-/** P4-B blocker: no platform entry of any state may exist until the authorization semantics are resolved. */
-export const FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = true;
+/** The P4-B blanket blocker, lifted by Step 7G-H5.5-P4-C (the authorization semantics are resolved). */
+export const FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = false;
 export type AuthorizationSemantics = "OPEN" | "RESOLVED";
-/** OPEN until a later gate resolves it (kept consistent with the blocker above by the tests). */
-export const AUTHORIZATION_SEMANTICS = "OPEN" as AuthorizationSemantics;
+/** RESOLVED by Step 7G-H5.5-P4-C (kept consistent with the blocker above by the tests). */
+export const AUTHORIZATION_SEMANTICS = "RESOLVED" as AuthorizationSemantics;
 
 /** The providers that serve each real platform (the connection provider, which selects the catalog). */
 export const PLATFORM_PROVIDERS: Readonly<Record<PlatformKey, string>> = Object.freeze({ facebook: "meta", instagram: "meta", tiktok: "tiktok" });
@@ -57,8 +57,13 @@ export interface ImplementedOperation {
 }
 export const IMPLEMENTED_PLATFORM_OPERATIONS: readonly ImplementedOperation[] = Object.freeze([]);
 
-/** `api-validation:{provider}/{platform}/{capability}/{YYYYMMDD}-{NN}`. */
-const EVIDENCE_ID = /^api-validation:([a-z][a-z0-9]{1,31})\/(facebook|instagram|tiktok)\/([a-z_]{2,40})\/(\d{8})-(\d{2})$/;
+/**
+ * `api-validation:{provider}.{platform}.{capability}.{YYYYMMDD}-{NN}` — dot-separated so every id is admitted by the
+ * stored column `capability.profile_entries.evidence_ref` (0009: ^[a-z][a-z0-9_.:-]{0,127}$; guard-tested). The record
+ * file lives at records/{provider}/{platform}/{capability}/{YYYYMMDD}-{NN}.json.
+ */
+export const API_VALIDATION_EVIDENCE_ID = /^api-validation:([a-z][a-z0-9]{1,31})\.(facebook|instagram|tiktok)\.([a-z_]{2,40})\.(\d{8})-(\d{2})$/;
+const EVIDENCE_ID = API_VALIDATION_EVIDENCE_ID;
 /** A provider permission/scope name, explicitly spelled (lower-case identifier, dots allowed); never the simulator's. */
 const PERMISSION_NAME = /^(?!sim\.)[a-z][a-z0-9_.]{0,99}$/;
 const SHORT_TEXT_MAX = 2000;
@@ -112,6 +117,7 @@ export type RecordViolation =
 
 export type EntryViolation =
   | "AUTHORIZATION_SEMANTICS_OPEN"
+  | "NOT_A_CATALOG_STATE"
   | "PLATFORM_NOT_NAMED"
   | "UNKNOWN_IS_THE_DEFAULT"
   | "NOT_VALIDATED"
@@ -171,6 +177,8 @@ export function apiValidationRecordViolations(record: ApiValidationRecord): read
 export function platformEntryViolations(entry: CatalogEntry, context: CatalogContractContext): readonly EntryViolation[] {
   const out = new Set<EntryViolation>();
   if (context.authorizationSemantics !== "RESOLVED") out.add("AUTHORIZATION_SEMANTICS_OPEN");
+  // NOT_AUTHORIZED (or any profile-only value) is refused even if a cast smuggled it past the CatalogState type.
+  if (!(CATALOG_STATES as readonly string[]).includes(entry.state)) out.add("NOT_A_CATALOG_STATE");
   if (entry.platform === ANY) out.add("PLATFORM_NOT_NAMED");
   if (entry.state === "UNKNOWN_NOT_VALIDATED") out.add("UNKNOWN_IS_THE_DEFAULT");
   if (entry.validation !== "validated") out.add("NOT_VALIDATED");

@@ -109,6 +109,7 @@ export const MESSAGE_KEYS = [
   "connections.recheck.reason.not_evaluated",
   "connections.recheck.reason.stale",
   "connections.recheck.reason.facts_unavailable",
+  "connections.recheck.reason.not_authorized",
   "connections.recheck.reason.too_soon",
   "connections.status.capability_recheck_requested",
   "connections.status.capability_recheck_too_soon",

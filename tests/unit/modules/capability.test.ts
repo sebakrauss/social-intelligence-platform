@@ -139,13 +139,13 @@ describe("account capability evaluator (pure, conservative)", () => {
     expect(entry(profile, "detect_native_replies")).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", reasons: ["CATALOG_NOT_VALIDATED"], catalogValidation: "not_validated" });
   });
 
-  it("missing or inconsistent facts never upgrade; a permission the account lacks makes it UNSUPPORTED", () => {
+  it("missing or inconsistent facts never upgrade; a permission the account lacks makes it NOT_AUTHORIZED (never UNSUPPORTED)", () => {
     const noFacts = evaluateProfile(input({ facts: { kind: "unavailable", observedAt: T0 } }));
     for (const e of noFacts.entries) expect(["UNKNOWN_NOT_VALIDATED", "UNSUPPORTED"]).toContain(e.state);
     expect(entry(noFacts, "read_interactions")?.reasons).toEqual(["ACCOUNT_FACTS_UNAVAILABLE"]);
     expect(entry(evaluateProfile(input({ facts: facts({ assetClass: "ad_account" }) })), "read_interactions")?.reasons).toEqual(["ACCOUNT_FACTS_INCONSISTENT"]);
     const limited = evaluateProfile(input({ facts: facts({ grantedPermissions: ["sim.read_account", "sim.read_content"] }) }));
-    expect(entry(limited, "read_interactions")).toMatchObject({ state: "UNSUPPORTED", reasons: ["ACCOUNT_PERMISSION_MISSING"] });
+    expect(entry(limited, "read_interactions")).toMatchObject({ state: "NOT_AUTHORIZED", reasons: ["ACCOUNT_PERMISSION_MISSING"] });
   });
 
   it("the real-platform catalog stays UNKNOWN even with every permission granted (facts never upgrade a catalog)", () => {
@@ -161,7 +161,7 @@ describe("account capability evaluator (pure, conservative)", () => {
       { kind: "target_not_eligible", capability: "reply_public", contentKind: "reel", source: "paid", observedAt: later, ref: "obs-2" },
     ];
     const profile = evaluateProfile(input({ observations }));
-    expect(entry(profile, "delete")).toMatchObject({ state: "UNSUPPORTED", reasons: ["OBSERVED_PERMISSION_MISSING"], observationRefs: ["obs-1"] });
+    expect(entry(profile, "delete")).toMatchObject({ state: "NOT_AUTHORIZED", reasons: ["OBSERVED_PERMISSION_MISSING"], observationRefs: ["obs-1"] });
     expect(entry(profile, "reply_public", "reel", "paid")).toMatchObject({ state: "UNSUPPORTED", reasons: ["OBSERVED_NOT_ELIGIBLE"], observationRefs: ["obs-2"] });
     expect(entry(profile, "reply_public")).toMatchObject({ state: "SUPPORTED" });
     // Facts described AFTER the observation (e.g. re-authorization) supersede it.
@@ -221,7 +221,7 @@ describe("runtime overlay (connection health never rewrites the profile)", () =>
     expect(CONNECTION_STATUSES).toEqual(["CONNECTING", "ACTIVE", "DEGRADED", "FAILED", "DISCONNECTED", "REMOVED"]);
   });
 
-  it("a permission-based UNSUPPORTED recovers by re-authorization; target rows resolve most-specific first", () => {
+  it("a NOT_AUTHORIZED row recovers by re-authorization; target rows resolve most-specific first", () => {
     const limited = evaluateProfile(input({ facts: facts({ grantedPermissions: [] }) }));
     expect(effectiveAvailability(resolveEntry(limited.entries, "hide", ANY, ANY), "ACTIVE", "hide", T0)).toMatchObject({ reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE" });
     expect(resolveEntry(profile.entries, "reply_public", "story", "organic")?.state).toBe("UNSUPPORTED");

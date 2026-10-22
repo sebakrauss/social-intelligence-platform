@@ -131,7 +131,7 @@ export interface ManageableAsset {
  */
 export async function viewConnectionSettings(
   store: ConnectionStore,
-  reevaluation: { readonly capability: Pick<CapabilityReadStore, "header">; readonly now: Date },
+  reevaluation: { readonly capability: CapabilityReadStore; readonly now: Date },
 ): Promise<ConnectionSettings> {
   const connections = await store.connections.list();
   const accounts = await store.connectedAccounts.list();

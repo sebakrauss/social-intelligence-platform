@@ -12,7 +12,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AppError } from "@/domain/errors";
 import { parseOrganizationId, parseUserId, parseWorkspaceId, type OrganizationId, type UserId, type WorkspaceId } from "@/domain/ids";
-import { CATALOGS, PLATFORM_CATALOG, SIMULATOR_CATALOG, type FactsInput, type StoredProfileHeader } from "@/modules/capability";
+import { CATALOGS, PLATFORM_CATALOG, SIMULATOR_CATALOG, type FactsInput, type ProfileEntry, type StoredProfileHeader } from "@/modules/capability";
 import { ACCOUNT_EVENT_REASONS, ACCOUNT_EVENT_TYPES, type ConnectedAccountEvent } from "@/modules/connections/domain/model";
 import {
   CAPABILITY_EVALUATION_TOPIC,
@@ -51,6 +51,9 @@ const MIN = 60_000;
 const available = (): FactsInput => ({ kind: "available", assetClass: "content_bearing", grantedPermissions: [], linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: T0 });
 const unavailable = (): FactsInput => ({ kind: "unavailable", observedAt: T0 });
 type Header = Pick<StoredProfileHeader, "catalogId" | "catalogRevision" | "facts">;
+type Row = Pick<ProfileEntry, "state">;
+const NONE: readonly Row[] = [];
+const NOT_AUTHORIZED_ROWS: readonly Row[] = [{ state: "SUPPORTED" }, { state: "NOT_AUTHORIZED" }];
 const header = (catalogId: "platform" | "simulator", catalogRevision: number, facts: FactsInput): Header => ({ catalogId, catalogRevision, facts });
 
 /** The dispatch_key CHECK of system.outbox, read from the migration that defines it (never restated here). */
@@ -64,6 +67,7 @@ interface World {
   account: ConnectedAccount | undefined;
   connection: Connection | undefined;
   header: Header | undefined;
+  entries: readonly Row[];
   events: { readonly type: string; readonly at: Date }[];
 }
 interface Recorder {
@@ -73,7 +77,7 @@ interface Recorder {
   readonly calls: string[];
 }
 
-function fixture(overrides: Partial<Pick<World, "header">> & { accountStatus?: "ACTIVE" | "INACTIVE"; connectionStatus?: Connection["status"] | "MISSING"; provider?: Connection["provider"]; events?: World["events"] } = {}) {
+function fixture(overrides: Partial<Pick<World, "header" | "entries">> & { accountStatus?: "ACTIVE" | "INACTIVE"; connectionStatus?: Connection["status"] | "MISSING"; provider?: Connection["provider"]; events?: World["events"] } = {}) {
   const accountId = randomUUID();
   const connectionId = randomUUID();
   const world: World = {
@@ -111,6 +115,7 @@ function fixture(overrides: Partial<Pick<World, "header">> & { accountStatus?: "
             updatedAt: T0,
           },
     header: "header" in overrides ? overrides.header : undefined,
+    entries: overrides.entries ?? NONE,
     events: overrides.events ?? [],
   };
   const recorder: Recorder = { locked: [], appendedEvents: [], appendedRequests: [], calls: [] };
@@ -146,6 +151,10 @@ function fixture(overrides: Partial<Pick<World, "header">> & { accountStatus?: "
       header: (id) => {
         recorder.calls.push("header");
         return Promise.resolve(id === world.account?.id && world.header !== undefined ? ({ ...world.header } as StoredProfileHeader) : undefined);
+      },
+      entries: (id) => {
+        recorder.calls.push("entries");
+        return Promise.resolve(id === world.account?.id ? (world.entries as readonly ProfileEntry[]) : []);
       },
     },
     outbox: {
@@ -210,13 +219,24 @@ describe("eligibility (exact matrix; provider-neutral)", () => {
     ["simulator: current with usable facts", header("simulator", SIMULATOR_CATALOG.revision, available()), "simulator", { eligible: false, reason: "PROFILE_CURRENT" }],
     ["simulator: profile on the platform catalog", header("platform", current, available()), "simulator", { eligible: true, basis: "PROFILE_STALE" }],
   ] as const)("%s", (_label, stored, provider, expected) => {
-    expect(profileEligibility(stored, provider)).toEqual(expected);
+    expect(profileEligibility(stored, provider, NONE)).toEqual(expected);
   });
 
   it("the catalog a profile should rest on comes from the provider only, like reconciliation (no provider-specific branch)", () => {
     for (const provider of ["meta", "tiktok", "anything"]) {
-      expect(profileEligibility(header("platform", CATALOGS.platform.revision, available()), provider)).toEqual({ eligible: false, reason: "PROFILE_CURRENT" });
+      expect(profileEligibility(header("platform", CATALOGS.platform.revision, available()), provider, NONE)).toEqual({ eligible: false, reason: "PROFILE_CURRENT" });
     }
+  });
+
+  it("Step 7G-H5.5-P4-C: a current profile with a NOT_AUTHORIZED row is eligible (AUTHORIZATION_MISSING); all-supported stays PROFILE_CURRENT", () => {
+    const current = header("platform", CATALOGS.platform.revision, available());
+    expect(profileEligibility(current, "meta", NOT_AUTHORIZED_ROWS)).toEqual({ eligible: true, basis: "AUTHORIZATION_MISSING" });
+    expect(profileEligibility(current, "meta", [{ state: "SUPPORTED" }, { state: "UNKNOWN_NOT_VALIDATED" }, { state: "UNSUPPORTED" }])).toEqual({ eligible: false, reason: "PROFILE_CURRENT" });
+    // Facts unavailable keeps its own basis; a stale or newer profile is decided before any row is looked at.
+    expect(profileEligibility(header("platform", CATALOGS.platform.revision, unavailable()), "meta", NOT_AUTHORIZED_ROWS)).toEqual({ eligible: true, basis: "FACTS_UNAVAILABLE" });
+    expect(profileEligibility(header("platform", CATALOGS.platform.revision - 1, available()), "meta", NOT_AUTHORIZED_ROWS)).toEqual({ eligible: true, basis: "PROFILE_STALE" });
+    expect(profileEligibility(header("platform", CATALOGS.platform.revision + 1, available()), "meta", NOT_AUTHORIZED_ROWS)).toEqual({ eligible: false, reason: "PROFILE_NEWER_THAN_CODE" });
+    expect(profileEligibility(undefined, "meta", NOT_AUTHORIZED_ROWS)).toEqual({ eligible: true, basis: "NO_PROFILE" });
   });
 });
 
@@ -427,5 +447,39 @@ describe("vocabulary alignment with migration 0014", () => {
     expect(listed("connected_account_events_event_type_check")).toEqual([...ACCOUNT_EVENT_TYPES].sort());
     expect(listed("connected_account_events_reason_code_check")).toEqual([...ACCOUNT_EVENT_REASONS].sort());
     expect(listed("audit_events_action_check")).toEqual([...AUDIT_ACTIONS].sort());
+  });
+});
+
+describe("Step 7G-H5.5-P4-C: Re-check after a missing authorization", () => {
+  const current = () => header("platform", CATALOGS.platform.revision, available());
+
+  it("a current profile with a NOT_AUTHORIZED row → requested with basis AUTHORIZATION_MISSING (one event, one request)", async () => {
+    const f = fixture({ header: current(), entries: NOT_AUTHORIZED_ROWS });
+    const output = await run(f);
+    expect(output).toMatchObject({ kind: "requested", basis: "AUTHORIZATION_MISSING" });
+    expect(f.recorder.calls).toEqual(["lock", "connection", "header", "entries", "cooldown", "event", "request"]);
+    expect(f.recorder.appendedEvents).toHaveLength(1);
+    expect(f.recorder.appendedRequests).toHaveLength(1);
+  });
+
+  it("an all-supported current profile is never re-checked for authorization: PROFILE_CURRENT, nothing written", async () => {
+    const f = fixture({ header: current(), entries: [{ state: "SUPPORTED" }, { state: "UNKNOWN_NOT_VALIDATED" }] });
+    expect(await run(f)).toMatchObject({ kind: "refused", reason: "PROFILE_CURRENT" });
+    wroteNothing(f);
+  });
+
+  it("the cooldown still applies to an authorization-missing profile", async () => {
+    const f = fixture({ header: current(), entries: NOT_AUTHORIZED_ROWS, events: [{ type: "LINKED", at: T0 }] });
+    expect(await run(f, new Date(T0.getTime() + 10 * 60_000))).toMatchObject({ kind: "refused", reason: "REEVALUATION_TOO_SOON" });
+    wroteNothing(f);
+  });
+
+  it("an inactive account or a non-ACTIVE connection is refused before any profile row is read", async () => {
+    const inactive = fixture({ header: current(), entries: NOT_AUTHORIZED_ROWS, accountStatus: "INACTIVE" });
+    expect(await run(inactive)).toMatchObject({ kind: "refused", reason: "ACCOUNT_INACTIVE" });
+    expect(inactive.recorder.calls).not.toContain("entries");
+    const degraded = fixture({ header: current(), entries: NOT_AUTHORIZED_ROWS, connectionStatus: "DEGRADED" });
+    expect(await run(degraded)).toMatchObject({ kind: "refused", reason: "CONNECTION_NOT_ACTIVE" });
+    expect(degraded.recorder.calls).not.toContain("entries");
   });
 });

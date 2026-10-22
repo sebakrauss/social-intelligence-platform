@@ -6,7 +6,8 @@
  * Conservative by construction (fail closed):
  *   - UNKNOWN or UNSUPPORTED in the catalog stays so: account facts or observations can never upgrade it;
  *   - SUPPORTED / AVAILABLE_WITH_LIMITATION needs account facts that are present, consistent, and grant every required
- *     permission; missing or inconsistent facts → UNKNOWN_NOT_VALIDATED, a missing permission → UNSUPPORTED;
+ *     permission; missing or inconsistent facts → UNKNOWN_NOT_VALIDATED, a missing permission → NOT_AUTHORIZED (the
+ *     platform supports it; this account lacks the provider authorization — Step 7G-H5.5-P4-C), never UNSUPPORTED;
  *   - only semantically relevant explicit observations count: PermissionMissing for this capability, and
  *     TargetNotEligible(unsupported_for_target) for this exact scope. Transient, rate-limited and timeout outcomes are
  *     not observations at all (they belong to retry/health) and can't rewrite a profile;
@@ -18,13 +19,14 @@ import type { PlatformKey } from "@/domain/platforms";
 import { ALL_CAPABILITIES, lookupCatalog, profileScopes, type CapabilityCatalog, type CatalogId } from "./catalog";
 import {
   ANY,
+  isCoherentProfileShape,
   type CapabilityAssetClass,
   type CapabilityContentKind,
   type CapabilityKey,
   type CapabilityReasonCode,
   type CapabilitySource,
-  type CapabilityState,
   type Limitation,
+  type ProfileState,
   type ScopeKind,
   type ScopeSource,
   type ValidationStatus,
@@ -86,7 +88,8 @@ export interface ProfileEntry {
   readonly capability: CapabilityKey;
   readonly contentKind: ScopeKind;
   readonly source: ScopeSource;
-  readonly state: CapabilityState;
+  /** Coherent with `reasons` (PROFILE_STATE_REASONS; database CHECK 0015). */
+  readonly state: ProfileState;
   readonly reasons: readonly CapabilityReasonCode[];
   readonly limitation: Limitation | null;
   readonly catalogValidation: ValidationStatus;
@@ -111,7 +114,7 @@ export interface CapabilityProfile {
 function evaluateScope(input: EvaluationInput, capability: CapabilityKey, contentKind: ScopeKind, source: ScopeSource): ProfileEntry {
   const catalog = lookupCatalog(input.catalog, { platform: input.platform, assetClass: input.assetClass, capability, contentKind, source });
   const base = { capability, contentKind, source, catalogValidation: catalog.validation, evidence: catalog.evidence };
-  const result = (state: CapabilityState, reasons: readonly CapabilityReasonCode[], limitation: Limitation | null = null, observationRefs: readonly string[] = []): ProfileEntry =>
+  const result = (state: ProfileState, reasons: readonly CapabilityReasonCode[], limitation: Limitation | null = null, observationRefs: readonly string[] = []): ProfileEntry =>
     ({ ...base, state, reasons, limitation, observationRefs });
 
   if (catalog.state === "UNKNOWN_NOT_VALIDATED") return result("UNKNOWN_NOT_VALIDATED", ["CATALOG_NOT_VALIDATED"]);
@@ -121,7 +124,7 @@ function evaluateScope(input: EvaluationInput, capability: CapabilityKey, conten
   if (facts.kind === "unavailable") return result("UNKNOWN_NOT_VALIDATED", ["ACCOUNT_FACTS_UNAVAILABLE"]);
   if (facts.assetClass !== input.assetClass) return result("UNKNOWN_NOT_VALIDATED", ["ACCOUNT_FACTS_INCONSISTENT"]);
   if (!catalog.requiredPermissions.every((permission) => facts.grantedPermissions.includes(permission))) {
-    return result("UNSUPPORTED", ["ACCOUNT_PERMISSION_MISSING"]);
+    return result("NOT_AUTHORIZED", ["ACCOUNT_PERMISSION_MISSING"]);
   }
 
   // Explicit observations: a PermissionMissing newer than the facts that granted the permission wins; facts
@@ -129,7 +132,7 @@ function evaluateScope(input: EvaluationInput, capability: CapabilityKey, conten
   const permissionMissing = input.observations.filter(
     (o) => o.kind === "permission_missing" && o.capability === capability && o.observedAt.getTime() > facts.obtainedAt.getTime(),
   );
-  if (permissionMissing.length > 0) return result("UNSUPPORTED", ["OBSERVED_PERMISSION_MISSING"], null, permissionMissing.map((o) => o.ref).sort());
+  if (permissionMissing.length > 0) return result("NOT_AUTHORIZED", ["OBSERVED_PERMISSION_MISSING"], null, permissionMissing.map((o) => o.ref).sort());
   const notEligible = input.observations.filter(
     (o) => o.kind === "target_not_eligible" && o.capability === capability && o.contentKind === contentKind && o.source === source,
   );
@@ -215,7 +218,7 @@ export interface CapabilityAvailability {
   /** Which stored row answered (null when no profile exists). */
   readonly scope: { readonly contentKind: ScopeKind; readonly source: ScopeSource } | null;
   /** The base profile state the answer rests on (never rewritten by health). */
-  readonly baseState: CapabilityState | null;
+  readonly baseState: ProfileState | null;
   readonly asOf: Date | null;
 }
 
@@ -227,9 +230,13 @@ const TEMPORARY: Readonly<Partial<Record<ConnectionStatus, { readonly reason: Av
 };
 
 /**
- * Base profile row + current connection health → effective availability. Platform truth (UNSUPPORTED, UNKNOWN)
- * takes precedence over health; a healthy connection shows the base result; an unhealthy one makes a normally
- * usable capability TEMPORARILY_UNAVAILABLE without touching the profile, so recovery restores it.
+ * Base profile row + current connection health → effective availability. Platform and account truth (UNSUPPORTED,
+ * NOT_AUTHORIZED, UNKNOWN) take precedence over health; a healthy connection shows the base result; an unhealthy one
+ * makes a normally usable capability TEMPORARILY_UNAVAILABLE without touching the profile, so recovery restores it.
+ * Strict (Step 7G-H5.5-P4-C): NOT_AUTHORIZED is always UNAVAILABLE / ACCOUNT_PERMISSION_MISSING / REAUTHORIZE — never
+ * AVAILABLE, never TEMPORARILY_UNAVAILABLE, never platform non-support; UNSUPPORTED is always
+ * CAPABILITY_UNSUPPORTED / OPEN_ON_PLATFORM. An incoherent row (state and reasons that can't go together) is never
+ * trusted: it answers UNAVAILABLE / CAPABILITY_NOT_VALIDATED.
  */
 export function effectiveAvailability(
   entry: ProfileEntry | undefined,
@@ -239,17 +246,18 @@ export function effectiveAvailability(
 ): CapabilityAvailability {
   const base = { capability, scope: entry === undefined ? null : { contentKind: entry.contentKind, source: entry.source }, baseState: entry?.state ?? null, asOf };
   if (entry === undefined) return { ...base, state: "UNAVAILABLE", reason: "PROFILE_NOT_EVALUATED", recovery: null, limitation: null };
-  if (entry.state === "UNKNOWN_NOT_VALIDATED") return { ...base, state: "UNAVAILABLE", reason: "CAPABILITY_NOT_VALIDATED", recovery: null, limitation: null };
-  if (entry.state === "UNSUPPORTED") {
-    const permission = entry.reasons.includes("ACCOUNT_PERMISSION_MISSING") || entry.reasons.includes("OBSERVED_PERMISSION_MISSING");
-    return permission
-      ? { ...base, state: "UNAVAILABLE", reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE", limitation: null }
-      : { ...base, state: "UNAVAILABLE", reason: "CAPABILITY_UNSUPPORTED", recovery: "OPEN_ON_PLATFORM", limitation: null };
-  }
+  if (!isCoherentProfileShape(entry) || entry.state === "UNKNOWN_NOT_VALIDATED") return { ...base, state: "UNAVAILABLE", reason: "CAPABILITY_NOT_VALIDATED", recovery: null, limitation: null };
+  if (entry.state === "NOT_AUTHORIZED") return { ...base, state: "UNAVAILABLE", reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE", limitation: null };
+  if (entry.state === "UNSUPPORTED") return { ...base, state: "UNAVAILABLE", reason: "CAPABILITY_UNSUPPORTED", recovery: "OPEN_ON_PLATFORM", limitation: null };
   if (connection === "REMOVED") return { ...base, state: "UNAVAILABLE", reason: "CONNECTION_REMOVED", recovery: null, limitation: null };
   const temporary = TEMPORARY[connection];
   if (temporary !== undefined) return { ...base, state: "TEMPORARILY_UNAVAILABLE", reason: temporary.reason, recovery: temporary.recovery, limitation: entry.limitation };
   return entry.state === "AVAILABLE_WITH_LIMITATION"
     ? { ...base, state: "AVAILABLE_WITH_LIMITATION", reason: "CAPABILITY_LIMITATION", recovery: null, limitation: entry.limitation }
     : { ...base, state: "AVAILABLE", reason: "CAPABILITY_SUPPORTED", recovery: null, limitation: null };
+}
+
+/** Whether any row of a profile is NOT_AUTHORIZED (a Re-check basis once the account is re-authorized; Step 7G-H5.5-P4-C). */
+export function profileLacksAuthorization(entries: readonly Pick<ProfileEntry, "state">[]): boolean {
+  return entries.some((entry) => entry.state === "NOT_AUTHORIZED");
 }

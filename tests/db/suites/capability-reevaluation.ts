@@ -19,7 +19,7 @@ import { parseUserId, type UserId } from "@/domain/ids";
 import { PermanentRejectedError, TransientError, type ProviderCredential, type ProviderReadPort } from "@/integrations/providers/contract";
 import { runEvaluateAccountCapabilities } from "@/jobs/connections";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
-import { PLATFORM_CATALOG, evaluateAndStore, type CapabilityCatalog, type FactsInput } from "@/modules/capability";
+import { ANY, PLATFORM_CATALOG, evaluateAndStore, type CapabilityCatalog, type FactsInput } from "@/modules/capability";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
 import { requestCapabilityReevaluation, type DiscoveryProviders, type ProviderCredentialAccess } from "@/modules/connections";
 import { createPostgresConnectionStore } from "@/modules/connections/persistence";
@@ -421,6 +421,35 @@ export function defineCapabilityReevaluationSuite(getTarget: () => DbTarget): vo
       expect(await request(t, t.members.OWNER, current.id)).toMatchObject({ status: "ok", value: { requested: false, reason: "PROFILE_CURRENT" } });
       expect(await request(t, t.members.OWNER, newer.id)).toMatchObject({ status: "ok", value: { requested: false, reason: "PROFILE_NEWER_THAN_CODE" } });
       await nothingWritten(t.workspaceId);
+    });
+
+    it("Step 7G-H5.5-P4-C: a current profile with a NOT_AUTHORIZED row (real evaluator, stored) is offered and accepted; all-supported is not", async () => {
+      // A hypothetical CURRENT platform catalog (same id and revision as the code's) with one permissioned entry.
+      const permissioned: CapabilityCatalog = {
+        ...PLATFORM_CATALOG,
+        label: "platform-catalog-hypothetical",
+        entries: [{ platform: "facebook", assetClass: "content_bearing", capability: "read_content", contentKind: ANY, source: ANY, state: "SUPPORTED", limitation: null,
+          requiredPermissions: ["synthetic_read_content"], validation: "validated", evidence: "api-validation:meta.facebook.read_content.20261101-01" }],
+      };
+      const t = await tenant();
+      const missing = await seedAccount(t);
+      await writeProfile(t, missing.id, permissioned, AVAILABLE()); // grants nothing → NOT_AUTHORIZED / ACCOUNT_PERMISSION_MISSING
+      const stored = await oracle<{ state: string; reason_codes: string[] }>("select state, reason_codes from capability.profile_entries where connected_account_id = $1 and capability = 'read_content'", [missing.id]);
+      expect(stored).toEqual([{ state: "NOT_AUTHORIZED", reason_codes: ["ACCOUNT_PERMISSION_MISSING"] }]);
+      const granted = await seedAccount(t);
+      await writeProfile(t, granted.id, permissioned, { ...AVAILABLE(), grantedPermissions: ["synthetic_read_content"] } as FactsInput);
+      const offer = async (account: string) => {
+        const state = await resolveConnectionSettings(pipelineFor(t.members.OWNER), t.workspaceId);
+        return state.kind === "ready" ? state.manageableAssets.find((asset) => asset.connectedAccountId === account)?.capabilityReevaluation : state.kind;
+      };
+      expect(await offer(missing.id)).toEqual({ allowed: true, reason: "ACCOUNT_PERMISSION_MISSING" });
+      expect(await offer(granted.id)).toEqual({ allowed: false, reason: "PROFILE_CURRENT" });
+      expect(await request(t, t.members.OWNER, granted.id)).toMatchObject({ status: "ok", value: { requested: false, reason: "PROFILE_CURRENT" } });
+      expect(await request(t, t.members.ADMIN, missing.id)).toMatchObject({ status: "ok", value: { requested: true } });
+      expect(await reevalRequests(t.workspaceId)).toHaveLength(1);
+      // The accepted request restarted the cooldown: a second one is refused, nothing more is written.
+      expect(await request(t, t.members.OWNER, missing.id)).toMatchObject({ status: "ok", value: { requested: false, reason: "REEVALUATION_TOO_SOON" } });
+      expect(await reevalRequests(t.workspaceId)).toHaveLength(1);
     });
 
     it("INACTIVE account → ACCOUNT_INACTIVE; a non-ACTIVE connection → CONNECTION_NOT_ACTIVE", async () => {

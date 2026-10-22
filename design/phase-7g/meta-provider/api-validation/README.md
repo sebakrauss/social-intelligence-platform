@@ -6,12 +6,12 @@ code is `modules/capability/domain/catalog-contract.ts` (development/test-time o
 `tests/unit/modules/capability-catalog-contract.test.ts` and
 `tests/architecture/capability-catalog-contract-guards.test.ts`).
 
-## Blocker in force
+## Authorization semantics
 
-`FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = YES`
-(`AUTHORIZATION_SEMANTICS_OPEN_BEFORE_FIRST_VALIDATED_ENTRY`). Until a later gate resolves the authorization semantics
-(see the Meta README › Capability catalog contract), the contract refuses **every** platform entry, whatever its
-evidence.
+`FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = NO` (lifted by Step 7G-H5.5-P4-C). A
+missing provider authorization is the profile-only state `NOT_AUTHORIZED`, never `UNSUPPORTED`, and no catalog entry can
+carry `NOT_AUTHORIZED` (see the Meta README › Capability catalog contract). Every requirement below still applies: with
+no accepted record and no registered implementation evidence, no platform entry is admissible.
 
 ## What an entry needs (fail closed)
 
@@ -19,6 +19,7 @@ evidence.
 |---|---|
 | SUPPORTED / AVAILABLE_WITH_LIMITATION | `validation: "validated"`; `evidence` = the id of an **accepted, positive** record for the exact (provider, platform, asset class, capability, content kind, source); a **non-empty** `requiredPermissions` set, each permission explicitly named, equal to the record's; an explicit `IMPLEMENTED_PLATFORM_OPERATIONS` registration of the Wrenkind provider operation for that (platform, capability) resting on the same record; a named platform (never `any`); a limitation exactly when the state is AVAILABLE_WITH_LIMITATION |
 | UNSUPPORTED | `validation: "validated"`; `evidence` = the id of an **accepted, authoritative-negative** record of the exact scope, whose basis is `provider_documentation` or `provider_non_eligibility_observation`; **no** required permissions; no limitation |
+| NOT_AUTHORIZED | never an entry: it is a profile-only state (an account's missing authorization) |
 | UNKNOWN_NOT_VALIDATED | never an entry: it is the catalog default |
 
 Not evidence, ever: an adapter exposing a method; a documented provider feature by itself; a granted or missing
@@ -28,7 +29,9 @@ the catalog lacking a rule; account infrastructure reads (`discoverAssets`, `des
 ## Record schema
 
 One JSON file per record, `records/<provider>/<platform>/<capability>/<YYYYMMDD>-<NN>.json` under this directory (the
-directory is created by the first validation gate). Id: `api-validation:{provider}/{platform}/{capability}/{YYYYMMDD}-{NN}`.
+directory is created by the first validation gate). Id: `api-validation:{provider}.{platform}.{capability}.{YYYYMMDD}-{NN}`
+— dot-separated, because the id is stored on every profile row (`capability.profile_entries.evidence_ref`, whose 0009
+CHECK admits only `^[a-z][a-z0-9_.:-]{0,127}$`; guard-tested).
 
 | Field | Content |
 |---|---|
@@ -60,5 +63,5 @@ guard runs the shared secret scan over every record.
 1. A gate authorizes ONE controlled validation of one (provider, platform, capability, operation, scope), after the
    operation is implemented in the Wrenkind provider adapter (and, for mutations, behind the Platform Mutation Executor).
 2. The record is written as `draft`, reviewed by the TL, and set to `accepted` (or `rejected`) in a commit.
-3. Only then may a later gate register the implementation evidence and add the catalog entry — which still requires the
-   authorization semantics to be resolved and a deliberate catalog revision decision (Meta README › Catalog version).
+3. Only then may a later gate register the implementation evidence and add the catalog entry — which still requires a
+   deliberate catalog revision decision (Meta README › Catalog version).

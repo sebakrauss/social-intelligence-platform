@@ -114,6 +114,7 @@ export const developmentReferenceCatalog: Catalog = {
   "connections.recheck.reason.not_evaluated": "Capabilities haven't been evaluated yet.",
   "connections.recheck.reason.stale": "Capability information is out of date.",
   "connections.recheck.reason.facts_unavailable": "Capability information couldn't be read for this account.",
+  "connections.recheck.reason.not_authorized": "Authorization is missing for one or more capabilities. Reauthorize the connection if needed, then re-check capabilities.",
   "connections.recheck.reason.too_soon": "A capability evaluation was requested recently. You can request a re-check 30 minutes after the last evaluation request.",
   "connections.status.capability_recheck_requested": "Capability re-check requested. Wrenkind will evaluate this account again in the background; this doesn't mean any capability is available yet. Reload the page later to see the result.",
   "connections.status.capability_recheck_too_soon": "No new re-check was requested: this account was re-checked or activated less than 30 minutes ago. Try again later.",

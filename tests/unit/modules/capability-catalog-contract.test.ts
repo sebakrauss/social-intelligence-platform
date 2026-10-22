@@ -1,8 +1,9 @@
 /**
  * Step 7G-H5.5-P4-B — the PLATFORM catalog entry contract (modules/capability/domain/catalog-contract.ts), fixtures
  * only: no database, no network, no real catalog entry. A fully evidenced synthetic entry proves the contract is
- * satisfiable once the authorization semantics are resolved; every single defect then fails closed with its own
- * violation, and while the semantics stay OPEN every platform entry is refused. The LIVE-shaped facts observed in P3
+ * satisfiable; every single defect then fails closed with its own violation. The authorization semantics are RESOLVED
+ * (Step 7G-H5.5-P4-C: NOT_AUTHORIZED is profile-only), yet with no accepted record and no registered implementation
+ * evidence no real platform entry is admissible. The LIVE-shaped facts observed in P3
  * (Facebook Page and Instagram professional account, five granted permissions) evaluate to ten UNKNOWN rows each.
  */
 import { describe, expect, it } from "vitest";
@@ -31,7 +32,7 @@ import {
   type ImplementedOperation,
 } from "@/modules/capability/domain/catalog-contract";
 
-const EVIDENCE = "api-validation:meta/facebook/read_interactions/20261101-01";
+const EVIDENCE = "api-validation:meta.facebook.read_interactions.20261101-01";
 const RECORD: ApiValidationRecord = Object.freeze({
   id: EVIDENCE,
   provider: "meta",
@@ -71,20 +72,31 @@ const TODAY: CatalogContractContext = { records: [], implementedOperations: IMPL
 
 const violations = (entry: Partial<CatalogEntry>, context: Partial<CatalogContractContext> = {}) => platformEntryViolations({ ...ENTRY, ...entry }, { ...RESOLVED, ...context });
 
-describe("P4-B freeze: the platform catalog stays r2 with zero entries; the first entry is blocked", () => {
+describe("P4-B freeze: the platform catalog stays r2 with zero entries; no entry is admissible yet", () => {
   it("platform r2, label platform-catalog-r2, entries [] (frozen) — and the whole catalog is admissible under today's context", () => {
     expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label, PLATFORM_CATALOG.entries.length]).toEqual(["platform", 2, "platform-catalog-r2", 0]);
     expect(Object.isFrozen(PLATFORM_CATALOG) && Object.isFrozen(PLATFORM_CATALOG.entries)).toBe(true);
     expect(platformCatalogViolations(PLATFORM_CATALOG, TODAY)).toEqual([]);
   });
 
-  it("authorization semantics are OPEN: every platform entry is refused, even a fully evidenced one", () => {
-    expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(true);
-    expect(AUTHORIZATION_SEMANTICS).toBe("OPEN");
+  it("authorization semantics are RESOLVED (P4-C): the blanket blocker is lifted, but today's context still admits no entry", () => {
+    expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(false);
+    expect(AUTHORIZATION_SEMANTICS).toBe("RESOLVED");
+    // The OPEN guard itself still works (a hypothetical context).
     expect(violations({}, { authorizationSemantics: "OPEN" })).toEqual(["AUTHORIZATION_SEMANTICS_OPEN"]);
+    // Today: no accepted record and no implementation evidence → every state is still refused, for those reasons.
     for (const state of ["SUPPORTED", "AVAILABLE_WITH_LIMITATION", "UNSUPPORTED"] as const) {
-      expect(platformEntryViolations({ ...ENTRY, state }, TODAY)).toContain("AUTHORIZATION_SEMANTICS_OPEN");
+      const today = platformEntryViolations({ ...ENTRY, state, limitation: state === "AVAILABLE_WITH_LIMITATION" ? { code: "HISTORY_DEPTH_LIMITED", value: 30 } : null }, TODAY);
+      expect(today).not.toContain("AUTHORIZATION_SEMANTICS_OPEN");
+      expect(today).toContain("EVIDENCE_RECORD_MISSING");
     }
+  });
+
+  it("NOT_AUTHORIZED is never a catalog verdict: the type refuses it, and a cast that smuggles it in is refused at runtime", () => {
+    // @ts-expect-error — CatalogEntry.state is a CatalogState: NOT_AUTHORIZED is a profile-only state.
+    const smuggled: CatalogEntry = { ...ENTRY, state: "NOT_AUTHORIZED" };
+    expect(platformEntryViolations(smuggled, RESOLVED)).toContain("NOT_A_CATALOG_STATE");
+    expect(violations({})).not.toContain("NOT_A_CATALOG_STATE");
   });
 
   it("no implementation evidence is registered today: every positive entry of every capability fails G2", () => {
@@ -117,7 +129,7 @@ describe("positive entries (SUPPORTED / AVAILABLE_WITH_LIMITATION) fail closed",
 
   it("validation must be 'validated' and the evidence an accepted api-validation record of the exact scope", () => {
     expect(violations({ validation: "not_validated" })).toContain("NOT_VALIDATED");
-    for (const evidence of [null, "simulator:contract-v1", "api-validation:", "api-validation:meta/facebook/read_interactions"]) {
+    for (const evidence of [null, "simulator:contract-v1", "api-validation:", "api-validation:meta.facebook.read_interactions"]) {
       expect(violations({ evidence })).toContain("EVIDENCE_NOT_API_VALIDATION");
     }
     expect(violations({}, { records: [] })).toContain("EVIDENCE_RECORD_MISSING");
@@ -134,7 +146,7 @@ describe("positive entries (SUPPORTED / AVAILABLE_WITH_LIMITATION) fail closed",
     expect(violations({}, { implementedOperations: [] })).toContain("IMPLEMENTATION_EVIDENCE_MISSING");
     expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, platform: "instagram" }] })).toContain("IMPLEMENTATION_EVIDENCE_MISSING");
     expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, operation: "getInteraction" }] })).toContain("IMPLEMENTATION_EVIDENCE_MISMATCH");
-    expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, evidence: "api-validation:meta/facebook/read_interactions/20261102-01" }] })).toContain("IMPLEMENTATION_EVIDENCE_MISMATCH");
+    expect(violations({}, { implementedOperations: [{ ...IMPLEMENTED, evidence: "api-validation:meta.facebook.read_interactions.20261102-01" }] })).toContain("IMPLEMENTATION_EVIDENCE_MISMATCH");
     // describeAccount (P3's live-validated read) is account infrastructure: never evidence for any capability.
     const infra = { ...RECORD, operation: "describeAccount" };
     expect(violations({}, { records: [infra], implementedOperations: [{ ...IMPLEMENTED, operation: "describeAccount" }] })).toContain("INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE");
@@ -151,7 +163,7 @@ describe("positive entries (SUPPORTED / AVAILABLE_WITH_LIMITATION) fail closed",
 });
 
 describe("UNSUPPORTED entries need authoritative negative evidence", () => {
-  const NEGATIVE: ApiValidationRecord = { ...RECORD, id: "api-validation:meta/facebook/read_interactions/20261101-02", requiredPermissions: [], polarity: "authoritative_negative", negativeBasis: "provider_documentation" };
+  const NEGATIVE: ApiValidationRecord = { ...RECORD, id: "api-validation:meta.facebook.read_interactions.20261101-02", requiredPermissions: [], polarity: "authoritative_negative", negativeBasis: "provider_documentation" };
   const unsupported = (patch: Partial<CatalogEntry> = {}, context: Partial<CatalogContractContext> = {}) =>
     platformEntryViolations({ ...ENTRY, state: "UNSUPPORTED", requiredPermissions: [], evidence: NEGATIVE.id, ...patch }, { ...RESOLVED, records: [NEGATIVE], ...context });
 
@@ -177,8 +189,8 @@ describe("UNSUPPORTED entries need authoritative negative evidence", () => {
 
 describe("evidence records carry no identifying or secret material", () => {
   it("ids, dates, revisions, permissions and free text are validated; long digit runs and links are refused", () => {
-    expect(apiValidationRecordViolations({ ...RECORD, id: "api-validation:meta/facebook/read_interactions/20261102-01" })).toContain("ID_FIELD_MISMATCH");
-    expect(apiValidationRecordViolations({ ...RECORD, platform: "tiktok", id: "api-validation:meta/tiktok/read_interactions/20261101-01" })).toContain("PROVIDER_PLATFORM_MISMATCH");
+    expect(apiValidationRecordViolations({ ...RECORD, id: "api-validation:meta.facebook.read_interactions.20261102-01" })).toContain("ID_FIELD_MISMATCH");
+    expect(apiValidationRecordViolations({ ...RECORD, platform: "tiktok", id: "api-validation:meta.tiktok.read_interactions.20261101-01" })).toContain("PROVIDER_PLATFORM_MISMATCH");
     expect(apiValidationRecordViolations({ ...RECORD, validatedOn: "2026-13-01" })).toContain("DATE_MALFORMED");
     expect(apiValidationRecordViolations({ ...RECORD, requiredPermissions: ["b_scope", "a_scope"] })).toContain("PERMISSIONS_NOT_NAMED");
     expect(apiValidationRecordViolations({ ...RECORD, scenario: "Page 123456789012345 replied" })).toContain("TEXT_SUSPECTED_IDENTIFIER");
@@ -208,19 +220,19 @@ describe("G3 — LIVE-shaped P3 facts produce no SUPPORTED and no UNSUPPORTED (f
     const hypothetical: CapabilityCatalog = { id: "platform", revision: 2, label: "hypothetical", entries: [unsafe] };
     const profile = evaluateProfile({ catalog: hypothetical, platform: "facebook", assetClass: "content_bearing", facts: liveFacts, observations: [], evaluatedAt: new Date() });
     expect(profile.entries.find((e) => e.capability === "read_interactions")?.state).toBe("SUPPORTED");
-    expect(platformCatalogViolations(hypothetical, TODAY)[0]?.violations).toEqual(expect.arrayContaining(["AUTHORIZATION_SEMANTICS_OPEN", "EVIDENCE_NOT_API_VALIDATION", "REQUIRED_PERMISSIONS_EMPTY", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+    expect(platformCatalogViolations(hypothetical, TODAY)[0]?.violations).toEqual(expect.arrayContaining(["EVIDENCE_NOT_API_VALIDATION", "REQUIRED_PERMISSIONS_EMPTY", "IMPLEMENTATION_EVIDENCE_MISSING"]));
   });
 });
 
 describe("authorization semantics guardrail: a missing permission is never presented as platform non-support", () => {
-  // A synthetic validated-looking catalog (the evaluator is unchanged; this only exercises its existing behavior).
+  // A synthetic validated-looking catalog: the evaluator's authorization branches (Step 7G-H5.5-P4-C).
   const permissioned: CapabilityCatalog = { id: "platform", revision: 2, label: "hypothetical", entries: [ENTRY] };
   const factsWith = (granted: readonly string[]): AccountFacts => ({ kind: "available", assetClass: "content_bearing", grantedPermissions: granted, linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: new Date("2026-10-22T12:00:00Z") });
 
-  it("stored UNSUPPORTED / ACCOUNT_PERMISSION_MISSING is presented as ACCOUNT_PERMISSION_MISSING + REAUTHORIZE, never CAPABILITY_UNSUPPORTED / OPEN_ON_PLATFORM", () => {
+  it("a missing permission is stored as NOT_AUTHORIZED / ACCOUNT_PERMISSION_MISSING and presented as ACCOUNT_PERMISSION_MISSING + REAUTHORIZE, never CAPABILITY_UNSUPPORTED / OPEN_ON_PLATFORM", () => {
     const profile = evaluateProfile({ catalog: permissioned, platform: "facebook", assetClass: "content_bearing", facts: factsWith(["pages_show_list"]), observations: [], evaluatedAt: new Date("2026-10-22T12:01:00Z") });
     const row = resolveEntry(profile.entries, "read_interactions", ANY, ANY);
-    expect(row).toMatchObject({ state: "UNSUPPORTED", reasons: ["ACCOUNT_PERMISSION_MISSING"] }); // historical/technical representation
+    expect(row).toMatchObject({ state: "NOT_AUTHORIZED", reasons: ["ACCOUNT_PERMISSION_MISSING"], evidence: ENTRY.evidence });
     const shown = effectiveAvailability(row, "ACTIVE", "read_interactions", profile.evaluatedAt);
     expect(shown).toMatchObject({ state: "UNAVAILABLE", reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE" });
     expect([shown.reason, shown.recovery]).not.toContain("CAPABILITY_UNSUPPORTED");
@@ -230,8 +242,10 @@ describe("authorization semantics guardrail: a missing permission is never prese
   it("an observed PermissionMissing is presented the same way (authorization, not platform)", () => {
     const later = new Date("2026-10-22T12:05:00Z");
     const profile = evaluateProfile({ catalog: permissioned, platform: "facebook", assetClass: "content_bearing", facts: factsWith(["synthetic_read_comments"]), observations: [{ kind: "permission_missing", capability: "read_interactions", observedAt: later, ref: "obs-1" }], evaluatedAt: later });
-    const shown = effectiveAvailability(resolveEntry(profile.entries, "read_interactions", ANY, ANY), "ACTIVE", "read_interactions", later);
-    expect(shown).toMatchObject({ reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE" });
+    const row = resolveEntry(profile.entries, "read_interactions", ANY, ANY);
+    expect(row).toMatchObject({ state: "NOT_AUTHORIZED", reasons: ["OBSERVED_PERMISSION_MISSING"], observationRefs: ["obs-1"] });
+    const shown = effectiveAvailability(row, "ACTIVE", "read_interactions", later);
+    expect(shown).toMatchObject({ state: "UNAVAILABLE", reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE" });
   });
 });
 

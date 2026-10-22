@@ -20,13 +20,14 @@ import {
   CAPABILITY_KEYS,
   CAPABILITY_REASON_CODES,
   CAPABILITY_SOURCES,
-  CAPABILITY_STATES,
   LIMITATION_CODES,
+  PROFILE_STATES,
   VALIDATION_STATUSES,
   ANY,
   isCapabilityContentKind,
   isCapabilityKey,
   isCapabilitySource,
+  isCoherentProfileShape,
 } from "../domain/vocabulary";
 import { accountProfiles, profileEntries } from "./tables";
 
@@ -90,19 +91,21 @@ function toHeader(row: typeof accountProfiles.$inferSelect): StoredProfileHeader
   };
 }
 
+/** A stored row in the closed profile vocabulary, coherent state ↔ reasons (else corruption: never passed on). */
 function toEntry(row: typeof profileEntries.$inferSelect): ProfileEntry {
   const table = "profile_entries";
-  return {
+  const entry: ProfileEntry = {
     capability: closed(CAPABILITY_KEYS, row.capability, table),
     contentKind: closed(SCOPE_KINDS, row.contentKind, table),
     source: closed(SCOPE_SOURCES, row.source, table),
-    state: closed(CAPABILITY_STATES, row.state, table),
+    state: closed(PROFILE_STATES, row.state, table),
     reasons: row.reasonCodes.map((code) => closed(CAPABILITY_REASON_CODES, code, table)),
     limitation: row.limitationCode === null ? null : { code: closed(LIMITATION_CODES, row.limitationCode, table), value: row.limitationValue },
     catalogValidation: closed(VALIDATION_STATUSES, row.catalogValidation, table),
     evidence: row.evidenceRef,
     observationRefs: row.observationRefs,
   };
+  return isCoherentProfileShape(entry) ? entry : corrupt(table);
 }
 
 export function createPostgresCapabilityStore(tx: DatabaseTransaction): CapabilityProfileStore {
@@ -136,6 +139,8 @@ export function createPostgresCapabilityStore(tx: DatabaseTransaction): Capabili
   };
 
   const replaceEntries = async (write: ProfileWrite, revision: number): Promise<void> => {
+    // The evaluator yields coherent rows by construction; an incoherent one is refused before anything is written.
+    if (!write.profile.entries.every(isCoherentProfileShape)) corrupt("profile_entries");
     await tx.delete(profileEntries).where(eq(profileEntries.connectedAccountId, write.connectedAccountId));
     if (write.profile.entries.length === 0) return;
     await tx.insert(profileEntries).values(

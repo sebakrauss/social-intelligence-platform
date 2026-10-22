@@ -4,10 +4,11 @@
  *   - the entry contract (modules/capability/domain/catalog-contract.ts) is development/test-time only — no runtime code
  *     imports it, so the evaluator and every deployed plane are unchanged;
  *   - every evidence record on disk passes the schema and the secret scan, and the real catalog is admissible against
- *     them, the registered implementation evidence and today's (OPEN) authorization semantics;
+ *     them, the registered implementation evidence and today's (RESOLVED, Step 7G-H5.5-P4-C) authorization semantics;
  *   - implementation evidence names a real provider contract operation the adapter actually implements (G2's static
  *     half) and never an account-infrastructure read;
- *   - the documents state the blocker, the four dimensions, the P3 scope and the re-evaluation contract;
+ *   - the documents state the resolved authorization semantics, the four dimensions, the P3 scope and the re-evaluation
+ *     contract;
  *   - no interface copy presents a missing permission as platform non-support.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -18,6 +19,7 @@ import { MUTATION_OPERATIONS, READ_OPERATIONS } from "@/integrations/providers/c
 import { PLATFORM_CATALOG } from "@/modules/capability";
 import {
   ACCOUNT_INFRASTRUCTURE_OPERATIONS,
+  API_VALIDATION_EVIDENCE_ID,
   AUTHORIZATION_SEMANTICS,
   FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED,
   IMPLEMENTED_PLATFORM_OPERATIONS,
@@ -75,9 +77,11 @@ describe("the platform catalog is frozen at r2 with zero entries", () => {
     expect(codeOf("modules/capability/index.ts")).not.toMatch(/catalog-contract/);
   });
 
-  it("the first validated entry stays blocked while the authorization semantics are OPEN", () => {
-    expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(true);
-    expect(AUTHORIZATION_SEMANTICS).toBe("OPEN");
+  it("the authorization semantics are RESOLVED (P4-C) and the blanket blocker is lifted — yet nothing is admissible: no record, no implementation", () => {
+    expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(false);
+    expect(AUTHORIZATION_SEMANTICS).toBe("RESOLVED");
+    expect(recordFiles()).toEqual([]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([]);
   });
 });
 
@@ -90,8 +94,23 @@ describe("evidence records and implementation evidence", () => {
       expect(detectSecrets(raw(file)), file).toEqual([]);
       const record = JSON.parse(raw(file)) as ApiValidationRecord;
       expect(apiValidationRecordViolations(record), file).toEqual([]);
-      expect(file).toBe(`${RECORDS_DIR}/${record.id.replace(/^api-validation:/, "")}.json`);
+      expect(file).toBe(`${RECORDS_DIR}/${record.id.replace(/^api-validation:/, "").replaceAll(".", "/")}.json`);
     }
+  });
+
+  it("every evidence id the contract admits is admitted by the stored column profile_entries.evidence_ref (0009 CHECK)", () => {
+    const column = /evidence_ref\s+text check \(evidence_ref ~ '([^']+)'\)/.exec(readFileSync(path.join(REPOSITORY_ROOT, "db/migrations/0009_capability_profiles.sql"), "utf8"));
+    expect(column).not.toBeNull();
+    const stored = new RegExp(column?.[1] ?? "^$");
+    const capabilities = ["read_content", "read_interactions", "read_history", "read_paid_context", "reply_public", "reply_private", "hide", "delete", "block", "detect_native_replies"];
+    for (const [provider, platform] of [["meta", "facebook"], ["meta", "instagram"], ["tiktok", "tiktok"], ["p".repeat(32), "instagram"]] as const)
+      for (const capability of capabilities) {
+        const id = `api-validation:${provider}.${platform}.${capability}.20261231-99`;
+        expect(API_VALIDATION_EVIDENCE_ID.test(id), id).toBe(true);
+        expect(stored.test(id), id).toBe(true);
+      }
+    // The P4-B slash form would never have been storable.
+    expect(stored.test("api-validation:meta/facebook/read_content/20261101-01")).toBe(false);
   });
 
   it("the real platform catalog is admissible against the records on disk, the registered implementations and today's semantics", () => {
@@ -129,7 +148,7 @@ describe("documents state the contract", () => {
     for (const field of ["`id`", "`provider`", "`platform`", "`assetClass`", "`accountKind`", "`capability`", "`contentKind`, `source`", "`operation`", "`validatedOn`", "`sourceRevision`", "`requiredPermissions`", "`scenario`", "`observedResult`", "`polarity`", "`negativeBasis`", "`reviewer`", "`status`"]) {
       expect(doc, field).toContain(field);
     }
-    for (const phrase of ["api-validation:{provider}/{platform}/{capability}/{YYYYMMDD}-{NN}", "Never in a record: access tokens", "FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = YES", "never an entry: it is the catalog default"]) {
+    for (const phrase of ["api-validation:{provider}.{platform}.{capability}.{YYYYMMDD}-{NN}", "Never in a record: access tokens", "FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = NO", "never an entry: it is the catalog default", "never an entry: it is a profile-only state"]) {
       expect(doc, phrase).toContain(phrase);
     }
   });
@@ -142,8 +161,11 @@ describe("documents state the contract", () => {
       "\"Can Wrenkind perform X now for this connected account?\"",
       "A capability-profile `SUPPORTED` requires dimensions 1–3 proven",
       "`ACCOUNT_PERMISSION_MISSING` is an authorization condition, not proof of intrinsic provider/platform non-support",
-      "AUTHORIZATION_SEMANTICS_OPEN_BEFORE_FIRST_VALIDATED_ENTRY",
-      "`FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = YES`",
+      "**Authorization semantics — RESOLVED (Step 7G-H5.5-P4-C).**",
+      "| NOT_AUTHORIZED | the provider/account supports it, but Wrenkind lacks the current provider authorization |",
+      "`AUTO_REEVALUATE_AFTER_REAUTHORIZED = NOT_IMPLEMENTED`",
+      "NOT_AUTHORIZED (availability ACCOUNT_PERMISSION_MISSING) must never become `CAPABILITY_UNSUPPORTED`",
+      "`FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = NO`",
       "No automatic reconcile is enabled",
       "the canonical paired Trigger release (`npm run trigger:release`, INTEGRATION then MAIN)",
     ]) {

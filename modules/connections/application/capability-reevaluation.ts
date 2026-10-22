@@ -14,6 +14,9 @@
  *   4  the stored profile header (read only)
  *   5  eligibility:  no profile → eligible; stale (older revision or another catalog) → eligible;
  *                    current with facts unavailable → eligible;
+ *                    current with a NOT_AUTHORIZED row → eligible (Step 7G-H5.5-P4-C: after the connection is
+ *                      re-authorized, a Re-check is the supported way to re-read the provider facts — it never grants
+ *                      any authorization itself; automatic evaluation after REAUTHORIZED is NOT implemented);
  *                    current with usable facts → PROFILE_CURRENT; newer revision than this code → PROFILE_NEWER_THAN_CODE
  *   6  cooldown: no LINKED, MOVED_IN or REEVALUATION_REQUESTED of this account in the last 30 minutes (server clock):
  *                    elapsed < 30:00 → REEVALUATION_TOO_SOON; exactly 30:00 → eligible
@@ -25,7 +28,7 @@
  * authority on availability, and the worker alone calls the provider. Nothing schedules or repeats this request.
  */
 import { AppError } from "@/domain/errors";
-import { CATALOGS, catalogIdFor, isCurrentProfile, type CapabilityReadStore, type StoredProfileHeader } from "@/modules/capability";
+import { CATALOGS, catalogIdFor, isCurrentProfile, profileLacksAuthorization, type CapabilityReadStore, type ProfileEntry, type StoredProfileHeader } from "@/modules/capability";
 import type { OutboxWriter } from "@/platform/outbox";
 import type { AccountEventType } from "../domain/model";
 import type { WorkspaceScope } from "./authorization";
@@ -42,7 +45,7 @@ export const REEVALUATION_REFUSALS = ["PROFILE_CURRENT", "PROFILE_NEWER_THAN_COD
 export type ReevaluationRefusal = (typeof REEVALUATION_REFUSALS)[number];
 
 /** Why a profile may be re-evaluated (informational; never shown as availability). */
-export type ReevaluationBasis = "NO_PROFILE" | "PROFILE_STALE" | "FACTS_UNAVAILABLE";
+export type ReevaluationBasis = "NO_PROFILE" | "PROFILE_STALE" | "FACTS_UNAVAILABLE" | "AUTHORIZATION_MISSING";
 
 export type ProfileEligibility =
   | { readonly eligible: true; readonly basis: ReevaluationBasis }
@@ -53,10 +56,15 @@ export type ProfileEligibility =
  * the catalog a profile SHOULD rest on comes only from the connection provider (catalogIdFor), exactly like
  * reconciliation; a profile on a newer revision than this code knows (a rolled-back deploy) is never replaced.
  */
-export function profileEligibility(header: Pick<StoredProfileHeader, "catalogId" | "catalogRevision" | "facts"> | undefined, provider: string): ProfileEligibility {
+export function profileEligibility(
+  header: Pick<StoredProfileHeader, "catalogId" | "catalogRevision" | "facts"> | undefined,
+  provider: string,
+  entries: readonly Pick<ProfileEntry, "state">[],
+): ProfileEligibility {
   if (header === undefined) return { eligible: true, basis: "NO_PROFILE" };
   if (isCurrentProfile(header, provider)) {
-    return header.facts.kind === "unavailable" ? { eligible: true, basis: "FACTS_UNAVAILABLE" } : { eligible: false, reason: "PROFILE_CURRENT" };
+    if (header.facts.kind === "unavailable") return { eligible: true, basis: "FACTS_UNAVAILABLE" };
+    return profileLacksAuthorization(entries) ? { eligible: true, basis: "AUTHORIZATION_MISSING" } : { eligible: false, reason: "PROFILE_CURRENT" };
   }
   const expected = CATALOGS[catalogIdFor(provider)];
   if (header.catalogId === expected.id && header.catalogRevision > expected.revision) return { eligible: false, reason: "PROFILE_NEWER_THAN_CODE" };
@@ -83,7 +91,7 @@ export interface CapabilityReevaluationStores {
     readonly connections: Pick<ConnectionStore["connections"], "getForShare">;
     readonly accountEvents: ConnectionStore["accountEvents"];
   };
-  readonly capability: Pick<CapabilityReadStore, "header">;
+  readonly capability: CapabilityReadStore;
   readonly outbox: Pick<OutboxWriter, "append">;
 }
 
@@ -101,7 +109,8 @@ export async function requestCapabilityReevaluation(
   const connection = await stores.connections.connections.getForShare(account.connectionId);
   if (connection?.status !== "ACTIVE") return refused("CONNECTION_NOT_ACTIVE");
   // 4–5. Eligibility of the stored profile.
-  const eligibility = profileEligibility(await stores.capability.header(account.id), connection.provider);
+  const header = await stores.capability.header(account.id);
+  const eligibility = profileEligibility(header, connection.provider, header === undefined ? [] : await stores.capability.entries(account.id));
   if (!eligibility.eligible) return refused(eligibility.reason);
   // 6. Cooldown, read AFTER the lock: a concurrent request that committed first is seen here.
   if (withinReevaluationCooldown(await stores.connections.accountEvents.latestOccurredAt(account.id, REEVALUATION_COOLDOWN_EVENTS), input.now)) {

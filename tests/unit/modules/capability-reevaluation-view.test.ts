@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { AVAILABILITY_REASONS, CAPABILITY_REASON_CODES, PLATFORM_CATALOG, SIMULATOR_CATALOG, type FactsInput, type StoredProfileHeader } from "@/modules/capability";
+import { AVAILABILITY_REASONS, CAPABILITY_REASON_CODES, PLATFORM_CATALOG, SIMULATOR_CATALOG, type FactsInput, type ProfileEntry, type StoredProfileHeader } from "@/modules/capability";
 import {
   REEVALUATION_OFFER_REASONS,
   capabilityReevaluationView,
@@ -23,7 +23,7 @@ const available = (): FactsInput => ({ kind: "available", assetClass: "content_b
 const unavailable = (): FactsInput => ({ kind: "unavailable", observedAt: T0 });
 type Header = Pick<StoredProfileHeader, "catalogId" | "catalogRevision" | "facts">;
 
-function stores(header: Header | undefined, latest: Date | undefined) {
+function stores(header: Header | undefined, latest: Date | undefined, entries: readonly Pick<ProfileEntry, "state">[] = []) {
   const reads: string[] = [];
   return {
     reads,
@@ -32,6 +32,10 @@ function stores(header: Header | undefined, latest: Date | undefined) {
         header: () => {
           reads.push("header");
           return Promise.resolve(header as StoredProfileHeader | undefined);
+        },
+        entries: () => {
+          reads.push("entries");
+          return Promise.resolve(entries as readonly ProfileEntry[]);
         },
       },
       accountEvents: {
@@ -43,8 +47,8 @@ function stores(header: Header | undefined, latest: Date | undefined) {
     },
   };
 }
-const view = (header: Header | undefined, options: { latest?: Date; now?: Date; account?: "ACTIVE" | "INACTIVE"; connection?: "ACTIVE" | "DEGRADED" | "FAILED" | "DISCONNECTED" | "REMOVED" | "CONNECTING"; provider?: "meta" | "tiktok" | "simulator" } = {}) => {
-  const s = stores(header, options.latest);
+const view = (header: Header | undefined, options: { latest?: Date; now?: Date; account?: "ACTIVE" | "INACTIVE"; connection?: "ACTIVE" | "DEGRADED" | "FAILED" | "DISCONNECTED" | "REMOVED" | "CONNECTING"; provider?: "meta" | "tiktok" | "simulator"; entries?: readonly Pick<ProfileEntry, "state">[] } = {}) => {
+  const s = stores(header, options.latest, options.entries);
   return capabilityReevaluationView(s.stores, {
     account: { id: randomUUID(), status: options.account ?? "ACTIVE" },
     connection: { provider: options.provider ?? "meta", status: options.connection ?? "ACTIVE" },
@@ -58,6 +62,14 @@ describe("the re-check offer (view model)", () => {
     expect((await view({ catalogId: "platform", catalogRevision: PLATFORM_CATALOG.revision - 1, facts: available() })).result).toEqual({ allowed: true, reason: "PROFILE_STALE" });
     expect((await view({ catalogId: "simulator", catalogRevision: SIMULATOR_CATALOG.revision, facts: available() })).result).toEqual({ allowed: true, reason: "PROFILE_STALE" });
     expect((await view({ catalogId: "platform", catalogRevision: PLATFORM_CATALOG.revision, facts: unavailable() })).result).toEqual({ allowed: true, reason: "ACCOUNT_FACTS_UNAVAILABLE" });
+  });
+
+  it("Step 7G-H5.5-P4-C: a current profile with a NOT_AUTHORIZED row offers Re-check as ACCOUNT_PERMISSION_MISSING; cooldown still applies", async () => {
+    const current = { catalogId: "platform" as const, catalogRevision: PLATFORM_CATALOG.revision, facts: available() };
+    const rows = [{ state: "SUPPORTED" as const }, { state: "NOT_AUTHORIZED" as const }];
+    expect(await view(current, { entries: rows })).toEqual({ result: { allowed: true, reason: "ACCOUNT_PERMISSION_MISSING" }, reads: ["header", "entries", "latest:LINKED,MOVED_IN,REEVALUATION_REQUESTED"] });
+    expect((await view(current, { entries: [{ state: "SUPPORTED" }] })).result).toEqual({ allowed: false, reason: "PROFILE_CURRENT" });
+    expect((await view(current, { entries: rows, latest: T0, now: at(5 * MIN) })).result).toEqual({ allowed: false, reason: "REEVALUATION_TOO_SOON" });
   });
 
   it("the eligible reasons are the capability module's own vocabulary (availability reasons / reason codes)", () => {
@@ -89,7 +101,7 @@ describe("the re-check offer (view model)", () => {
 
   it("the cooldown note's single reason covers every source event: LINKED, MOVED_IN and REEVALUATION_REQUESTED (others don't start it)", async () => {
     const byType = (type: string) => ({
-      capability: { header: () => Promise.resolve(undefined) },
+      capability: { header: () => Promise.resolve(undefined), entries: () => Promise.resolve([]) },
       accountEvents: {
         latestOccurredAt: (_id: string, types: readonly string[]) => Promise.resolve(types.includes(type) ? T0 : undefined),
       },
@@ -124,7 +136,7 @@ describe("the settings read model carries the offer for managed accounts only", 
       },
       accountEvents: { latestOccurredAt: () => Promise.resolve(undefined) },
     } as unknown as ConnectionStore;
-    return viewConnectionSettings(store, { capability: { header: () => Promise.resolve(header as StoredProfileHeader | undefined) }, now: T0 });
+    return viewConnectionSettings(store, { capability: { header: () => Promise.resolve(header as StoredProfileHeader | undefined), entries: () => Promise.resolve([]) }, now: T0 });
   };
 
   it("managed → its account id and offer; unmanaged → no account, no offer", async () => {

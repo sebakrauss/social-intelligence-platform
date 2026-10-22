@@ -122,6 +122,7 @@ export const CAPABILITY_RECHECK_OFFER_MESSAGES: { readonly [R in ReevaluationOff
   PROFILE_NOT_EVALUATED: "connections.recheck.reason.not_evaluated",
   PROFILE_STALE: "connections.recheck.reason.stale",
   ACCOUNT_FACTS_UNAVAILABLE: "connections.recheck.reason.facts_unavailable",
+  ACCOUNT_PERMISSION_MISSING: "connections.recheck.reason.not_authorized",
   REEVALUATION_TOO_SOON: "connections.recheck.reason.too_soon",
 };
 

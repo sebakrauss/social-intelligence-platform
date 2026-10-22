@@ -456,14 +456,42 @@ dimensions stay distinct:
 A capability-profile `SUPPORTED` requires dimensions 1–3 proven. Dimension 4 is a product/exposure concern: it is never
 inferred from provider support, and future UI/action availability may impose an additional product gate.
 
-**Authorization semantics — OPEN (`AUTHORIZATION_SEMANTICS_OPEN_BEFORE_FIRST_VALIDATED_ENTRY`).**
-`ACCOUNT_PERMISSION_MISSING` is an authorization condition, not proof of intrinsic provider/platform non-support. The
-evaluator's stored `UNSUPPORTED / ACCOUNT_PERMISSION_MISSING` (and `OBSERVED_PERMISSION_MISSING`) is historical/technical
-behavior. It MUST be interpreted together with its reason code, and the availability overlay presents it as
-`ACCOUNT_PERMISSION_MISSING` + `REAUTHORIZE`, never as "the platform doesn't offer it" (`CAPABILITY_UNSUPPORTED` /
-`OPEN_ON_PLATFORM`). The approved documents define Unsupported as platform non-support (TA §16.2, Model §6.2). P4-B does
-not reconcile this: no new state, reason code, migration or evaluator change.
-`FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = YES`.
+**Authorization semantics — RESOLVED (Step 7G-H5.5-P4-C).**
+`ACCOUNT_PERMISSION_MISSING` is an authorization condition, not proof of intrinsic provider/platform non-support. P4-B
+had found the evaluator storing it as `UNSUPPORTED / ACCOUNT_PERMISSION_MISSING`, contradicting the approved meaning of
+Unsupported (TA §16.2, Model §6.2); P4-C resolves it with a PROFILE-ONLY state. The account profile now has five states,
+the catalog keeps four:
+
+| Profile state | Meaning | Reasons (exactly) | Availability | Recovery |
+|---|---|---|---|---|
+| SUPPORTED | validated platform support, account authorized | CATALOG_SUPPORTED | AVAILABLE | — |
+| AVAILABLE_WITH_LIMITATION | as SUPPORTED, with a known restriction | CATALOG_LIMITATION | AVAILABLE_WITH_LIMITATION | — |
+| UNSUPPORTED | the provider/account can't support it (authoritative) | CATALOG_UNSUPPORTED, OBSERVED_NOT_ELIGIBLE | UNAVAILABLE / CAPABILITY_UNSUPPORTED | OPEN_ON_PLATFORM |
+| NOT_AUTHORIZED | the provider/account supports it, but Wrenkind lacks the current provider authorization | ACCOUNT_PERMISSION_MISSING, OBSERVED_PERMISSION_MISSING | UNAVAILABLE / ACCOUNT_PERMISSION_MISSING | REAUTHORIZE, then manual Re-check |
+| UNKNOWN_NOT_VALIDATED | support truth not established, or facts unreadable | CATALOG_NOT_VALIDATED, ACCOUNT_FACTS_UNAVAILABLE, ACCOUNT_FACTS_INCONSISTENT | UNAVAILABLE / CAPABILITY_NOT_VALIDATED | Re-check when facts were unavailable |
+
+- **Profile-only.** `NOT_AUTHORIZED` is a `ProfileState`, never a `CatalogState`: a catalog entry can't declare it (type),
+  and the entry contract refuses it if a cast smuggles it in (`NOT_A_CATALOG_STATE`).
+- **Strict.** The overlay maps NOT_AUTHORIZED only to UNAVAILABLE / ACCOUNT_PERMISSION_MISSING / REAUTHORIZE (never
+  AVAILABLE, TEMPORARILY_UNAVAILABLE or platform non-support) and UNSUPPORTED only to CAPABILITY_UNSUPPORTED /
+  OPEN_ON_PLATFORM. An incoherent row is never trusted: the store refuses it as corruption, the overlay answers
+  CAPABILITY_NOT_VALIDATED, and migration 0015's `profile_entries_state_reasons` CHECK refuses it in the database.
+- **Recovery.** A current profile with any NOT_AUTHORIZED row is eligible for an Owner/Admin Re-check (basis
+  `AUTHORIZATION_MISSING`; offer copy "Authorization is missing for one or more capabilities. Reauthorize the connection
+  if needed, then re-check capabilities."). Re-check only re-reads the provider facts; it never grants authorization.
+  The cooldown applies as usual.
+- **Remaining gap.** `AUTO_REEVALUATE_AFTER_REAUTHORIZED = NOT_IMPLEMENTED`: a re-authorization does not request an
+  evaluation yet. The supported recovery is (1) reauthorize the connection, (2) Re-check. A later gate can automate (2).
+- **Execution layer.** No AppError mapping from availability exists today. When the action-execution phase adds one,
+  NOT_AUTHORIZED (availability ACCOUNT_PERMISSION_MISSING) must never become `CAPABILITY_UNSUPPORTED`: it is an
+  authorization problem with a re-authorization recovery, not a platform limit.
+- **No catalog change.** This is a profile-vocabulary change only: no entry, capability key or scope changed, so
+  `platform` and `simulator` both stay revision 2 and no LIVE profile becomes stale (the 20 LIVE rows are
+  UNKNOWN_NOT_VALIDATED / CATALOG_NOT_VALIDATED, valid before and after). P4-C validates no capability.
+- **Migration 0015** (`0015_capability_not_authorized.sql`): widens `profile_entries_state_check` with NOT_AUTHORIZED and
+  adds the `profile_entries_state_reasons` coherence CHECK; additive, no backfill. Its VALIDATE step fails if any row
+  still has the old UNSUPPORTED + permission shape (none existed). Deploy order: the migration, then the paired Trigger
+  release, then the web.
 
 **Entry contract.** `modules/capability/domain/catalog-contract.ts` (development/test-time only) and the evidence schema
 `api-validation/README.md`:
@@ -475,7 +503,8 @@ not reconcile this: no new state, reason code, migration or evaluator change.
   read or a missing rule never yield UNSUPPORTED: those stay UNKNOWN.
 - **No inferred mappings.** No capability-to-operation mapping is inferred from names, and `describeAccount` is never
   evidence.
-- **Nothing passes today.** No capability passes, so `platform.entries` is `[]`.
+- **Nothing passes today.** No accepted record and no registered implementation evidence exist, so no entry is admissible
+  and `platform.entries` is `[]` — even though the P4-B authorization-semantics blocker itself is lifted (P4-C).
 
 **Catalog version and re-evaluation.**
 - **P4-B:** `platform` stays revision 2 (`platform-catalog-r2`) and the LIVE profiles stay current and untouched.
@@ -492,7 +521,9 @@ not reconcile this: no new state, reason code, migration or evaluator change.
 |---|---|
 | PLATFORM_CATALOG | `platform` r2, entries `[]` (frozen, guard-tested) |
 | CATALOG_ENTRY_CONTRACT | G1 non-empty named permissions; G2 registered implementation evidence (none registered → every positive entry refused); UNSUPPORTED only from authoritative negative evidence; G3 LIVE-shaped facts → 0 SUPPORTED, 0 UNSUPPORTED, 10 UNKNOWN per account |
-| FIRST_VALIDATED_PLATFORM_ENTRY | BLOCKED until the authorization semantics are resolved |
+| FIRST_VALIDATED_PLATFORM_ENTRY | semantic blocker LIFTED (P4-C, `FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = NO`); still not admissible without an accepted record and implementation evidence |
+| PROFILE_STATES | SUPPORTED, AVAILABLE_WITH_LIMITATION, UNSUPPORTED, NOT_AUTHORIZED, UNKNOWN_NOT_VALIDATED (NOT_AUTHORIZED profile-only) |
+| AUTO_REEVALUATE_AFTER_REAUTHORIZED | NOT_IMPLEMENTED (manual Re-check) |
 | REEVALUATION | manual Re-check only; no automatic reconcile |
 
 **H6 readiness contract.** H6 may ingest for a Connected Account only when, at the moment of ingestion:

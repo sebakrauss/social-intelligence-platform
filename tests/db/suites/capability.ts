@@ -19,14 +19,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { parseUserId, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
 import { SimulatorWorld, simulateConsent, type SimulatedConsent } from "@/integrations/providers/simulator";
 import type { CallbackQuery } from "@/integrations/providers/contract";
-import { SIMULATOR_CATALOG, evaluateProfile, inputDigest, type CapabilityProfileStore } from "@/modules/capability";
+import { PROFILE_STATES, SIMULATOR_CATALOG, evaluateProfile, inputDigest, type CapabilityProfileStore } from "@/modules/capability";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
 import { refreshAccountCapabilities, type CapabilityRefreshDependencies } from "@/modules/connections";
 import { createLocalKeyring, type LocalKeyring } from "@/platform/crypto/credentials/local-keyring";
 import { createCredentialOpener } from "@/platform/crypto/credentials/open";
 import { createCredentialSealer } from "@/platform/crypto/credentials/seal";
 import { createPkceDeriver } from "@/platform/crypto/oauth";
-import { withUserScope, withWorkspaceJobScope, type DatabaseTransaction, type RuntimeDatabase } from "@/platform/db";
+import { postgresError, withUserScope, withWorkspaceJobScope, type DatabaseTransaction, type RuntimeDatabase } from "@/platform/db";
 import { withSystemScope } from "@/platform/db/system-scope";
 import { runTenantStepJob } from "@/platform/jobs";
 import { createLogger } from "@/platform/observability";
@@ -221,13 +221,76 @@ export function defineCapabilitySuite(getTarget: () => DbTarget): void {
       expect(rows.find((r) => r.capability === "hide")?.state).toBe("UNKNOWN_NOT_VALIDATED");
     });
 
-    it("an account lacking permissions is UNSUPPORTED with a re-authorization recovery; facts never upgrade it", async () => {
+    it("an account lacking permissions is NOT_AUTHORIZED (never UNSUPPORTED) with a re-authorization recovery; facts never upgrade it", async () => {
       const partial = await connect(world.A1, { kind: "grant", grant: "meta_partial" });
       const limited = await link(world.A1, partial, "ig_acct_limited");
       await refresh(world.A1, limited);
       const rows = await entries(limited);
-      expect(rows.find((r) => r.capability === "read_interactions" && r.content_kind === "any")).toMatchObject({ state: "UNSUPPORTED", reason_codes: ["ACCOUNT_PERMISSION_MISSING"] });
+      expect(rows.find((r) => r.capability === "read_interactions" && r.content_kind === "any")).toMatchObject({ state: "NOT_AUTHORIZED", reason_codes: ["ACCOUNT_PERMISSION_MISSING"] });
+      expect(rows.filter((r) => r.state === "UNSUPPORTED" && r.reason_codes.some((code) => code.endsWith("PERMISSION_MISSING")))).toEqual([]);
       expect(expectOk(await availability(world.A1, limited, "hide"))).toMatchObject({ state: "UNAVAILABLE", reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE" });
+    });
+  });
+
+  describe("migration 0015: NOT_AUTHORIZED and state ↔ reason coherence (Step 7G-H5.5-P4-C)", () => {
+    class Rollback extends Error {}
+    /** One raw row in the worker's own scope, always rolled back: "accepted" or the refusing SQLSTATE:constraint. */
+    const attempt = async (state: string, reasons: readonly string[], limitation: string | null = null): Promise<string> => {
+      try {
+        await asWorker(world.A1, async (tx) => {
+          await tx.execute(sql`insert into capability.profile_entries
+            (organization_id, workspace_id, connected_account_id, capability, content_kind, source, state, reason_codes, limitation_code, limitation_value,
+             catalog_validation, evidence_ref, observation_refs, revision, evaluated_at)
+            values (${world.orgA}, ${world.A1}, ${A1.page}, 'detect_native_replies', 'video', 'mixed', ${state}, ${`{${reasons.join(",")}}`}::text[], ${limitation}, null,
+                    'validated', null, '{}', 1, now())`);
+          throw new Rollback();
+        });
+      } catch (error) {
+        if (error instanceof Rollback) return "accepted";
+        const pg = postgresError(error);
+        if (pg === undefined) throw error;
+        return `${pg.code}:${pg.constraint ?? ""}`;
+      }
+      return "unreachable";
+    };
+
+    it("both constraints are validated, and the state CHECK admits exactly the five profile states", async () => {
+      const rows = await oracle<{ name: string; validated: boolean; definition: string }>(
+        `select conname as name, convalidated as validated, pg_get_constraintdef(oid) as definition from pg_constraint
+          where conrelid = 'capability.profile_entries'::regclass and conname in ('profile_entries_state_check', 'profile_entries_state_reasons') order by conname`,
+      );
+      expect(rows.map((row) => [row.name, row.validated])).toEqual([["profile_entries_state_check", true], ["profile_entries_state_reasons", true]]);
+      const states = [...(rows[0]?.definition ?? "").matchAll(/'([A-Z_]+)'::text/g)].map((match) => match[1]).sort();
+      expect(states).toEqual([...PROFILE_STATES].sort());
+    });
+
+    it("accepts every coherent shape and refuses every incoherent one (fail closed)", async () => {
+      await refresh(world.A1, A1.page); // the account's profile header exists (composite FK)
+      for (const [state, reasons, limitation] of [
+        ["SUPPORTED", ["CATALOG_SUPPORTED"], null],
+        ["AVAILABLE_WITH_LIMITATION", ["CATALOG_LIMITATION"], "HISTORY_DEPTH_LIMITED"],
+        ["NOT_AUTHORIZED", ["ACCOUNT_PERMISSION_MISSING"], null],
+        ["NOT_AUTHORIZED", ["OBSERVED_PERMISSION_MISSING"], null],
+        ["NOT_AUTHORIZED", ["ACCOUNT_PERMISSION_MISSING", "OBSERVED_PERMISSION_MISSING"], null],
+        ["UNSUPPORTED", ["CATALOG_UNSUPPORTED"], null],
+        ["UNSUPPORTED", ["OBSERVED_NOT_ELIGIBLE"], null],
+        ["UNKNOWN_NOT_VALIDATED", ["CATALOG_NOT_VALIDATED"], null],
+        ["UNKNOWN_NOT_VALIDATED", ["ACCOUNT_FACTS_UNAVAILABLE"], null],
+        ["UNKNOWN_NOT_VALIDATED", ["ACCOUNT_FACTS_INCONSISTENT"], null],
+      ] as const) {
+        expect(await attempt(state, reasons, limitation), `${state} ${reasons.join("+")}`).toBe("accepted");
+      }
+      const refused = "23514:profile_entries_state_reasons";
+      expect(await attempt("UNSUPPORTED", ["ACCOUNT_PERMISSION_MISSING"])).toBe(refused);
+      expect(await attempt("UNSUPPORTED", ["OBSERVED_PERMISSION_MISSING"])).toBe(refused);
+      expect(await attempt("UNSUPPORTED", ["CATALOG_UNSUPPORTED", "ACCOUNT_PERMISSION_MISSING"])).toBe(refused);
+      expect(await attempt("NOT_AUTHORIZED", ["CATALOG_UNSUPPORTED"])).toBe(refused);
+      expect(await attempt("NOT_AUTHORIZED", ["OBSERVED_NOT_ELIGIBLE"])).toBe(refused);
+      expect(await attempt("SUPPORTED", ["ACCOUNT_PERMISSION_MISSING"])).toBe(refused);
+      expect(await attempt("UNKNOWN_NOT_VALIDATED", ["CATALOG_SUPPORTED"])).toBe(refused);
+      expect(await attempt("NOT_AUTHORIZED", ["ACCOUNT_PERMISSION_MISSING"], "HISTORY_DEPTH_LIMITED")).toBe("23514:profile_entries_limitation_shape");
+      expect(await attempt("NOT_AUTHORIZED", [])).toBe("23514:profile_entries_reason_codes_check");
+      expect(await attempt("AUTHORIZATION_REQUIRED", ["ACCOUNT_PERMISSION_MISSING"])).toBe("23514:profile_entries_state_check");
     });
   });
 
@@ -297,7 +360,8 @@ export function defineCapabilitySuite(getTarget: () => DbTarget): void {
       expect(await writeFor(account, { catalogRevision: 2, minutes: 10, permissions: [] })).toEqual({ kind: "applied", revision: 2 });
       expect(await writeFor(account, { catalogRevision: 1, minutes: 59, permissions: ["sim.read_interactions"] })).toEqual({ kind: "stale", revision: 2 });
       expect((await header(account))?.catalog_revision).toBe(2);
-      expect(await readInteractions(account)).toBe("UNSUPPORTED");
+      // The revision-2 content granted nothing: a missing permission is NOT_AUTHORIZED (Step 7G-H5.5-P4-C).
+      expect(await readInteractions(account)).toBe("NOT_AUTHORIZED");
     });
 
     it("same revision, same inputs_as_of, different content: CONFLICT — rejected, never decided by digest order", async () => {
