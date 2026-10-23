@@ -892,3 +892,34 @@ This supersedes the P11-B statement that the live registry is Facebook-only. Sco
 **Accepting this record does NOT change the catalog.** The platform catalog stays `platform` r3 with its one Facebook
 entry, and the Instagram profile keeps ten UNKNOWN rows. Publishing Instagram `post` / `unknown` support is a later
 catalog gate (r4), followed by a paired release, web alignment and a Re-check.
+
+## Platform catalog r4: first published Instagram capability (Step 7G-H5.5-P11-E)
+
+**What changed (code only, local).** `PLATFORM_CATALOG` moves from `platform` r3 to **r4** (`platform-catalog-r4`)
+with exactly TWO entries: the Facebook entry, unchanged, and one new Instagram entry scoped exactly as its accepted
+record:
+
+| Field | Instagram entry |
+|---|---|
+| platform · assetClass | `instagram` · `content_bearing` (provider `meta`, implied by the platform) |
+| capability · contentKind · source | `read_content` · `post` · `unknown` |
+| state · limitation · validation | `SUPPORTED` · none · `validated` |
+| requiredPermissions | `instagram_basic`, `pages_read_engagement` |
+| evidence | `api-validation:meta.instagram.read_content.20261023-01` |
+
+Both entries are admissible with zero contract violations: each rests on its own accepted positive record of the same
+scope and permissions, and on its own live registration of `getContent` + `listContent`. No record backs the other
+platform's entry, and no entry is visible to the other platform's lookup.
+
+**No broadening.** Instagram `video`, `reel` and `carousel`, every other source (organic, paid, mixed, any), stories,
+live, tagged or mentioned media and generic `any` / `any` read_content stay UNKNOWN_NOT_VALIDATED. Organic or paid
+support is not claimed, and `pages_show_list` is not an Instagram read_content requirement: an account holding
+`instagram_basic` and `pages_read_engagement` without it gets the exact row SUPPORTED / CATALOG_SUPPORTED (availability
+AVAILABLE); missing either of the two gives NOT_AUTHORIZED / ACCOUNT_PERMISSION_MISSING.
+
+**Profiles (expected semantics, nothing executed).** No evaluator, resolver, Re-check, database or migration change.
+A fresh r4 profile has 11 rows on either platform (10 `any` / `any` rows plus the exact `read_content` · `post` ·
+`unknown` row). Once r4 is deployed, the stored r3 profiles (Facebook and Instagram) are stale by revision
+(`PROFILE_STALE`) until an explicit human Re-check; nothing rewrites them automatically.
+
+**Not claimed.** The runtime does not use r4 yet: no deploy, no Trigger release, no profile refreshed, no Re-check run.

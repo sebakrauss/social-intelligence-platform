@@ -79,15 +79,16 @@ describe("vocabulary", () => {
 describe("platform capability catalog", () => {
   it("carries a monotonic integer revision (the only ordering value) and a human label that is never compared", () => {
     // Revision 2 (Step 7G-H5.5): the vocabulary gained read_content, so every revision-1 profile is stale. Platform
-    // revision 3 (Step 7G-H5.5-P5-C9-C): its first entry, so every r2 platform profile is stale; the simulator stays r2.
-    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.id, SIMULATOR_CATALOG.revision]).toEqual(["platform", 3, "simulator", 2]);
+    // revision 3 (Step 7G-H5.5-P5-C9-C): its first entry, so every r2 platform profile is stale; revision 4 (Step
+    // 7G-H5.5-P11-E): the first Instagram entry, so every r3 platform profile is stale; the simulator stays r2.
+    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.id, SIMULATOR_CATALOG.revision]).toEqual(["platform", 4, "simulator", 2]);
     expect(Number.isInteger(PLATFORM_CATALOG.revision) && Number.isInteger(SIMULATOR_CATALOG.revision)).toBe(true);
-    expect([PLATFORM_CATALOG.label, SIMULATOR_CATALOG.label]).toEqual(["platform-catalog-r3", "simulator-catalog-r2"]);
+    expect([PLATFORM_CATALOG.label, SIMULATOR_CATALOG.label]).toEqual(["platform-catalog-r4", "simulator-catalog-r2"]);
     for (const file of ["modules/capability/application/ports.ts", "modules/capability/persistence/store.ts"]) expect(codeOf(file)).not.toMatch(/\.label\b/);
     expect(Object.isFrozen(PLATFORM_CATALOG.entries) && Object.isFrozen(SIMULATOR_CATALOG.entries)).toBe(true);
   });
 
-  it("resolves EVERY real-platform scope to UNKNOWN_NOT_VALIDATED except the one validated scope (facebook · content_bearing · read_content · post · unknown)", () => {
+  it("resolves EVERY real-platform scope to UNKNOWN_NOT_VALIDATED except the two validated scopes (facebook and instagram · content_bearing · read_content · post · unknown)", () => {
     let checked = 0;
     let supported = 0;
     for (const platform of PLATFORM_KEYS)
@@ -96,9 +97,12 @@ describe("platform capability catalog", () => {
           for (const contentKind of [...CAPABILITY_CONTENT_KINDS, ANY] as const)
             for (const source of [...CAPABILITY_SOURCES, ANY] as const) {
               const result = lookupCatalog(PLATFORM_CATALOG, { platform, assetClass, capability, contentKind, source });
-              const validated = platform === "facebook" && assetClass === "content_bearing" && capability === "read_content" && contentKind === "post" && source === "unknown";
+              const validated = platform !== "tiktok" && assetClass === "content_bearing" && capability === "read_content" && contentKind === "post" && source === "unknown";
               if (validated) {
-                expect(result).toMatchObject({ catalogRevision: 3, state: "SUPPORTED", validation: "validated", evidence: "api-validation:meta.facebook.read_content.20261023-01", limitation: null, requiredPermissions: ["pages_read_engagement", "pages_show_list"] });
+                const expected = platform === "facebook"
+                  ? { evidence: "api-validation:meta.facebook.read_content.20261023-01", requiredPermissions: ["pages_read_engagement", "pages_show_list"] }
+                  : { evidence: "api-validation:meta.instagram.read_content.20261023-01", requiredPermissions: ["instagram_basic", "pages_read_engagement"] };
+                expect(result).toMatchObject({ catalogRevision: 4, state: "SUPPORTED", validation: "validated", limitation: null, ...expected });
                 supported += 1;
               } else {
                 // Includes post/organic|paid|mixed|any and any/any: a wildcard scope matches only wildcard entries.
@@ -106,7 +110,7 @@ describe("platform capability catalog", () => {
               }
               checked += 1;
             }
-    expect([checked, supported]).toEqual([3 * 2 * 10 * 8 * 5, 1]);
+    expect([checked, supported]).toEqual([3 * 2 * 10 * 8 * 5, 2]);
   });
 
   it("guard: a real-platform entry may exist only as a validated, api-validation-evidenced fact — never a simulator one", () => {
@@ -114,7 +118,7 @@ describe("platform capability catalog", () => {
       expect(e.validation).toBe("validated");
       expect(e.evidence).toMatch(/^api-validation:/);
     }
-    expect(PLATFORM_CATALOG.entries).toHaveLength(1);
+    expect(PLATFORM_CATALOG.entries).toHaveLength(2);
     for (const e of SIMULATOR_CATALOG.entries) {
       expect(e.evidence).toBe("simulator:contract-v1");
       expect(e.platform).toBe(ANY);
@@ -157,10 +161,12 @@ describe("account capability evaluator (pure, conservative)", () => {
     expect(entry(limited, "read_interactions")).toMatchObject({ state: "NOT_AUTHORIZED", reasons: ["ACCOUNT_PERMISSION_MISSING"] });
   });
 
-  it("the real-platform catalog stays UNKNOWN even with every permission granted (facts never upgrade a catalog)", () => {
+  it("facts never upgrade the real-platform catalog: without the provider permissions an Instagram account gets no support", () => {
     const profile = evaluateProfile(input({ catalog: PLATFORM_CATALOG, facts: facts({ grantedPermissions: ["pages_manage_engagement", ...ALL_PERMISSIONS] }) }));
-    expect(profile.entries.every((e) => e.state === "UNKNOWN_NOT_VALIDATED")).toBe(true);
-    expect(profile.entries).toHaveLength(CAPABILITY_KEYS.length);
+    // r4 (Step 7G-H5.5-P11-E): the one exact Instagram row exists but lacks instagram_basic + pages_read_engagement.
+    expect(profile.entries).toHaveLength(CAPABILITY_KEYS.length + 1);
+    expect(profile.entries.filter((e) => e.state !== "UNKNOWN_NOT_VALIDATED").map((e) => [e.capability, e.contentKind, e.source, e.state])).toEqual([["read_content", "post", "unknown", "NOT_AUTHORIZED"]]);
+    expect(profile.entries.some((e) => e.state === "SUPPORTED")).toBe(false);
   });
 
   it("explicit observations: PermissionMissing (newer than the facts) and TargetNotEligible for its exact scope only", () => {

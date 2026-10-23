@@ -1,7 +1,8 @@
 /**
  * Step 7G-H5.5-P4-B — static guards around the PLATFORM capability catalog before its first validated entry:
  *   - the catalog literal stayed `platform` r2 with zero entries through P4-B…P5-C9-B; Step 7G-H5.5-P5-C9-C publishes r3
- *     with exactly one entry, scoped exactly as the first accepted record (Facebook read_content · post · unknown);
+ *     with exactly one entry, scoped exactly as the first accepted record (Facebook read_content · post · unknown); Step
+ *     7G-H5.5-P11-E publishes r4, adding exactly the accepted Instagram read_content · post · unknown entry;
  *   - the entry contract (modules/capability/domain/catalog-contract.ts) is development/test-time only — no runtime code
  *     imports it, so the evaluator and every deployed plane are unchanged;
  *   - every evidence record on disk passes the schema and the secret scan, and the real catalog is admissible against
@@ -72,19 +73,24 @@ function metaOperationImplemented(operation: string, readPortCode: string, metaM
   return false;
 }
 
-describe("the platform catalog is r3 with exactly the one evidenced entry (P5-C9-C)", () => {
-  it("the catalog literal is r3 with one entry: facebook · content_bearing · read_content · post · unknown, SUPPORTED, the two permissions, the accepted record", () => {
-    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label]).toEqual(["platform", 3, "platform-catalog-r3"]);
+describe("the platform catalog is r4 with exactly the two evidenced entries (P5-C9-C Facebook, P11-E Instagram)", () => {
+  it("the catalog literal is r4 with two entries: facebook and instagram · content_bearing · read_content · post · unknown, SUPPORTED, each with its own permissions and accepted record", () => {
+    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label]).toEqual(["platform", 4, "platform-catalog-r4"]);
     expect(PLATFORM_CATALOG.entries).toEqual([
       { platform: "facebook", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
         requiredPermissions: ["pages_read_engagement", "pages_show_list"], validation: "validated", evidence: FIRST_RECORD_ID },
+      { platform: "instagram", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
+        requiredPermissions: ["instagram_basic", "pages_read_engagement"], validation: "validated", evidence: INSTAGRAM_RECORD_ID },
     ]);
-    // The literal names exactly one evidence id and no source other than "unknown" outside the simulator catalog.
+    // The literal names exactly the two evidence ids and no source other than "unknown" outside the simulator catalog.
     const code = codeOf("modules/capability/domain/catalog.ts");
     const platformLiteral = code.slice(code.indexOf("export const PLATFORM_CATALOG"), code.indexOf("const SIM_EVIDENCE"));
-    expect(platformLiteral.match(/api-validation:[a-z0-9._-]+/g)).toEqual([FIRST_RECORD_ID]);
-    expect(platformLiteral).toMatch(/revision: 3,/);
-    expect(platformLiteral).not.toMatch(/source: "(organic|paid|mixed|any)"|contentKind: "(?!post")|ANY/);
+    expect(platformLiteral.match(/api-validation:[a-z0-9._-]+/g)).toEqual([FIRST_RECORD_ID, INSTAGRAM_RECORD_ID]);
+    expect(platformLiteral).toMatch(/revision: 4,/);
+    expect(platformLiteral).not.toMatch(/source: "(organic|paid|mixed|any)"|contentKind: "(?!post")|ANY|platform: "(?!facebook"|instagram")/);
+    // The Instagram capability requires its read-path permissions only (never pages_show_list).
+    expect(platformLiteral).toMatch(/requiredPermissions: Object\.freeze\(\["instagram_basic", "pages_read_engagement"\]\)/);
+    expect(platformLiteral.match(/pages_show_list/g)).toHaveLength(1);
   });
 
   it("the entry contract is development/test-time only: no runtime file imports it, and the module's public API does not export it", () => {
@@ -94,14 +100,14 @@ describe("the platform catalog is r3 with exactly the one evidenced entry (P5-C9
     expect(codeOf("modules/capability/index.ts")).not.toMatch(/catalog-contract/);
   });
 
-  it("the authorization semantics are RESOLVED (P4-C); TWO accepted records and TWO live registrations exist (Facebook P5-C9-B, Instagram P11-D); r3 still publishes only the Facebook entry (P5-C9-C)", () => {
+  it("the authorization semantics are RESOLVED (P4-C); TWO accepted records and TWO live registrations exist (Facebook P5-C9-B, Instagram P11-D); r4 publishes exactly one entry resting on each (P5-C9-C, P11-E)", () => {
     expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(false);
     expect(AUTHORIZATION_SEMANTICS).toBe("RESOLVED");
     expect(recordFiles()).toEqual([FIRST_RECORD_FILE, INSTAGRAM_RECORD_FILE]);
     expect(IMPLEMENTED_PLATFORM_OPERATIONS).toHaveLength(2);
-    // Publication is its own gate: r3 still has one entry, resting on the Facebook record; the Instagram record is accepted, unpublished.
-    expect(PLATFORM_CATALOG.revision).toBe(3);
-    expect(PLATFORM_CATALOG.entries.map((entry) => entry.evidence)).toEqual([FIRST_RECORD_ID]);
+    // Publication was its own gate per platform: r4 has two entries, each resting on its own record and registration.
+    expect(PLATFORM_CATALOG.revision).toBe(4);
+    expect(PLATFORM_CATALOG.entries.map((entry) => entry.evidence)).toEqual([FIRST_RECORD_ID, INSTAGRAM_RECORD_ID]);
     expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual([FIRST_RECORD_ID, INSTAGRAM_RECORD_ID]);
   });
 });
@@ -196,10 +202,10 @@ describe("evidence records and implementation evidence", () => {
       expect(`${record?.scenario ?? ""} ${record?.observedResult ?? ""}`).not.toMatch(/\borganic\b|\bpaid\b|minimal|CloudTrail|arn:|run_/i);
     });
 
-    it("the r3 catalog is admissible, and its one entry IS the matching post / unknown entry (P5-C9-C)", () => {
+    it("the r4 catalog is admissible, and its Facebook entry IS the matching post / unknown entry (P5-C9-C, unchanged)", () => {
       expect(platformCatalogViolations(PLATFORM_CATALOG, today)).toEqual([]);
       expect(check()).toEqual([]);
-      expect(PLATFORM_CATALOG.entries).toEqual([entry()]);
+      expect(PLATFORM_CATALOG.entries.filter((e) => e.platform === "facebook")).toEqual([entry()]);
     });
 
     it("the record supports NO other source: organic, paid, mixed and any are refused (scope mismatch, fail closed)", () => {
@@ -251,9 +257,9 @@ describe("evidence records and implementation evidence", () => {
       expect(text).toMatch(/no Page token derived/);
     });
 
-    it("an Instagram post / unknown entry WOULD be admissible (A + B + record) — but r3 publishes no Instagram entry", () => {
+    it("the Instagram post / unknown entry is admissible (A + B + record) and IS the r4 Instagram entry (P11-E)", () => {
       expect(check()).toEqual([]);
-      expect(PLATFORM_CATALOG.entries.filter((e) => e.platform === "instagram")).toEqual([]);
+      expect(PLATFORM_CATALOG.entries.filter((e) => e.platform === "instagram")).toEqual([entry()]);
       expect(platformCatalogViolations(PLATFORM_CATALOG, today)).toEqual([]);
     });
 
@@ -403,6 +409,20 @@ describe("P5-B documents: Facebook read_content implemented offline, validated l
       "| R13 |",
       "Accepting this record does NOT change the catalog",
     ]) expect(doc, phrase).toContain(phrase);
+  });
+
+  it("the Meta README records r4 (P11-E): exact Instagram scope, permissions, no broadening, Re-check pending, runtime not on r4", () => {
+    const doc = raw(META_README);
+    const section = doc.slice(doc.indexOf("## Platform catalog r4: first published Instagram capability (Step 7G-H5.5-P11-E)"));
+    expect(section.length).toBeGreaterThan(0);
+    for (const phrase of [
+      "`api-validation:meta.instagram.read_content.20261023-01`",
+      "| requiredPermissions | `instagram_basic`, `pages_read_engagement` |",
+      "`pages_show_list` is not an Instagram read_content requirement",
+      "Organic or paid\nsupport is not claimed",
+      "`PROFILE_STALE`",
+      "The runtime does not use r4 yet",
+    ]) expect(section, phrase).toContain(phrase);
   });
 
   it("the Meta README records r3 (P5-C9-C): exact scope, no broadening, Re-check pending, runtime not on r3", () => {

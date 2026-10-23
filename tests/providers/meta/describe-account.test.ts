@@ -162,7 +162,7 @@ describe("Meta describeAccount · refusals (fail closed; no partial description)
   });
 });
 
-describe("Meta facts through the real capability evaluator (platform catalog r3: one validated entry)", () => {
+describe("Meta facts through the real capability evaluator (platform catalog r4: one validated entry per Meta platform)", () => {
   it("only read_content post/unknown is SUPPORTED (both permissions granted); every any/any row stays UNKNOWN_NOT_VALIDATED; deterministic; revision recorded", async () => {
     const { describeAccount } = portWith(META_WORLD);
     const { data } = await describeAccount("facebook", PAGE);
@@ -170,7 +170,7 @@ describe("Meta facts through the real capability evaluator (platform catalog r3:
     expect(catalog).toBe(PLATFORM_CATALOG);
     const input = { catalog, platform: "facebook" as const, assetClass: "content_bearing" as const, facts: factsFromDescription(data, NOW), observations: [], evaluatedAt: NOW };
     const profile = evaluateProfile(input);
-    expect(profile).toMatchObject({ catalogId: "platform", catalogRevision: 3 });
+    expect(profile).toMatchObject({ catalogId: "platform", catalogRevision: 4 });
     const generic = profile.entries.filter((entry) => entry.contentKind === "any" && entry.source === "any");
     expect(generic.map((entry) => entry.capability).sort()).toEqual([...CAPABILITY_KEYS].sort());
     for (const entry of generic) expect(entry).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", reasons: ["CATALOG_NOT_VALIDATED"], catalogValidation: "not_validated", evidence: null });
@@ -179,5 +179,17 @@ describe("Meta facts through the real capability evaluator (platform catalog r3:
     ]);
     expect(evaluateProfile(input)).toEqual(profile);
     expect(inputDigest(input)).toBe(inputDigest({ ...input, evaluatedAt: new Date(NOW.getTime() + 60_000) }));
+  });
+
+  it("an Instagram account's described facts (instagram_basic + pages_read_engagement granted) → only its own read_content post/unknown row is SUPPORTED", async () => {
+    const { describeAccount } = portWith(META_WORLD);
+    const { data } = await describeAccount("instagram", IG);
+    const input = { catalog: selectCatalog("meta", { NODE_ENV: "production" }), platform: "instagram" as const, assetClass: "content_bearing" as const, facts: factsFromDescription(data, NOW), observations: [], evaluatedAt: NOW };
+    const profile = evaluateProfile(input);
+    expect(profile).toMatchObject({ catalogId: "platform", catalogRevision: 4 });
+    expect(profile.entries).toHaveLength(CAPABILITY_KEYS.length + 1);
+    expect(profile.entries.filter((entry) => entry.state !== "UNKNOWN_NOT_VALIDATED")).toEqual([
+      { capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", reasons: ["CATALOG_SUPPORTED"], limitation: null, catalogValidation: "validated", evidence: "api-validation:meta.instagram.read_content.20261023-01", observationRefs: [] },
+    ]);
   });
 });
