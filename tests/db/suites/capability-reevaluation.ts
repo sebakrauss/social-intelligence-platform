@@ -165,7 +165,9 @@ export function defineCapabilityReevaluationSuite(getTarget: () => DbTarget): vo
         evaluatedAt: clock(),
       }),
     );
-  const AVAILABLE = (): FactsInput => ({ kind: "available", assetClass: "content_bearing", grantedPermissions: [], linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: clock() });
+  // Usable facts: the account holds the two permissions platform r3's one entry names (Step 7G-H5.5-P5-C9-C), so a
+  // current profile built from them has no NOT_AUTHORIZED row and is genuinely "usable current".
+  const AVAILABLE = (): FactsInput => ({ kind: "available", assetClass: "content_bearing", grantedPermissions: ["pages_read_engagement", "pages_show_list"], linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: clock() });
   const UNAVAILABLE = (): FactsInput => ({ kind: "unavailable", observedAt: clock() });
 
   // ── Oracle reads ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -433,7 +435,7 @@ export function defineCapabilityReevaluationSuite(getTarget: () => DbTarget): vo
       };
       const t = await tenant();
       const missing = await seedAccount(t);
-      await writeProfile(t, missing.id, permissioned, AVAILABLE()); // grants nothing → NOT_AUTHORIZED / ACCOUNT_PERMISSION_MISSING
+      await writeProfile(t, missing.id, permissioned, AVAILABLE()); // lacks synthetic_read_content → NOT_AUTHORIZED / ACCOUNT_PERMISSION_MISSING
       const stored = await oracle<{ state: string; reason_codes: string[] }>("select state, reason_codes from capability.profile_entries where connected_account_id = $1 and capability = 'read_content'", [missing.id]);
       expect(stored).toEqual([{ state: "NOT_AUTHORIZED", reason_codes: ["ACCOUNT_PERMISSION_MISSING"] }]);
       const granted = await seedAccount(t);

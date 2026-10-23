@@ -2,7 +2,7 @@
  * PLATFORM catalog entry contract (Step 7G-H5.5-P4-B; design/phase-7g/meta-provider/api-validation/README.md — the
  * authority for the evidence record). Development/test-time validation ONLY: no runtime code imports this module
  * (guard-tested), so the evaluator, the stored profiles and every deployed plane are unchanged. It states, fail closed,
- * what a FUTURE real-platform catalog entry must carry before it may exist; today the platform catalog holds none.
+ * what every real-platform catalog entry must carry before it may exist — the published ones and any future one.
  *
  * The product question the capability system answers is "can Wrenkind perform X now for this connected account?"
  * (TL decision, P4-B). A positive entry (SUPPORTED, AVAILABLE_WITH_LIMITATION) therefore needs ALL of:
@@ -28,10 +28,13 @@
  * non-support (TA §16.2, Model §6.2). A catalog entry can't carry NOT_AUTHORIZED (CatalogState; refused here too), so
  * the blanket P4-B blocker is lifted. Every other requirement stands.
  *
- * FIRST ACCEPTED EVIDENCE (Step 7G-H5.5-P5-C9-B): `api-validation:meta.facebook.read_content.20261023-01` (Facebook
- * Page · content_bearing · read_content · post · unknown) is accepted and registered below. Accepting evidence never
- * changes the catalog: the platform catalog stays r2 with zero entries until a separate gate publishes an entry of
- * EXACTLY that scope (any other scope — organic, paid, mixed, any — is refused as EVIDENCE_SCOPE_MISMATCH).
+ * CURRENT STATE: accepted, positive LIVE evidence exists for Facebook read_content, and its validated operation set is
+ * registered in IMPLEMENTED_PLATFORM_OPERATIONS below. Platform catalog r3 publishes exactly one SUPPORTED entry resting
+ * on them — facebook · content_bearing · read_content · post · unknown — and no other scope: every unvalidated
+ * platform, asset class, capability, content kind or source (organic, paid, mixed, any) stays absent and resolves to
+ * UNKNOWN_NOT_VALIDATED. Accepting evidence never changes the catalog by itself, and every further entry stays
+ * fail-closed: it needs its own accepted positive record of exactly its scope and a matching implementation
+ * registration; any other scope is refused (EVIDENCE_SCOPE_MISMATCH).
  */
 import type { PlatformKey } from "@/domain/platforms";
 import type { CapabilityCatalog, CatalogEntry } from "./catalog";

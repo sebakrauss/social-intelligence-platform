@@ -78,26 +78,35 @@ describe("vocabulary", () => {
 
 describe("platform capability catalog", () => {
   it("carries a monotonic integer revision (the only ordering value) and a human label that is never compared", () => {
-    // Revision 2 (Step 7G-H5.5): the vocabulary gained read_content, so every revision-1 profile is stale.
-    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.id, SIMULATOR_CATALOG.revision]).toEqual(["platform", 2, "simulator", 2]);
+    // Revision 2 (Step 7G-H5.5): the vocabulary gained read_content, so every revision-1 profile is stale. Platform
+    // revision 3 (Step 7G-H5.5-P5-C9-C): its first entry, so every r2 platform profile is stale; the simulator stays r2.
+    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.id, SIMULATOR_CATALOG.revision]).toEqual(["platform", 3, "simulator", 2]);
     expect(Number.isInteger(PLATFORM_CATALOG.revision) && Number.isInteger(SIMULATOR_CATALOG.revision)).toBe(true);
-    expect([PLATFORM_CATALOG.label, SIMULATOR_CATALOG.label]).toEqual(["platform-catalog-r2", "simulator-catalog-r2"]);
+    expect([PLATFORM_CATALOG.label, SIMULATOR_CATALOG.label]).toEqual(["platform-catalog-r3", "simulator-catalog-r2"]);
     for (const file of ["modules/capability/application/ports.ts", "modules/capability/persistence/store.ts"]) expect(codeOf(file)).not.toMatch(/\.label\b/);
     expect(Object.isFrozen(PLATFORM_CATALOG.entries) && Object.isFrozen(SIMULATOR_CATALOG.entries)).toBe(true);
   });
 
-  it("resolves EVERY real-platform scope to UNKNOWN_NOT_VALIDATED (nothing has passed API validation)", () => {
+  it("resolves EVERY real-platform scope to UNKNOWN_NOT_VALIDATED except the one validated scope (facebook · content_bearing · read_content · post · unknown)", () => {
     let checked = 0;
+    let supported = 0;
     for (const platform of PLATFORM_KEYS)
       for (const assetClass of CAPABILITY_ASSET_CLASSES)
         for (const capability of CAPABILITY_KEYS)
           for (const contentKind of [...CAPABILITY_CONTENT_KINDS, ANY] as const)
             for (const source of [...CAPABILITY_SOURCES, ANY] as const) {
               const result = lookupCatalog(PLATFORM_CATALOG, { platform, assetClass, capability, contentKind, source });
-              expect(result).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", validation: "not_validated", evidence: null, limitation: null });
+              const validated = platform === "facebook" && assetClass === "content_bearing" && capability === "read_content" && contentKind === "post" && source === "unknown";
+              if (validated) {
+                expect(result).toMatchObject({ catalogRevision: 3, state: "SUPPORTED", validation: "validated", evidence: "api-validation:meta.facebook.read_content.20261023-01", limitation: null, requiredPermissions: ["pages_read_engagement", "pages_show_list"] });
+                supported += 1;
+              } else {
+                // Includes post/organic|paid|mixed|any and any/any: a wildcard scope matches only wildcard entries.
+                expect(result).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", validation: "not_validated", evidence: null, limitation: null });
+              }
               checked += 1;
             }
-    expect(checked).toBe(3 * 2 * 10 * 8 * 5);
+    expect([checked, supported]).toEqual([3 * 2 * 10 * 8 * 5, 1]);
   });
 
   it("guard: a real-platform entry may exist only as a validated, api-validation-evidenced fact — never a simulator one", () => {
@@ -105,7 +114,7 @@ describe("platform capability catalog", () => {
       expect(e.validation).toBe("validated");
       expect(e.evidence).toMatch(/^api-validation:/);
     }
-    expect(PLATFORM_CATALOG.entries).toHaveLength(0);
+    expect(PLATFORM_CATALOG.entries).toHaveLength(1);
     for (const e of SIMULATOR_CATALOG.entries) {
       expect(e.evidence).toBe("simulator:contract-v1");
       expect(e.platform).toBe(ANY);

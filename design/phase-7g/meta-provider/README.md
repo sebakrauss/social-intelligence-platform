@@ -738,3 +738,40 @@ with operations `getContent` + `listContent`. Scope: `facebook` · `content_bear
 the LIVE profiles keep their current state. A later gate may publish an r3 entry of exactly this scope (post / unknown,
 the two permissions, this evidence). The revision bump will make every profile `PROFILE_STALE` until a manual Re-check.
 
+## Platform catalog r3: first published supported capability (Step 7G-H5.5-P5-C9-C)
+
+**What changed (code only, local).** `PLATFORM_CATALOG` moves from `platform` r2 (no entries) to **r3**
+(`platform-catalog-r3`) with exactly ONE entry, scoped exactly as the accepted record:
+
+| Field | Value |
+|---|---|
+| platform · assetClass | `facebook` · `content_bearing` (provider `meta`, implied by the platform) |
+| capability · contentKind · source | `read_content` · `post` · `unknown` |
+| state · limitation · validation | `SUPPORTED` · none · `validated` |
+| requiredPermissions | `pages_read_engagement`, `pages_show_list` |
+| evidence | `api-validation:meta.facebook.read_content.20261023-01` |
+
+The entry contract admits it with no violation: the record is accepted and positive with the identical scope and
+identical permissions, and the one live registration (`IMPLEMENTED_PLATFORM_OPERATIONS`) rests on that same record with
+exactly `READ_CONTENT_REQUIRED_OPERATIONS`. The record and the registry are unchanged.
+
+**No broadening.**
+- No `organic`, `paid`, `mixed` or `any` source entry exists. `unknown` stays the provider-reported source, never
+  translated to organic.
+- No other content kind, no `any` kind, no Instagram, TikTok or `ad_account` entry, no other capability.
+- A generic `read_content` caller (`any` / `any`) still resolves to its own UNKNOWN row. The catalog lookup lets a
+  wildcard scope match only wildcard entries, and the profile resolver is not widened. Making generic callers ask
+  for the exact scope is future H6 caller work.
+
+**Profiles (expected semantics, nothing executed).** The evaluator, the availability resolver, the Re-check action and
+the database are unchanged; no migration (the stored scope columns already admit `post` / `unknown`).
+- Once r3 is deployed, every stored platform profile evaluated at r2 is stale by revision (`PROFILE_STALE`) until an
+  explicit Re-check. No row is rewritten by this change.
+- After a Re-check, a Facebook Page holding both permissions gets a `read_content` · `post` · `unknown` row that is
+  `SUPPORTED` / `CATALOG_SUPPORTED` (availability `AVAILABLE`), next to its `any` / `any` rows, which stay
+  UNKNOWN_NOT_VALIDATED.
+- A Page missing either permission gets `NOT_AUTHORIZED` / `ACCOUNT_PERMISSION_MISSING`, never UNSUPPORTED.
+- Instagram profiles keep ten UNKNOWN rows.
+
+**Not claimed.** The runtime does not use r3 yet: no deploy, no Trigger release, no profile refreshed, no Re-check
+run. The source, permission and reference semantics of the C9-B section above apply unchanged.

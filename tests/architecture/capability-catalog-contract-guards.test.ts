@@ -1,6 +1,7 @@
 /**
  * Step 7G-H5.5-P4-B — static guards around the PLATFORM capability catalog before its first validated entry:
- *   - the catalog literal stays `platform` r2 with zero entries (P4-B adds none and stales no profile);
+ *   - the catalog literal stayed `platform` r2 with zero entries through P4-B…P5-C9-B; Step 7G-H5.5-P5-C9-C publishes r3
+ *     with exactly one entry, scoped exactly as the first accepted record (Facebook read_content · post · unknown);
  *   - the entry contract (modules/capability/domain/catalog-contract.ts) is development/test-time only — no runtime code
  *     imports it, so the evaluator and every deployed plane are unchanged;
  *   - every evidence record on disk passes the schema and the secret scan, and the real catalog is admissible against
@@ -69,12 +70,19 @@ function metaOperationImplemented(operation: string, readPortCode: string, metaM
   return false;
 }
 
-describe("the platform catalog is frozen at r2 with zero entries", () => {
-  it("the literal in catalog.ts is exactly the empty r2 catalog", () => {
-    expect(codeOf("modules/capability/domain/catalog.ts")).toContain(
-      'export const PLATFORM_CATALOG: CapabilityCatalog = Object.freeze({ id: "platform", revision: 2, label: "platform-catalog-r2", entries: Object.freeze([]) });',
-    );
-    expect(PLATFORM_CATALOG.entries).toHaveLength(0);
+describe("the platform catalog is r3 with exactly the one evidenced entry (P5-C9-C)", () => {
+  it("the catalog literal is r3 with one entry: facebook · content_bearing · read_content · post · unknown, SUPPORTED, the two permissions, the accepted record", () => {
+    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label]).toEqual(["platform", 3, "platform-catalog-r3"]);
+    expect(PLATFORM_CATALOG.entries).toEqual([
+      { platform: "facebook", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
+        requiredPermissions: ["pages_read_engagement", "pages_show_list"], validation: "validated", evidence: FIRST_RECORD_ID },
+    ]);
+    // The literal names exactly one evidence id and no source other than "unknown" outside the simulator catalog.
+    const code = codeOf("modules/capability/domain/catalog.ts");
+    const platformLiteral = code.slice(code.indexOf("export const PLATFORM_CATALOG"), code.indexOf("const SIM_EVIDENCE"));
+    expect(platformLiteral.match(/api-validation:[a-z0-9._-]+/g)).toEqual([FIRST_RECORD_ID]);
+    expect(platformLiteral).toMatch(/revision: 3,/);
+    expect(platformLiteral).not.toMatch(/source: "(organic|paid|mixed|any)"|contentKind: "(?!post")|ANY/);
   });
 
   it("the entry contract is development/test-time only: no runtime file imports it, and the module's public API does not export it", () => {
@@ -84,14 +92,15 @@ describe("the platform catalog is frozen at r2 with zero entries", () => {
     expect(codeOf("modules/capability/index.ts")).not.toMatch(/catalog-contract/);
   });
 
-  it("the authorization semantics are RESOLVED (P4-C); exactly ONE accepted record and ONE live registration exist (P5-C9-B) — and the catalog is still empty", () => {
+  it("the authorization semantics are RESOLVED (P4-C); exactly ONE accepted record and ONE live registration exist (P5-C9-B); r3 publishes exactly one entry resting on them (P5-C9-C)", () => {
     expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(false);
     expect(AUTHORIZATION_SEMANTICS).toBe("RESOLVED");
     expect(recordFiles()).toEqual([FIRST_RECORD_FILE]);
     expect(IMPLEMENTED_PLATFORM_OPERATIONS).toHaveLength(1);
-    // Accepting evidence never mutates the catalog: publication is a separate, deliberate gate.
-    expect(PLATFORM_CATALOG.revision).toBe(2);
-    expect(PLATFORM_CATALOG.entries).toHaveLength(0);
+    // Publication was its own gate (P5-C9-C): r3, one entry, resting on the one record and the one registration.
+    expect(PLATFORM_CATALOG.revision).toBe(3);
+    expect(PLATFORM_CATALOG.entries.map((entry) => entry.evidence)).toEqual([FIRST_RECORD_ID]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual([FIRST_RECORD_ID]);
   });
 });
 
@@ -184,9 +193,10 @@ describe("evidence records and implementation evidence", () => {
       expect(`${record?.scenario ?? ""} ${record?.observedResult ?? ""}`).not.toMatch(/\borganic\b|\bpaid\b|minimal|CloudTrail|arn:|run_/i);
     });
 
-    it("the catalog stays r2 / [] and admissible; a matching post / unknown entry WOULD be admissible", () => {
+    it("the r3 catalog is admissible, and its one entry IS the matching post / unknown entry (P5-C9-C)", () => {
       expect(platformCatalogViolations(PLATFORM_CATALOG, today)).toEqual([]);
       expect(check()).toEqual([]);
+      expect(PLATFORM_CATALOG.entries).toEqual([entry()]);
     });
 
     it("the record supports NO other source: organic, paid, mixed and any are refused (scope mismatch, fail closed)", () => {
@@ -309,6 +319,20 @@ describe("P5-B documents: Facebook read_content implemented offline, validated l
       "| R13 |",
       "Accepting this record does NOT change the catalog",
     ]) expect(doc, phrase).toContain(phrase);
+  });
+
+  it("the Meta README records r3 (P5-C9-C): exact scope, no broadening, Re-check pending, runtime not on r3", () => {
+    const doc = raw(META_README);
+    const section = doc.slice(doc.indexOf("## Platform catalog r3: first published supported capability (Step 7G-H5.5-P5-C9-C)"));
+    expect(section.length).toBeGreaterThan(0);
+    for (const phrase of [
+      "`read_content` · `post` · `unknown`",
+      "`api-validation:meta.facebook.read_content.20261023-01`",
+      "No `organic`, `paid`, `mixed` or `any` source entry exists",
+      "`PROFILE_STALE`",
+      "future H6 caller work",
+      "The runtime does not use r3 yet",
+    ]) expect(section, phrase).toContain(phrase);
   });
 });
 

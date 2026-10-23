@@ -6,11 +6,13 @@
  *
  * Two catalogs exist and are selected by the CONNECTION PROVIDER, never by platform:
  *
- *   "platform"   Facebook / Instagram / TikTok through real adapters (meta, tiktok). It holds NO entries: nothing has
- *                passed real-provider API validation (PD OQ-18, OQ-19, OQ-27 VALIDATE), so every lookup resolves to
- *                UNKNOWN_NOT_VALIDATED. An entry may be added only with validation "validated" and an
- *                "api-validation:" evidence reference from the project's validation process (guard-tested). An
- *                adapter exposing a method, or a documented provider feature, is NOT evidence.
+ *   "platform"   Facebook / Instagram / TikTok through real adapters (meta, tiktok). It holds exactly ONE entry (r3):
+ *                Facebook read_content for content kind `post` and source `unknown`, backed by the accepted LIVE record
+ *                api-validation:meta.facebook.read_content.20261023-01. Every other scope has passed no real-provider
+ *                API validation (PD OQ-18, OQ-19, OQ-27 VALIDATE) and resolves to UNKNOWN_NOT_VALIDATED. An entry may
+ *                be added only with validation "validated" and an "api-validation:" evidence reference from the
+ *                project's validation process (guard-tested). An adapter exposing a method, or a documented provider
+ *                feature, is NOT evidence.
  *   "simulator"  SIMULATOR CONTRACT BEHAVIOR ONLY. Deterministic entries that exercise every state of the
  *                architecture in local development and tests. They are not evidence about Meta, Instagram or
  *                TikTok, are never consulted for a real provider, and are refused outside development/test.
@@ -21,7 +23,8 @@
  * A revision covers everything an evaluation's output depends on besides the account's inputs: the entries AND the
  * capability vocabulary they are evaluated over. Revision 2 (Step 7G-H5.5) adds `read_content` to the vocabulary, so
  * every revision-1 profile lacks a row for it and is stale by revision: availability refuses it (PROFILE_STALE) and
- * reconciliation requests its re-evaluation. The platform catalog still holds no entry.
+ * reconciliation requests its re-evaluation. Revision 3 of the platform catalog (Step 7G-H5.5-P5-C9-C) adds its first
+ * entry, so every platform profile evaluated at r2 is stale by revision in the same way until an explicit Re-check.
  *
  * The PROFILE state vocabulary is not part of a revision's content: Step 7G-H5.5-P4-C added NOT_AUTHORIZED (a missing
  * authorization, previously stored as UNSUPPORTED) without changing any entry, capability key or scope, so neither
@@ -69,13 +72,35 @@ export interface CapabilityCatalog {
 }
 
 /**
- * Real platforms: empty until API validation produces evidence-backed entries. Frozen at r2 with zero entries (Step
- * 7G-H5.5-P4-B). Every future entry must satisfy the entry contract in ./catalog-contract.ts (api-validation evidence
- * record, named permissions, registered implementation evidence). The authorization semantics are resolved (Step
- * 7G-H5.5-P4-C: a missing authorization is the PROFILE state NOT_AUTHORIZED, never a catalog verdict), which is a
- * profile-output vocabulary change only: no entry, capability key or scope changed, so neither catalog revision moves.
+ * Real platforms: only API-validated, evidence-backed entries. Every entry must satisfy the entry contract in
+ * ./catalog-contract.ts (accepted api-validation evidence record of the exact scope, identical named permissions,
+ * registered implementation evidence). The authorization semantics are resolved (Step 7G-H5.5-P4-C: a missing
+ * authorization is the PROFILE state NOT_AUTHORIZED, never a catalog verdict).
+ *
+ * r3 (Step 7G-H5.5-P5-C9-C) publishes the first and only entry, scoped EXACTLY as its evidence: Facebook ·
+ * content_bearing · read_content · `post` · `unknown`. `unknown` is the source the provider reported; it is never
+ * widened to `any` nor read as `organic`, so organic, paid, mixed and every other content kind stay UNKNOWN. Whether an
+ * account holds the two permissions is account truth, decided by the profile (NOT_AUTHORIZED), never here.
  */
-export const PLATFORM_CATALOG: CapabilityCatalog = Object.freeze({ id: "platform", revision: 2, label: "platform-catalog-r2", entries: Object.freeze([]) });
+export const PLATFORM_CATALOG: CapabilityCatalog = Object.freeze({
+  id: "platform",
+  revision: 3,
+  label: "platform-catalog-r3",
+  entries: Object.freeze([
+    Object.freeze({
+      platform: "facebook",
+      assetClass: "content_bearing",
+      capability: "read_content",
+      contentKind: "post",
+      source: "unknown",
+      state: "SUPPORTED",
+      limitation: null,
+      requiredPermissions: Object.freeze(["pages_read_engagement", "pages_show_list"]),
+      validation: "validated",
+      evidence: "api-validation:meta.facebook.read_content.20261023-01",
+    }),
+  ]),
+});
 
 const SIM_EVIDENCE = "simulator:contract-v1";
 const sim = (

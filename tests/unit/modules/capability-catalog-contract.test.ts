@@ -5,15 +5,20 @@
  * (Step 7G-H5.5-P4-C: NOT_AUTHORIZED is profile-only), yet with no accepted record and no registered implementation
  * evidence no real platform entry is admissible. The LIVE-shaped facts observed in P3
  * (Facebook Page and Instagram professional account, five granted permissions) evaluate to ten UNKNOWN rows each.
+ * Step 7G-H5.5-P5-C9-C: platform r3 holds exactly one entry (Facebook read_content · post · unknown, backed by the
+ * first accepted record); the same LIVE-shaped facts now add one SUPPORTED row for that exact scope on Facebook only.
  */
 import { describe, expect, it } from "vitest";
 import {
   ANY,
+  CAPABILITY_CONTENT_KINDS,
   CAPABILITY_KEYS,
+  CAPABILITY_SOURCES,
   PLATFORM_CATALOG,
   SIMULATOR_CATALOG,
   effectiveAvailability,
   evaluateProfile,
+  isCurrentProfile,
   resolveEntry,
   selectCatalog,
   type AccountFacts,
@@ -77,13 +82,115 @@ const TODAY: CatalogContractContext = { records: [], offlineImplementations: OFF
 
 const violations = (entry: Partial<CatalogEntry>, context: Partial<CatalogContractContext> = {}) => platformEntryViolations({ ...ENTRY, ...entry }, { ...RESOLVED, ...context });
 
-describe("P4-B freeze: the platform catalog stays r2 with zero entries; no entry is admissible yet", () => {
-  it("platform r2, label platform-catalog-r2, entries [] (frozen) — and the whole catalog is admissible under today's context", () => {
-    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label, PLATFORM_CATALOG.entries.length]).toEqual(["platform", 2, "platform-catalog-r2", 0]);
+/**
+ * The first accepted record as a fixture (its file is design/phase-7g/meta-provider/api-validation/records/…; the
+ * architecture guard proves the file itself parses to exactly these fields and admits the real catalog).
+ */
+const FIRST_EVIDENCE = "api-validation:meta.facebook.read_content.20261023-01";
+const FIRST_RECORD: ApiValidationRecord = Object.freeze({
+  ...RECORD,
+  id: FIRST_EVIDENCE,
+  contentKind: "post",
+  source: "unknown",
+  validatedOn: "2026-10-23",
+  sourceRevision: "fb91ead8bfb79e8c8a5c1a210f65800997afc9b1",
+  requiredPermissions: Object.freeze(["pages_read_engagement", "pages_show_list"]),
+});
+const TODAY_WITH_RECORD: CatalogContractContext = { ...TODAY, records: [FIRST_RECORD] };
+const R3_ENTRY: CatalogEntry = {
+  platform: "facebook", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
+  requiredPermissions: ["pages_read_engagement", "pages_show_list"], validation: "validated", evidence: FIRST_EVIDENCE,
+};
+
+describe("P5-C9-C: platform catalog r3 holds exactly the one evidenced entry", () => {
+  it("platform r3, label platform-catalog-r3, exactly one frozen entry: facebook · content_bearing · read_content · post · unknown · SUPPORTED", () => {
+    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label, PLATFORM_CATALOG.entries.length]).toEqual(["platform", 3, "platform-catalog-r3", 1]);
     expect(Object.isFrozen(PLATFORM_CATALOG) && Object.isFrozen(PLATFORM_CATALOG.entries)).toBe(true);
-    expect(platformCatalogViolations(PLATFORM_CATALOG, TODAY)).toEqual([]);
+    expect(PLATFORM_CATALOG.entries[0]).toEqual(R3_ENTRY);
+    expect(Object.isFrozen(PLATFORM_CATALOG.entries[0]) && Object.isFrozen(PLATFORM_CATALOG.entries[0]?.requiredPermissions)).toBe(true);
   });
 
+  it("the catalog is admissible with the accepted record — and fails closed without it", () => {
+    expect(platformCatalogViolations(PLATFORM_CATALOG, TODAY_WITH_RECORD)).toEqual([]);
+    expect(platformCatalogViolations(PLATFORM_CATALOG, TODAY)).toEqual([{ index: 0, violations: ["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"] }]);
+  });
+
+  it("no organic, paid, mixed or any source; no any or other content kind; no other platform, asset class or capability", () => {
+    const entries = PLATFORM_CATALOG.entries;
+    for (const source of ["organic", "paid", "mixed", ANY]) expect(entries.filter((e) => e.source === source), source).toEqual([]);
+    for (const contentKind of [ANY, ...CAPABILITY_CONTENT_KINDS.filter((k) => k !== "post")]) expect(entries.filter((e) => e.contentKind === contentKind), contentKind).toEqual([]);
+    expect(entries.filter((e) => e.platform !== "facebook" || e.assetClass !== "content_bearing" || e.capability !== "read_content")).toEqual([]);
+  });
+
+  it("the entry fails closed on any defect: wrong evidence id, non-accepted or negative evidence, wrong permissions, other scope", () => {
+    const check = (patch: Partial<CatalogEntry>, context: CatalogContractContext = TODAY_WITH_RECORD) => platformEntryViolations({ ...R3_ENTRY, ...patch }, context);
+    expect(check({})).toEqual([]);
+    expect(check({ evidence: "api-validation:meta.facebook.read_content.20261023-02" })).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
+    expect(check({ evidence: "simulator:contract-v1" })).toContain("EVIDENCE_NOT_API_VALIDATION");
+    expect(check({}, { ...TODAY, records: [{ ...FIRST_RECORD, status: "draft" }] })).toContain("EVIDENCE_RECORD_NOT_ACCEPTED");
+    const negative: ApiValidationRecord = { ...FIRST_RECORD, polarity: "authoritative_negative", negativeBasis: "provider_documentation" };
+    expect(check({}, { ...TODAY, records: [negative] })).toContain("EVIDENCE_POLARITY_MISMATCH");
+    expect(check({ requiredPermissions: ["pages_read_engagement"] })).toContain("EVIDENCE_PERMISSIONS_MISMATCH");
+    expect(check({ requiredPermissions: ["pages_read_engagement", "pages_read_user_content", "pages_show_list"] })).toContain("EVIDENCE_PERMISSIONS_MISMATCH");
+    expect(check({ requiredPermissions: [] })).toEqual(expect.arrayContaining(["REQUIRED_PERMISSIONS_EMPTY", "EVIDENCE_PERMISSIONS_MISMATCH"]));
+    for (const source of ["organic", "paid", "mixed", ANY] as const) expect(check({ source }), source).toContain("EVIDENCE_SCOPE_MISMATCH");
+    for (const contentKind of ["reel", "video", "carousel", "story", ANY] as const) expect(check({ contentKind }), contentKind).toContain("EVIDENCE_SCOPE_MISMATCH");
+    expect(check({ platform: "instagram" })).toContain("EVIDENCE_SCOPE_MISMATCH");
+  });
+});
+
+describe("P5-C9-C: what r3 means for profiles (existing evaluator, unchanged)", () => {
+  const T = new Date("2026-10-23T08:00:00.000Z");
+  const both = ["pages_read_engagement", "pages_show_list"];
+  const fbFacts = (granted: readonly string[]): AccountFacts => ({ kind: "available", assetClass: "content_bearing", grantedPermissions: granted, linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: T });
+  const evaluate = (granted: readonly string[], platform: "facebook" | "instagram" = "facebook") =>
+    evaluateProfile({ catalog: selectCatalog("meta", { NODE_ENV: "production" }), platform, assetClass: "content_bearing", facts: fbFacts(granted), observations: [], evaluatedAt: T });
+
+  it("A: a Facebook Page holding both permissions → exact post / unknown SUPPORTED / CATALOG_SUPPORTED → AVAILABLE", () => {
+    const row = resolveEntry(evaluate(both).entries, "read_content", "post", "unknown");
+    expect(row).toMatchObject({ contentKind: "post", source: "unknown", state: "SUPPORTED", reasons: ["CATALOG_SUPPORTED"], catalogValidation: "validated", evidence: FIRST_EVIDENCE });
+    expect(effectiveAvailability(row, "ACTIVE", "read_content", T)).toMatchObject({ state: "AVAILABLE", reason: "CAPABILITY_SUPPORTED", scope: { contentKind: "post", source: "unknown" } });
+  });
+
+  it("B / C: missing pages_read_engagement or pages_show_list → NOT_AUTHORIZED / ACCOUNT_PERMISSION_MISSING (never UNSUPPORTED)", () => {
+    for (const granted of [["pages_show_list"], ["pages_read_engagement"], []]) {
+      const row = resolveEntry(evaluate(granted).entries, "read_content", "post", "unknown");
+      expect(row, granted.join(",")).toMatchObject({ contentKind: "post", source: "unknown", state: "NOT_AUTHORIZED", reasons: ["ACCOUNT_PERMISSION_MISSING"] });
+      expect(effectiveAvailability(row, "ACTIVE", "read_content", T)).toMatchObject({ state: "UNAVAILABLE", reason: "ACCOUNT_PERMISSION_MISSING", recovery: "REAUTHORIZE" });
+    }
+  });
+
+  it("D: generic any / any does NOT inherit post / unknown support (its own row stays UNKNOWN; resolver not widened)", () => {
+    const entries = evaluate(both).entries.filter((e) => e.capability === "read_content");
+    expect(entries.map((e) => [e.contentKind, e.source, e.state])).toEqual([[ANY, ANY, "UNKNOWN_NOT_VALIDATED"], ["post", "unknown", "SUPPORTED"]]);
+    const generic = resolveEntry(evaluate(both).entries, "read_content", ANY, ANY);
+    expect(generic).toMatchObject({ contentKind: ANY, source: ANY, state: "UNKNOWN_NOT_VALIDATED", reasons: ["CATALOG_NOT_VALIDATED"], evidence: null });
+    expect(effectiveAvailability(generic, "ACTIVE", "read_content", T)).toMatchObject({ state: "UNAVAILABLE", reason: "CAPABILITY_NOT_VALIDATED" });
+  });
+
+  it("E: Instagram is unaffected — ten UNKNOWN any/any rows, whatever was granted", () => {
+    const profile = evaluate([...both, "instagram_basic"], "instagram");
+    expect(profile.entries).toHaveLength(10);
+    for (const e of profile.entries) expect(e).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", contentKind: ANY, source: ANY });
+  });
+
+  it("F: every other content kind / source on Facebook read_content resolves to the UNKNOWN any/any row", () => {
+    const entries = evaluate(both).entries;
+    for (const contentKind of [...CAPABILITY_CONTENT_KINDS, ANY] as const)
+      for (const source of [...CAPABILITY_SOURCES, ANY] as const) {
+        if (contentKind === "post" && source === "unknown") continue;
+        expect(resolveEntry(entries, "read_content", contentKind, source), `${contentKind}/${source}`).toMatchObject({ contentKind: ANY, source: ANY, state: "UNKNOWN_NOT_VALIDATED" });
+      }
+  });
+
+  it("staleness: a platform profile evaluated at r2 is not current against r3 (PROFILE_STALE until an explicit Re-check)", () => {
+    expect(isCurrentProfile({ catalogId: "platform", catalogRevision: 2 }, "meta")).toBe(false);
+    expect(isCurrentProfile({ catalogId: "platform", catalogRevision: 3 }, "meta")).toBe(true);
+    expect(evaluate(both).catalogRevision).toBe(3);
+  });
+});
+
+describe("P4-B / P4-C contract history", () => {
   it("authorization semantics are RESOLVED (P4-C): the blanket blocker is lifted, but today's context still admits no entry", () => {
     expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(false);
     expect(AUTHORIZATION_SEMANTICS).toBe("RESOLVED");
@@ -261,14 +368,18 @@ describe("G3 — LIVE-shaped P3 facts produce no SUPPORTED and no UNSUPPORTED (f
   const liveFacts: AccountFacts = { kind: "available", assetClass: "content_bearing", grantedPermissions: LIVE_GRANTED, linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: new Date("2026-10-22T12:47:03.097Z") };
 
   for (const platform of ["facebook", "instagram"] as const) {
-    it(`${platform}: 10 × UNKNOWN_NOT_VALIDATED / CATALOG_NOT_VALIDATED on platform r2 (scope any/any)`, () => {
+    it(`${platform}: 10 × UNKNOWN_NOT_VALIDATED / CATALOG_NOT_VALIDATED (scope any/any) on platform r3${platform === "facebook" ? " + exactly one SUPPORTED read_content post/unknown row" : ""}`, () => {
       const profile = evaluateProfile({ catalog: selectCatalog("meta", { NODE_ENV: "production" }), platform, assetClass: "content_bearing", facts: liveFacts, observations: [], evaluatedAt: new Date("2026-10-22T12:47:03.440Z") });
-      expect([profile.catalogId, profile.catalogRevision]).toEqual(["platform", 2]);
-      expect(profile.entries).toHaveLength(10);
-      expect(profile.entries.map((e) => e.capability).sort()).toEqual([...CAPABILITY_KEYS].sort());
-      expect(profile.entries.filter((e) => e.state === "SUPPORTED" || e.state === "AVAILABLE_WITH_LIMITATION")).toHaveLength(0);
-      expect(profile.entries.filter((e) => e.state === "UNSUPPORTED")).toHaveLength(0);
-      for (const e of profile.entries) expect(e).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", reasons: ["CATALOG_NOT_VALIDATED"], contentKind: ANY, source: ANY, catalogValidation: "not_validated", evidence: null });
+      expect([profile.catalogId, profile.catalogRevision]).toEqual(["platform", 3]);
+      const generic = profile.entries.filter((e) => e.contentKind === ANY && e.source === ANY);
+      expect(generic).toHaveLength(10);
+      expect(generic.map((e) => e.capability).sort()).toEqual([...CAPABILITY_KEYS].sort());
+      for (const e of generic) expect(e).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", reasons: ["CATALOG_NOT_VALIDATED"], catalogValidation: "not_validated", evidence: null });
+      const exact = profile.entries.filter((e) => !(e.contentKind === ANY && e.source === ANY));
+      expect(exact).toEqual(platform === "facebook"
+        ? [{ capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", reasons: ["CATALOG_SUPPORTED"], limitation: null, catalogValidation: "validated", evidence: FIRST_EVIDENCE, observationRefs: [] }]
+        : []);
+      expect(profile.entries.filter((e) => e.state === "UNSUPPORTED" || e.state === "NOT_AUTHORIZED")).toHaveLength(0);
     });
   }
 

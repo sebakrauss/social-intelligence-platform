@@ -539,7 +539,12 @@ export function defineCapabilitySuite(getTarget: () => DbTarget): void {
         expect(stored).toMatchObject({ workspace_id: world.A2, catalog_id: "platform", facts_available: true, facts_granted_permissions: [] });
         const rows = await entries(account);
         expect(rows.length).toBeGreaterThan(0);
-        expect(rows.every((row) => row.state === "UNKNOWN_NOT_VALIDATED")).toBe(true); // the stub never makes anything supported
+        // The stub never makes anything supported: it grants no permission, so platform r3's one entry (read_content
+        // post/unknown, Step 7G-H5.5-P5-C9-C) is NOT_AUTHORIZED and every other row stays UNKNOWN_NOT_VALIDATED.
+        expect(rows.filter((row) => row.state !== "UNKNOWN_NOT_VALIDATED")).toEqual([
+          expect.objectContaining({ capability: "read_content", content_kind: "post", source: "unknown", state: "NOT_AUTHORIZED", reason_codes: ["ACCOUNT_PERMISSION_MISSING"] }),
+        ]);
+        expect(rows.filter((row) => row.state === "SUPPORTED" || row.state === "AVAILABLE_WITH_LIMITATION")).toEqual([]);
         expect(fetchSpy).not.toHaveBeenCalled();
         expect(httpSpy).not.toHaveBeenCalled();
         expect(httpsSpy).not.toHaveBeenCalled();
