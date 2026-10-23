@@ -292,10 +292,15 @@ describe("evidence records and implementation evidence", () => {
     });
   });
 
-  it("the implementation checker reads the adapter as it is: describeAccount, listContent, getContent implemented; other capability reads refused; no Meta mutation port", () => {
+  it("the implementation checker reads the adapter as it is: describeAccount, listContent, getContent and (P12-B1) listInteractions, getInteraction implemented; other capability reads refused; no Meta mutation port", () => {
     const readPort = codeOf("integrations/providers/meta/read-port.ts");
-    for (const op of ["describeAccount", "listContent", "getContent"]) expect(metaOperationImplemented(op, readPort, false), op).toBe(true);
-    for (const op of ["listInteractions", "getInteraction", "getCurrentState", "retrievePaidContext"]) expect(metaOperationImplemented(op, readPort, false), op).toBe(false);
+    for (const op of ["describeAccount", "listContent", "getContent", "listInteractions", "getInteraction"]) expect(metaOperationImplemented(op, readPort, false), op).toBe(true);
+    for (const op of ["getCurrentState", "retrievePaidContext"]) expect(metaOperationImplemented(op, readPort, false), op).toBe(false);
+    // P12-B1 implements the interaction reads offline WITHOUT registering them: no offline registration, no declared
+    // operation set and no live registration exist for read_interactions until P12-B2.
+    expect(OFFLINE_IMPLEMENTED_OPERATIONS.some((op) => op.capability === "read_interactions")).toBe(false);
+    expect(CAPABILITY_REQUIRED_OPERATIONS.read_interactions).toBeUndefined();
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.some((op) => op.capability === "read_interactions")).toBe(false);
     expect(existsSync(path.join(REPOSITORY_ROOT, "integrations/providers/meta/mutation-port.ts"))).toBe(false);
     for (const op of MUTATION_OPERATIONS) expect(metaOperationImplemented(op, readPort, false)).toBe(false);
     expect(metaOperationImplemented("notAnOperation", readPort, true)).toBe(false);

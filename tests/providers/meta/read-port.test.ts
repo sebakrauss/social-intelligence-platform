@@ -114,8 +114,9 @@ describe("Meta read port · shape (shared contract assertions that apply)", () =
     expect(DISCOVER_ASSETS_MAX_PAGES).toBe(20);
   });
 
-  // listContent / getContent (Step 7G-H5.5-P5-B) are covered in read-content.test.ts.
-  it.each(READ_OPERATIONS.filter((operation) => !["discoverAssets", "describeAccount", "listContent", "getContent", "parseWebhook"].includes(operation)))("%s is refused (permanent), never synthetic data", async (operation) => {
+  // listContent / getContent (Step 7G-H5.5-P5-B) are covered in read-content.test.ts; listInteractions /
+  // getInteraction (Step 7G-H5.5-P12-B1) in read-interactions.test.ts.
+  it.each(READ_OPERATIONS.filter((operation) => !["discoverAssets", "describeAccount", "listContent", "getContent", "listInteractions", "getInteraction", "parseWebhook"].includes(operation)))("%s is refused (permanent), never synthetic data", async (operation) => {
     const { port, calls } = portWith(graphOf(WORLD));
     const method = port[operation].bind(port) as (...args: unknown[]) => Promise<unknown>;
     const error = await failure(method({}, {}, {}, null));
@@ -338,9 +339,12 @@ describe("Meta read port · Graph transport security (the contained query-token 
     expect(META_GRAPH_RESPONSE_MAX_BYTES).toBe(65_536);
   });
 
-  it("the transport exposes exactly ten typed operations (P5-B adds three, P11-B two): no URL, path or next-link input", () => {
+  it("the transport exposes exactly fourteen typed operations (P5-B adds three, P11-B two, P12-B1 four): no URL, path or next-link input", () => {
     const transport = createMetaGraphTransport({ fetch: () => Promise.reject(new Error("unused")) });
-    expect(Object.keys(transport).sort()).toEqual(["getInstagramAccount", "getInstagramMedia", "getPage", "getPageAccessToken", "getPageInstagram", "getPost", "listInstagramMedia", "listPages", "listPermissions", "listPublishedPosts"]);
+    expect(Object.keys(transport).sort()).toEqual([
+      "getComment", "getInstagramAccount", "getInstagramComment", "getInstagramMedia", "getPage", "getPageAccessToken", "getPageInstagram", "getPost",
+      "listInstagramComments", "listInstagramMedia", "listPages", "listPermissions", "listPostComments", "listPublishedPosts",
+    ]);
   });
 
   const outcomes: readonly (readonly [string, Reply, ProviderErrorKind, Record<string, unknown>, { readonly timeoutMs?: number; readonly maxResponseBytes?: number }])[] = [

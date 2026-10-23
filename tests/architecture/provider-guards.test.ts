@@ -214,9 +214,14 @@ describe("Meta read port (Step 7G-E; P5-B read_content): the contained query-tok
     // Derived inside the call, handed straight to the one content read; no module or closure state keeps it.
     expect(readPort).toMatch(/const token = await pageToken\(transport, access, page, "listContent"\);/);
     expect(readPort).toMatch(/const token = await pageToken\(transport, access, page, "getContent"\);/);
-    expect(readPort.match(/\bpageToken\(/g)).toHaveLength(3); // the helper + its two call sites
+    // Step 7G-H5.5-P12-B1: the Facebook interaction reads derive their own Page token per call, the same way.
+    expect(readPort).toMatch(/const token = await pageToken\(transport, access, page, "listInteractions"\);/);
+    expect(readPort).toMatch(/const token = await pageToken\(transport, access, page, "getInteraction"\);/);
+    expect(readPort.match(/\bpageToken\(/g)).toHaveLength(5); // the helper + its four call sites
     expect(readPort).toMatch(/transport\.listPublishedPosts\(token, page, after\)/);
     expect(readPort).toMatch(/transport\.getPost\(token, postId\)/);
+    expect(readPort).toMatch(/transport\.listPostComments\(token, post, after\)/);
+    expect(readPort).toMatch(/transport\.getComment\(token, commentId\)/);
     expect(readPort).not.toMatch(/new Map<[^>]*SecretValue|cache|memo|WeakMap|globalThis/i);
     // The DTO mapper never sees a token; nothing persists, logs or emits anything from the provider layer.
     const mapper = readPort.slice(readPort.indexOf("function contentOf("), readPort.indexOf("function windowBounds("));
@@ -324,6 +329,80 @@ describe("Meta Instagram read_content (Step 7G-H5.5-P11-B): /media and the media
   });
 });
 
+describe("Meta read_interactions (Step 7G-H5.5-P12-B1): Facebook comments + replies, Instagram top-level comments, offline only", () => {
+  const META = "integrations/providers/meta";
+  const transport = () => codeOf(`${META}/graph-transport.ts`);
+  const readPort = () => codeOf(`${META}/read-port.ts`);
+  const between = (code: string, from: string, to: string) => code.slice(code.indexOf(from), code.indexOf(to));
+
+  it("only the four documented comment reads, each with ONE whitelist constant and a fixed limit; no replies edge, no field expansion", () => {
+    expect(transport()).toMatch(/export const META_FACEBOOK_COMMENT_FIELDS = "id,from,message,created_time,parent,is_hidden";/);
+    expect(transport()).toMatch(/export const META_FACEBOOK_COMMENT_NODE_FIELDS = "id,from,message,created_time,parent,is_hidden,object";/);
+    expect(transport()).toMatch(/export const META_INSTAGRAM_COMMENT_FIELDS = "id,from,text,timestamp,parent_id,hidden,media";/);
+    expect(transport().match(/\["fields", META_FACEBOOK_COMMENT_FIELDS\]/g)).toHaveLength(1);
+    expect(transport().match(/\["fields", META_FACEBOOK_COMMENT_NODE_FIELDS\]/g)).toHaveLength(1);
+    expect(transport().match(/\["fields", META_INSTAGRAM_COMMENT_FIELDS\]/g)).toHaveLength(2);
+    expect(transport().match(/\["filter", "stream"\]/g)).toHaveLength(1);
+    expect(transport()).toMatch(/get\(\[postId, "comments"\], /);
+    expect(transport()).toMatch(/get\(\[mediaId, "comments"\], /);
+    expect(transport()).toMatch(/export const META_FACEBOOK_COMMENTS_PAGE_LIMIT = 10;/);
+    expect(transport()).toMatch(/export const META_INSTAGRAM_COMMENTS_PAGE_LIMIT = 10;/);
+    expect(transport()).not.toMatch(/"replies"|"reactions"|"likes"|"private_replies"|"ordered_comments"|"order"|"since"|"until"/);
+    for (const fields of ["id,from,message,created_time,parent,is_hidden", "id,from,text,timestamp,parent_id,hidden,media"]) expect(fields).not.toMatch(/\{|attachment|like|reaction|replies|permalink|private/);
+  });
+
+  it("the Facebook interaction reads derive a Page token per call; the Instagram ones use the User token directly and never derive", () => {
+    const facebookReads = between(readPort(), "async function listPageComments(", "function interactionOfInstagramComment(");
+    expect(facebookReads).toMatch(/transport\.listPostComments\(token, post, after\)/);
+    expect(facebookReads).toMatch(/transport\.getComment\(token, commentId\)/);
+    const instagramReads = between(readPort(), "function interactionOfInstagramComment(", "function contentOfScope(");
+    expect(instagramReads.length).toBeGreaterThan(0);
+    expect(instagramReads).toMatch(/transport\.listInstagramComments\(access\.credential\.secret, media, after\)/);
+    expect(instagramReads).toMatch(/transport\.getInstagramComment\(access\.credential\.secret, commentId\)/);
+    expect(instagramReads).not.toMatch(/pageToken|getPageAccessToken|listPostComments|getComment\(/);
+    expect(readPort().match(/access\.account\.platform === "instagram" \? await (listMediaComments|getMediaComment)\(/g)).toHaveLength(2);
+  });
+
+  it("the mappers never see a token; replies only from parent.id (Facebook); Instagram refuses parent_id and a foreign media.id; content of a node only from object / media", () => {
+    const facebookMapper = between(readPort(), "function interactionOfComment(", "async function listPageComments(");
+    expect(facebookMapper).toMatch(/interactionKind: comment\.parentId === null \? "comment" : "reply",/);
+    expect(facebookMapper).toMatch(/role: comment\.fromId === page \? "account_identity" : "user",/);
+    const instagramMapper = between(readPort(), "function interactionOfInstagramComment(", "async function listMediaComments(");
+    expect(instagramMapper).toMatch(/if \(comment\.parentId !== null\) throw new PermanentRejectedError\(operation, "unknown"\);/);
+    expect(instagramMapper).toMatch(/if \(comment\.mediaId !== null && comment\.mediaId !== media\) throw new PermanentRejectedError\(operation, "unknown"\);/);
+    expect(instagramMapper).toMatch(/interactionKind: "comment",/);
+    expect(instagramMapper).not.toMatch(/"reply"/);
+    for (const mapper of [facebookMapper, instagramMapper]) expect(mapper).not.toMatch(/token|secret|credential|"organic"|"paid"|"mixed"|reportedSource/);
+    expect(readPort()).toMatch(/if \(comment\.objectId === null \|\| comment\.objectId === comment\.parentId \|\| comment\.objectId === comment\.id\) throw new PermanentRejectedError\("getInteraction", "unknown"\);/);
+    expect(readPort()).toMatch(/if \(comment\.mediaId === null\) throw new PermanentRejectedError\("getInteraction", "unknown"\);/);
+    // No account-wide comment feed, on any platform.
+    expect(readPort()).toMatch(/if \(scope\.kind === "account"\) throw new TargetNotEligibleError\("listInteractions", "unsupported_for_target"\);/);
+  });
+
+  it("the transport requires from.id on every comment (no author → unreadable) and reads visibility only from the reported boolean", () => {
+    for (const parser of [between(transport(), "function facebookCommentOf(", "function facebookCommentListOf("), between(transport(), "function instagramCommentOf(", "function instagramCommentListOf(")]) {
+      expect(parser).toMatch(/const fromId = parseProviderObjectId\(from\?\.\["id"\]\);/);
+      expect(parser).toMatch(/fromId === undefined \|\|/);
+    }
+    expect(readPort()).toMatch(/const visibilityOf = \(hidden: boolean \| null\): InteractionDto\["visibility"\] => \(hidden === null \? "unknown" : hidden \? "hidden" : "visible"\);/);
+  });
+
+  it("the README records the P12-B1 slice: offline, unregistered, the per-platform kinds, the author rule and the LIVE-verify items", () => {
+    const doc = readFileSync(path.join(root, "design/phase-7g/meta-provider/README.md"), "utf8");
+    const section = doc.slice(doc.indexOf("## read_interactions (Step 7G-H5.5-P12-B1) — IMPLEMENTED_OFFLINE_NOT_REGISTERED"));
+    expect(section.length).toBeGreaterThan(0);
+    for (const phrase of [
+      "belong to P12-B2, atomically",
+      "Every Meta `read_interactions` scope stays\nUNKNOWN_NOT_VALIDATED",
+      "`comment` and `reply`",
+      "`comment` only (top-level)",
+      "a missing `from` or `from.id` fails the WHOLE page",
+      "Facebook's ONLY\ncontent authority is `object.id`",
+      "no permission set is claimed here and none is minimal",
+    ]) expect(section, phrase).toContain(phrase);
+  });
+});
+
 describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cursor never crosses the port", () => {
   const META = "integrations/providers/meta";
   const readPort = () => codeOf(`${META}/read-port.ts`);
@@ -348,11 +427,16 @@ describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cu
     const code = readPort();
     expect(code).not.toMatch(/parsePageCursor\(list\.after\)/);
     expect(code).toMatch(/const next = encodeMetaPageCursor\(list\.after\);/);
-    // parsePageCursor appears exactly three times: inside the encoder (over the prefixed payload) and as the input check
-    // of each listContent branch (Facebook Page, Instagram account — Step 7G-H5.5-P11-B).
-    expect(code.match(/parsePageCursor\(/g)).toHaveLength(3);
+    // parsePageCursor appears exactly five times: inside the encoder (over the prefixed payload) and as the input check
+    // of each listContent branch (Facebook Page, Instagram account — Step 7G-H5.5-P11-B) and each listInteractions
+    // branch (Step 7G-H5.5-P12-B1).
+    expect(code.match(/parsePageCursor\(/g)).toHaveLength(5);
     expect(code.match(/if \(cursor !== null && parsePageCursor\(cursor\) === undefined\) throw new PermanentRejectedError\("listContent", "invalid_cursor"\);/g)).toHaveLength(2);
+    expect(code.match(/if \(cursor !== null && parsePageCursor\(cursor\) === undefined\) throw new PermanentRejectedError\("listInteractions", "invalid_cursor"\);/g)).toHaveLength(2);
     expect(code.match(/const next = encodeMetaPageCursor\(list\.after\);/g)).toHaveLength(2);
+    // The interaction pages continue through the same envelope, decoded and encoded under their own operation.
+    expect(code.match(/const after: MetaGraphCursor \| null = cursor === null \? null : decodeMetaPageCursor\(cursor, "listInteractions"\);/g)).toHaveLength(2);
+    expect(code.match(/encodeMetaPageCursor\(/g)).toHaveLength(4); // the helper, two content pages, one shared interaction page
     expect(code).toMatch(/parsePageCursor\(META_PAGE_CURSOR_PREFIX \+ Buffer\.from\(raw, "latin1"\)\.toString\("base64url"\)\)/);
     // Incoming cursors are decoded (strict alphabet, canonical re-encode, raw re-validation) before any request.
     expect(code.match(/const after: MetaGraphCursor \| null = cursor === null \? null : decodeMetaPageCursor\(cursor\);/g)).toHaveLength(2);

@@ -923,3 +923,56 @@ A fresh r4 profile has 11 rows on either platform (10 `any` / `any` rows plus th
 (`PROFILE_STALE`) until an explicit human Re-check; nothing rewrites them automatically.
 
 **Not claimed.** The runtime does not use r4 yet: no deploy, no Trigger release, no profile refreshed, no Re-check run.
+
+## read_interactions (Step 7G-H5.5-P12-B1) — IMPLEMENTED_OFFLINE_NOT_REGISTERED
+
+The Meta read port implements `listInteractions` and `getInteraction` offline, through the existing provider contract
+(`ProviderReadPort`, `InteractionDto`, `AuthorDto`, `InteractionScope`; interaction kinds `comment` and `reply` only — no
+reactions, mentions, DMs or private replies). Nothing here is evidence, a catalog entry or a registration: the offline
+registry, `CAPABILITY_REQUIRED_OPERATIONS.read_interactions`, the record's `interactionKinds` field and the diagnostic
+`integration.read_interactions_validation` belong to P12-B2, atomically. Every Meta `read_interactions` scope stays
+UNKNOWN_NOT_VALIDATED.
+
+**Scope.** One known content item per call: `listInteractions` with `scope.kind === "content"`. The `account` scope (an
+account-wide comment feed) is `TargetNotEligible(unsupported_for_target)` on every platform, before any request.
+
+| | Facebook Page post | Instagram professional-account media |
+|---|---|---|
+| Kinds implemented | `comment` and `reply` | `comment` only (top-level) |
+| listInteractions | Page token derivation, then ONE page of `GET /v25.0/{post-id}/comments` with `filter=stream` | ONE page of `GET /v25.0/{ig-media-id}/comments` |
+| getInteraction | Page token derivation, then `GET /v25.0/{comment-id}` | `GET /v25.0/{ig-comment-id}` |
+| Fields | edge `META_FACEBOOK_COMMENT_FIELDS` = `id,from,message,created_time,parent,is_hidden`; node `META_FACEBOOK_COMMENT_NODE_FIELDS` adds `object` | `META_INSTAGRAM_COMMENT_FIELDS` = `id,from,text,timestamp,parent_id,hidden,media` (edge and node) |
+| Token | derived Page Access Token per operation, never kept (the read_content helper) | the sealed User Access Token directly; no derivation |
+| Meta GETs per call | 2 | 1 |
+| Page size | `META_FACEBOOK_COMMENTS_PAGE_LIMIT` = 10 | `META_INSTAGRAM_COMMENTS_PAGE_LIMIT` = 10 |
+
+**Normalization.** `ref` = the comment id; `content` = the scope's content on list; `interactionKind` = `reply` exactly
+when Facebook reports `parent.id` (`parent` = that comment), else `comment` with `parent` null. Instagram never yields a
+reply: a `parent_id` fails closed (it is not normalized as a reply in this slice). `author.ref` = `from.id`, REQUIRED:
+a missing `from` or `from.id` fails the WHOLE page — never a dropped row, never an invented author. `author.role` =
+`account_identity` exactly when `from.id` is the managed asset's id, else `user`. Facebook `displayName` = `from.name`
+(or null), `handle` null; Instagram `displayName` null, `handle` = `from.username` (or null). `text` = `message` / `text`
+as reported (required; `""` only when the provider says so). `visibility` from the reported boolean only (`is_hidden` /
+`hidden`; absent → `unknown`). `availability` `available`; `textRevision`, `editedAt`, `updatedAt` null. No source and no
+paid attribution exist on an interaction (`read_paid_context` is separate).
+
+**Correlation, fail closed.** List: the caller's content scope is the parent authority (it comes from validated managed
+content); Instagram additionally fails closed on a reported `media.id` other than the scope's. Get: Facebook's ONLY
+content authority is `object.id` — absent, malformed, equal to the parent comment or to the comment itself fails
+closed; Instagram's is `media.id` (absent fails closed). A get answer whose echoed id differs is unreadable; code 100 /
+subcode 33 on the node read is TargetNotFound. A Facebook comment naming itself as its parent fails closed. Any
+malformed item fails the whole page before the window is applied.
+
+**Window and pagination.** The window [from, to) is applied client-side to the creation time with no ordering assumed
+and no early stop. Exactly one provider page per call; the same `meta1.` envelope, raw-cursor bounds and
+fixed-endpoint continuation as read_content; `paging.next` is never fetched; a repeated cursor fails closed.
+
+**Errors.** The shared Graph read mapping with capability `read_interactions` (a failed Page token derivation for an
+interaction read also names `read_interactions`); never non-support.
+
+**LIVE-verify items (not established by this slice).** Whether Graph returns `is_hidden` and `object` on these reads;
+whether `object.id` of a reply names the post; pagination parameters on the Instagram comments edge; whether `from`
+is always present for user comments under the granted permissions; whether Instagram reports the account's own
+comments with `from.id` equal to the IG user id; the exact permissions each read needs (P12-A2: documentation is
+internally inconsistent, so no permission set is claimed here and none is minimal); whether a page of long comments fits
+the 64 KiB body bound (an oversized page fails closed).

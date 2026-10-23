@@ -61,14 +61,30 @@
  * value) fails closed, with no fallback. `reportedSource` is always "unknown": the surface (FEED, REELS) says where
  * the media appears, not whether it is organic or paid. Errors: the same shared mapping and the same getContent-only
  * 100/33 → TargetNotFound.
+ *
+ * read_interactions (Step 7G-H5.5-P12-B1; README › read_interactions — IMPLEMENTED_OFFLINE_NOT_REGISTERED):
+ * `listInteractions` of ONE known content item (an account-wide comment feed is not offered: the `account` scope is
+ * TargetNotEligible for every platform, before any request) and `getInteraction`. Platform-selected like read_content:
+ *   Facebook   comments AND replies. listInteractions derives a Page token, then ONE page of `{post-id}/comments`
+ *              with `filter=stream` (top-level comments and their replies in one edge, each reply carrying
+ *              `parent.id`); getInteraction derives a Page token, then `{comment-id}`, whose `object.id` is its ONLY
+ *              content authority (absent, or equal to its own parent, fails closed: never a guessed post).
+ *   Instagram  top-level comments ONLY, with the sealed User token directly: ONE page of `{ig-media-id}/comments`, or
+ *              `{ig-comment-id}`. A `parent_id` fails closed (replies are not read in this slice; never normalized as
+ *              a reply); a `media.id` other than the scope's fails closed; getInteraction requires `media.id`.
+ * Both: `from.id` is required (a missing author fails the WHOLE page — never a dropped row, never an invented id);
+ * the author is the account itself exactly when `from.id` is the managed asset's id; visibility comes only from the
+ * reported boolean (absent → unknown); the same `meta1.` cursor envelope, fixed-endpoint continuation and client-side
+ * window [from, to) on the creation time, with no ordering assumed. Errors: the shared Graph read mapping with
+ * capability read_interactions, plus getInteraction's 100/33 → TargetNotFound.
  * Every other read operation is refused (permanent).
  */
 import type { ProviderCredential } from "../contract/credential";
-import { PermanentRejectedError, TargetNotFoundError, TransientError, type PermissionCapability, type ReadOperation } from "../contract/errors";
-import type { AccountDescriptionDto, ContentDto, ContentKind, ProviderAccess, SocialAssetDto } from "../contract/dto";
+import { PermanentRejectedError, TargetNotEligibleError, TargetNotFoundError, TransientError, type PermissionCapability, type ReadOperation } from "../contract/errors";
+import type { AccountDescriptionDto, ContentDto, ContentKind, InteractionDto, ProviderAccess, SocialAssetDto } from "../contract/dto";
 import { isoInstant, parseIsoInstant, parseProviderObjectId, providerObjectRef, rawReference, type ProviderObjectId, type ProviderObjectRef } from "../contract/identity";
 import { BUDGET_NOT_REPORTED, parsePageCursor, type Page, type PageCursor, type TimeWindow } from "../contract/pagination";
-import type { ProviderReadPort } from "../contract/read-port";
+import type { InteractionScope, ProviderReadPort } from "../contract/read-port";
 import { WebhookRejectedError } from "../contract/webhooks";
 import { META_GRAPH_VERSION } from "./endpoints";
 import { metaGraphReadError } from "./errors";
@@ -77,7 +93,9 @@ import {
   parseMetaGraphCursor,
   type MetaGraphCursor,
   type MetaGraphOutcome,
+  type MetaComment,
   type MetaGraphTransport,
+  type MetaInstagramComment,
   type MetaInstagramMedia,
   type MetaPageList,
   type MetaPost,
@@ -127,10 +145,13 @@ export const META_INSTAGRAM_MEDIA_CONTENT_KINDS: Readonly<Record<string, Content
 export const META_PAGE_CURSOR_PREFIX = "meta1.";
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
+/** The paginated reads: each names its own failures. */
+type ListOperation = "listContent" | "listInteractions";
+
 /** A validated raw Graph cursor as the opaque PageCursor handed to callers. */
-function encodeMetaPageCursor(raw: MetaGraphCursor): PageCursor {
+function encodeMetaPageCursor(raw: MetaGraphCursor, operation: ListOperation = "listContent"): PageCursor {
   const cursor = parsePageCursor(META_PAGE_CURSOR_PREFIX + Buffer.from(raw, "latin1").toString("base64url"));
-  if (cursor === undefined) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  if (cursor === undefined) throw new PermanentRejectedError(operation, "invalid_cursor");
   return cursor;
 }
 
@@ -139,13 +160,13 @@ function encodeMetaPageCursor(raw: MetaGraphCursor): PageCursor {
  * canonical (re-encoding the bytes reproduces the payload — Node's decoder is permissive), and the decoded value must
  * again be a valid raw Graph cursor. The value never appears in the error.
  */
-function decodeMetaPageCursor(cursor: PageCursor): MetaGraphCursor {
+function decodeMetaPageCursor(cursor: PageCursor, operation: ListOperation = "listContent"): MetaGraphCursor {
   const value: string = cursor;
   const payload = value.startsWith(META_PAGE_CURSOR_PREFIX) ? value.slice(META_PAGE_CURSOR_PREFIX.length) : "";
-  if (!BASE64URL.test(payload)) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  if (!BASE64URL.test(payload)) throw new PermanentRejectedError(operation, "invalid_cursor");
   const bytes = Buffer.from(payload, "base64url");
   const raw = bytes.toString("base64url") === payload ? parseMetaGraphCursor(bytes.toString("latin1")) : undefined;
-  if (raw === undefined) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  if (raw === undefined) throw new PermanentRejectedError(operation, "invalid_cursor");
   return raw;
 }
 
@@ -195,9 +216,10 @@ async function describe(transport: MetaGraphTransport, access: ProviderAccess, n
 }
 
 type ContentOperation = "listContent" | "getContent";
+type InteractionOperation = "listInteractions" | "getInteraction";
 
 /** The managed Facebook Page of `access`, or a refusal before any request (Instagram has its own branch; TikTok: not here). */
-function managedPage(access: ProviderAccess, operation: ContentOperation): ProviderObjectId {
+function managedPage(access: ProviderAccess, operation: ContentOperation | InteractionOperation): ProviderObjectId {
   const { platform, kind, id } = access.account;
   const page = parseProviderObjectId(id);
   // The kind is re-checked at runtime: a caller's ref is data, whatever its static type says.
@@ -225,16 +247,17 @@ function contentOf(post: MetaPost, page: ProviderObjectId, operation: ContentOpe
 }
 
 /** [from, to) as epoch milliseconds, refused (before any request) unless both ends are instants and from < to. */
-function windowBounds(window: TimeWindow): { readonly from: number; readonly to: number } {
+function windowBounds(window: TimeWindow, operation: ListOperation = "listContent"): { readonly from: number; readonly to: number } {
   const from = parseIsoInstant(window.from);
   const to = parseIsoInstant(window.to);
-  if (from === undefined || to === undefined || Date.parse(from) >= Date.parse(to)) throw new PermanentRejectedError("listContent", "invalid_request");
+  if (from === undefined || to === undefined || Date.parse(from) >= Date.parse(to)) throw new PermanentRejectedError(operation, "invalid_request");
   return { from: Date.parse(from), to: Date.parse(to) };
 }
 
-/** The Page Access Token for one content read, derived from the sealed User Access Token. Never kept. */
-async function pageToken(transport: MetaGraphTransport, access: ProviderAccess, page: ProviderObjectId, operation: ContentOperation) {
-  return outcomeValue(await transport.getPageAccessToken(access.credential.secret, page), operation, "read_content");
+/** The Page Access Token for one content or interaction read, derived from the sealed User Access Token. Never kept. */
+async function pageToken(transport: MetaGraphTransport, access: ProviderAccess, page: ProviderObjectId, operation: ContentOperation | InteractionOperation) {
+  const capability: PermissionCapability = operation === "listContent" || operation === "getContent" ? "read_content" : "read_interactions";
+  return outcomeValue(await transport.getPageAccessToken(access.credential.secret, page), operation, capability);
 }
 
 async function listPublished(transport: MetaGraphTransport, access: ProviderAccess, window: TimeWindow, cursor: PageCursor | null): Promise<Page<ContentDto>> {
@@ -268,7 +291,7 @@ async function getPublished(transport: MetaGraphTransport, access: ProviderAcces
 }
 
 /** The managed Instagram professional account of `access`, or a refusal before any request. */
-function managedInstagramAccount(access: ProviderAccess, operation: ContentOperation): ProviderObjectId {
+function managedInstagramAccount(access: ProviderAccess, operation: ContentOperation | InteractionOperation): ProviderObjectId {
   const { platform, kind, id } = access.account;
   const account = parseProviderObjectId(id);
   // The kind is re-checked at runtime: a caller's ref is data, whatever its static type says.
@@ -383,10 +406,157 @@ async function discover(transport: MetaGraphTransport, credential: ProviderCrede
   return Object.freeze([...pages, ...accounts]);
 }
 
+// ── read_interactions (Step 7G-H5.5-P12-B1) ─────────────────────────────────────────────────────────────────
+
+/** The content item a listInteractions scope names, on the managed account's platform; anything else is refused before any request. */
+function scopedContent(content: ProviderObjectRef<"content">, platform: "facebook" | "instagram"): ProviderObjectId {
+  const id = parseProviderObjectId(content.id);
+  // The kind is re-checked at runtime: a caller's ref is data, whatever its static type says.
+  if (content.platform !== platform || (content.kind as string) !== "content" || id === undefined) throw new PermanentRejectedError("listInteractions", "invalid_request");
+  return id;
+}
+
+/** The interaction a getInteraction ref names, on the managed account's platform; anything else is refused before any request. */
+function requestedInteraction(ref: ProviderObjectRef<"interaction">, platform: "facebook" | "instagram"): ProviderObjectId {
+  const id = parseProviderObjectId(ref.id);
+  if (ref.platform !== platform || (ref.kind as string) !== "interaction" || id === undefined) throw new PermanentRejectedError("getInteraction", "invalid_request");
+  return id;
+}
+
+/** Visibility only from the reported boolean: absent is unknown, never assumed visible. */
+const visibilityOf = (hidden: boolean | null): InteractionDto["visibility"] => (hidden === null ? "unknown" : hidden ? "hidden" : "visible");
+
+/** Keeps the interactions created in [from, to): client-side, no ordering assumed, every item already mapped. */
+const createdWithin = (items: readonly InteractionDto[], bounds: { readonly from: number; readonly to: number }): readonly InteractionDto[] =>
+  items.filter((item) => {
+    const at = Date.parse(item.timestamps.createdAt ?? "");
+    return at >= bounds.from && at < bounds.to;
+  });
+
+/** One provider page as the port's Page: `end` when Graph reports no next page, else the `meta1.` envelope (a repeat fails closed). */
+function interactionPage(items: readonly InteractionDto[], after: MetaGraphCursor | null, cursor: PageCursor | null): Page<InteractionDto> {
+  if (after === null) return Object.freeze({ items: Object.freeze([...items]), next: Object.freeze({ kind: "end" as const }) });
+  const next = encodeMetaPageCursor(after, "listInteractions");
+  if (next === cursor) throw new PermanentRejectedError("listInteractions", "invalid_cursor");
+  return Object.freeze({ items: Object.freeze([...items]), next: Object.freeze({ kind: "more" as const, cursor: next }) });
+}
+
+/**
+ * A Facebook comment as an InteractionDto on `post`: a reply exactly when Graph reports `parent.id` (a comment that
+ * names itself as its parent is unreadable); the author is the Page itself exactly when `from.id` is the managed Page.
+ */
+function interactionOfComment(comment: MetaComment, post: ProviderObjectId, page: ProviderObjectId, operation: InteractionOperation): InteractionDto {
+  if (comment.parentId === comment.id) throw new PermanentRejectedError(operation, "unknown");
+  return Object.freeze({
+    ref: providerObjectRef("facebook", "interaction", comment.id),
+    content: providerObjectRef("facebook", "content", post),
+    parent: comment.parentId === null ? null : providerObjectRef("facebook", "interaction", comment.parentId),
+    interactionKind: comment.parentId === null ? "comment" : "reply",
+    author: Object.freeze({
+      ref: providerObjectRef("facebook", "author", comment.fromId),
+      role: comment.fromId === page ? "account_identity" : "user",
+      displayName: comment.fromName,
+      handle: null,
+    }),
+    text: comment.message,
+    textRevision: null,
+    editedAt: null,
+    visibility: visibilityOf(comment.isHidden),
+    availability: "available",
+    timestamps: Object.freeze({ createdAt: comment.createdTime, updatedAt: null }),
+    rawReference: rawReference("meta", META_GRAPH_VERSION, `facebook:comment:${comment.id}`),
+  });
+}
+
+async function listPageComments(transport: MetaGraphTransport, access: ProviderAccess, content: ProviderObjectRef<"content">, window: TimeWindow, cursor: PageCursor | null): Promise<Page<InteractionDto>> {
+  const page = managedPage(access, "listInteractions");
+  const post = scopedContent(content, "facebook");
+  const bounds = windowBounds(window, "listInteractions");
+  if (cursor !== null && parsePageCursor(cursor) === undefined) throw new PermanentRejectedError("listInteractions", "invalid_cursor");
+  const after: MetaGraphCursor | null = cursor === null ? null : decodeMetaPageCursor(cursor, "listInteractions");
+  const token = await pageToken(transport, access, page, "listInteractions");
+  const list = outcomeValue(await transport.listPostComments(token, post, after), "listInteractions", "read_interactions");
+  // Map EVERY comment first (one malformed comment fails the whole page), then filter the window client-side.
+  const items = list.comments.map((comment) => interactionOfComment(comment, post, page, "listInteractions"));
+  return interactionPage(createdWithin(items, bounds), list.after, cursor);
+}
+
+async function getPageComment(transport: MetaGraphTransport, access: ProviderAccess, ref: ProviderObjectRef<"interaction">): Promise<InteractionDto> {
+  const page = managedPage(access, "getInteraction");
+  const commentId = requestedInteraction(ref, "facebook");
+  const token = await pageToken(transport, access, page, "getInteraction");
+  const outcome = await transport.getComment(token, commentId);
+  if (outcome.kind === "graph_error" && outcome.error.code === AMBIGUOUS_OBJECT_CODE && outcome.error.subcode === AMBIGUOUS_OBJECT_SUBCODE) throw new TargetNotFoundError("getInteraction");
+  const comment = outcomeValue(outcome, "getInteraction", "read_interactions");
+  // `object.id` is the node's only content authority: without it, or when it names the parent comment, the content
+  // cannot be established — fail closed rather than guess a post.
+  if (comment.objectId === null || comment.objectId === comment.parentId || comment.objectId === comment.id) throw new PermanentRejectedError("getInteraction", "unknown");
+  return interactionOfComment(comment, comment.objectId, page, "getInteraction");
+}
+
+/**
+ * An IG Comment as an InteractionDto on `media`: top-level only in this slice (a `parent_id` is unreadable, never a
+ * reply), and a reported `media.id` must be that media; the author is the account itself exactly when `from.id` is the
+ * managed account.
+ */
+function interactionOfInstagramComment(comment: MetaInstagramComment, media: ProviderObjectId, account: ProviderObjectId, operation: InteractionOperation): InteractionDto {
+  if (comment.parentId !== null) throw new PermanentRejectedError(operation, "unknown");
+  if (comment.mediaId !== null && comment.mediaId !== media) throw new PermanentRejectedError(operation, "unknown");
+  return Object.freeze({
+    ref: providerObjectRef("instagram", "interaction", comment.id),
+    content: providerObjectRef("instagram", "content", media),
+    parent: null,
+    interactionKind: "comment",
+    author: Object.freeze({
+      ref: providerObjectRef("instagram", "author", comment.fromId),
+      role: comment.fromId === account ? "account_identity" : "user",
+      displayName: null,
+      handle: comment.fromUsername,
+    }),
+    text: comment.text,
+    textRevision: null,
+    editedAt: null,
+    visibility: visibilityOf(comment.hidden),
+    availability: "available",
+    timestamps: Object.freeze({ createdAt: comment.timestamp, updatedAt: null }),
+    rawReference: rawReference("meta", META_GRAPH_VERSION, `instagram:comment:${comment.id}`),
+  });
+}
+
+async function listMediaComments(transport: MetaGraphTransport, access: ProviderAccess, content: ProviderObjectRef<"content">, window: TimeWindow, cursor: PageCursor | null): Promise<Page<InteractionDto>> {
+  const account = managedInstagramAccount(access, "listInteractions");
+  const media = scopedContent(content, "instagram");
+  const bounds = windowBounds(window, "listInteractions");
+  if (cursor !== null && parsePageCursor(cursor) === undefined) throw new PermanentRejectedError("listInteractions", "invalid_cursor");
+  const after: MetaGraphCursor | null = cursor === null ? null : decodeMetaPageCursor(cursor, "listInteractions");
+  // The sealed User Access Token, used directly: Instagram reads derive no Page token.
+  const list = outcomeValue(await transport.listInstagramComments(access.credential.secret, media, after), "listInteractions", "read_interactions");
+  const items = list.comments.map((comment) => interactionOfInstagramComment(comment, media, account, "listInteractions"));
+  return interactionPage(createdWithin(items, bounds), list.after, cursor);
+}
+
+async function getMediaComment(transport: MetaGraphTransport, access: ProviderAccess, ref: ProviderObjectRef<"interaction">): Promise<InteractionDto> {
+  const account = managedInstagramAccount(access, "getInteraction");
+  const commentId = requestedInteraction(ref, "instagram");
+  const outcome = await transport.getInstagramComment(access.credential.secret, commentId);
+  if (outcome.kind === "graph_error" && outcome.error.code === AMBIGUOUS_OBJECT_CODE && outcome.error.subcode === AMBIGUOUS_OBJECT_SUBCODE) throw new TargetNotFoundError("getInteraction");
+  const comment = outcomeValue(outcome, "getInteraction", "read_interactions");
+  // `media.id` is the node's only content authority: without it the comment cannot be placed.
+  if (comment.mediaId === null) throw new PermanentRejectedError("getInteraction", "unknown");
+  return interactionOfInstagramComment(comment, comment.mediaId, account, "getInteraction");
+}
+
+/** Only one known content item at a time: an account-wide comment feed is not offered on any platform. */
+function contentOfScope(scope: InteractionScope): ProviderObjectRef<"content"> {
+  if (scope.kind === "account") throw new TargetNotEligibleError("listInteractions", "unsupported_for_target");
+  if ((scope.kind as string) !== "content") throw new PermanentRejectedError("listInteractions", "invalid_request");
+  return scope.content;
+}
+
 export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderReadPort {
   const transport = options.transport ?? createMetaGraphTransport();
   const clock = options.clock ?? (() => new Date());
-  const refuse = (operation: Exclude<ReadOperation, "discoverAssets" | "describeAccount" | "listContent" | "getContent" | "parseWebhook">): Promise<never> =>
+  const refuse = (operation: Exclude<ReadOperation, "discoverAssets" | "describeAccount" | "listContent" | "getContent" | "listInteractions" | "getInteraction" | "parseWebhook">): Promise<never> =>
     Promise.reject(new PermanentRejectedError(operation, "invalid_request"));
 
   return Object.freeze({
@@ -410,8 +580,18 @@ export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderR
       const content = access.account.platform === "instagram" ? await getMedia(transport, access, ref) : await getPublished(transport, access, ref);
       return Object.freeze({ data: content, budget: BUDGET_NOT_REPORTED });
     },
-    listInteractions: () => refuse("listInteractions"),
-    getInteraction: () => refuse("getInteraction"),
+    // The same platform selection: Instagram reads top-level media comments; every other platform takes the Facebook
+    // Page path (comments and replies), which refuses anything that is not a Facebook Page before any request.
+    async listInteractions(access, scope, window, cursor) {
+      const content = contentOfScope(scope);
+      const page = access.account.platform === "instagram" ? await listMediaComments(transport, access, content, window, cursor) : await listPageComments(transport, access, content, window, cursor);
+      return Object.freeze({ data: page, budget: BUDGET_NOT_REPORTED });
+    },
+
+    async getInteraction(access, ref) {
+      const interaction = access.account.platform === "instagram" ? await getMediaComment(transport, access, ref) : await getPageComment(transport, access, ref);
+      return Object.freeze({ data: interaction, budget: BUDGET_NOT_REPORTED });
+    },
     getCurrentState: () => refuse("getCurrentState"),
     retrievePaidContext: () => refuse("retrievePaidContext"),
     parseWebhook: () => Promise.reject(new WebhookRejectedError("invalid_signature")),

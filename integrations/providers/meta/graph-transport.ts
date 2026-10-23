@@ -1,8 +1,9 @@
 /**
  * The Meta Graph READ transport for discoverAssets (Step 7G-E; design/phase-7g/meta-provider/README.md, E1 — the
  * implementation authority), describeAccount (Step 7G-H5.5, contract H55), Facebook Page read_content (Step
- * 7G-H5.5-P5-B, README › read_content) and Instagram professional-account read_content (Step 7G-H5.5-P11-B, README ›
- * Instagram read_content). Ten typed operations, nothing else:
+ * 7G-H5.5-P5-B, README › read_content), Instagram professional-account read_content (Step 7G-H5.5-P11-B, README ›
+ * Instagram read_content) and Meta read_interactions (Step 7G-H5.5-P12-B1, README › read_interactions). Fourteen typed
+ * operations, nothing else:
  *
  *   listPages            GET https://graph.facebook.com/v25.0/me/accounts?fields=id,name[&after={cursor}]
  *   getPageInstagram     GET https://graph.facebook.com/v25.0/{page-id}?fields=instagram_business_account
@@ -16,6 +17,14 @@
  *   listInstagramMedia   GET https://graph.facebook.com/v25.0/{ig-user-id}/media?fields=META_INSTAGRAM_MEDIA_FIELDS
  *                            &limit=META_INSTAGRAM_MEDIA_PAGE_LIMIT[&after={cursor}]                  (User token)
  *   getInstagramMedia    GET https://graph.facebook.com/v25.0/{ig-media-id}?fields=META_INSTAGRAM_MEDIA_FIELDS (User token)
+ *   listPostComments     GET https://graph.facebook.com/v25.0/{post-id}/comments?fields=META_FACEBOOK_COMMENT_FIELDS
+ *                            &filter=stream&limit=META_FACEBOOK_COMMENTS_PAGE_LIMIT[&after={cursor}] (Page token)
+ *   getComment           GET https://graph.facebook.com/v25.0/{comment-id}?fields=META_FACEBOOK_COMMENT_NODE_FIELDS
+ *                                                                                                   (Page token)
+ *   listInstagramComments GET https://graph.facebook.com/v25.0/{ig-media-id}/comments?fields=META_INSTAGRAM_COMMENT_FIELDS
+ *                            &limit=META_INSTAGRAM_COMMENTS_PAGE_LIMIT[&after={cursor}]               (User token)
+ *   getInstagramComment  GET https://graph.facebook.com/v25.0/{ig-comment-id}?fields=META_INSTAGRAM_COMMENT_FIELDS
+ *                                                                                                   (User token)
  *
  * Callers name an operation and pass a SecretValue token plus validated provider ids or a validated cursor — never a
  * URL. Meta documents the access token as the `access_token` query parameter for these exact endpoints, so the
@@ -130,6 +139,76 @@ export interface MetaInstagramMediaList {
   readonly after: MetaGraphCursor | null;
 }
 
+/**
+ * The minimum comment fields Facebook read_interactions maps on the `{post-id}/comments` edge (P12-A/P12-B1; README ›
+ * read_interactions): never attachments, likes, reactions, mentions, permalinks, counts or private-reply data. `from`
+ * is read for its `id` and `name`, `parent` for its `id` only. `is_hidden` is a LIVE-verify field: when Graph omits it
+ * the visibility is unknown, never assumed.
+ */
+export const META_FACEBOOK_COMMENT_FIELDS = "id,from,message,created_time,parent,is_hidden";
+/** The comment node read adds `object` (the commented object, read for its `id` only; LIVE-verify): the node's only content authority. */
+export const META_FACEBOOK_COMMENT_NODE_FIELDS = "id,from,message,created_time,parent,is_hidden,object";
+/** One provider page of `{post-id}/comments`: fixed, the same size as the content pages. */
+export const META_FACEBOOK_COMMENTS_PAGE_LIMIT = 10;
+
+/** One Facebook comment exactly as the whitelist reads it: closed fields, nothing else from the body. */
+export interface MetaComment {
+  readonly id: ProviderObjectId;
+  /** `from.id`: the author (required; a comment without one is not the documented shape). */
+  readonly fromId: ProviderObjectId;
+  /** `from.name` as reported; null when absent. Untrusted text. */
+  readonly fromName: string | null;
+  /** `message` as reported (required; "" only when Graph says ""). Untrusted text. */
+  readonly message: string;
+  readonly createdTime: IsoInstant;
+  /** `parent.id`: the comment this one replies to; null when absent (a top-level comment). */
+  readonly parentId: ProviderObjectId | null;
+  /** `is_hidden` as reported; null when absent. */
+  readonly isHidden: boolean | null;
+  /** `object.id` on the node read only (the edge never requests it); null when absent. */
+  readonly objectId: ProviderObjectId | null;
+}
+
+export interface MetaCommentList {
+  readonly comments: readonly MetaComment[];
+  /** The next page's cursor, or null when the provider reports no next page (`paging.next` absent). */
+  readonly after: MetaGraphCursor | null;
+}
+
+/**
+ * The minimum IG Comment fields Instagram read_interactions maps (P12-A/P12-B1; README › read_interactions), shared by
+ * the `{ig-media-id}/comments` edge and the comment node read: never `replies`, `like_count`, `user` or
+ * `legacy_instagram_comment_id`, never a field expansion. `from` is read for its `id` and `username`, `media` for its
+ * `id` only. `parent_id` is read only to refuse replies in this first slice.
+ */
+export const META_INSTAGRAM_COMMENT_FIELDS = "id,from,text,timestamp,parent_id,hidden,media";
+/** One provider page of `{ig-media-id}/comments`: fixed, the same size as the content pages. */
+export const META_INSTAGRAM_COMMENTS_PAGE_LIMIT = 10;
+
+/** One IG Comment exactly as the whitelist reads it: closed fields, nothing else from the body. */
+export interface MetaInstagramComment {
+  readonly id: ProviderObjectId;
+  /** `from.id`: the author (required). */
+  readonly fromId: ProviderObjectId;
+  /** `from.username` as reported; null when absent. Untrusted text. */
+  readonly fromUsername: string | null;
+  /** `text` as reported (required). Untrusted text. */
+  readonly text: string;
+  readonly timestamp: IsoInstant;
+  /** `parent_id` as reported; null when absent. */
+  readonly parentId: ProviderObjectId | null;
+  /** `hidden` as reported; null when absent. */
+  readonly hidden: boolean | null;
+  /** `media.id`: the commented media; null when absent. */
+  readonly mediaId: ProviderObjectId | null;
+}
+
+export interface MetaInstagramCommentList {
+  readonly comments: readonly MetaInstagramComment[];
+  /** The next page's cursor, or null when the provider reports no next page (`paging.next` absent). */
+  readonly after: MetaGraphCursor | null;
+}
+
 export interface MetaGraphTransport {
   listPages(token: SecretValue, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaPageList>>;
   /** The linked Instagram professional account id, or null when the Page has none. */
@@ -153,6 +232,14 @@ export interface MetaGraphTransport {
   listInstagramMedia(userToken: SecretValue, instagramId: ProviderObjectId, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaInstagramMediaList>>;
   /** One IG Media node (User token), its echoed id checked. */
   getInstagramMedia(userToken: SecretValue, mediaId: ProviderObjectId): Promise<MetaGraphOutcome<MetaInstagramMedia>>;
+  /** ONE page of a Page post's comments and replies (`filter=stream`, Page token); the `next` URL is never fetched. */
+  listPostComments(pageToken: SecretValue, postId: ProviderObjectId, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaCommentList>>;
+  /** One Facebook comment node (Page token), its echoed id checked. */
+  getComment(pageToken: SecretValue, commentId: ProviderObjectId): Promise<MetaGraphOutcome<MetaComment>>;
+  /** ONE page of an IG Media's top-level comments (User token, no derivation); the `next` URL is never fetched. */
+  listInstagramComments(userToken: SecretValue, mediaId: ProviderObjectId, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaInstagramCommentList>>;
+  /** One IG Comment node (User token), its echoed id checked. */
+  getInstagramComment(userToken: SecretValue, commentId: ProviderObjectId): Promise<MetaGraphOutcome<MetaInstagramComment>>;
 }
 
 /** A Meta permission name: lower-case identifier, bounded. Anything else is an unreadable response, never kept. */
@@ -426,6 +513,109 @@ function singleInstagramMediaOf(body: unknown, mediaId: ProviderObjectId): MetaI
   return media?.id === mediaId ? media : undefined;
 }
 
+/** An optional string: absent → null, a string → itself, anything else → undefined (malformed). */
+const optionalString = (value: unknown): string | null | undefined => (value === undefined ? null : typeof value === "string" ? value : undefined);
+/** An optional boolean: absent → null, a boolean → itself, anything else → undefined (malformed). */
+const optionalBoolean = (value: unknown): boolean | null | undefined => (value === undefined ? null : typeof value === "boolean" ? value : undefined);
+/** An optional `{id}` reference: absent → null, an object with a valid id → that id, anything else → undefined. */
+const optionalRefId = (value: unknown): ProviderObjectId | null | undefined => (value === undefined ? null : parseProviderObjectId(record(value)?.["id"]));
+/** An optional bare id: absent → null, a valid id → itself, anything else → undefined. */
+const optionalId = (value: unknown): ProviderObjectId | null | undefined => (value === undefined ? null : parseProviderObjectId(value));
+
+/**
+ * The shared continuation rule of the comment edges: `paging.next` (presence only) and `paging.cursors.after`. null
+ * when the provider reports no next page; undefined (unreadable) when `next` is present without a valid `after`.
+ */
+function afterOf(root: Record<string, unknown>): MetaGraphCursor | null | undefined {
+  const paging = root["paging"];
+  if (paging === undefined) return null;
+  const pagingRecord = record(paging);
+  if (pagingRecord === undefined) return undefined;
+  const next = pagingRecord["next"];
+  if (next === undefined) return null;
+  // `next` only signals that another page exists; it is never read as a URL or fetched.
+  if (typeof next !== "string" || next === "") return undefined;
+  return parseMetaGraphCursor(record(pagingRecord["cursors"])?.["after"]);
+}
+
+/** One Facebook comment by whitelist; `object.id` is read only when the node read requested it. */
+function facebookCommentOf(value: unknown, withObject: boolean): MetaComment | undefined {
+  const comment = record(value);
+  if (comment === undefined) return undefined;
+  const from = record(comment["from"]);
+  const id = parseProviderObjectId(comment["id"]);
+  const fromId = parseProviderObjectId(from?.["id"]);
+  const fromName = optionalString(from?.["name"]);
+  const message = typeof comment["message"] === "string" ? comment["message"] : undefined;
+  const createdTime = parseGraphDatetime(comment["created_time"]);
+  const parentId = optionalRefId(comment["parent"]);
+  const isHidden = optionalBoolean(comment["is_hidden"]);
+  const objectId = withObject ? optionalRefId(comment["object"]) : null;
+  if (id === undefined || fromId === undefined || fromName === undefined || message === undefined || createdTime === undefined || parentId === undefined || isHidden === undefined || objectId === undefined) return undefined;
+  return Object.freeze({ id, fromId, fromName, message, createdTime, parentId, isHidden, objectId });
+}
+
+/** `{post-id}/comments`: `data[]` of comments (whitelist) and the shared continuation. More than the limit is not the documented shape. */
+function facebookCommentListOf(body: unknown): MetaCommentList | undefined {
+  const root = record(body);
+  if (root === undefined || !Array.isArray(root["data"])) return undefined;
+  const data = root["data"] as readonly unknown[];
+  if (data.length > META_FACEBOOK_COMMENTS_PAGE_LIMIT) return undefined;
+  const comments: MetaComment[] = [];
+  for (const item of data) {
+    const comment = facebookCommentOf(item, false);
+    if (comment === undefined) return undefined;
+    comments.push(comment);
+  }
+  const after = afterOf(root);
+  return after === undefined ? undefined : Object.freeze({ comments: Object.freeze(comments), after });
+}
+
+/** `{comment-id}?fields=…`: the echoed id must be the requested one. */
+function singleFacebookCommentOf(body: unknown, commentId: ProviderObjectId): MetaComment | undefined {
+  const comment = facebookCommentOf(body, true);
+  return comment?.id === commentId ? comment : undefined;
+}
+
+/** One IG Comment by whitelist: id, from.id, from.username, text, timestamp, parent_id, hidden, media.id. */
+function instagramCommentOf(value: unknown): MetaInstagramComment | undefined {
+  const comment = record(value);
+  if (comment === undefined) return undefined;
+  const from = record(comment["from"]);
+  const id = parseProviderObjectId(comment["id"]);
+  const fromId = parseProviderObjectId(from?.["id"]);
+  const fromUsername = optionalString(from?.["username"]);
+  const text = typeof comment["text"] === "string" ? comment["text"] : undefined;
+  const timestamp = parseGraphDatetime(comment["timestamp"]);
+  const parentId = optionalId(comment["parent_id"]);
+  const hidden = optionalBoolean(comment["hidden"]);
+  const mediaId = optionalRefId(comment["media"]);
+  if (id === undefined || fromId === undefined || fromUsername === undefined || text === undefined || timestamp === undefined || parentId === undefined || hidden === undefined || mediaId === undefined) return undefined;
+  return Object.freeze({ id, fromId, fromUsername, text, timestamp, parentId, hidden, mediaId });
+}
+
+/** `{ig-media-id}/comments`: `data[]` of IG Comments (whitelist) and the shared continuation. More than the limit is not the documented shape. */
+function instagramCommentListOf(body: unknown): MetaInstagramCommentList | undefined {
+  const root = record(body);
+  if (root === undefined || !Array.isArray(root["data"])) return undefined;
+  const data = root["data"] as readonly unknown[];
+  if (data.length > META_INSTAGRAM_COMMENTS_PAGE_LIMIT) return undefined;
+  const comments: MetaInstagramComment[] = [];
+  for (const item of data) {
+    const comment = instagramCommentOf(item);
+    if (comment === undefined) return undefined;
+    comments.push(comment);
+  }
+  const after = afterOf(root);
+  return after === undefined ? undefined : Object.freeze({ comments: Object.freeze(comments), after });
+}
+
+/** `{ig-comment-id}?fields=…`: the echoed id must be the requested one. */
+function singleInstagramCommentOf(body: unknown, commentId: ProviderObjectId): MetaInstagramComment | undefined {
+  const comment = instagramCommentOf(body);
+  return comment?.id === commentId ? comment : undefined;
+}
+
 export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}): MetaGraphTransport {
   const fetchImpl: MetaGraphFetch = options.fetch ?? ((url, init) => fetch(url, init));
   const timeoutMs = options.timeoutMs ?? META_GRAPH_TIMEOUT_MS;
@@ -500,6 +690,20 @@ export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}
     },
     getInstagramMedia(userToken, mediaId) {
       return get([mediaId], [["fields", META_INSTAGRAM_MEDIA_FIELDS]], userToken, (body) => singleInstagramMediaOf(body, mediaId));
+    },
+    listPostComments(pageToken, postId, after) {
+      const query: [string, string][] = [["fields", META_FACEBOOK_COMMENT_FIELDS], ["filter", "stream"], ["limit", String(META_FACEBOOK_COMMENTS_PAGE_LIMIT)]];
+      return get([postId, "comments"], after === null ? query : [...query, ["after", after]], pageToken, facebookCommentListOf);
+    },
+    getComment(pageToken, commentId) {
+      return get([commentId], [["fields", META_FACEBOOK_COMMENT_NODE_FIELDS]], pageToken, (body) => singleFacebookCommentOf(body, commentId));
+    },
+    listInstagramComments(userToken, mediaId, after) {
+      const query: [string, string][] = [["fields", META_INSTAGRAM_COMMENT_FIELDS], ["limit", String(META_INSTAGRAM_COMMENTS_PAGE_LIMIT)]];
+      return get([mediaId, "comments"], after === null ? query : [...query, ["after", after]], userToken, instagramCommentListOf);
+    },
+    getInstagramComment(userToken, commentId) {
+      return get([commentId], [["fields", META_INSTAGRAM_COMMENT_FIELDS]], userToken, (body) => singleInstagramCommentOf(body, commentId));
     },
   };
 }
