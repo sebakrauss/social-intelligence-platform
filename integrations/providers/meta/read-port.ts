@@ -208,7 +208,8 @@ function managedPage(access: ProviderAccess, operation: ContentOperation): Provi
 /** A post as a ContentDto: correlated to the managed Page, classified by the closed table, else unreadable. */
 function contentOf(post: MetaPost, page: ProviderObjectId, operation: ContentOperation): ContentDto {
   if (post.fromId !== page) throw new PermanentRejectedError(operation, "unknown");
-  const contentKind = post.statusType === null ? undefined : META_STATUS_TYPE_CONTENT_KINDS[post.statusType];
+  // Own keys only: an inherited name that passes the grammar (e.g. `constructor`) is unreadable, never a kind.
+  const contentKind = post.statusType !== null && Object.hasOwn(META_STATUS_TYPE_CONTENT_KINDS, post.statusType) ? META_STATUS_TYPE_CONTENT_KINDS[post.statusType] : undefined;
   if (contentKind === undefined) throw new PermanentRejectedError(operation, "unknown");
   return Object.freeze({
     ref: providerObjectRef("facebook", "content", post.id),

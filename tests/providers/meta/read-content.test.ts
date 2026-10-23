@@ -287,6 +287,30 @@ describe("status_type → content kind: a CLOSED table, unknown fails closed", (
   );
 });
 
+describe("status_type lookup is own-property only (Step 7G-H5.5-P11-B-H1): inherited names never yield a kind", () => {
+  // `constructor` passes the lexical grammar and is inherited by every plain object; the others are rejected earlier by
+  // the grammar. Whichever stage refuses them, none may produce a ContentKind, on list or get.
+  it.each(["constructor", "toString", "__proto__", "valueOf", "hasownproperty", "future_status"])("%s fails closed on listContent (the whole page) and on getContent", async (statusType) => {
+    const hostile = post(POST_B, { status_type: statusType });
+    const { list, get } = portWith(graphOf({ pages: { "": { data: [post(POST_A), hostile] } }, posts: { [POST_B]: hostile } }));
+    expect((await failure(list())).toJSON()).toEqual({ kind: "permanent_rejected", operation: "listContent", retry: "never", details: { reasonCode: "unknown" } });
+    expect((await failure(get(POST_B))).toJSON()).toEqual({ kind: "permanent_rejected", operation: "getContent", retry: "never", details: { reasonCode: "unknown" } });
+  });
+
+  it("the four supported status types still map exactly as before, with the same DTO facts", async () => {
+    const statuses = Object.keys(META_STATUS_TYPE_CONTENT_KINDS);
+    expect(statuses).toEqual(["added_video", "mobile_status_update", "added_photos", "shared_story"]);
+    for (const statusType of statuses) {
+      const { list, get } = portWith(graphOf({ pages: { "": { data: [post(POST_A, { status_type: statusType })] } }, posts: { [POST_A]: post(POST_A, { status_type: statusType }) } }));
+      const expected = { ref: providerObjectRef("facebook", "content", POST_A), account: providerObjectRef("facebook", "asset", PAGE), contentKind: META_STATUS_TYPE_CONTENT_KINDS[statusType], reportedSource: "unknown", caption: `caption of ${POST_A}`, publishedAt: "2026-10-01T12:00:00.000Z" };
+      const page = (await list()).data;
+      expect(page.next).toEqual({ kind: "end" });
+      expect(page.items[0]).toMatchObject(expected);
+      expect((await get()).data).toMatchObject(expected);
+    }
+  });
+});
+
 describe("time window [from, to): client-side on created_time, never a server bound, never an early stop", () => {
   it("keeps exactly the items with from ≤ created_time < to, and sends no since/until", async () => {
     const at = (time: string, id: string) => post(id, { created_time: time });

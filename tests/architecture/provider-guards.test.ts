@@ -318,6 +318,9 @@ describe("Meta Instagram read_content (Step 7G-H5.5-P11-B): /media and the media
     expect(readPort()).toMatch(/const token = await pageToken\(transport, access, page, "listContent"\);/);
     expect(readPort()).toMatch(/const token = await pageToken\(transport, access, page, "getContent"\);/);
     expect(readPort()).toMatch(/export const META_STATUS_TYPE_CONTENT_KINDS: Readonly<Record<string, ContentKind>> = Object\.freeze\(\{\n {2}added_video: "video",\n {2}mobile_status_update: "post",\n {2}added_photos: "post",\n {2}shared_story: "post",\n\}\);/);
+    // Step 7G-H5.5-P11-B-H1: both closed tables are read by own key only (no inherited Object.prototype name).
+    expect(readPort()).toMatch(/post\.statusType !== null && Object\.hasOwn\(META_STATUS_TYPE_CONTENT_KINDS, post\.statusType\)/);
+    expect(readPort()).not.toMatch(/META_STATUS_TYPE_CONTENT_KINDS\[post\.statusType\];/);
   });
 });
 
