@@ -211,15 +211,17 @@ describe("P4-B / P4-C contract history", () => {
     expect(violations({})).not.toContain("NOT_A_CATALOG_STATE");
   });
 
-  it("exactly one live-validated registration exists (Facebook read_content, P5-C9-B): every other platform × capability still fails G2", () => {
+  it("exactly two live-validated registrations exist (Facebook P5-C9-B, Instagram P11-D read_content): every other platform × capability still fails G2", () => {
     expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([
       { provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"], evidence: "api-validation:meta.facebook.read_content.20261023-01" },
+      { provider: "meta", platform: "instagram", capability: "read_content", operations: ["getContent", "listContent"], evidence: "api-validation:meta.instagram.read_content.20261023-01" },
     ]);
     for (const capability of CAPABILITY_KEYS)
       for (const platform of ["facebook", "instagram", "tiktok"] as const) {
         const v = platformEntryViolations({ ...ENTRY, platform, capability }, { ...TODAY, records: [RECORD] });
-        // The registered Facebook read_content operations rest on ANOTHER record than this synthetic one: still refused.
-        expect(v, `${platform}:${capability}`).toContain(platform === "facebook" && capability === "read_content" ? "IMPLEMENTATION_EVIDENCE_MISMATCH" : "IMPLEMENTATION_EVIDENCE_MISSING");
+        // The registered Meta read_content operations rest on OTHER records than this synthetic one: still refused.
+        const registered = platform !== "tiktok" && capability === "read_content";
+        expect(v, `${platform}:${capability}`).toContain(registered ? "IMPLEMENTATION_EVIDENCE_MISMATCH" : "IMPLEMENTATION_EVIDENCE_MISSING");
       }
   });
 });
@@ -297,8 +299,11 @@ describe("P5-B: read_content requires the exact operation SET listContent + getC
       { provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"] },
       { provider: "meta", platform: "instagram", capability: "read_content", operations: ["getContent", "listContent"] },
     ]);
-    // Live validation stays Facebook-only: Instagram (P11-B) is offline-implemented with no accepted record.
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => [op.platform, op.capability, op.evidence])).toEqual([["facebook", "read_content", "api-validation:meta.facebook.read_content.20261023-01"]]);
+    // Live validation: Facebook (P5-C9-B) and Instagram (P11-D), each resting on its own accepted record.
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => [op.platform, op.capability, op.evidence])).toEqual([
+      ["facebook", "read_content", "api-validation:meta.facebook.read_content.20261023-01"],
+      ["instagram", "read_content", "api-validation:meta.instagram.read_content.20261023-01"],
+    ]);
     // A holds; B exists but for another evidence id than this synthetic entry's (and this context has no record).
     const today = platformEntryViolations({ ...ENTRY, contentKind: "post", source: "organic" }, TODAY);
     expect(today).not.toContain("IMPLEMENTATION_INCOMPLETE");
@@ -310,11 +315,17 @@ describe("P5-B: read_content requires the exact operation SET listContent + getC
     expect(violations({}, { offlineImplementations: [] })).toEqual(["IMPLEMENTATION_INCOMPLETE"]);
   });
 
-  it("P11-B: an Instagram read_content entry satisfies A (offline) but not B — no record, no live registration — so it is refused", () => {
-    const instagram: CatalogEntry = { ...ENTRY, platform: "instagram", contentKind: "post", source: "unknown", requiredPermissions: ["instagram_basic", "pages_read_engagement"], evidence: "api-validation:meta.instagram.read_content.20261101-01" };
-    const v = platformEntryViolations(instagram, TODAY);
-    expect(v).not.toContain("IMPLEMENTATION_INCOMPLETE");
-    expect(v).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+  it("P11-D: an Instagram post/unknown entry on the accepted record satisfies A and B — admissible, yet NOT published (r3 has no Instagram entry)", () => {
+    const INSTAGRAM_EVIDENCE = "api-validation:meta.instagram.read_content.20261023-01";
+    const instagramRecord: ApiValidationRecord = { ...RECORD, id: INSTAGRAM_EVIDENCE, platform: "instagram", accountKind: "instagram_professional_account", contentKind: "post", source: "unknown",
+      validatedOn: "2026-10-23", sourceRevision: "cd2c86365e71c589847a7b35e115ff1b4ac30ba8", requiredPermissions: ["instagram_basic", "pages_read_engagement"] };
+    const instagram: CatalogEntry = { ...ENTRY, platform: "instagram", contentKind: "post", source: "unknown", requiredPermissions: ["instagram_basic", "pages_read_engagement"], evidence: INSTAGRAM_EVIDENCE };
+    expect(apiValidationRecordViolations(instagramRecord)).toEqual([]);
+    expect(platformEntryViolations(instagram, { ...TODAY, records: [instagramRecord] })).toEqual([]);
+    // Without its record (this context's default), still fail closed.
+    expect(platformEntryViolations(instagram, TODAY)).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING"]));
+    // Another (unaccepted) Instagram evidence id is not the registered one.
+    expect(platformEntryViolations({ ...instagram, evidence: "api-validation:meta.instagram.read_content.20261101-01" }, TODAY)).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
     expect(PLATFORM_CATALOG.entries.filter((entry) => entry.platform === "instagram")).toEqual([]);
   });
 

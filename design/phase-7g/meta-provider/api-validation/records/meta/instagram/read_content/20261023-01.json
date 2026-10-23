@@ -1,0 +1,20 @@
+{
+  "id": "api-validation:meta.instagram.read_content.20261023-01",
+  "provider": "meta",
+  "platform": "instagram",
+  "assetClass": "content_bearing",
+  "accountKind": "instagram_professional_account",
+  "capability": "read_content",
+  "contentKind": "post",
+  "source": "unknown",
+  "operations": ["getContent", "listContent"],
+  "validatedOn": "2026-10-23",
+  "sourceRevision": "cd2c86365e71c589847a7b35e115ff1b4ac30ba8",
+  "requiredPermissions": ["instagram_basic", "pages_read_engagement"],
+  "scenario": "One controlled LIVE execution of the operator-only INTEGRATION read_content diagnostic against a connected Instagram professional account carrying a recent single-image Feed publication, using the deployed source revision, a single task attempt, a 30-day window and one list page. The connection held instagram_basic and pages_read_engagement. listContent read one page of the account's media edge with the User access token directly (no Page token derived); getContent re-read the media object selected from that same list result.",
+  "observedResult": "listContent succeeded: one item inside the window, provider media type IMAGE on the FEED surface normalized to content kind post, reported source unknown, owner correlated with the managed account, continuation present and normalized into a valid PageCursor. getContent succeeded on the selected listed item: same ref, same managed account, same content kind. Two Meta GET requests inferred from the executed stages. No authorization, credential, rate-limit or transient failure. No product profile, outbox or catalog change.",
+  "polarity": "positive",
+  "negativeBasis": null,
+  "reviewer": "TL",
+  "status": "accepted"
+}

@@ -28,9 +28,10 @@
  * non-support (TA §16.2, Model §6.2). A catalog entry can't carry NOT_AUTHORIZED (CatalogState; refused here too), so
  * the blanket P4-B blocker is lifted. Every other requirement stands.
  *
- * CURRENT STATE: accepted, positive LIVE evidence exists for Facebook read_content, and its validated operation set is
- * registered in IMPLEMENTED_PLATFORM_OPERATIONS below. Platform catalog r3 publishes exactly one SUPPORTED entry resting
- * on them — facebook · content_bearing · read_content · post · unknown — and no other scope: every unvalidated
+ * CURRENT STATE: accepted, positive LIVE evidence exists for Facebook and Instagram read_content (each post · unknown),
+ * and each validated operation set is registered in IMPLEMENTED_PLATFORM_OPERATIONS below. Platform catalog r3
+ * publishes exactly one SUPPORTED entry — facebook · content_bearing · read_content · post · unknown; the Instagram
+ * evidence is accepted but not yet published (a separate catalog gate) — and no other scope: every unvalidated
  * platform, asset class, capability, content kind or source (organic, paid, mixed, any) stays absent and resolves to
  * UNKNOWN_NOT_VALIDATED. Accepting evidence never changes the catalog by itself, and every further entry stays
  * fail-closed: it needs its own accepted positive record of exactly its scope and a matching implementation
@@ -78,8 +79,8 @@ export interface OperationSetRegistration {
  * IMPLEMENTED OFFLINE: the adapter implements these operations and offline tests cover them; NOT validated against
  * the live provider, so never evidence by itself (requirement A only). The architecture guard proves each one is
  * actually implemented by the adapter. Step 7G-H5.5-P5-B: Facebook Page read_content (listContent + getContent). Step
- * 7G-H5.5-P11-B: Instagram professional-account read_content (listContent + getContent) — offline only: it has no
- * accepted record and no live registration, so no Instagram entry is admissible (IMPLEMENTATION_EVIDENCE_MISSING).
+ * 7G-H5.5-P11-B: Instagram professional-account read_content (listContent + getContent); validated live and registered
+ * below by Step 7G-H5.5-P11-D.
  */
 export const OFFLINE_IMPLEMENTED_OPERATIONS: readonly OperationSetRegistration[] = Object.freeze([
   Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS }),
@@ -89,8 +90,9 @@ export const OFFLINE_IMPLEMENTED_OPERATIONS: readonly OperationSetRegistration[]
 /**
  * LIVE-VALIDATED implementation evidence (requirement B): the operations that perform a capability on one platform,
  * registered explicitly by the gate that implemented AND validated them live, with the accepted positive record.
- * Step 7G-H5.5-P5-C9-B: Facebook read_content (getContent + listContent), backed by the first accepted record. Every
- * other platform × capability has none, so its positive entries are refused (IMPLEMENTATION_EVIDENCE_MISSING).
+ * Step 7G-H5.5-P5-C9-B: Facebook read_content (getContent + listContent), backed by the first accepted record. Step
+ * 7G-H5.5-P11-D: Instagram read_content (getContent + listContent), backed by its own accepted record (post · unknown).
+ * Every other platform × capability has none, so its positive entries are refused (IMPLEMENTATION_EVIDENCE_MISSING).
  */
 export interface ImplementedOperation extends OperationSetRegistration {
   /** The accepted positive record proving it. */
@@ -98,6 +100,7 @@ export interface ImplementedOperation extends OperationSetRegistration {
 }
 export const IMPLEMENTED_PLATFORM_OPERATIONS: readonly ImplementedOperation[] = Object.freeze([
   Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS, evidence: "api-validation:meta.facebook.read_content.20261023-01" }),
+  Object.freeze({ provider: "meta", platform: "instagram", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS, evidence: "api-validation:meta.instagram.read_content.20261023-01" }),
 ]);
 
 /**

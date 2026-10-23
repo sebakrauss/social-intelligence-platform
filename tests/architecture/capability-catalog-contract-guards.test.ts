@@ -36,6 +36,8 @@ import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 
 const FIRST_RECORD_ID = "api-validation:meta.facebook.read_content.20261023-01";
 const FIRST_RECORD_FILE = "design/phase-7g/meta-provider/api-validation/records/meta/facebook/read_content/20261023-01.json";
+const INSTAGRAM_RECORD_ID = "api-validation:meta.instagram.read_content.20261023-01";
+const INSTAGRAM_RECORD_FILE = "design/phase-7g/meta-provider/api-validation/records/meta/instagram/read_content/20261023-01.json";
 
 const CONTRACT = "modules/capability/domain/catalog-contract.ts";
 const EVIDENCE_DIR = "design/phase-7g/meta-provider/api-validation";
@@ -92,15 +94,15 @@ describe("the platform catalog is r3 with exactly the one evidenced entry (P5-C9
     expect(codeOf("modules/capability/index.ts")).not.toMatch(/catalog-contract/);
   });
 
-  it("the authorization semantics are RESOLVED (P4-C); exactly ONE accepted record and ONE live registration exist (P5-C9-B); r3 publishes exactly one entry resting on them (P5-C9-C)", () => {
+  it("the authorization semantics are RESOLVED (P4-C); TWO accepted records and TWO live registrations exist (Facebook P5-C9-B, Instagram P11-D); r3 still publishes only the Facebook entry (P5-C9-C)", () => {
     expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(false);
     expect(AUTHORIZATION_SEMANTICS).toBe("RESOLVED");
-    expect(recordFiles()).toEqual([FIRST_RECORD_FILE]);
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toHaveLength(1);
-    // Publication was its own gate (P5-C9-C): r3, one entry, resting on the one record and the one registration.
+    expect(recordFiles()).toEqual([FIRST_RECORD_FILE, INSTAGRAM_RECORD_FILE]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toHaveLength(2);
+    // Publication is its own gate: r3 still has one entry, resting on the Facebook record; the Instagram record is accepted, unpublished.
     expect(PLATFORM_CATALOG.revision).toBe(3);
     expect(PLATFORM_CATALOG.entries.map((entry) => entry.evidence)).toEqual([FIRST_RECORD_ID]);
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual([FIRST_RECORD_ID]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual([FIRST_RECORD_ID, INSTAGRAM_RECORD_ID]);
   });
 });
 
@@ -152,7 +154,7 @@ describe("evidence records and implementation evidence", () => {
       expect(record?.operations).toEqual(CAPABILITY_REQUIRED_OPERATIONS[op.capability]);
       expect([record?.provider, record?.platform, record?.capability]).toEqual([op.provider, op.platform, op.capability]);
     }
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual([FIRST_RECORD_ID]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual([FIRST_RECORD_ID, INSTAGRAM_RECORD_ID]);
   });
 
   it("P5-B (A, static): every OFFLINE registration names contract operations the adapter actually implements — the exact declared set", () => {
@@ -206,8 +208,8 @@ describe("evidence records and implementation evidence", () => {
 
     it("the record supports NO other content kind, platform, asset class or capability", () => {
       for (const contentKind of ["reel", "video", "story", ANY] as const) expect(check({ contentKind }), contentKind).toContain("EVIDENCE_SCOPE_MISMATCH");
-      // Instagram is implemented offline (P11-B) but has no live registration and no record of its own: still refused.
-      expect(check({ platform: "instagram" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+      // The Facebook record never backs an Instagram entry: scope mismatch, and Instagram's live registration rests on its OWN record.
+      expect(check({ platform: "instagram" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
       expect(check({ platform: "instagram" })).not.toContain("IMPLEMENTATION_INCOMPLETE");
       expect(check({ assetClass: "ad_account" })).toContain("EVIDENCE_SCOPE_MISMATCH");
       for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
@@ -220,6 +222,67 @@ describe("evidence records and implementation evidence", () => {
 
     it("the record cannot back an UNSUPPORTED entry (polarity)", () => {
       expect(check({ state: "UNSUPPORTED", requiredPermissions: [] })).toContain("EVIDENCE_POLARITY_MISMATCH");
+    });
+  });
+
+  describe("P11-D: the accepted Instagram record — exact post / unknown scope, both operations, its own permissions", () => {
+    const today = { records, offlineImplementations: OFFLINE_IMPLEMENTED_OPERATIONS, implementedOperations: IMPLEMENTED_PLATFORM_OPERATIONS, authorizationSemantics: AUTHORIZATION_SEMANTICS };
+    const entry = (patch: Partial<CatalogEntry> = {}): CatalogEntry => ({ platform: "instagram", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED",
+      limitation: null, requiredPermissions: ["instagram_basic", "pages_read_engagement"], validation: "validated", evidence: INSTAGRAM_RECORD_ID, ...patch });
+    const check = (patch: Partial<CatalogEntry> = {}) => platformEntryViolations(entry(patch), today);
+
+    it("the record parses, is accepted and positive, and states exactly the approved scope, operations and permissions", () => {
+      const record = records.find((r) => r.id === INSTAGRAM_RECORD_ID);
+      expect(record).toBeDefined();
+      expect(apiValidationRecordViolations(record as ApiValidationRecord)).toEqual([]);
+      expect(Object.keys(record ?? {})).toHaveLength(18);
+      expect(record).toMatchObject({
+        provider: "meta", platform: "instagram", assetClass: "content_bearing", accountKind: "instagram_professional_account", capability: "read_content",
+        contentKind: "post", source: "unknown", operations: ["getContent", "listContent"], validatedOn: "2026-10-23",
+        sourceRevision: "cd2c86365e71c589847a7b35e115ff1b4ac30ba8", requiredPermissions: ["instagram_basic", "pages_read_engagement"],
+        polarity: "positive", negativeBasis: null, reviewer: "TL", status: "accepted",
+      });
+      expect(record?.operations).toEqual(READ_CONTENT_REQUIRED_OPERATIONS);
+      // The known requirements of the implemented read path: never the granted set, never a minimality claim.
+      for (const p of ["pages_show_list", "business_management", "public_profile", "pages_read_user_content"]) expect(record?.requiredPermissions).not.toContain(p);
+      const text = `${record?.scenario ?? ""} ${record?.observedResult ?? ""}`;
+      expect(text).not.toMatch(/\borganic\b|\bpaid\b|minimal|CloudTrail|arn:|run_|\breel\b|\bcarousel\b|\bstor(y|ies)\b/i);
+      expect(text).toMatch(/IMAGE on the FEED surface normalized to content kind post/);
+      expect(text).toMatch(/no Page token derived/);
+    });
+
+    it("an Instagram post / unknown entry WOULD be admissible (A + B + record) — but r3 publishes no Instagram entry", () => {
+      expect(check()).toEqual([]);
+      expect(PLATFORM_CATALOG.entries.filter((e) => e.platform === "instagram")).toEqual([]);
+      expect(platformCatalogViolations(PLATFORM_CATALOG, today)).toEqual([]);
+    });
+
+    it("the record supports NO other kind: video, reel, carousel, story and any are refused", () => {
+      for (const contentKind of ["video", "reel", "carousel", "story", ANY] as const) expect(check({ contentKind }), contentKind).toContain("EVIDENCE_SCOPE_MISMATCH");
+    });
+
+    it("the record supports NO other source: organic, paid, mixed and any are refused; nor any / any", () => {
+      for (const source of ["organic", "paid", "mixed", ANY] as const) expect(check({ source }), source).toContain("EVIDENCE_SCOPE_MISMATCH");
+      expect(check({ contentKind: ANY, source: ANY })).toContain("EVIDENCE_SCOPE_MISMATCH");
+      expect(check({ contentKind: ANY, source: "unknown" })).toContain("EVIDENCE_SCOPE_MISMATCH");
+    });
+
+    it("no cross-platform reuse: the Instagram record never backs Facebook, and the Facebook record never backs Instagram", () => {
+      expect(check({ platform: "facebook" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
+      expect(check({ evidence: FIRST_RECORD_ID })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
+      expect(check({ assetClass: "ad_account" })).toContain("EVIDENCE_SCOPE_MISMATCH");
+      for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
+    });
+
+    it("the record's permissions are exact: adding pages_show_list or dropping one is refused; it cannot back UNSUPPORTED", () => {
+      expect(check({ requiredPermissions: ["instagram_basic", "pages_read_engagement", "pages_show_list"] })).toContain("EVIDENCE_PERMISSIONS_MISMATCH");
+      expect(check({ requiredPermissions: ["instagram_basic"] })).toContain("EVIDENCE_PERMISSIONS_MISMATCH");
+      expect(check({ state: "UNSUPPORTED", requiredPermissions: [] })).toContain("EVIDENCE_POLARITY_MISMATCH");
+    });
+
+    it("the Facebook record and registration are unchanged", () => {
+      expect(records.find((r) => r.id === FIRST_RECORD_ID)).toMatchObject({ platform: "facebook", contentKind: "post", source: "unknown", sourceRevision: "fb91ead8bfb79e8c8a5c1a210f65800997afc9b1", requiredPermissions: ["pages_read_engagement", "pages_show_list"] });
+      expect(IMPLEMENTED_PLATFORM_OPERATIONS[0]).toEqual({ provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"], evidence: FIRST_RECORD_ID });
     });
   });
 
@@ -307,7 +370,25 @@ describe("P5-B documents: Facebook read_content implemented offline, validated l
     expect(doc).toContain("## Facebook read_content: first accepted record (Step 7G-H5.5-P5-C9-B)");
     expect(doc).toContain("`api-validation:meta.facebook.read_content.20261023-01`");
     expect(doc).toContain("`source` `unknown`");
-    expect(recordFiles()).toEqual([FIRST_RECORD_FILE]);
+    expect(recordFiles()).toEqual([FIRST_RECORD_FILE, INSTAGRAM_RECORD_FILE]);
+  });
+
+  it("the READMEs record the P11-D Instagram acceptance: exact scope, no other kind or source, permissions semantics, no catalog change", () => {
+    const meta = raw(META_README);
+    const section = meta.slice(meta.indexOf("## Instagram read_content LIVE evidence accepted (Step 7G-H5.5-P11-D)"));
+    expect(section.length).toBeGreaterThan(0);
+    for (const phrase of [
+      "`api-validation:meta.instagram.read_content.20261023-01`",
+      "`instagram` · `content_bearing` ·\n`read_content` · `post` · `unknown`",
+      "`video`, `reel` and `carousel` stay unvalidated",
+      "the provider path proves neither organic nor paid",
+      "no globally\n  minimal permission set is claimed",
+      "Accepting this record does NOT change the catalog.",
+    ]) expect(section, phrase).toContain(phrase);
+    const evidence = raw(`${EVIDENCE_DIR}/README.md`);
+    expect(evidence).toContain("## Instagram read_content: first accepted record (Step 7G-H5.5-P11-D)");
+    expect(evidence).toContain("`api-validation:meta.instagram.read_content.20261023-01`");
+    expect(evidence).not.toContain("expected future evidence shape\n\nP11-B");
   });
 
   it("the Meta README records the C9-B acceptance with its authoritative references and the permission/source semantics", () => {

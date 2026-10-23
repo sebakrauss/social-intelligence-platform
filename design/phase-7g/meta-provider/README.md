@@ -861,3 +861,34 @@ kind needs its own positive live evidence, its own record and its own catalog en
 | R2, R8, R11, R5 | As listed above: getting started (User token on `/media`, sample `paging.cursors`), IG User fields and edges, permissions reference, cursor pagination (cursors are not to be stored). |
 
 Meta's samples now show a newer Graph version; moving off `v25.0` is a separate, deliberate change.
+
+## Instagram read_content LIVE evidence accepted (Step 7G-H5.5-P11-D)
+
+**LIVE result (P11-C2, 2026-10-23 UTC).** At source revision `cd2c863`, fully aligned on the INTEGRATION and MAIN
+Trigger planes and the web, one operator run of `integration.read_content_validation` (one attempt) against the
+connected Instagram professional account succeeded end-to-end: `listContent` read one page of `{ig-user-id}/media`
+with the Facebook User Access Token directly (no Page token derived) and returned one in-window item — provider
+IMAGE on the FEED surface, normalized to `post`, reported source `unknown`, owner correlated — with continuation as a
+`meta1.` PageCursor; `getContent` re-read that same media object (same ref, same managed account, same kind). Two
+Graph GETs are inferred from the executed stages (Graph `v25.0`). No authorization, credential, rate-limit or
+transient failure; no profile, outbox or catalog change. The previous run (P11-C1) is history only: it listed
+successfully but found no in-window item, so it was never evidence.
+
+**Accepted record.** `api-validation:meta.instagram.read_content.20261023-01`
+(`api-validation/records/meta/instagram/read_content/20261023-01.json`), registered in
+`IMPLEMENTED_PLATFORM_OPERATIONS` with operations `getContent` + `listContent`, next to the unchanged Facebook entry.
+This supersedes the P11-B statement that the live registry is Facebook-only. Scope: `instagram` · `content_bearing` ·
+`read_content` · `post` · `unknown`, accountKind `instagram_professional_account`.
+
+**What it does NOT claim.**
+- No other kind: `video`, `reel` and `carousel` stay unvalidated (each needs its own positive run, record and entry).
+- No other source: the provider path proves neither organic nor paid, and the operator's knowledge of how the post
+  was made is not provider evidence; `any` is never used.
+- No stories, live media, tagged or mentioned media, and no generic `any` / `any` read_content.
+- `requiredPermissions` = `instagram_basic` and `pages_read_engagement`, the known requirements of the implemented
+  read path. `pages_show_list` and the other granted permissions are account facts, not requirements, and no globally
+  minimal permission set is claimed.
+
+**Accepting this record does NOT change the catalog.** The platform catalog stays `platform` r3 with its one Facebook
+entry, and the Instagram profile keeps ten UNKNOWN rows. Publishing Instagram `post` / `unknown` support is a later
+catalog gate (r4), followed by a paired release, web alignment and a Re-check.

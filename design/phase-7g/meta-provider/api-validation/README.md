@@ -77,16 +77,17 @@ Two field meanings this first record makes concrete (the generic rules above are
 The record is registered in `IMPLEMENTED_PLATFORM_OPERATIONS`. It does not, by itself, create a catalog entry: an entry
 needs a separate gate, and only an entry of exactly this scope (post / unknown) can rest on it.
 
-## Instagram read_content (Step 7G-H5.5-P11-B): expected future evidence shape
+## Instagram read_content: first accepted record (Step 7G-H5.5-P11-D)
 
-P11-B implemented Instagram professional-account `listContent` and `getContent` **offline only**
-(`OFFLINE_IMPLEMENTED_OPERATIONS`). Nothing is validated live and **no Instagram record exists**. A future record would
-be positive only if the operator diagnostic lists at least one in-window item AND reads that same item back with full
-correlation, and it would state exactly the observed kind: for an IMAGE · FEED item, `provider` `meta`, `platform`
-`instagram`, `assetClass` `content_bearing`, `accountKind` `instagram_professional_account`, `capability`
-`read_content`, `contentKind` `post`, `source` `unknown`, `operations` `["getContent", "listContent"]`,
-`requiredPermissions` `["instagram_basic", "pages_read_engagement"]` (the known requirements of the implemented read
-path, not the granted set and not a minimality claim). A video, reel or carousel needs its own record.
+`records/meta/instagram/read_content/20261023-01.json` — `api-validation:meta.instagram.read_content.20261023-01`,
+`accepted`, `positive`: `provider` `meta`, `platform` `instagram`, `assetClass` `content_bearing`, `accountKind`
+`instagram_professional_account`, `capability` `read_content`, `contentKind` `post`, `source` `unknown`, `operations`
+`["getContent", "listContent"]`, `requiredPermissions` `["instagram_basic", "pages_read_engagement"]`,
+`sourceRevision` the deployed commit, `reviewer` `TL`. It asserts one successful LIVE validation in which an IMAGE ·
+FEED item was listed and read back with full correlation (Meta README › Step 7G-H5.5-P11-D); it carries no run,
+account, media or provider identifier. It backs only that exact scope: a video, reel or carousel needs its own record,
+and `requiredPermissions` is the known requirement of the implemented read path, never the granted set or a
+minimality claim.
 
 ## Process
 
