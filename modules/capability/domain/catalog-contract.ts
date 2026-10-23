@@ -26,8 +26,12 @@
  * NOT_AUTHORIZED (reasons ACCOUNT_PERMISSION_MISSING / OBSERVED_PERMISSION_MISSING; availability UNAVAILABLE /
  * ACCOUNT_PERMISSION_MISSING / REAUTHORIZE), never UNSUPPORTED, which stays reserved for authoritative provider/platform
  * non-support (TA §16.2, Model §6.2). A catalog entry can't carry NOT_AUTHORIZED (CatalogState; refused here too), so
- * the blanket P4-B blocker is lifted. Every other requirement stands: with no accepted record and no registered
- * implementation evidence, NO real platform entry is admissible yet.
+ * the blanket P4-B blocker is lifted. Every other requirement stands.
+ *
+ * FIRST ACCEPTED EVIDENCE (Step 7G-H5.5-P5-C9-B): `api-validation:meta.facebook.read_content.20261023-01` (Facebook
+ * Page · content_bearing · read_content · post · unknown) is accepted and registered below. Accepting evidence never
+ * changes the catalog: the platform catalog stays r2 with zero entries until a separate gate publishes an entry of
+ * EXACTLY that scope (any other scope — organic, paid, mixed, any — is refused as EVIDENCE_SCOPE_MISMATCH).
  */
 import type { PlatformKey } from "@/domain/platforms";
 import type { CapabilityCatalog, CatalogEntry } from "./catalog";
@@ -79,14 +83,16 @@ export const OFFLINE_IMPLEMENTED_OPERATIONS: readonly OperationSetRegistration[]
 /**
  * LIVE-VALIDATED implementation evidence (requirement B): the operations that perform a capability on one platform,
  * registered explicitly by the gate that implemented AND validated them live, with the accepted positive record.
- * Empty (LIVE_VALIDATED_OPERATIONS = none): nothing has been validated live for any of the ten capabilities, so every
- * positive platform entry is refused (IMPLEMENTATION_EVIDENCE_MISSING).
+ * Step 7G-H5.5-P5-C9-B: Facebook read_content (getContent + listContent), backed by the first accepted record. Every
+ * other platform × capability has none, so its positive entries are refused (IMPLEMENTATION_EVIDENCE_MISSING).
  */
 export interface ImplementedOperation extends OperationSetRegistration {
   /** The accepted positive record proving it. */
   readonly evidence: string;
 }
-export const IMPLEMENTED_PLATFORM_OPERATIONS: readonly ImplementedOperation[] = Object.freeze([]);
+export const IMPLEMENTED_PLATFORM_OPERATIONS: readonly ImplementedOperation[] = Object.freeze([
+  Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS, evidence: "api-validation:meta.facebook.read_content.20261023-01" }),
+]);
 
 /**
  * `api-validation:{provider}.{platform}.{capability}.{YYYYMMDD}-{NN}` — dot-separated so every id is admitted by the

@@ -688,3 +688,53 @@ Runs #2/#3 returned no posts, so Graph sent no `next` and the cursor was never c
 
 **Next.** Rollout (commit → CI → paired Trigger release → web alignment), then exactly one controlled LIVE run #5,
 reusing the fresh Page test post if it is still available. Facebook read_content is NOT LIVE-validated until then.
+
+## Facebook read_content LIVE evidence accepted (Step 7G-H5.5-P5-C9-B)
+
+**LIVE result (P5-C8, 2026-10-23 UTC).** At source revision `fb91ead`, fully aligned on the INTEGRATION and MAIN
+Trigger planes and the web, one operator run of `integration.read_content_validation` (one attempt) succeeded
+end-to-end. The run derived a Page token and read one page of `published_posts`: one in-window item, kind `post`,
+reported source `unknown`, with continuation returned as a `meta1.` PageCursor (the P5-C7 fix, confirmed LIVE). It
+then derived a Page token again and read the same item back with `getContent`: same ref, same managed Page, same kind.
+Four Graph GETs are inferred from the executed stages. There was no authorization, credential, rate-limit or transient
+failure, and no profile, outbox or catalog change. The earlier diagnostic runs are history only, never evidence:
+- #1 was refused at the input guard (invocation tooling);
+- #2 and #3 found no content;
+- #4 hit the cursor-envelope defect fixed in P5-C7.
+
+**Accepted record.** `api-validation:meta.facebook.read_content.20261023-01`
+(`api-validation/records/meta/facebook/read_content/20261023-01.json`), registered in `IMPLEMENTED_PLATFORM_OPERATIONS`
+with operations `getContent` + `listContent`. Scope: `facebook` · `content_bearing` · `read_content` · `post` ·
+`unknown`. This scope supersedes the P5-B proposal of `source = organic`.
+
+**Source semantics.**
+- `unknown` is a real capability-source value: the platform reported no more specific classification, and the
+  adapter never manufactures one.
+- Reading `/published_posts` says who published the content, not whether it was organic or paid. The validated
+  `post` was reported `unknown`, so organic, paid and mixed remain unvalidated.
+- `any` is not used: it means every value of the source dimension and would claim support never observed.
+
+**Permission semantics.**
+- `requiredPermissions` = the known provider/contract conditions for this path: `pages_read_engagement` and
+  `pages_show_list`, per R11 below.
+- The observed granted permissions are account facts (the profile's granted set), not requirements. The validated
+  connection also held `business_management`, `instagram_basic` and `public_profile`; none of them is listed.
+- `pages_read_user_content` was NOT granted and the read succeeded, so it is not required for this Page-owned-post path.
+- The run proves that this two-permission path works. It does NOT claim a globally minimal permission set for every
+  Facebook API scenario, and no independent AWS audit is claimed (the record contract does not require one and forbids
+  AWS identifiers).
+
+**Authoritative references** (Meta-owned, retrieved 2026-10-23; R6, R10 and R11 as listed in E1):
+
+| Ref | Source and what it supports |
+|---|---|
+| R11 | Permissions reference. `pages_read_engagement` lets an app read content (posts, photos, videos, events) posted by the Page, with `pages_show_list` as its dependency. `pages_show_list` gives access to the list of Pages a person manages. `pages_read_user_content` covers user-generated content on the Page (posts, comments and ratings by users or other Pages), which is not the Page-owned content read here. |
+| R6 | Page reference. `access_token` is a Page field ("The Page's access token"), returned only when the requesting User has a role on the Page other than Live Contributor. This is the per-Page lookup Wrenkind uses: `GET /{page-id}?fields=access_token` with the User token. |
+| R10 | Access tokens guide. Page access tokens are obtained with a User access token for Pages the person has a role on; the guide shows the `/{user-id}/accounts` form. |
+| R13 | Page Published Posts edge — `https://developers.facebook.com/docs/graph-api/reference/page/published_posts/` (localized). Its Reading section names no permission scope; it only notes that a public-Page-content feature permission may be required. The permission assertion therefore rests on R11 and on the LIVE result, not on R13. |
+| R14 | Meta's Facebook API Postman workspace, request "Get Specific Page Access Token" — `https://www.postman.com/meta/facebook/request/tass6hw/get-specific-page-access-token`. Located through the search index (a per-Page `fields=…access_token` lookup with a User token). The page did not render for retrieval, so it is supplementary and not relied upon; R6 is the authority. |
+
+**Accepting this record does NOT change the catalog.** The platform catalog stays `platform` r2 with zero entries, and
+the LIVE profiles keep their current state. A later gate may publish an r3 entry of exactly this scope (post / unknown,
+the two permissions, this evidence). The revision bump will make every profile `PROFILE_STALE` until a manual Re-check.
+

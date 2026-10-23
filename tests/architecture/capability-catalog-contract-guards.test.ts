@@ -16,7 +16,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectSecrets } from "@/domain/secret-patterns";
 import { MUTATION_OPERATIONS, READ_OPERATIONS } from "@/integrations/providers/contract";
-import { PLATFORM_CATALOG } from "@/modules/capability";
+import { ANY, CAPABILITY_KEYS, PLATFORM_CATALOG, type CatalogEntry } from "@/modules/capability";
 import {
   ACCOUNT_INFRASTRUCTURE_OPERATIONS,
   API_VALIDATION_EVIDENCE_ID,
@@ -25,11 +25,16 @@ import {
   CAPABILITY_REQUIRED_OPERATIONS,
   IMPLEMENTED_PLATFORM_OPERATIONS,
   OFFLINE_IMPLEMENTED_OPERATIONS,
+  READ_CONTENT_REQUIRED_OPERATIONS,
   apiValidationRecordViolations,
   platformCatalogViolations,
+  platformEntryViolations,
   type ApiValidationRecord,
 } from "@/modules/capability/domain/catalog-contract";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
+
+const FIRST_RECORD_ID = "api-validation:meta.facebook.read_content.20261023-01";
+const FIRST_RECORD_FILE = "design/phase-7g/meta-provider/api-validation/records/meta/facebook/read_content/20261023-01.json";
 
 const CONTRACT = "modules/capability/domain/catalog-contract.ts";
 const EVIDENCE_DIR = "design/phase-7g/meta-provider/api-validation";
@@ -79,11 +84,14 @@ describe("the platform catalog is frozen at r2 with zero entries", () => {
     expect(codeOf("modules/capability/index.ts")).not.toMatch(/catalog-contract/);
   });
 
-  it("the authorization semantics are RESOLVED (P4-C) and the blanket blocker is lifted — yet nothing is admissible: no record, no implementation", () => {
+  it("the authorization semantics are RESOLVED (P4-C); exactly ONE accepted record and ONE live registration exist (P5-C9-B) — and the catalog is still empty", () => {
     expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(false);
     expect(AUTHORIZATION_SEMANTICS).toBe("RESOLVED");
-    expect(recordFiles()).toEqual([]);
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([]);
+    expect(recordFiles()).toEqual([FIRST_RECORD_FILE]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toHaveLength(1);
+    // Accepting evidence never mutates the catalog: publication is a separate, deliberate gate.
+    expect(PLATFORM_CATALOG.revision).toBe(2);
+    expect(PLATFORM_CATALOG.entries).toHaveLength(0);
   });
 });
 
@@ -132,8 +140,10 @@ describe("evidence records and implementation evidence", () => {
       expect(record?.status).toBe("accepted");
       expect(record?.polarity).toBe("positive");
       expect(record?.operations).toEqual(op.operations);
+      expect(record?.operations).toEqual(CAPABILITY_REQUIRED_OPERATIONS[op.capability]);
+      expect([record?.provider, record?.platform, record?.capability]).toEqual([op.provider, op.platform, op.capability]);
     }
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual([FIRST_RECORD_ID]);
   });
 
   it("P5-B (A, static): every OFFLINE registration names contract operations the adapter actually implements — the exact declared set", () => {
@@ -151,12 +161,53 @@ describe("evidence records and implementation evidence", () => {
     for (const [capability, operations] of Object.entries(CAPABILITY_REQUIRED_OPERATIONS)) for (const name of operations) expect([...READ_OPERATIONS] as readonly string[], `${capability}:${name}`).toContain(name);
   });
 
-  it("P5-B: read_content cannot yet produce a real platform catalog SUPPORTED entry (offline-implemented, validated live nowhere)", () => {
-    const candidate = { platform: "facebook", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "organic", state: "SUPPORTED", limitation: null,
-      requiredPermissions: ["pages_read_engagement", "pages_show_list"], validation: "validated", evidence: "api-validation:meta.facebook.read_content.20261101-01" } as const;
-    const violations = platformCatalogViolations({ ...PLATFORM_CATALOG, entries: [candidate] }, { records, offlineImplementations: OFFLINE_IMPLEMENTED_OPERATIONS, implementedOperations: IMPLEMENTED_PLATFORM_OPERATIONS, authorizationSemantics: AUTHORIZATION_SEMANTICS });
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.violations).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+  describe("P5-C9-B: the first accepted record — exact scope, exact operations, exact permissions", () => {
+    const today = { records, offlineImplementations: OFFLINE_IMPLEMENTED_OPERATIONS, implementedOperations: IMPLEMENTED_PLATFORM_OPERATIONS, authorizationSemantics: AUTHORIZATION_SEMANTICS };
+    const entry = (patch: Partial<CatalogEntry> = {}): CatalogEntry => ({ platform: "facebook", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED",
+      limitation: null, requiredPermissions: ["pages_read_engagement", "pages_show_list"], validation: "validated", evidence: FIRST_RECORD_ID, ...patch });
+    const check = (patch: Partial<CatalogEntry> = {}) => platformEntryViolations(entry(patch), today);
+
+    it("the record parses, is accepted and positive, and states exactly the approved scope, operations and permissions", () => {
+      const record = records.find((r) => r.id === FIRST_RECORD_ID);
+      expect(record).toBeDefined();
+      expect(apiValidationRecordViolations(record as ApiValidationRecord)).toEqual([]);
+      expect(record).toMatchObject({
+        provider: "meta", platform: "facebook", assetClass: "content_bearing", accountKind: "facebook_page", capability: "read_content",
+        contentKind: "post", source: "unknown", operations: ["getContent", "listContent"], validatedOn: "2026-10-23",
+        sourceRevision: "fb91ead8bfb79e8c8a5c1a210f65800997afc9b1", requiredPermissions: ["pages_read_engagement", "pages_show_list"],
+        polarity: "positive", negativeBasis: null, reviewer: "TL", status: "accepted",
+      });
+      expect(record?.operations).toEqual(READ_CONTENT_REQUIRED_OPERATIONS);
+      // Not the observed grant set, never the user-content permission.
+      for (const p of ["business_management", "instagram_basic", "public_profile", "pages_read_user_content"]) expect(record?.requiredPermissions).not.toContain(p);
+      // No claim of organic/paid source, minimality or independent AWS verification in the free text.
+      expect(`${record?.scenario ?? ""} ${record?.observedResult ?? ""}`).not.toMatch(/\borganic\b|\bpaid\b|minimal|CloudTrail|arn:|run_/i);
+    });
+
+    it("the catalog stays r2 / [] and admissible; a matching post / unknown entry WOULD be admissible", () => {
+      expect(platformCatalogViolations(PLATFORM_CATALOG, today)).toEqual([]);
+      expect(check()).toEqual([]);
+    });
+
+    it("the record supports NO other source: organic, paid, mixed and any are refused (scope mismatch, fail closed)", () => {
+      for (const source of ["organic", "paid", "mixed", ANY] as const) expect(check({ source }), source).toContain("EVIDENCE_SCOPE_MISMATCH");
+    });
+
+    it("the record supports NO other content kind, platform, asset class or capability", () => {
+      for (const contentKind of ["reel", "video", "story", ANY] as const) expect(check({ contentKind }), contentKind).toContain("EVIDENCE_SCOPE_MISMATCH");
+      expect(check({ platform: "instagram" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_INCOMPLETE", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+      expect(check({ assetClass: "ad_account" })).toContain("EVIDENCE_SCOPE_MISMATCH");
+      for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
+    });
+
+    it("the record's permissions are exact: adding the user-content permission or dropping one is refused", () => {
+      expect(check({ requiredPermissions: ["pages_read_engagement", "pages_read_user_content", "pages_show_list"] })).toContain("EVIDENCE_PERMISSIONS_MISMATCH");
+      expect(check({ requiredPermissions: ["pages_read_engagement"] })).toContain("EVIDENCE_PERMISSIONS_MISMATCH");
+    });
+
+    it("the record cannot back an UNSUPPORTED entry (polarity)", () => {
+      expect(check({ state: "UNSUPPORTED", requiredPermissions: [] })).toContain("EVIDENCE_POLARITY_MISMATCH");
+    });
   });
 
   it("the implementation checker reads the adapter as it is: describeAccount, listContent, getContent implemented; other capability reads refused; no Meta mutation port", () => {
@@ -227,15 +278,37 @@ describe("P5-B documents: Facebook read_content implemented offline, validated l
     ]) {
       expect(doc, phrase).toContain(phrase);
     }
-    const section = doc.slice(doc.indexOf("## Facebook Page read_content (Step 7G-H5.5-P5-B)"));
+    // The P5-B section itself (up to the C9-B acceptance section, which cites Meta-owned URLs and the evidence id).
+    const section = doc.slice(doc.indexOf("## Facebook Page read_content (Step 7G-H5.5-P5-B)"), doc.indexOf("## Facebook read_content LIVE evidence accepted (Step 7G-H5.5-P5-C9-B)"));
+    expect(section.length).toBeGreaterThan(0);
     expect(section).not.toMatch(/\d{8,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|proj_|arn:aws|dpl_|run_[a-z0-9]{6,}|https?:\/\//);
+    // The C9-B section: no provider/account/run/AWS identifiers; the only digit run is the evidence date; URLs only Meta-owned.
+    const accepted = doc.slice(doc.indexOf("## Facebook read_content LIVE evidence accepted (Step 7G-H5.5-P5-C9-B)"));
+    expect(accepted).not.toMatch(/\d{9,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|proj_|arn:aws|dpl_|run_[a-z0-9]{6,}|worker_/);
+    expect([...accepted.matchAll(/\d{8,}/g)].map((m) => m[0]).every((d) => d === "20261023")).toBe(true);
+    for (const url of accepted.match(/https?:\/\/[^\s`)]+/g) ?? []) expect(url, url).toMatch(/^https:\/\/(developers\.facebook\.com|www\.postman\.com\/meta\/)/);
   });
 
-  it("the evidence contract defines the future read_content record shape without any record existing", () => {
+  it("the evidence contract documents the first accepted read_content record (P5-C9-B)", () => {
     const doc = raw(`${EVIDENCE_DIR}/README.md`);
-    expect(doc).toContain("## Facebook read_content (Step 7G-H5.5-P5-B): expected future evidence shape");
-    expect(doc).toContain("**no record exists — not even a draft**");
-    expect(recordFiles()).toEqual([]);
+    expect(doc).toContain("## Facebook read_content: first accepted record (Step 7G-H5.5-P5-C9-B)");
+    expect(doc).toContain("`api-validation:meta.facebook.read_content.20261023-01`");
+    expect(doc).toContain("`source` `unknown`");
+    expect(recordFiles()).toEqual([FIRST_RECORD_FILE]);
+  });
+
+  it("the Meta README records the C9-B acceptance with its authoritative references and the permission/source semantics", () => {
+    const doc = raw(META_README);
+    for (const phrase of [
+      "## Facebook read_content LIVE evidence accepted (Step 7G-H5.5-P5-C9-B)",
+      "`requiredPermissions` = the known provider/contract conditions",
+      "observed granted permissions are account facts",
+      "does NOT claim a globally minimal permission set",
+      "`unknown` is a real capability-source value",
+      "organic, paid and mixed remain unvalidated",
+      "| R13 |",
+      "Accepting this record does NOT change the catalog",
+    ]) expect(doc, phrase).toContain(phrase);
   });
 });
 

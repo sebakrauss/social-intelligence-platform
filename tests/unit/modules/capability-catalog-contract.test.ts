@@ -104,11 +104,15 @@ describe("P4-B freeze: the platform catalog stays r2 with zero entries; no entry
     expect(violations({})).not.toContain("NOT_A_CATALOG_STATE");
   });
 
-  it("no implementation evidence is registered today: every positive entry of every capability fails G2", () => {
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([]);
+  it("exactly one live-validated registration exists (Facebook read_content, P5-C9-B): every other platform × capability still fails G2", () => {
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([
+      { provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"], evidence: "api-validation:meta.facebook.read_content.20261023-01" },
+    ]);
     for (const capability of CAPABILITY_KEYS)
       for (const platform of ["facebook", "instagram", "tiktok"] as const) {
-        expect(platformEntryViolations({ ...ENTRY, platform, capability }, { ...TODAY, records: [RECORD] })).toContain("IMPLEMENTATION_EVIDENCE_MISSING");
+        const v = platformEntryViolations({ ...ENTRY, platform, capability }, { ...TODAY, records: [RECORD] });
+        // The registered Facebook read_content operations rest on ANOTHER record than this synthetic one: still refused.
+        expect(v, `${platform}:${capability}`).toContain(platform === "facebook" && capability === "read_content" ? "IMPLEMENTATION_EVIDENCE_MISMATCH" : "IMPLEMENTATION_EVIDENCE_MISSING");
       }
   });
 });
@@ -181,15 +185,15 @@ describe("P5-B: read_content requires the exact operation SET listContent + getC
     }
   });
 
-  it("offline implementation (A) and live validation (B) are distinct: today Facebook read_content is implemented offline, validated live NOWHERE", () => {
+  it("offline implementation (A) and live validation (B) are distinct; B now rests on ONE specific accepted record", () => {
     expect(OFFLINE_IMPLEMENTED_OPERATIONS).toEqual([{ provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"] }]);
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([]);
-    // Today: A holds, B does not — and no accepted record exists.
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => [op.platform, op.capability, op.evidence])).toEqual([["facebook", "read_content", "api-validation:meta.facebook.read_content.20261023-01"]]);
+    // A holds; B exists but for another evidence id than this synthetic entry's (and this context has no record).
     const today = platformEntryViolations({ ...ENTRY, contentKind: "post", source: "organic" }, TODAY);
     expect(today).not.toContain("IMPLEMENTATION_INCOMPLETE");
-    expect(today).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISSING"]));
-    // Even with a (hypothetical) accepted record, the missing live registration still refuses it.
-    expect(platformEntryViolations(ENTRY, { ...TODAY, records: [RECORD] })).toEqual(["IMPLEMENTATION_EVIDENCE_MISSING"]);
+    expect(today).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
+    // Even with a (hypothetical) accepted record, a registration resting on a DIFFERENT record still refuses it.
+    expect(platformEntryViolations(ENTRY, { ...TODAY, records: [RECORD] })).toEqual(["IMPLEMENTATION_EVIDENCE_MISMATCH"]);
     // Offline registrations are never evidence: offline-only (no live registration) is refused; live without offline too.
     expect(violations({}, { implementedOperations: [] })).toEqual(["IMPLEMENTATION_EVIDENCE_MISSING"]);
     expect(violations({}, { offlineImplementations: [] })).toEqual(["IMPLEMENTATION_INCOMPLETE"]);
@@ -273,7 +277,7 @@ describe("G3 — LIVE-shaped P3 facts produce no SUPPORTED and no UNSUPPORTED (f
     const hypothetical: CapabilityCatalog = { id: "platform", revision: 2, label: "hypothetical", entries: [unsafe] };
     const profile = evaluateProfile({ catalog: hypothetical, platform: "facebook", assetClass: "content_bearing", facts: liveFacts, observations: [], evaluatedAt: new Date() });
     expect(profile.entries.find((e) => e.capability === "read_content")?.state).toBe("SUPPORTED");
-    expect(platformCatalogViolations(hypothetical, TODAY)[0]?.violations).toEqual(expect.arrayContaining(["EVIDENCE_NOT_API_VALIDATION", "REQUIRED_PERMISSIONS_EMPTY", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+    expect(platformCatalogViolations(hypothetical, TODAY)[0]?.violations).toEqual(expect.arrayContaining(["EVIDENCE_NOT_API_VALIDATION", "REQUIRED_PERMISSIONS_EMPTY", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
   });
 });
 

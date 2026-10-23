@@ -1,0 +1,20 @@
+{
+  "id": "api-validation:meta.facebook.read_content.20261023-01",
+  "provider": "meta",
+  "platform": "facebook",
+  "assetClass": "content_bearing",
+  "accountKind": "facebook_page",
+  "capability": "read_content",
+  "contentKind": "post",
+  "source": "unknown",
+  "operations": ["getContent", "listContent"],
+  "validatedOn": "2026-10-23",
+  "sourceRevision": "fb91ead8bfb79e8c8a5c1a210f65800997afc9b1",
+  "requiredPermissions": ["pages_read_engagement", "pages_show_list"],
+  "scenario": "One controlled LIVE execution of the operator-only INTEGRATION read_content diagnostic against a connected Facebook Page carrying a recent Page-authored post, using the deployed source revision, a single task attempt, a 30-day window and one list page. The connection held pages_read_engagement and pages_show_list and did not hold pages_read_user_content. listContent derived a Page access token and read one page of published posts; getContent derived a Page access token again and re-read the item selected from that same list result.",
+  "observedResult": "listContent succeeded: one item returned, one item inside the window, content kind post, reported source unknown, Page identity correlated, continuation present and normalized into a valid PageCursor. getContent succeeded on the selected listed item: same ref, same managed account, same content kind. Four Meta GET requests inferred from the executed stages. No authorization, credential, rate-limit or transient failure. No product profile, outbox or catalog change.",
+  "polarity": "positive",
+  "negativeBasis": null,
+  "reviewer": "TL",
+  "status": "accepted"
+}

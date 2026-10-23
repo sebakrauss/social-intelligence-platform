@@ -58,18 +58,24 @@ apps; workspace, connection, account or credential ids; AWS ids, ARNs, session o
 responses or any user data; URLs (they embed ids). The contract refuses free text with long digit runs or links, and the
 guard runs the shared secret scan over every record.
 
-## Facebook read_content (Step 7G-H5.5-P5-B): expected future evidence shape
+## Facebook read_content: first accepted record (Step 7G-H5.5-P5-C9-B)
 
-P5-B implemented Facebook Page `listContent` and `getContent` **offline only** (`OFFLINE_IMPLEMENTED_OPERATIONS`); nothing
-is validated live (`IMPLEMENTED_PLATFORM_OPERATIONS` stays empty) and **no record exists — not even a draft**. A future
-P5-C record would be, if and only if the operator diagnostic `integration.read_content_validation` lists at least one
-in-window item AND reads that same item back with full correlation: `provider` `meta`, `platform` `facebook`,
-`assetClass` `content_bearing`, `accountKind` `facebook_page`, `capability` `read_content`, `operations`
-`["getContent", "listContent"]`, `requiredPermissions` exactly as observed LIVE (expected, not established:
-`pages_read_engagement`, `pages_show_list`), the proposed scope (`contentKind` `post`, `source` `organic` — PROPOSED,
-not accepted), `polarity` `positive`, `status` `draft` until the TL accepts it. A zero-item run, a failed or uncorrelated
-getContent, or a single operation is never positive evidence; a LIVE authorization rejection is `NOT_AUTHORIZED`
-evidence, never an authoritative negative.
+`records/meta/facebook/read_content/20261023-01.json` — `api-validation:meta.facebook.read_content.20261023-01`,
+`accepted`, `positive`: `provider` `meta`, `platform` `facebook`, `assetClass` `content_bearing`, `accountKind`
+`facebook_page`, `capability` `read_content`, `contentKind` `post`, `source` `unknown`, `operations`
+`["getContent", "listContent"]`, `requiredPermissions` `["pages_read_engagement", "pages_show_list"]`, `sourceRevision`
+the deployed commit, `reviewer` `TL`. It is a compact assertion of one successful LIVE validation (Meta README ›
+Step 7G-H5.5-P5-C9-B); it carries no run, account or provider identifier, and the operational history of the
+preceding runs stays in the design README, not in the record.
+
+Two field meanings this first record makes concrete (the generic rules above are unchanged):
+- `requiredPermissions` lists the known provider/contract conditions the operation needs — never the full set an
+  account happened to have granted, and never a claim of empirical minimality.
+- `source` is the source the PROVIDER reported for the validated content. `unknown` is a real value; it is not
+  widened to `any` (every source) nor reinterpreted as `organic`.
+
+The record is registered in `IMPLEMENTED_PLATFORM_OPERATIONS`. It does not, by itself, create a catalog entry: an entry
+needs a separate gate, and only an entry of exactly this scope (post / unknown) can rest on it.
 
 ## Process
 
