@@ -1,8 +1,8 @@
 /**
  * INTEGRATION-plane read_content VALIDATION diagnostic (Step 7G-H5.5-P5-B; design/phase-7g/meta-provider/README.md ›
- * read_content; DEV/non-prod only). The controlled operator vehicle for the LIVE validation of the offline Facebook
- * Page read_content implementation (a later gate, P5-C): it exercises listContent and then getContent of ONE
- * connected Facebook Page through the SAME production path as the product tasks —
+ * read_content; DEV/non-prod only). The controlled operator vehicle for the LIVE validation of Meta read_content: it
+ * exercises listContent and then getContent of ONE connected Facebook Page (P5-C) or Instagram professional account
+ * (Step 7G-H5.5-P11-B) through the SAME production path as the product tasks —
  *
  *   read-only lookup (worker scope, the payload's ONE workspace) → composeReadContentValidation (jobs/connections.ts:
  *   createCredentialAccess(composeCredentialOpener(env, integrationWorkerAwsCredentials(env), one KMS attempt)) and the
@@ -19,13 +19,15 @@
  *   runtime    Node.js 22
  *   provider   CAPABILITY_PROVIDER_MODE unset (never the synthetic staging stub)
  *   crypto     the KMS keyring (never the local one)
- *   target     an ACTIVE, content-bearing Facebook Page of an unremoved Meta connection with its active credential
+ *   target     an ACTIVE, content-bearing Facebook Page or Instagram professional account of an unremoved Meta
+ *              connection with its active credential (the account's platform selects the read path; no fallback)
  *
- * Sequence (ONE credential opening, ONE KMS Decrypt): listContent over [now − 30 days, now), first page only (the
- * port derives a Page Access Token, then reads ONE page of published_posts); then, only if that page returned at
- * least one in-window item, getContent of the FIRST listed ref (the port derives a Page Access Token again, then reads
- * the post) — never an arbitrary target. Meta GETs: 4 with an item, 2 without. A run without an item is never
- * positive evidence (`positiveEvidenceEligible` false).
+ * Sequence (ONE credential opening, ONE KMS Decrypt): listContent over [now − 30 days, now), first page only; then,
+ * only if that page returned at least one in-window item, getContent of the FIRST listed ref — never an arbitrary
+ * target. Meta GETs (READ_CONTENT_VALIDATION_META_REQUESTS, per platform):
+ *   facebook   4 with an item, 2 without (the port derives a Page Access Token before each content read)
+ *   instagram  2 with an item, 1 without (the sealed User Access Token is used directly: `/media`, then the media node)
+ * A run without an item is never positive evidence (`positiveEvidenceEligible` false). The output names the platform.
  *
  * Output names the selected item's normalized kind (`get.selectedContentKind`, closed ContentKind) so a positive run proves
  * WHICH kind getContent was validated on (Step 7G-H5.5-P5-C0); `get.contentKindMatchesListed` then says whether the
@@ -33,9 +35,9 @@
  *
  * Writes NOTHING: no capability profile, catalog, outbox, ingestion, audit or effect claim (the lookup is read-only and
  * its write dependencies refuse). Provider errors are reported as closed classes, never thrown provider prose; the
- * output carries no Page/post id, ref, token, caption, name, cursor, URL or raw response. Retry: ONE task attempt and
- * ONE KMS attempt, so a logical run is exactly one attempt; a transient failure is reported, and re-running is a new,
- * deliberate operator run.
+ * output carries no Page/post/account/media id, ref, token, caption, name, cursor, URL or raw response. Retry: ONE
+ * task attempt and ONE KMS attempt, so a logical run is exactly one attempt; a transient failure is reported, and
+ * re-running is a new, deliberate operator run.
  */
 import { CredentialUnreadableError, type ConnectedAccount, type Connection, type ProviderCredentialAccess } from "@/modules/connections";
 import { isUuid, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
@@ -77,8 +79,17 @@ export const READ_CONTENT_VALIDATION_TRIGGER_ENVIRONMENT = "PRODUCTION";
 /** The listing window [now − 30 days, now) and at most ONE list page (P5-C plan). */
 export const READ_CONTENT_VALIDATION_WINDOW_DAYS = 30;
 export const READ_CONTENT_VALIDATION_MAX_LIST_PAGES = 1;
-/** Meta GETs per successful run: token derivation + one content read, for each of listContent and getContent. */
-export const READ_CONTENT_VALIDATION_META_REQUESTS = Object.freeze({ withItem: 4, withoutItem: 2 } as const);
+/** The platforms the diagnostic reads (Meta content-bearing accounts). */
+export const READ_CONTENT_VALIDATION_PLATFORMS = ["facebook", "instagram"] as const;
+export type ReadContentValidationPlatform = (typeof READ_CONTENT_VALIDATION_PLATFORMS)[number];
+/**
+ * Meta GETs per run, by platform: Facebook derives a Page token before each content read (derivation + read, for each
+ * of listContent and getContent); Instagram reads with the User token directly (one GET per operation).
+ */
+export const READ_CONTENT_VALIDATION_META_REQUESTS = Object.freeze({
+  facebook: Object.freeze({ withItem: 4, withoutItem: 2 } as const),
+  instagram: Object.freeze({ withItem: 2, withoutItem: 1 } as const),
+} as const);
 /** One attempt for the diagnostic's KMS client: no SDK retry, independent of the task retry. */
 export const READ_CONTENT_VALIDATION_AWS_ATTEMPTS = Object.freeze({ maxAttempts: 1 } as const);
 
@@ -96,7 +107,7 @@ export const READ_CONTENT_VALIDATION_FAILURES = [
   "read_content_validation_keyring_refused",
   "read_content_validation_target_not_found",
   "read_content_validation_target_inactive",
-  "read_content_validation_target_not_facebook_page",
+  "read_content_validation_target_not_meta_content_account",
   "read_content_validation_credential_missing",
   "read_content_validation_credential_unreadable",
   "read_content_validation_keyring_access_denied",
@@ -117,7 +128,7 @@ export class ReadContentValidationError extends NonRetryableJobError {
 const TARGET_REFUSALS: Readonly<Record<Exclude<ReadContentValidationTarget["kind"], "found">, ReadContentValidationFailure>> = Object.freeze({
   not_found: "read_content_validation_target_not_found",
   inactive: "read_content_validation_target_inactive",
-  not_facebook_page: "read_content_validation_target_not_facebook_page",
+  not_meta_content_account: "read_content_validation_target_not_meta_content_account",
   credential_missing: "read_content_validation_credential_missing",
 });
 
@@ -145,6 +156,8 @@ export type ReadContentAuthorizationClass = "AUTHORIZED_READS_OBSERVED" | "PERMI
 
 /** The ONLY output: closed values, counts and booleans. No id, ref, token, text, name, cursor, URL or raw body. */
 export interface ReadContentValidationOutcome {
+  /** The platform of the managed account read (closed; never an id). */
+  readonly platform: ReadContentValidationPlatform;
   readonly result: ReadContentValidationResult;
   /** True only for a list AND get success with full correlation; a zero-item run can never be positive evidence. */
   readonly positiveEvidenceEligible: boolean;
@@ -153,7 +166,7 @@ export interface ReadContentValidationOutcome {
   readonly windowDays: typeof READ_CONTENT_VALIDATION_WINDOW_DAYS;
   readonly maxListPages: typeof READ_CONTENT_VALIDATION_MAX_LIST_PAGES;
   readonly stages: readonly ReadContentStage[];
-  /** The Meta GETs the implemented sequence made for the stages reached (4 with an item, 2 without). */
+  /** The Meta GETs the implemented sequence made for the stages reached (per platform: READ_CONTENT_VALIDATION_META_REQUESTS). */
   readonly expectedMetaRequests: number;
   readonly list: {
     readonly succeeded: boolean;
@@ -162,7 +175,8 @@ export interface ReadContentValidationOutcome {
     readonly inWindowItemCount: number;
     readonly contentKinds: Readonly<Record<ContentKind, number>>;
     readonly pagination: "more" | "end" | null;
-    readonly allItemsFromManagedPage: boolean | null;
+    /** Every listed item belongs to the managed account (the Page, or the Instagram account). */
+    readonly allItemsFromManagedAccount: boolean | null;
     readonly allSourcesUnknown: boolean | null;
     readonly error: ReadContentErrorClass | null;
   };
@@ -176,7 +190,7 @@ export interface ReadContentValidationOutcome {
      */
     readonly selectedContentKind: ContentKind | null;
     readonly refMatchesListed: boolean | null;
-    readonly accountMatchesManagedPage: boolean | null;
+    readonly accountMatchesManagedAccount: boolean | null;
     /** getContent's kind === selectedContentKind (the selected item's own kind); null when nothing was read back. */
     readonly contentKindMatchesListed: boolean | null;
     readonly error: ReadContentErrorClass | null;
@@ -196,8 +210,8 @@ export interface ReadContentValidationInput {
 
 /** What the read-only lookup found for the payload's account (closed facts plus the envelope to open). */
 export type ReadContentValidationTarget =
-  | { readonly kind: "not_found" | "inactive" | "not_facebook_page" | "credential_missing" }
-  | { readonly kind: "found"; readonly providerAssetId: string; readonly credentialId: string; readonly envelope: Uint8Array };
+  | { readonly kind: "not_found" | "inactive" | "not_meta_content_account" | "credential_missing" }
+  | { readonly kind: "found"; readonly platform: ReadContentValidationPlatform; readonly providerAssetId: string; readonly credentialId: string; readonly envelope: Uint8Array };
 
 export interface ReadContentValidationDependencies {
   readonly nodeVersion: string;
@@ -208,7 +222,11 @@ export interface ReadContentValidationDependencies {
   readonly compose: (environment: Environment) => { readonly access: ProviderCredentialAccess; readonly read: ProviderReadPort };
 }
 
-/** Classifies what the lookup read (pure): the Page must be an ACTIVE content-bearing Facebook account of a live Meta connection. */
+/**
+ * Classifies what the lookup read (pure): an ACTIVE content-bearing Facebook Page or Instagram professional account of
+ * a live Meta connection, with that connection's active credential. Any other platform, an ad account or another
+ * provider is refused.
+ */
 export function classifyTarget(
   account: ConnectedAccount | undefined,
   connection: Connection | undefined,
@@ -216,9 +234,10 @@ export function classifyTarget(
 ): ReadContentValidationTarget {
   if (account === undefined || connection === undefined || connection.status === "REMOVED") return { kind: "not_found" };
   if (account.status !== "ACTIVE") return { kind: "inactive" };
-  if (connection.provider !== "meta" || account.platform !== "facebook" || account.assetClass !== "content_bearing") return { kind: "not_facebook_page" };
+  const platform = (READ_CONTENT_VALIDATION_PLATFORMS as readonly string[]).includes(account.platform) ? (account.platform as ReadContentValidationPlatform) : undefined;
+  if (connection.provider !== "meta" || platform === undefined || account.assetClass !== "content_bearing") return { kind: "not_meta_content_account" };
   if (connection.activeCredentialId === null || credential?.connectionId !== connection.id) return { kind: "credential_missing" };
-  return { kind: "found", providerAssetId: account.providerAssetId, credentialId: connection.activeCredentialId, envelope: credential.envelope };
+  return { kind: "found", platform, providerAssetId: account.providerAssetId, credentialId: connection.activeCredentialId, envelope: credential.envelope };
 }
 
 /** The production lookup: ONE worker transaction bound to the payload's workspace; reads only. */
@@ -329,7 +348,9 @@ export async function runReadContentValidation(
   const window = { from: isoInstant(new Date(now.getTime() - READ_CONTENT_VALIDATION_WINDOW_DAYS * DAY_MS)), to: isoInstant(now) };
   const from = Date.parse(window.from);
   const to = Date.parse(window.to);
-  const managed = providerObjectRef("facebook", "asset", found.providerAssetId);
+  const platform = found.platform;
+  const requests = READ_CONTENT_VALIDATION_META_REQUESTS[platform];
+  const managed = providerObjectRef(platform, "asset", found.providerAssetId);
 
   try {
     const { access, read } = deps.compose(environment);
@@ -359,7 +380,7 @@ export async function runReadContentValidation(
         }).length,
         contentKinds: Object.freeze(histogram),
         pagination,
-        allItemsFromManagedPage: listed ? items.every((item) => sameProviderObject(item.account, managed)) : null,
+        allItemsFromManagedAccount: listed ? items.every((item) => sameProviderObject(item.account, managed)) : null,
         allSourcesUnknown: listed ? items.every((item) => item.reportedSource === "unknown") : null,
         error: listError,
       });
@@ -367,6 +388,7 @@ export async function runReadContentValidation(
       const first = items[0];
       if (!listed || first === undefined) {
         return Object.freeze({
+          platform,
           result: listed ? "READ_CONTENT_LIST_SUCCEEDED_NO_ITEMS" : "READ_CONTENT_LIST_FAILED",
           positiveEvidenceEligible: false,
           authorization: authorizationOf([listError], false),
@@ -374,9 +396,9 @@ export async function runReadContentValidation(
           windowDays: READ_CONTENT_VALIDATION_WINDOW_DAYS,
           maxListPages: READ_CONTENT_VALIDATION_MAX_LIST_PAGES,
           stages: Object.freeze(stages),
-          expectedMetaRequests: READ_CONTENT_VALIDATION_META_REQUESTS.withoutItem,
+          expectedMetaRequests: requests.withoutItem,
           list,
-          get: Object.freeze({ attempted: false, succeeded: null, selectedContentKind: null, refMatchesListed: null, accountMatchesManagedPage: null, contentKindMatchesListed: null, error: null }),
+          get: Object.freeze({ attempted: false, succeeded: null, selectedContentKind: null, refMatchesListed: null, accountMatchesManagedAccount: null, contentKindMatchesListed: null, error: null }),
         } satisfies ReadContentValidationOutcome);
       }
 
@@ -392,11 +414,12 @@ export async function runReadContentValidation(
         getError = errorClassOf(error);
       }
       const refMatchesListed = got === undefined ? null : sameProviderObject(got.ref, first.ref);
-      const accountMatchesManagedPage = got === undefined ? null : sameProviderObject(got.account, managed);
+      const accountMatchesManagedAccount = got === undefined ? null : sameProviderObject(got.account, managed);
       const contentKindMatchesListed = got === undefined ? null : got.contentKind === selectedContentKind;
-      const correlated = refMatchesListed === true && accountMatchesManagedPage === true && list.allItemsFromManagedPage === true;
+      const correlated = refMatchesListed === true && accountMatchesManagedAccount === true && list.allItemsFromManagedAccount === true;
       const result: ReadContentValidationResult = got === undefined ? "READ_CONTENT_GET_FAILED" : correlated ? "READ_CONTENT_LIST_AND_GET_SUCCEEDED" : "READ_CONTENT_GET_NOT_CORRELATED";
       return Object.freeze({
+        platform,
         result,
         positiveEvidenceEligible: result === "READ_CONTENT_LIST_AND_GET_SUCCEEDED" && list.inWindowItemCount === list.itemCount,
         authorization: authorizationOf([listError, getError], got !== undefined),
@@ -404,9 +427,9 @@ export async function runReadContentValidation(
         windowDays: READ_CONTENT_VALIDATION_WINDOW_DAYS,
         maxListPages: READ_CONTENT_VALIDATION_MAX_LIST_PAGES,
         stages: Object.freeze(stages),
-        expectedMetaRequests: READ_CONTENT_VALIDATION_META_REQUESTS.withItem,
+        expectedMetaRequests: requests.withItem,
         list,
-        get: Object.freeze({ attempted: true, succeeded: got !== undefined, selectedContentKind, refMatchesListed, accountMatchesManagedPage, contentKindMatchesListed, error: getError }),
+        get: Object.freeze({ attempted: true, succeeded: got !== undefined, selectedContentKind, refMatchesListed, accountMatchesManagedAccount, contentKindMatchesListed, error: getError }),
       } satisfies ReadContentValidationOutcome);
     });
   } catch (error) {

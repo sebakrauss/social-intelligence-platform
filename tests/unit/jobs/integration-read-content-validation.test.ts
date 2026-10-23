@@ -1,6 +1,6 @@
 /**
- * The INTEGRATION read_content validation diagnostic (Step 7G-H5.5-P5-B; jobs/integration-read-content-validation.ts),
- * offline. The guards run on synthetic environments; the provider path runs the REAL Meta read port and Graph
+ * The INTEGRATION read_content validation diagnostic (Step 7G-H5.5-P5-B; Instagram: Step 7G-H5.5-P11-B;
+ * jobs/integration-read-content-validation.ts), offline. The guards run on synthetic environments; the provider path runs the REAL Meta read port and Graph
  * transport against an in-process `fetch` double (every Meta GET counted), with a synthetic credential lent by a
  * fake credential access and a fake read-only lookup — no database, AWS or network. Synthetic ids, texts and tokens
  * only; the output is checked for every one of them.
@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConnectedAccount, Connection, ProviderCredentialAccess } from "@/modules/connections";
 import { CredentialUnreadableError } from "@/modules/connections";
 import { CONTENT_KINDS, providerCredential, type ProviderReadPort } from "@/integrations/providers/contract";
-import { META_POST_FIELDS, createMetaGraphTransport, type MetaGraphFetch } from "@/integrations/providers/meta/graph-transport";
+import { META_INSTAGRAM_MEDIA_FIELDS, META_POST_FIELDS, createMetaGraphTransport, type MetaGraphFetch } from "@/integrations/providers/meta/graph-transport";
 import { createMetaReadPort } from "@/integrations/providers/meta/read-port";
 import { CredentialCryptoError } from "@/platform/crypto/credentials/errors";
 import { NonRetryableJobError, type JobRelease } from "@/platform/jobs";
@@ -25,6 +25,7 @@ import {
   READ_CONTENT_VALIDATION_AWS_ATTEMPTS,
   READ_CONTENT_VALIDATION_FAILURES,
   READ_CONTENT_VALIDATION_META_REQUESTS,
+  READ_CONTENT_VALIDATION_PLATFORMS,
   READ_CONTENT_VALIDATION_TASK_ID,
   ReadContentValidationError,
   classifyTarget,
@@ -110,7 +111,7 @@ function metaWorld(graph: Graph) {
   return { calls, read: createMetaReadPort({ transport: createMetaGraphTransport({ fetch }) }) };
 }
 
-const FOUND: ReadContentValidationTarget = { kind: "found", providerAssetId: PAGE, credentialId: CREDENTIAL_ID, envelope: new Uint8Array([1, 2, 3]) };
+const FOUND: ReadContentValidationTarget = { kind: "found", platform: "facebook", providerAssetId: PAGE, credentialId: CREDENTIAL_ID, envelope: new Uint8Array([1, 2, 3]) };
 
 /** A fake credential access: lends a synthetic credential to exactly one use and records the opening. */
 function lendingAccess() {
@@ -166,11 +167,12 @@ async function refused(promise: Promise<unknown>): Promise<ReadContentValidation
 }
 
 /** The ONLY keys an outcome may carry (output schema). */
-const OUTCOME_KEYS = ["authorization", "expectedMetaRequests", "get", "graphVersion", "list", "maxListPages", "positiveEvidenceEligible", "result", "stages", "windowDays"];
-const LIST_KEYS = ["allItemsFromManagedPage", "allSourcesUnknown", "contentKinds", "error", "inWindowItemCount", "itemCount", "pagination", "succeeded"];
-const GET_KEYS = ["accountMatchesManagedPage", "attempted", "contentKindMatchesListed", "error", "refMatchesListed", "selectedContentKind", "succeeded"];
+const OUTCOME_KEYS = ["authorization", "expectedMetaRequests", "get", "graphVersion", "list", "maxListPages", "platform", "positiveEvidenceEligible", "result", "stages", "windowDays"];
+const LIST_KEYS = ["allItemsFromManagedAccount", "allSourcesUnknown", "contentKinds", "error", "inWindowItemCount", "itemCount", "pagination", "succeeded"];
+const GET_KEYS = ["accountMatchesManagedAccount", "attempted", "contentKindMatchesListed", "error", "refMatchesListed", "selectedContentKind", "succeeded"];
 const CLOSED_STRINGS = new Set<string>([
   ...CONTENT_KINDS,
+  ...READ_CONTENT_VALIDATION_PLATFORMS,
   "READ_CONTENT_LIST_AND_GET_SUCCEEDED", "READ_CONTENT_LIST_SUCCEEDED_NO_ITEMS", "READ_CONTENT_LIST_FAILED", "READ_CONTENT_GET_FAILED", "READ_CONTENT_GET_NOT_CORRELATED",
   "AUTHORIZED_READS_OBSERVED", "PERMISSION_MISSING_OBSERVED", "CREDENTIAL_INVALID_OBSERVED", "NOT_DETERMINED", "v25.0", "list_content", "get_content", "more", "end",
   "rate_limited", "transient", "permission_missing", "target_not_found", "target_not_eligible", "credential_invalid", "permanent_rejected", "outcome_unknown",
@@ -204,7 +206,8 @@ describe("the diagnostic's identity: operator-only INTEGRATION task", () => {
     expect(Object.keys(definition ?? {}).sort()).toEqual(["id", "maxDuration", "queue", "retry", "run"]);
     expect(sdk.scheduled).toEqual([]);
     expect(READ_CONTENT_VALIDATION_AWS_ATTEMPTS).toEqual({ maxAttempts: 1 });
-    expect(READ_CONTENT_VALIDATION_META_REQUESTS).toEqual({ withItem: 4, withoutItem: 2 });
+    expect(READ_CONTENT_VALIDATION_PLATFORMS).toEqual(["facebook", "instagram"]);
+    expect(READ_CONTENT_VALIDATION_META_REQUESTS).toEqual({ facebook: { withItem: 4, withoutItem: 2 }, instagram: { withItem: 2, withoutItem: 1 } });
   });
 
   it("the task aborts with the fixed code of a refusal (no retry), never a message of its own", async () => {
@@ -257,7 +260,7 @@ describe("guards: every refusal happens before any lookup, composition or provid
   it.each([
     [{ kind: "not_found" }, "read_content_validation_target_not_found"],
     [{ kind: "inactive" }, "read_content_validation_target_inactive"],
-    [{ kind: "not_facebook_page" }, "read_content_validation_target_not_facebook_page"],
+    [{ kind: "not_meta_content_account" }, "read_content_validation_target_not_meta_content_account"],
     [{ kind: "credential_missing" }, "read_content_validation_credential_missing"],
   ] as const)("a lookup answering %o is refused (%s) before composition or any provider request", async (target, failure) => {
     const h = harness({}, { lookup: () => Promise.resolve(target) });
@@ -272,25 +275,33 @@ describe("guards: every refusal happens before any lookup, composition or provid
   });
 });
 
-describe("target classification (pure): only an ACTIVE content-bearing Facebook Page of a live Meta connection with its credential", () => {
+describe("target classification (pure): only an ACTIVE content-bearing Facebook Page or Instagram account of a live Meta connection with its credential", () => {
   const account = (patch: Partial<ConnectedAccount> = {}) => ({ id: ACCOUNT, connectionId: CONNECTION_ID, platform: "facebook", providerAssetId: PAGE, assetClass: "content_bearing", status: "ACTIVE", ...patch }) as ConnectedAccount;
   const connection = (patch: Partial<Connection> = {}) => ({ id: CONNECTION_ID, provider: "meta", status: "ACTIVE", activeCredentialId: CREDENTIAL_ID, ...patch }) as unknown as Connection;
   const credential = { connectionId: CONNECTION_ID, envelope: new Uint8Array([9]) };
 
   it.each([
     ["the found Page", account(), connection(), credential, "found"],
+    ["the found Instagram account", account({ platform: "instagram" }), connection(), credential, "found"],
     ["no account", undefined, connection(), credential, "not_found"],
     ["no connection", account(), undefined, credential, "not_found"],
     ["a removed connection", account(), connection({ status: "REMOVED" }), credential, "not_found"],
     ["an inactive account", account({ status: "INACTIVE" }), connection(), credential, "inactive"],
-    ["an Instagram account", account({ platform: "instagram" }), connection(), credential, "not_facebook_page"],
-    ["an ad account", account({ assetClass: "ad_account" }), connection(), credential, "not_facebook_page"],
-    ["a TikTok connection", account(), connection({ provider: "tiktok" }), credential, "not_facebook_page"],
+    ["an ad account", account({ assetClass: "ad_account" }), connection(), credential, "not_meta_content_account"],
+    ["an Instagram ad account", account({ platform: "instagram", assetClass: "ad_account" }), connection(), credential, "not_meta_content_account"],
+    ["a TikTok account", account({ platform: "tiktok" }), connection(), credential, "not_meta_content_account"],
+    ["a TikTok connection", account(), connection({ provider: "tiktok" }), credential, "not_meta_content_account"],
+    ["a TikTok connection's Instagram-labelled account", account({ platform: "instagram" }), connection({ provider: "tiktok" }), credential, "not_meta_content_account"],
     ["no active credential", account(), connection({ activeCredentialId: null }), credential, "credential_missing"],
     ["a credential of another connection", account(), connection(), { ...credential, connectionId: "5eed0000-d1a9-4000-8000-00000000f099" }, "credential_missing"],
     ["no stored envelope", account(), connection(), undefined, "credential_missing"],
   ] as const)("%s → %s", (_name, a, c, k, kind) => {
     expect(classifyTarget(a, c, k).kind).toBe(kind);
+  });
+
+  it("a found target carries the account's platform (it selects the read path)", () => {
+    expect(classifyTarget(account(), connection(), credential)).toMatchObject({ kind: "found", platform: "facebook", providerAssetId: PAGE });
+    expect(classifyTarget(account({ platform: "instagram", providerAssetId: "17840000000000001" }), connection(), credential)).toMatchObject({ kind: "found", platform: "instagram" });
   });
 
   it("the read-only lookup exposes exactly three reads, and its store's write dependencies refuse", () => {
@@ -311,10 +322,11 @@ describe("the provider sequence: listContent, then getContent of the FIRST liste
       `/vN.N/N_N?${META_POST_FIELDS}`,
     ]);
     expect(h.world.calls[3]?.pathname).toBe(`/v25.0/${POST_A}`); // the first listed ref, never an arbitrary target
-    expect(h.world.calls).toHaveLength(READ_CONTENT_VALIDATION_META_REQUESTS.withItem);
+    expect(h.world.calls).toHaveLength(READ_CONTENT_VALIDATION_META_REQUESTS.facebook.withItem);
     expect(h.lending.openings).toEqual([{ workspaceId: WORKSPACE, credentialId: CREDENTIAL_ID }]);
     expect(h.lookups).toEqual([{ workspaceId: WORKSPACE, connectedAccountId: ACCOUNT }]);
     expect(outcome).toEqual({
+      platform: "facebook",
       result: "READ_CONTENT_LIST_AND_GET_SUCCEEDED",
       positiveEvidenceEligible: true,
       authorization: "AUTHORIZED_READS_OBSERVED",
@@ -329,11 +341,11 @@ describe("the provider sequence: listContent, then getContent of the FIRST liste
         inWindowItemCount: 2,
         contentKinds: { post: 1, reel: 0, video: 1, carousel: 0, story: 0, ad_creative: 0, other: 0 },
         pagination: "more",
-        allItemsFromManagedPage: true,
+        allItemsFromManagedAccount: true,
         allSourcesUnknown: true,
         error: null,
       },
-      get: { attempted: true, succeeded: true, selectedContentKind: "post", refMatchesListed: true, accountMatchesManagedPage: true, contentKindMatchesListed: true, error: null },
+      get: { attempted: true, succeeded: true, selectedContentKind: "post", refMatchesListed: true, accountMatchesManagedAccount: true, contentKindMatchesListed: true, error: null },
     } satisfies ReadContentValidationOutcome);
     expectOutcomeSchema(outcome);
   });
@@ -349,7 +361,7 @@ describe("the provider sequence: listContent, then getContent of the FIRST liste
   it("with zero in-window items: 2 Meta GETs, no getContent, and never positive evidence", async () => {
     const h = harness({ list: { data: [] } });
     const outcome = await h.run();
-    expect(h.world.calls).toHaveLength(READ_CONTENT_VALIDATION_META_REQUESTS.withoutItem);
+    expect(h.world.calls).toHaveLength(READ_CONTENT_VALIDATION_META_REQUESTS.facebook.withoutItem);
     expect(outcome).toMatchObject({
       result: "READ_CONTENT_LIST_SUCCEEDED_NO_ITEMS",
       positiveEvidenceEligible: false,
@@ -369,7 +381,7 @@ describe("the provider sequence: listContent, then getContent of the FIRST liste
       result: "READ_CONTENT_LIST_FAILED",
       positiveEvidenceEligible: false,
       authorization: "PERMISSION_MISSING_OBSERVED",
-      list: { succeeded: false, itemCount: 0, pagination: null, allItemsFromManagedPage: null, error: { kind: "permission_missing", detail: "read_content" } },
+      list: { succeeded: false, itemCount: 0, pagination: null, allItemsFromManagedAccount: null, error: { kind: "permission_missing", detail: "read_content" } },
       get: { attempted: false },
     });
     expectOutcomeSchema(outcome);
@@ -462,7 +474,7 @@ describe("P5-C0: the output names the kind of the EXACT item getContent was vali
     const h = harness({ list: { data: [post(POST_A, { created_time: "2020-01-01T00:00:00+0000" })] } });
     const outcome = await h.run();
     expect(h.world.calls).toHaveLength(2);
-    expect(outcome.get).toEqual({ attempted: false, succeeded: null, selectedContentKind: null, refMatchesListed: null, accountMatchesManagedPage: null, contentKindMatchesListed: null, error: null });
+    expect(outcome.get).toEqual({ attempted: false, succeeded: null, selectedContentKind: null, refMatchesListed: null, accountMatchesManagedAccount: null, contentKindMatchesListed: null, error: null });
   });
 
   it("a re-read of a different kind: contentKindMatchesListed = false, selectedContentKind stays the LISTED kind", async () => {
@@ -495,5 +507,121 @@ describe("no writes, no persistence of the Page token", () => {
     expectRedacted(outcome);
     // The Page token was used only on the content reads (as the documented query parameter), never elsewhere.
     expect(h.world.calls.filter((url) => url.searchParams.get("access_token") === PAGE_TOKEN).map((url) => url.pathname.endsWith("/published_posts") || url.pathname === `/v25.0/${POST_A}`)).toEqual([true, true]);
+  });
+});
+
+describe("Step 7G-H5.5-P11-B: an Instagram professional account — /media, then the media node, with the User token directly", () => {
+  const IG = "17840000000000001";
+  const OTHER_IG = "17840000000000002";
+  const MEDIA_A = "17900000000000001";
+  const MEDIA_B = "17900000000000002";
+  const IG_FORBIDDEN = [IG, OTHER_IG, MEDIA_A, MEDIA_B, "instagram:media", USER_TOKEN, CAPTION, CURSOR, BODY_MARKER, "access_token", "http"];
+  const FOUND_IG: ReadContentValidationTarget = { kind: "found", platform: "instagram", providerAssetId: IG, credentialId: CREDENTIAL_ID, envelope: new Uint8Array([1, 2, 3]) };
+  const media = (id: string, patch: Record<string, unknown> = {}) => ({ id, media_type: "IMAGE", media_product_type: "FEED", timestamp: "2026-10-10T10:00:00+0000", caption: CAPTION, owner: { id: IG }, ...patch });
+
+  /** The real Meta read port over a counting fetch double that answers only the two Instagram reads. */
+  function instagramWorld(graph: Graph) {
+    const calls: URL[] = [];
+    const fetch: MetaGraphFetch = (url) => {
+      const parsed = new URL(url);
+      calls.push(parsed);
+      if (parsed.pathname === `/v25.0/${IG}/media`) return json(graph.listStatus ?? 200, graph.list ?? { data: [media(MEDIA_A), media(MEDIA_B, { media_type: "VIDEO", media_product_type: "REELS" })], paging: { cursors: { after: CURSOR }, next: `https://graph.facebook.com/next?access_token=${USER_TOKEN}` } });
+      if (parsed.searchParams.get("fields") === META_INSTAGRAM_MEDIA_FIELDS) return json(graph.getStatus ?? 200, graph.get ?? media(MEDIA_A));
+      return json(400, { error: { code: 100, message: BODY_MARKER } });
+    };
+    return { calls, read: createMetaReadPort({ transport: createMetaGraphTransport({ fetch }) }) };
+  }
+
+  function instagramHarness(graph: Graph = {}) {
+    const world = instagramWorld(graph);
+    const lending = lendingAccess();
+    const run = () => runReadContentValidation(PAYLOAD, RUN, DEPLOYED, { nodeVersion: "v22.16.0", clock: () => NOW, lookup: () => Promise.resolve(FOUND_IG), compose: () => ({ access: lending.access, read: world.read }) });
+    return { world, lending, run };
+  }
+
+  const expectInstagramRedacted = (value: unknown): void => {
+    const text = rendered(value);
+    for (const forbidden of IG_FORBIDDEN) expect(text, forbidden).not.toContain(forbidden);
+  };
+
+  it("happy post: 2 Meta GETs (/media, then the FIRST listed media node), one opening, positive and fully correlated", async () => {
+    const h = instagramHarness();
+    const outcome = await h.run();
+    expect(h.world.calls.map((url) => `${url.pathname}?${url.searchParams.get("fields") ?? ""}`)).toEqual([`/v25.0/${IG}/media?${META_INSTAGRAM_MEDIA_FIELDS}`, `/v25.0/${MEDIA_A}?${META_INSTAGRAM_MEDIA_FIELDS}`]);
+    expect(h.world.calls).toHaveLength(READ_CONTENT_VALIDATION_META_REQUESTS.instagram.withItem);
+    // The User token directly on both reads: no Page token derivation, no access_token field request.
+    expect(h.world.calls.map((url) => url.searchParams.get("access_token"))).toEqual([USER_TOKEN, USER_TOKEN]);
+    expect(h.world.calls.some((url) => url.searchParams.get("fields") === "access_token")).toBe(false);
+    expect(h.lending.openings).toEqual([{ workspaceId: WORKSPACE, credentialId: CREDENTIAL_ID }]);
+    expect(outcome).toEqual({
+      platform: "instagram",
+      result: "READ_CONTENT_LIST_AND_GET_SUCCEEDED",
+      positiveEvidenceEligible: true,
+      authorization: "AUTHORIZED_READS_OBSERVED",
+      graphVersion: "v25.0",
+      windowDays: 30,
+      maxListPages: 1,
+      stages: ["list_content", "get_content"],
+      expectedMetaRequests: 2,
+      list: {
+        succeeded: true,
+        itemCount: 2,
+        inWindowItemCount: 2,
+        contentKinds: { post: 1, reel: 1, video: 0, carousel: 0, story: 0, ad_creative: 0, other: 0 },
+        pagination: "more",
+        allItemsFromManagedAccount: true,
+        allSourcesUnknown: true,
+        error: null,
+      },
+      get: { attempted: true, succeeded: true, selectedContentKind: "post", refMatchesListed: true, accountMatchesManagedAccount: true, contentKindMatchesListed: true, error: null },
+    } satisfies ReadContentValidationOutcome);
+    expectOutcomeSchema(outcome);
+    expectInstagramRedacted(outcome);
+  });
+
+  it("empty list: 1 Meta GET, no getContent, never positive evidence", async () => {
+    const h = instagramHarness({ list: { data: [] } });
+    const outcome = await h.run();
+    expect(h.world.calls).toHaveLength(READ_CONTENT_VALIDATION_META_REQUESTS.instagram.withoutItem);
+    expect(outcome).toMatchObject({ platform: "instagram", result: "READ_CONTENT_LIST_SUCCEEDED_NO_ITEMS", positiveEvidenceEligible: false, stages: ["list_content"], expectedMetaRequests: 1, list: { succeeded: true, itemCount: 0, pagination: "end" }, get: { attempted: false, selectedContentKind: null } });
+    expectOutcomeSchema(outcome);
+  });
+
+  it("a selected reel names reel as the validated kind; the window drops older media client-side", async () => {
+    const h = instagramHarness({ list: { data: [media(MEDIA_A, { timestamp: "2026-09-01T00:00:00+0000" }), media(MEDIA_B, { media_type: "VIDEO", media_product_type: "REELS" })] }, get: media(MEDIA_B, { media_type: "VIDEO", media_product_type: "REELS" }) });
+    const outcome = await h.run();
+    expect(h.world.calls[1]?.pathname).toBe(`/v25.0/${MEDIA_B}`);
+    expect(outcome).toMatchObject({ result: "READ_CONTENT_LIST_AND_GET_SUCCEEDED", list: { itemCount: 1, inWindowItemCount: 1 }, get: { selectedContentKind: "reel", contentKindMatchesListed: true } });
+    expect(h.world.calls[0]?.searchParams.has("since")).toBe(false);
+    expectOutcomeSchema(outcome);
+  });
+
+  it.each([
+    ["a permission failure", { error: { code: 10, message: BODY_MARKER } }, 403, { kind: "permission_missing", detail: "read_content" }, "PERMISSION_MISSING_OBSERVED"],
+    ["media of another account", { data: [media(MEDIA_A, { owner: { id: OTHER_IG } })] }, 200, { kind: "permanent_rejected", detail: "unknown" }, "NOT_DETERMINED"],
+    ["media without an owner", { data: [media(MEDIA_A, { owner: undefined })] }, 200, { kind: "permanent_rejected", detail: "unknown" }, "NOT_DETERMINED"],
+    ["a story", { data: [media(MEDIA_A, { media_product_type: "STORY" })] }, 200, { kind: "permanent_rejected", detail: "unknown" }, "NOT_DETERMINED"],
+  ] as const)("a list failure (%s) → %o, getContent not called, redacted", async (_name, list, listStatus, error, authorization) => {
+    const h = instagramHarness({ list, listStatus });
+    const outcome = await h.run();
+    expect(h.world.calls).toHaveLength(1);
+    expect(outcome).toMatchObject({ platform: "instagram", result: "READ_CONTENT_LIST_FAILED", authorization, positiveEvidenceEligible: false, list: { error, allItemsFromManagedAccount: null }, get: { attempted: false } });
+    expectOutcomeSchema(outcome);
+    expectInstagramRedacted(outcome);
+  });
+
+  it("a getContent 100/33 (TargetNotFound) after a successful list is reported, never positive", async () => {
+    const h = instagramHarness({ get: { error: { code: 100, error_subcode: 33, message: BODY_MARKER } }, getStatus: 400 });
+    const outcome = await h.run();
+    expect(h.world.calls).toHaveLength(2);
+    expect(outcome).toMatchObject({ result: "READ_CONTENT_GET_FAILED", positiveEvidenceEligible: false, get: { attempted: true, succeeded: false, selectedContentKind: "post", error: { kind: "target_not_found", detail: null } } });
+    expectOutcomeSchema(outcome);
+  });
+
+  it("a re-read of a different kind is reported (contentKindMatchesListed false), the selected kind stays the listed one", async () => {
+    const h = instagramHarness({ get: media(MEDIA_A, { media_type: "CAROUSEL_ALBUM" }) });
+    const outcome = await h.run();
+    expect(outcome.get).toMatchObject({ attempted: true, succeeded: true, selectedContentKind: "post", contentKindMatchesListed: false });
+    expectOutcomeSchema(outcome);
   });
 });

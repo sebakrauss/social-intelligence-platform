@@ -338,9 +338,9 @@ describe("Meta read port · Graph transport security (the contained query-token 
     expect(META_GRAPH_RESPONSE_MAX_BYTES).toBe(65_536);
   });
 
-  it("the transport exposes exactly eight typed operations (P5-B adds three): no URL, path or next-link input", () => {
+  it("the transport exposes exactly ten typed operations (P5-B adds three, P11-B two): no URL, path or next-link input", () => {
     const transport = createMetaGraphTransport({ fetch: () => Promise.reject(new Error("unused")) });
-    expect(Object.keys(transport).sort()).toEqual(["getInstagramAccount", "getPage", "getPageAccessToken", "getPageInstagram", "getPost", "listPages", "listPermissions", "listPublishedPosts"]);
+    expect(Object.keys(transport).sort()).toEqual(["getInstagramAccount", "getInstagramMedia", "getPage", "getPageAccessToken", "getPageInstagram", "getPost", "listInstagramMedia", "listPages", "listPermissions", "listPublishedPosts"]);
   });
 
   const outcomes: readonly (readonly [string, Reply, ProviderErrorKind, Record<string, unknown>, { readonly timeoutMs?: number; readonly maxResponseBytes?: number }])[] = [

@@ -77,6 +77,17 @@ Two field meanings this first record makes concrete (the generic rules above are
 The record is registered in `IMPLEMENTED_PLATFORM_OPERATIONS`. It does not, by itself, create a catalog entry: an entry
 needs a separate gate, and only an entry of exactly this scope (post / unknown) can rest on it.
 
+## Instagram read_content (Step 7G-H5.5-P11-B): expected future evidence shape
+
+P11-B implemented Instagram professional-account `listContent` and `getContent` **offline only**
+(`OFFLINE_IMPLEMENTED_OPERATIONS`). Nothing is validated live and **no Instagram record exists**. A future record would
+be positive only if the operator diagnostic lists at least one in-window item AND reads that same item back with full
+correlation, and it would state exactly the observed kind: for an IMAGE · FEED item, `provider` `meta`, `platform`
+`instagram`, `assetClass` `content_bearing`, `accountKind` `instagram_professional_account`, `capability`
+`read_content`, `contentKind` `post`, `source` `unknown`, `operations` `["getContent", "listContent"]`,
+`requiredPermissions` `["instagram_basic", "pages_read_engagement"]` (the known requirements of the implemented read
+path, not the granted set and not a minimality claim). A video, reel or carousel needs its own record.
+
 ## Process
 
 1. A gate authorizes ONE controlled validation of one (provider, platform, capability, operation, scope), after the

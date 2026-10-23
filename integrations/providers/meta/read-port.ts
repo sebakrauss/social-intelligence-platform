@@ -1,6 +1,6 @@
 /**
- * Meta implementation of the provider READ port — `discoverAssets`, `describeAccount` and Facebook Page
- * `listContent` / `getContent` (Step 7G-E; design/phase-7g/meta-provider/README.md, E1 — the implementation authority). Composed only by the integration worker (jobs/connections.ts), with
+ * Meta implementation of the provider READ port — `discoverAssets`, `describeAccount` and Facebook Page and Instagram
+ * professional-account `listContent` / `getContent` (Step 7G-E; design/phase-7g/meta-provider/README.md, E1 — the implementation authority). Composed only by the integration worker (jobs/connections.ts), with
  * the credential the worker opened for this one call: no Meta app configuration, no App Secret, no KMS, no state.
  *
  * Discovery, sequential and deterministic, only documented requests (./graph-transport):
@@ -26,7 +26,7 @@
  * permission is requested, so none is claimed). Any other platform is refused (invalid_request) before any request;
  * any failure fails the whole description — the evaluator then records "facts unavailable" (UNKNOWN, never SUPPORTED).
  *
- * read_content, Facebook Pages only (Step 7G-H5.5-P5-B; README › read_content — IMPLEMENTED_OFFLINE_NOT_LIVE_VALIDATED):
+ * read_content, Facebook Pages (Step 7G-H5.5-P5-B; README › read_content — IMPLEMENTED_OFFLINE_NOT_LIVE_VALIDATED):
  * READ_CONTENT_REQUIRED_OPERATIONS = listContent + getContent (modules/capability/domain/catalog-contract.ts), both here. Each call derives a Page Access Token from
  * the sealed User Access Token it was handed (`{page-id}?fields=access_token`) and uses it for exactly ONE content
  * read in the same call; the derived token is a SecretValue local to that call — never persisted, cached, returned,
@@ -47,6 +47,20 @@
  * Errors: the shared Graph read mapping (permission → PermissionMissing(read_content), never non-support), plus ONE
  * getContent-only case: code 100 / subcode 33 on the post read is TargetNotFound — ambiguous (missing, inaccessible
  * or unsupported), so it is never an eligibility or support observation.
+ *
+ * read_content, Instagram professional accounts (Step 7G-H5.5-P11-B; README › Instagram read_content —
+ * IMPLEMENTED_OFFLINE_NOT_LIVE_VALIDATED): the same two operations, selected by the account's platform (no fallback).
+ * The sealed Facebook User Access Token is used DIRECTLY — no Page token is derived — so each call is ONE Graph GET:
+ *   listContent  ONE page of `{ig-user-id}/media` (never stories, live media, tags, mentions or album children), with
+ *                the same `meta1.` cursor envelope, the same fixed-endpoint continuation and the same client-side
+ *                window, here on `timestamp`.
+ *   getContent   `{ig-media-id}` (echoed id checked).
+ * Every media object must have `owner.id` = the managed account, else the WHOLE page (or the single read) fails closed.
+ * The kind is classified by a CLOSED table on (`media_type`, `media_product_type`) — IMAGE·FEED → post, VIDEO·FEED →
+ * video, VIDEO·REELS → reel, CAROUSEL_ALBUM·FEED → carousel; anything else (STORY, AD, IMAGE·REELS, a new or missing
+ * value) fails closed, with no fallback. `reportedSource` is always "unknown": the surface (FEED, REELS) says where
+ * the media appears, not whether it is organic or paid. Errors: the same shared mapping and the same getContent-only
+ * 100/33 → TargetNotFound.
  * Every other read operation is refused (permanent).
  */
 import type { ProviderCredential } from "../contract/credential";
@@ -64,6 +78,7 @@ import {
   type MetaGraphCursor,
   type MetaGraphOutcome,
   type MetaGraphTransport,
+  type MetaInstagramMedia,
   type MetaPageList,
   type MetaPost,
 } from "./graph-transport";
@@ -91,6 +106,18 @@ export const META_STATUS_TYPE_CONTENT_KINDS: Readonly<Record<string, ContentKind
   mobile_status_update: "post",
   added_photos: "post",
   shared_story: "post",
+});
+
+/**
+ * The CLOSED (`media_type`, `media_product_type`) → content-kind table (P11-B), keyed `MEDIA_TYPE:MEDIA_PRODUCT_TYPE`.
+ * Only the documented pairs that unambiguously denote one product kind; STORY and AD media, IMAGE or CAROUSEL_ALBUM as
+ * REELS, any new value and a missing value are unreadable. Album children are never read.
+ */
+export const META_INSTAGRAM_MEDIA_CONTENT_KINDS: Readonly<Record<string, ContentKind>> = Object.freeze({
+  "IMAGE:FEED": "post",
+  "VIDEO:FEED": "video",
+  "VIDEO:REELS": "reel",
+  "CAROUSEL_ALBUM:FEED": "carousel",
 });
 
 /**
@@ -169,7 +196,7 @@ async function describe(transport: MetaGraphTransport, access: ProviderAccess, n
 
 type ContentOperation = "listContent" | "getContent";
 
-/** The managed Facebook Page of `access`, or a refusal before any request (Instagram/TikTok read_content: not here). */
+/** The managed Facebook Page of `access`, or a refusal before any request (Instagram has its own branch; TikTok: not here). */
 function managedPage(access: ProviderAccess, operation: ContentOperation): ProviderObjectId {
   const { platform, kind, id } = access.account;
   const page = parseProviderObjectId(id);
@@ -237,6 +264,63 @@ async function getPublished(transport: MetaGraphTransport, access: ProviderAcces
   const outcome = await transport.getPost(token, postId);
   if (outcome.kind === "graph_error" && outcome.error.code === AMBIGUOUS_OBJECT_CODE && outcome.error.subcode === AMBIGUOUS_OBJECT_SUBCODE) throw new TargetNotFoundError("getContent");
   return contentOf(outcomeValue(outcome, "getContent", "read_content"), page, "getContent");
+}
+
+/** The managed Instagram professional account of `access`, or a refusal before any request. */
+function managedInstagramAccount(access: ProviderAccess, operation: ContentOperation): ProviderObjectId {
+  const { platform, kind, id } = access.account;
+  const account = parseProviderObjectId(id);
+  // The kind is re-checked at runtime: a caller's ref is data, whatever its static type says.
+  if (platform !== "instagram" || (kind as string) !== "asset" || account === undefined) throw new PermanentRejectedError(operation, "invalid_request");
+  return account;
+}
+
+/** An IG Media object as a ContentDto: created by the managed account, classified by the closed table, else unreadable. */
+function contentOfMedia(media: MetaInstagramMedia, account: ProviderObjectId, operation: ContentOperation): ContentDto {
+  if (media.ownerId !== account) throw new PermanentRejectedError(operation, "unknown");
+  const key = media.mediaType === null || media.mediaProductType === null ? undefined : `${media.mediaType}:${media.mediaProductType}`;
+  const contentKind = key !== undefined && Object.hasOwn(META_INSTAGRAM_MEDIA_CONTENT_KINDS, key) ? META_INSTAGRAM_MEDIA_CONTENT_KINDS[key] : undefined;
+  if (contentKind === undefined) throw new PermanentRejectedError(operation, "unknown");
+  return Object.freeze({
+    ref: providerObjectRef("instagram", "content", media.id),
+    account: providerObjectRef("instagram", "asset", account),
+    contentKind,
+    reportedSource: "unknown",
+    caption: media.caption,
+    publishedAt: media.timestamp,
+    availability: "available",
+    timestamps: Object.freeze({ createdAt: media.timestamp, updatedAt: null }),
+    rawReference: rawReference("meta", META_GRAPH_VERSION, `instagram:media:${media.id}`),
+  });
+}
+
+async function listMedia(transport: MetaGraphTransport, access: ProviderAccess, window: TimeWindow, cursor: PageCursor | null): Promise<Page<ContentDto>> {
+  const account = managedInstagramAccount(access, "listContent");
+  const bounds = windowBounds(window);
+  // The caller's cursor is the envelope a previous page returned: re-validated and decoded to the raw `after`, never a URL.
+  if (cursor !== null && parsePageCursor(cursor) === undefined) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  const after: MetaGraphCursor | null = cursor === null ? null : decodeMetaPageCursor(cursor);
+  // The sealed User Access Token, used directly: Instagram reads derive no Page token.
+  const list = outcomeValue(await transport.listInstagramMedia(access.credential.secret, account, after), "listContent", "read_content");
+  // Map EVERY media object first (one mismatch fails the whole page), then filter the window client-side.
+  const items = list.media.map((media) => contentOfMedia(media, account, "listContent")).filter((item) => {
+    const at = Date.parse(item.publishedAt ?? "");
+    return at >= bounds.from && at < bounds.to;
+  });
+  if (list.after === null) return Object.freeze({ items: Object.freeze(items), next: Object.freeze({ kind: "end" as const }) });
+  // Deterministic envelope: the same raw cursor yields the same PageCursor, so a repeat is detected here.
+  const next = encodeMetaPageCursor(list.after);
+  if (next === cursor) throw new PermanentRejectedError("listContent", "invalid_cursor");
+  return Object.freeze({ items: Object.freeze(items), next: Object.freeze({ kind: "more" as const, cursor: next }) });
+}
+
+async function getMedia(transport: MetaGraphTransport, access: ProviderAccess, ref: ProviderObjectRef<"content">): Promise<ContentDto> {
+  const account = managedInstagramAccount(access, "getContent");
+  const mediaId = parseProviderObjectId(ref.id);
+  if (ref.platform !== "instagram" || (ref.kind as string) !== "content" || mediaId === undefined) throw new PermanentRejectedError("getContent", "invalid_request");
+  const outcome = await transport.getInstagramMedia(access.credential.secret, mediaId);
+  if (outcome.kind === "graph_error" && outcome.error.code === AMBIGUOUS_OBJECT_CODE && outcome.error.subcode === AMBIGUOUS_OBJECT_SUBCODE) throw new TargetNotFoundError("getContent");
+  return contentOfMedia(outcomeValue(outcome, "getContent", "read_content"), account, "getContent");
 }
 
 async function discover(transport: MetaGraphTransport, credential: ProviderCredential): Promise<readonly SocialAssetDto[]> {
@@ -314,12 +398,16 @@ export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderR
     async describeAccount(access) {
       return Object.freeze({ data: await describe(transport, access, clock()), budget: BUDGET_NOT_REPORTED });
     },
+    // The account's platform selects the branch; every platform but Instagram takes the Facebook Page path, which
+    // refuses anything that is not a Facebook Page before any request.
     async listContent(access, window, cursor) {
-      return Object.freeze({ data: await listPublished(transport, access, window, cursor), budget: BUDGET_NOT_REPORTED });
+      const page = access.account.platform === "instagram" ? await listMedia(transport, access, window, cursor) : await listPublished(transport, access, window, cursor);
+      return Object.freeze({ data: page, budget: BUDGET_NOT_REPORTED });
     },
 
     async getContent(access, ref) {
-      return Object.freeze({ data: await getPublished(transport, access, ref), budget: BUDGET_NOT_REPORTED });
+      const content = access.account.platform === "instagram" ? await getMedia(transport, access, ref) : await getPublished(transport, access, ref);
+      return Object.freeze({ data: content, budget: BUDGET_NOT_REPORTED });
     },
     listInteractions: () => refuse("listInteractions"),
     getInteraction: () => refuse("getInteraction"),

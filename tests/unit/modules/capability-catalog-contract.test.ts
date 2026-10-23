@@ -293,7 +293,11 @@ describe("P5-B: read_content requires the exact operation SET listContent + getC
   });
 
   it("offline implementation (A) and live validation (B) are distinct; B now rests on ONE specific accepted record", () => {
-    expect(OFFLINE_IMPLEMENTED_OPERATIONS).toEqual([{ provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"] }]);
+    expect(OFFLINE_IMPLEMENTED_OPERATIONS).toEqual([
+      { provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"] },
+      { provider: "meta", platform: "instagram", capability: "read_content", operations: ["getContent", "listContent"] },
+    ]);
+    // Live validation stays Facebook-only: Instagram (P11-B) is offline-implemented with no accepted record.
     expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => [op.platform, op.capability, op.evidence])).toEqual([["facebook", "read_content", "api-validation:meta.facebook.read_content.20261023-01"]]);
     // A holds; B exists but for another evidence id than this synthetic entry's (and this context has no record).
     const today = platformEntryViolations({ ...ENTRY, contentKind: "post", source: "organic" }, TODAY);
@@ -304,6 +308,14 @@ describe("P5-B: read_content requires the exact operation SET listContent + getC
     // Offline registrations are never evidence: offline-only (no live registration) is refused; live without offline too.
     expect(violations({}, { implementedOperations: [] })).toEqual(["IMPLEMENTATION_EVIDENCE_MISSING"]);
     expect(violations({}, { offlineImplementations: [] })).toEqual(["IMPLEMENTATION_INCOMPLETE"]);
+  });
+
+  it("P11-B: an Instagram read_content entry satisfies A (offline) but not B — no record, no live registration — so it is refused", () => {
+    const instagram: CatalogEntry = { ...ENTRY, platform: "instagram", contentKind: "post", source: "unknown", requiredPermissions: ["instagram_basic", "pages_read_engagement"], evidence: "api-validation:meta.instagram.read_content.20261101-01" };
+    const v = platformEntryViolations(instagram, TODAY);
+    expect(v).not.toContain("IMPLEMENTATION_INCOMPLETE");
+    expect(v).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+    expect(PLATFORM_CATALOG.entries.filter((entry) => entry.platform === "instagram")).toEqual([]);
   });
 
   it("one of the two operations is never enough — offline, in the record, or in the live registration", () => {

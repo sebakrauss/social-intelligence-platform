@@ -77,10 +77,13 @@ export interface OperationSetRegistration {
 /**
  * IMPLEMENTED OFFLINE: the adapter implements these operations and offline tests cover them; NOT validated against
  * the live provider, so never evidence by itself (requirement A only). The architecture guard proves each one is
- * actually implemented by the adapter. Step 7G-H5.5-P5-B: Facebook Page read_content (listContent + getContent).
+ * actually implemented by the adapter. Step 7G-H5.5-P5-B: Facebook Page read_content (listContent + getContent). Step
+ * 7G-H5.5-P11-B: Instagram professional-account read_content (listContent + getContent) — offline only: it has no
+ * accepted record and no live registration, so no Instagram entry is admissible (IMPLEMENTATION_EVIDENCE_MISSING).
  */
 export const OFFLINE_IMPLEMENTED_OPERATIONS: readonly OperationSetRegistration[] = Object.freeze([
   Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS }),
+  Object.freeze({ provider: "meta", platform: "instagram", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS }),
 ]);
 
 /**

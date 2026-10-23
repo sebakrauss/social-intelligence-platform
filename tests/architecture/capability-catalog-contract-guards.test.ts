@@ -157,7 +157,8 @@ describe("evidence records and implementation evidence", () => {
 
   it("P5-B (A, static): every OFFLINE registration names contract operations the adapter actually implements — the exact declared set", () => {
     const readPort = codeOf("integrations/providers/meta/read-port.ts");
-    expect(OFFLINE_IMPLEMENTED_OPERATIONS).toHaveLength(1);
+    // Facebook Page (P5-B) and Instagram professional account (P11-B) read_content: offline-implemented, never evidence.
+    expect(OFFLINE_IMPLEMENTED_OPERATIONS.map((op) => [op.provider, op.platform, op.capability])).toEqual([["meta", "facebook", "read_content"], ["meta", "instagram", "read_content"]]);
     for (const op of OFFLINE_IMPLEMENTED_OPERATIONS) {
       expect(op.operations).toEqual(CAPABILITY_REQUIRED_OPERATIONS[op.capability]);
       for (const name of op.operations) {
@@ -205,7 +206,9 @@ describe("evidence records and implementation evidence", () => {
 
     it("the record supports NO other content kind, platform, asset class or capability", () => {
       for (const contentKind of ["reel", "video", "story", ANY] as const) expect(check({ contentKind }), contentKind).toContain("EVIDENCE_SCOPE_MISMATCH");
-      expect(check({ platform: "instagram" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_INCOMPLETE", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+      // Instagram is implemented offline (P11-B) but has no live registration and no record of its own: still refused.
+      expect(check({ platform: "instagram" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISSING"]));
+      expect(check({ platform: "instagram" })).not.toContain("IMPLEMENTATION_INCOMPLETE");
       expect(check({ assetClass: "ad_account" })).toContain("EVIDENCE_SCOPE_MISMATCH");
       for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
     });

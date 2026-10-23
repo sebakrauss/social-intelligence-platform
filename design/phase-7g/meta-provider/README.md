@@ -775,3 +775,89 @@ the database are unchanged; no migration (the stored scope columns already admit
 
 **Not claimed.** The runtime does not use r3 yet: no deploy, no Trigger release, no profile refreshed, no Re-check
 run. The source, permission and reference semantics of the C9-B section above apply unchanged.
+
+## Instagram read_content (Step 7G-H5.5-P11-B) — IMPLEMENTED_OFFLINE_NOT_LIVE_VALIDATED
+
+**Scope.** Instagram professional accounts (Business or Creator, connected to a Facebook Page), asset class
+`content_bearing`, capability `read_content`. The provider contract is unchanged: the same `listContent` and
+`getContent` operations, selected by the account's platform with no fallback (a TikTok or any other account still
+takes the Facebook Page path, which refuses it before any request). Graph stays at `v25.0`.
+
+**Reads.** The sealed Facebook User Access Token is used directly; no Page Access Token is derived, so each call is ONE
+Graph GET:
+
+| Operation | Request | Fields |
+|---|---|---|
+| `listContent` | `GET /v25.0/{ig-user-id}/media?fields=…&limit=10[&after=…]` | `META_INSTAGRAM_MEDIA_FIELDS` |
+| `getContent` | `GET /v25.0/{ig-media-id}?fields=…` | the same constant |
+
+`META_INSTAGRAM_MEDIA_FIELDS` = `id,media_type,media_product_type,timestamp,caption,owner`. Never media URLs,
+thumbnails, permalinks, album children, counts, metrics or boost data. The stories, live media, tags and mentioned
+media edges are never read.
+
+**Normalization.**
+- `owner.id` must be the managed account; an absent or different owner fails the WHOLE page (or the single read)
+  closed. A media object is never accepted on its id alone. The get answer must echo the requested id.
+- Kind: a CLOSED table on (`media_type`, `media_product_type`):
+
+  | media_type · media_product_type | ContentKind |
+  |---|---|
+  | IMAGE · FEED | `post` |
+  | VIDEO · FEED | `video` |
+  | VIDEO · REELS | `reel` |
+  | CAROUSEL_ALBUM · FEED | `carousel` |
+
+  STORY and AD media, IMAGE or CAROUSEL_ALBUM as REELS, any new value and a missing value fail closed (no fallback to
+  `post`, `other` or an unknown kind). List and get share one mapper, so the same object always has the same kind.
+- `reportedSource` is always `unknown`. FEED and REELS name where media appears, not whether it is organic or paid;
+  nothing on this path proves either, and `any` is never used.
+- `caption` → caption (untrusted text); `timestamp` → `publishedAt` and `createdAt`; `updatedAt` is not reported.
+
+**Window and pagination.** One provider page per call, filtered client-side to [from, to) on `timestamp` (no
+`since`/`until`, no ordering assumed, no early stop). Continuation reuses the Page path's rules unchanged: `more`
+carries `paging.cursors.after` in the `meta1.` envelope, `end` means `paging.next` was absent, the `next` URL is never
+fetched, and a repeated or malformed cursor fails closed. `PAGE_CURSOR_MAX_LENGTH` and the raw Graph cursor bound are
+unchanged.
+
+**Errors.** The shared Graph read mapping, unchanged (permission → PermissionMissing(read_content), never
+non-support), plus the same getContent-only case: code 100 / subcode 33 on the media read is TargetNotFound. No
+Instagram-specific code is added.
+
+**Permissions.** `requiredPermissions` for Instagram `read_content` = the known requirements of the implemented read
+path: `instagram_basic` and `pages_read_engagement` (R15: the `/media` edge needs `instagram_basic` with
+`pages_read_engagement` or `pages_show_list`; R16: the media node needs `instagram_basic` and
+`pages_read_engagement`). `pages_show_list` can matter for connection, discovery and App Review dependency flows, but
+it is NOT a requirement of this capability's operation set as implemented, and the live account holding it does not
+make it one. No globally minimal permission set is claimed.
+
+**Diagnostic.** `integration.read_content_validation` (no new task; INTEGRATION 4 tasks, MAIN 6) now accepts an ACTIVE
+content-bearing Facebook Page or Instagram professional account of a live Meta connection, and its output names the
+`platform`. The output fields are platform-neutral (`allItemsFromManagedAccount`, `accountMatchesManagedAccount`); the
+refusal for any other account is `read_content_validation_target_not_meta_content_account`. Meta GETs per run:
+
+| Platform | No item | With an item |
+|---|---|---|
+| facebook | 2 | 4 |
+| instagram | 1 | 2 |
+
+**Contract state.** `OFFLINE_IMPLEMENTED_OPERATIONS` registers meta / instagram / read_content (requirement A). It is
+NOT live evidence: `IMPLEMENTED_PLATFORM_OPERATIONS` stays Facebook-only, the accepted record count stays 1, and the
+platform catalog stays r3 with its one Facebook entry. Instagram has no catalog support, and its profile keeps ten
+UNKNOWN rows.
+
+**First live target.** One controlled run of the diagnostic on an Instagram account whose selected item is
+IMAGE · FEED could support, after TL acceptance, exactly: `instagram` · `content_bearing` · `read_content` · `post` ·
+`unknown`, accountKind `instagram_professional_account`, operations `getContent` + `listContent`, requiredPermissions
+`instagram_basic` + `pages_read_engagement`. One observed post never validates `video`, `reel` or `carousel`: each
+kind needs its own positive live evidence, its own record and its own catalog entry. No generalized `any` support.
+
+**References** (Meta-owned, retrieved 2026-10-23):
+
+| Ref | Source and what it supports |
+|---|---|
+| R15 | IG User Media edge — `https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media`. User token; `instagram_basic` with `pages_read_engagement` or `pages_show_list`; up to 10K of the most recently created media; story media not returned (separate edge). |
+| R16 | IG Media node — `https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-media`. Facebook User token with `instagram_basic` and `pages_read_engagement`; `media_type` is CAROUSEL_ALBUM, IMAGE or VIDEO; `media_product_type` is AD, FEED, STORY or REELS; `timestamp` is ISO 8601 in UTC; `owner` is returned only for media the app user created; data only for media of professional accounts. |
+| R17 | IG Media children edge — `https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-media/children`. Album children: not read in this slice. |
+| R2, R8, R11, R5 | As listed above: getting started (User token on `/media`, sample `paging.cursors`), IG User fields and edges, permissions reference, cursor pagination (cursors are not to be stored). |
+
+Meta's samples now show a newer Graph version; moving off `v25.0` is a separate, deliberate change.

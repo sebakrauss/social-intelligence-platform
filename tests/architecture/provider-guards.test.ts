@@ -261,6 +261,66 @@ describe("Meta read port (Step 7G-E; P5-B read_content): the contained query-tok
   });
 });
 
+describe("Meta Instagram read_content (Step 7G-H5.5-P11-B): /media and the media node, User token directly, closed kinds", () => {
+  const META = "integrations/providers/meta";
+  const transport = () => codeOf(`${META}/graph-transport.ts`);
+  const readPort = () => codeOf(`${META}/read-port.ts`);
+  const instagramBranch = () => readPort().slice(readPort().indexOf("function managedInstagramAccount("), readPort().indexOf("async function discover("));
+
+  it("only the two documented Instagram reads: GET {ig-user-id}/media (fixed limit) and GET {ig-media-id}, one shared field whitelist", () => {
+    expect(transport()).toMatch(/export const META_INSTAGRAM_MEDIA_FIELDS = "id,media_type,media_product_type,timestamp,caption,owner";/);
+    expect(transport().match(/\["fields", META_INSTAGRAM_MEDIA_FIELDS\]/g)).toHaveLength(2);
+    expect(transport()).toMatch(/get\(\[instagramId, "media"\], /);
+    expect(transport()).toMatch(/get\(\[mediaId\], \[\["fields", META_INSTAGRAM_MEDIA_FIELDS\]\], userToken, /);
+    expect(transport()).toMatch(/export const META_INSTAGRAM_MEDIA_PAGE_LIMIT = 10;/);
+    expect(transport().match(/\["limit", String\(META_INSTAGRAM_MEDIA_PAGE_LIMIT\)\]/g)).toHaveLength(1);
+    // Never stories, live media, tags, mentions, album children, media URLs, thumbnails, permalinks, counts or boost data.
+    expect(transport()).not.toMatch(/"stories"|"live_media"|"tags"|"mentioned_media"|"children"|media_url|thumbnail_url|permalink|like_count|comments_count|boost_/);
+  });
+
+  it("the Instagram branch reads with the sealed User token directly: no Page token derivation, no published_posts", () => {
+    const branch = instagramBranch();
+    expect(branch.length).toBeGreaterThan(0);
+    expect(branch).toMatch(/transport\.listInstagramMedia\(access\.credential\.secret, account, after\)/);
+    expect(branch).toMatch(/transport\.getInstagramMedia\(access\.credential\.secret, mediaId\)/);
+    expect(branch).not.toMatch(/pageToken|getPageAccessToken|listPublishedPosts|getPost\b|META_POST_FIELDS|status_type/);
+    // The branch is selected by the account's platform only (no fallback); TikTok and the rest take the refusing Page path.
+    expect(readPort().match(/access\.account\.platform === "instagram" \? await (listMedia|getMedia)\(/g)).toHaveLength(2);
+  });
+
+  it("the kind table is CLOSED on (media_type, media_product_type) and read by own key only; the source is always unknown", () => {
+    expect(readPort()).toMatch(/export const META_INSTAGRAM_MEDIA_CONTENT_KINDS: Readonly<Record<string, ContentKind>> = Object\.freeze\(\{\n {2}"IMAGE:FEED": "post",\n {2}"VIDEO:FEED": "video",\n {2}"VIDEO:REELS": "reel",\n {2}"CAROUSEL_ALBUM:FEED": "carousel",\n\}\);/);
+    const mapper = readPort().slice(readPort().indexOf("function contentOfMedia("), readPort().indexOf("async function listMedia("));
+    expect(mapper).toMatch(/Object\.hasOwn\(META_INSTAGRAM_MEDIA_CONTENT_KINDS, key\)/);
+    expect(mapper).toMatch(/if \(media\.ownerId !== account\) throw new PermanentRejectedError\(operation, "unknown"\);/);
+    expect(mapper).toMatch(/reportedSource: "unknown",/);
+    expect(mapper).not.toMatch(/"organic"|"paid"|"mixed"|"any"|"other"|token|secret|credential/);
+  });
+
+  it("the README records the P11-B slice: offline only, the two permissions, pages_show_list not required, post/unknown first, no catalog change", () => {
+    const doc = readFileSync(path.join(root, "design/phase-7g/meta-provider/README.md"), "utf8");
+    const section = doc.slice(doc.indexOf("## Instagram read_content (Step 7G-H5.5-P11-B) — IMPLEMENTED_OFFLINE_NOT_LIVE_VALIDATED"));
+    expect(section.length).toBeGreaterThan(0);
+    for (const phrase of [
+      "`META_INSTAGRAM_MEDIA_FIELDS` = `id,media_type,media_product_type,timestamp,caption,owner`",
+      "`instagram_basic` and `pages_read_engagement`",
+      "it is NOT a requirement of this capability's operation set as implemented",
+      "No globally minimal permission set is claimed.",
+      "`reportedSource` is always `unknown`",
+      "`IMPLEMENTED_PLATFORM_OPERATIONS` stays Facebook-only",
+      "One observed post never validates `video`, `reel` or `carousel`",
+    ]) expect(section, phrase).toContain(phrase);
+  });
+
+  it("the Facebook Page path keeps its derivation, endpoint, fields and closed table (regression pin)", () => {
+    expect(transport()).toMatch(/export const META_POST_FIELDS = "id,from,message,created_time,updated_time,status_type";/);
+    expect(transport()).toMatch(/get\(\[pageId, "published_posts"\], /);
+    expect(readPort()).toMatch(/const token = await pageToken\(transport, access, page, "listContent"\);/);
+    expect(readPort()).toMatch(/const token = await pageToken\(transport, access, page, "getContent"\);/);
+    expect(readPort()).toMatch(/export const META_STATUS_TYPE_CONTENT_KINDS: Readonly<Record<string, ContentKind>> = Object\.freeze\(\{\n {2}added_video: "video",\n {2}mobile_status_update: "post",\n {2}added_photos: "post",\n {2}shared_story: "post",\n\}\);/);
+  });
+});
+
 describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cursor never crosses the port", () => {
   const META = "integrations/providers/meta";
   const readPort = () => codeOf(`${META}/read-port.ts`);
@@ -285,11 +345,14 @@ describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cu
     const code = readPort();
     expect(code).not.toMatch(/parsePageCursor\(list\.after\)/);
     expect(code).toMatch(/const next = encodeMetaPageCursor\(list\.after\);/);
-    // parsePageCursor appears exactly twice: inside the encoder (over the prefixed payload) and as the input check.
-    expect(code.match(/parsePageCursor\(/g)).toHaveLength(2);
+    // parsePageCursor appears exactly three times: inside the encoder (over the prefixed payload) and as the input check
+    // of each listContent branch (Facebook Page, Instagram account — Step 7G-H5.5-P11-B).
+    expect(code.match(/parsePageCursor\(/g)).toHaveLength(3);
+    expect(code.match(/if \(cursor !== null && parsePageCursor\(cursor\) === undefined\) throw new PermanentRejectedError\("listContent", "invalid_cursor"\);/g)).toHaveLength(2);
+    expect(code.match(/const next = encodeMetaPageCursor\(list\.after\);/g)).toHaveLength(2);
     expect(code).toMatch(/parsePageCursor\(META_PAGE_CURSOR_PREFIX \+ Buffer\.from\(raw, "latin1"\)\.toString\("base64url"\)\)/);
     // Incoming cursors are decoded (strict alphabet, canonical re-encode, raw re-validation) before any request.
-    expect(code).toMatch(/const after: MetaGraphCursor \| null = cursor === null \? null : decodeMetaPageCursor\(cursor\);/);
+    expect(code.match(/const after: MetaGraphCursor \| null = cursor === null \? null : decodeMetaPageCursor\(cursor\);/g)).toHaveLength(2);
     expect(code).toMatch(/bytes\.toString\("base64url"\) === payload \? parseMetaGraphCursor\(bytes\.toString\("latin1"\)\) : undefined/);
     // The helpers stay private to the adapter.
     expect(code).not.toMatch(/export function (encode|decode)MetaPageCursor/);

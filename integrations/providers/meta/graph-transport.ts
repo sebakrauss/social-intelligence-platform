@@ -1,7 +1,8 @@
 /**
  * The Meta Graph READ transport for discoverAssets (Step 7G-E; design/phase-7g/meta-provider/README.md, E1 — the
- * implementation authority), describeAccount (Step 7G-H5.5, contract H55) and Facebook Page read_content (Step
- * 7G-H5.5-P5-B, README › read_content). Eight typed operations, nothing else:
+ * implementation authority), describeAccount (Step 7G-H5.5, contract H55), Facebook Page read_content (Step
+ * 7G-H5.5-P5-B, README › read_content) and Instagram professional-account read_content (Step 7G-H5.5-P11-B, README ›
+ * Instagram read_content). Ten typed operations, nothing else:
  *
  *   listPages            GET https://graph.facebook.com/v25.0/me/accounts?fields=id,name[&after={cursor}]
  *   getPageInstagram     GET https://graph.facebook.com/v25.0/{page-id}?fields=instagram_business_account
@@ -12,6 +13,9 @@
  *   listPublishedPosts   GET https://graph.facebook.com/v25.0/{page-id}/published_posts?fields=META_POST_FIELDS
  *                            &limit=META_PUBLISHED_POSTS_PAGE_LIMIT[&after={cursor}]                  (Page token)
  *   getPost              GET https://graph.facebook.com/v25.0/{post-id}?fields=META_POST_FIELDS        (Page token)
+ *   listInstagramMedia   GET https://graph.facebook.com/v25.0/{ig-user-id}/media?fields=META_INSTAGRAM_MEDIA_FIELDS
+ *                            &limit=META_INSTAGRAM_MEDIA_PAGE_LIMIT[&after={cursor}]                  (User token)
+ *   getInstagramMedia    GET https://graph.facebook.com/v25.0/{ig-media-id}?fields=META_INSTAGRAM_MEDIA_FIELDS (User token)
  *
  * Callers name an operation and pass a SecretValue token plus validated provider ids or a validated cursor — never a
  * URL. Meta documents the access token as the `access_token` query parameter for these exact endpoints, so the
@@ -96,6 +100,36 @@ export interface MetaPostList {
   readonly after: MetaGraphCursor | null;
 }
 
+/**
+ * The minimum IG Media fields Instagram read_content maps (P11-A/P11-B; README › Instagram read_content), shared by the
+ * `/media` edge and the media node read: never a media URL, thumbnail, permalink, children, counts, metrics or boost
+ * data. `owner` is read for its `id` only.
+ */
+export const META_INSTAGRAM_MEDIA_FIELDS = "id,media_type,media_product_type,timestamp,caption,owner";
+/** One provider page of `{ig-user-id}/media`: fixed, the same size as the Page-post page. */
+export const META_INSTAGRAM_MEDIA_PAGE_LIMIT = 10;
+
+/** One IG Media object exactly as the whitelist reads it: closed fields, nothing else from the body. */
+export interface MetaInstagramMedia {
+  readonly id: ProviderObjectId;
+  /** `owner.id`: the account that created the media (the read port requires it to be the managed account). */
+  readonly ownerId: ProviderObjectId;
+  /** `caption` as reported; null when absent. Untrusted text. */
+  readonly caption: string | null;
+  /** `timestamp` (ISO 8601 in UTC): the creation instant. */
+  readonly timestamp: IsoInstant;
+  /** `media_type` as reported (a bounded upper-case token), null when absent; classified by the read port only. */
+  readonly mediaType: string | null;
+  /** `media_product_type` as reported (a bounded upper-case token), null when absent; classified by the read port only. */
+  readonly mediaProductType: string | null;
+}
+
+export interface MetaInstagramMediaList {
+  readonly media: readonly MetaInstagramMedia[];
+  /** The next page's cursor, or null when the provider reports no next page (`paging.next` absent). */
+  readonly after: MetaGraphCursor | null;
+}
+
 export interface MetaGraphTransport {
   listPages(token: SecretValue, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaPageList>>;
   /** The linked Instagram professional account id, or null when the Page has none. */
@@ -115,6 +149,10 @@ export interface MetaGraphTransport {
   listPublishedPosts(pageToken: SecretValue, pageId: ProviderObjectId, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaPostList>>;
   /** One post node (Page token), its echoed id checked. */
   getPost(pageToken: SecretValue, postId: ProviderObjectId): Promise<MetaGraphOutcome<MetaPost>>;
+  /** ONE page of the Instagram account's `/media` edge (User token, no derivation); the `next` URL is never fetched. */
+  listInstagramMedia(userToken: SecretValue, instagramId: ProviderObjectId, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaInstagramMediaList>>;
+  /** One IG Media node (User token), its echoed id checked. */
+  getInstagramMedia(userToken: SecretValue, mediaId: ProviderObjectId): Promise<MetaGraphOutcome<MetaInstagramMedia>>;
 }
 
 /** A Meta permission name: lower-case identifier, bounded. Anything else is an unreadable response, never kept. */
@@ -336,6 +374,58 @@ function singlePostOf(body: unknown, postId: ProviderObjectId): MetaPost | undef
   return post?.id === postId ? post : undefined;
 }
 
+/** An IG `media_type` / `media_product_type`: a bounded upper-case token (classification is the read port's, closed). */
+const MEDIA_ENUM = /^[A-Z][A-Z_]{0,63}$/;
+/** An optional enum field: absent → null, a bounded token → itself, anything else → undefined (malformed). */
+const mediaEnum = (value: unknown): string | null | undefined => (value === undefined ? null : typeof value === "string" && MEDIA_ENUM.test(value) ? value : undefined);
+
+/** One IG Media node by whitelist: id, media_type, media_product_type, timestamp, caption, owner.id. */
+function instagramMediaOf(value: unknown): MetaInstagramMedia | undefined {
+  const media = record(value);
+  if (media === undefined) return undefined;
+  const id = parseProviderObjectId(media["id"]);
+  const ownerId = parseProviderObjectId(record(media["owner"])?.["id"]);
+  const caption = media["caption"] === undefined ? null : typeof media["caption"] === "string" ? media["caption"] : undefined;
+  const timestamp = parseGraphDatetime(media["timestamp"]);
+  const mediaType = mediaEnum(media["media_type"]);
+  const mediaProductType = mediaEnum(media["media_product_type"]);
+  if (id === undefined || ownerId === undefined || caption === undefined || timestamp === undefined || mediaType === undefined || mediaProductType === undefined) return undefined;
+  return Object.freeze({ id, ownerId, caption, timestamp, mediaType, mediaProductType });
+}
+
+/**
+ * `{ig-user-id}/media`: `data[]` of IG Media (whitelist), `paging.next` (presence only) and `paging.cursors.after` —
+ * the same continuation rules as `published_posts`. More entries than the requested limit is not the documented shape.
+ */
+function instagramMediaListOf(body: unknown): MetaInstagramMediaList | undefined {
+  const root = record(body);
+  if (root === undefined || !Array.isArray(root["data"])) return undefined;
+  const data = root["data"] as readonly unknown[];
+  if (data.length > META_INSTAGRAM_MEDIA_PAGE_LIMIT) return undefined;
+  const media: MetaInstagramMedia[] = [];
+  for (const item of data) {
+    const one = instagramMediaOf(item);
+    if (one === undefined) return undefined;
+    media.push(one);
+  }
+  const paging = root["paging"];
+  if (paging === undefined) return Object.freeze({ media: Object.freeze(media), after: null });
+  const pagingRecord = record(paging);
+  if (pagingRecord === undefined) return undefined;
+  const next = pagingRecord["next"];
+  if (next === undefined) return Object.freeze({ media: Object.freeze(media), after: null });
+  // `next` only signals that another page exists; it is never read as a URL or fetched.
+  if (typeof next !== "string" || next === "") return undefined;
+  const after = parseMetaGraphCursor(record(pagingRecord["cursors"])?.["after"]);
+  return after === undefined ? undefined : Object.freeze({ media: Object.freeze(media), after });
+}
+
+/** `{ig-media-id}?fields=…`: the echoed id must be the requested one. */
+function singleInstagramMediaOf(body: unknown, mediaId: ProviderObjectId): MetaInstagramMedia | undefined {
+  const media = instagramMediaOf(body);
+  return media?.id === mediaId ? media : undefined;
+}
+
 export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}): MetaGraphTransport {
   const fetchImpl: MetaGraphFetch = options.fetch ?? ((url, init) => fetch(url, init));
   const timeoutMs = options.timeoutMs ?? META_GRAPH_TIMEOUT_MS;
@@ -403,6 +493,13 @@ export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}
     },
     getPost(pageToken, postId) {
       return get([postId], [["fields", META_POST_FIELDS]], pageToken, (body) => singlePostOf(body, postId));
+    },
+    listInstagramMedia(userToken, instagramId, after) {
+      const query: [string, string][] = [["fields", META_INSTAGRAM_MEDIA_FIELDS], ["limit", String(META_INSTAGRAM_MEDIA_PAGE_LIMIT)]];
+      return get([instagramId, "media"], after === null ? query : [...query, ["after", after]], userToken, instagramMediaListOf);
+    },
+    getInstagramMedia(userToken, mediaId) {
+      return get([mediaId], [["fields", META_INSTAGRAM_MEDIA_FIELDS]], userToken, (body) => singleInstagramMediaOf(body, mediaId));
     },
   };
 }

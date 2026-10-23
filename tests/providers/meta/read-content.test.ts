@@ -433,11 +433,11 @@ describe("pagination: ONE provider page per call; the Graph `after` cursor in a 
 });
 
 describe("listContent / getContent · refusal before any request", () => {
+  // Instagram accounts take their own branch (Step 7G-H5.5-P11-B; tests/providers/meta/instagram-read-content.test.ts).
   it.each([
-    ["an Instagram account", providerObjectRef("instagram", "asset", "17840001")],
     ["a TikTok account", providerObjectRef("tiktok", "asset", "7001")],
     ["a non-asset ref", providerObjectRef("facebook", "content", PAGE)],
-  ])("%s is refused (invalid_request) — read_content is Facebook Pages only here", async (_label, account) => {
+  ])("%s is refused (invalid_request) — the Facebook Page path accepts only a Facebook Page", async (_label, account) => {
     const { port, calls } = portWith(graphOf({ pages: ONE_PAGE }));
     const access = { credential: CREDENTIAL, account } as unknown as typeof ACCESS;
     for (const [operation, run] of [["listContent", () => port.listContent(access, WINDOW, null)], ["getContent", () => port.getContent(access, providerObjectRef("facebook", "content", POST_A))]] as const) {
