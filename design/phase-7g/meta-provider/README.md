@@ -316,7 +316,7 @@ Permanent product code. The F4A contract, with the TL decisions D1–D4 and T1.
 | Known temporary-policy cost | in a two-admin race the loser's code was already exchanged and its token sealed (one GenerateDataKey) before the guard refuses; the envelope is never stored, the plaintext follows the existing zeroing, nothing secret is surfaced |
 | AUTHORIZATION_REDIRECT_VALIDATION | HTTPS_EXACT_META_ORIGIN_AND_DIALOG_PATH: https, no userinfo, no fragment, origin + path exactly `META_DIALOG_URL` (composed in `server/connections/runtime.ts`); the query is never interpreted; otherwise `authorization_start_failed`, no redirect |
 | DB_MIGRATION | NO |
-| RECONNECT_SURFACE | NOT_IMPLEMENTED (the domain path is unchanged) |
+| RECONNECT_SURFACE | IMPLEMENTED in Step 7G-H5.5-P12-C0-R2, LIVE-validated R5I (see the Remove Meta table below); the domain reconnect path is unchanged |
 | REMOVE_SURFACE | IMPLEMENTED_OFFLINE in Step 7G-F4C (see below) |
 | F4C_REMOVE_SURFACE_REQUIRED_BEFORE_LIVE | YES: satisfied by Step 7G-F4C (a FAILED or DISCONNECTED Meta connection is recovered by Remove, then a fresh connect) |
 | ROLE_LEVEL_IDLE_TRANSACTION_HARDENING | DEFERRED_BEFORE_CUSTOMER_EXPOSURE (separate operational gate; not a blocker for the controlled DEV live acceptance) |
@@ -344,7 +344,7 @@ The F4C0 contract, with the TL decisions D1–D7.
 | DISCOVERY_IN_FLIGHT_AFTER_REMOVE | SAFE_BUT_MAY_WASTE_PROVIDER_WORK: a run that already loaded the envelope may still Decrypt and call Meta; its write is refused; later runs skip before Decrypt |
 | LIVE_CLEANUP_ORDER | WAIT_FOR_DISCOVERY_TERMINAL_THEN_REMOVE (so Decrypt / provider-call evidence counts stay exact) |
 | CAPABILITY_PROFILE_FINAL_RECHECK | DEFERRED_HARDENING (a late profile for an already inactive account is derived metadata, not resurrection) |
-| RECONNECT_SURFACE | NOT_IMPLEMENTED (a reconnect after removal stays refused) |
+| RECONNECT_SURFACE | IMPLEMENTED, LIVE-VALIDATED (Step 7G-H5.5-P12-C0-R2 / R5I): one Reconnect form per Meta connection that isn't REMOVED on Settings › Connections; `reconnectMetaConnectionAction` reads only `workspaceId` and `connectionId` and starts the existing authorization with that connection as its reconnect target, so a successful completion is `reauthorized` on the SAME logical connection (new credential stored, pointer swapped, old envelope shredded, one transaction). A reconnect after removal stays refused |
 
 ## First controlled live acceptance (Steps 7G-H3/H4)
 
@@ -482,8 +482,15 @@ the catalog keeps four:
   `AUTHORIZATION_MISSING`; offer copy "Authorization is missing for one or more capabilities. Reauthorize the connection
   if needed, then re-check capabilities."). Re-check only re-reads the provider facts; it never grants authorization.
   The cooldown applies as usual.
-- **Remaining gap.** `AUTO_REEVALUATE_AFTER_REAUTHORIZED = NOT_IMPLEMENTED`: a re-authorization does not request an
-  evaluation yet. The supported recovery is (1) reauthorize the connection, (2) Re-check. A later gate can automate (2).
+- **Capability refresh after re-authorization.** `AUTO_REEVALUATE_AFTER_REAUTHORIZED = IMPLEMENTED_VIA_VALIDATED_DISCOVERY`
+  (Step 7G-H5.5-P12-C0-R1; LIVE-validated R5I). The completion of a successful `reauthorized` exchange emits no evaluation
+  itself: it marks that connection's discovery authority with the typed `capability_refresh_credential_id` of the NEW
+  credential (the only producer; never user input). Only a VALIDATED discovery whose marker still equals the active
+  credential requests one system `capability.evaluate_account` per ACTIVE account of that connection and workspace, keyed
+  `capability.evaluate_account:{account}:credential.{credentialId}` (at most one per account per credential); a
+  superseded credential requests nothing, and a credential-bound evaluation whose credential was replaced is a no-op
+  before any credential load. This is backend/system authority: no `REEVALUATION_REQUESTED` event, no manual Re-check
+  is fabricated, and the Owner/Admin Re-check keeps its own semantics (PROFILE_CURRENT, cooldown, `USER_REQUESTED_REEVALUATION`).
 - **Execution layer.** No AppError mapping from availability exists today. When the action-execution phase adds one,
   NOT_AUTHORIZED (availability ACCOUNT_PERMISSION_MISSING) must never become `CAPABILITY_UNSUPPORTED`: it is an
   authorization problem with a re-authorization recovery, not a platform limit.
@@ -529,7 +536,7 @@ the catalog keeps four:
 | CATALOG_ENTRY_CONTRACT | G1 non-empty named permissions; G2 registered implementation evidence (none registered → every positive entry refused); UNSUPPORTED only from authoritative negative evidence; G3 LIVE-shaped facts → 0 SUPPORTED, 0 UNSUPPORTED, 10 UNKNOWN per account |
 | FIRST_VALIDATED_PLATFORM_ENTRY | semantic blocker LIFTED (P4-C, `FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = NO`); still not admissible without an accepted record and implementation evidence |
 | PROFILE_STATES | SUPPORTED, AVAILABLE_WITH_LIMITATION, UNSUPPORTED, NOT_AUTHORIZED, UNKNOWN_NOT_VALIDATED (NOT_AUTHORIZED profile-only) |
-| AUTO_REEVALUATE_AFTER_REAUTHORIZED | NOT_IMPLEMENTED (manual Re-check) |
+| AUTO_REEVALUATE_AFTER_REAUTHORIZED | IMPLEMENTED_VIA_VALIDATED_DISCOVERY (P12-C0-R1; LIVE R5I): system evaluation per ACTIVE account for the new credential, emitted only by that credential's validated discovery; manual Re-check unchanged |
 | REEVALUATION | manual Re-check only; no automatic reconcile |
 
 **H6 readiness contract.** H6 may ingest for a Connected Account only when, at the moment of ingestion:

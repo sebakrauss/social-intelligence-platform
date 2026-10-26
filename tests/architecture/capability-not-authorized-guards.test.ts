@@ -73,9 +73,13 @@ describe("consumers go through capabilityAvailability", () => {
     expect(hits).toEqual([]);
   });
 
-  it("REAUTHORIZED requests no capability evaluation yet (AUTO_REEVALUATE_AFTER_REAUTHORIZED = NOT_IMPLEMENTED)", () => {
+  it("REAUTHORIZED itself requests no capability evaluation and no manual re-check: the refresh is emitted only by that credential's validated discovery (AUTO_REEVALUATE_AFTER_REAUTHORIZED = IMPLEMENTED_VIA_VALIDATED_DISCOVERY)", () => {
     const authorization = codeOf("modules/connections/application/authorization.ts");
     expect(authorization).toMatch(/"REAUTHORIZED"/);
     expect(authorization).not.toMatch(/capabilityEvaluationRequest|capability\.evaluate_account|requestCapabilityReevaluation/);
+    // The one producer of credential-reason requests is the validated-discovery refresh (Step 7G-H5.5-P12-C0-R1), never the human re-check.
+    const discovery = codeOf("modules/connections/application/discovery.ts");
+    expect(discovery).toMatch(/reason: \{ kind: "credential", credentialId: refresh\.credentialId \}/);
+    expect(discovery).not.toMatch(/requestCapabilityReevaluation|REEVALUATION_REQUESTED/);
   });
 });
