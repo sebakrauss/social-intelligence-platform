@@ -10,8 +10,13 @@
  * exchange and a bounded response body. Results are closed: a validated token (wrapped at once as a SecretValue),
  * the closed fields of a Graph error, or `ambiguous` — the request may have been processed (no response, timeout,
  * redirect, unreadable or unexpected body), so the authorization code must be considered spent.
+ *
+ * Every `ambiguous` carries ONE closed reason (Step 7G-H5.5-P12-C0-R5A) naming the branch, or for a 2xx body the
+ * token-response check, that refused it: never a value, a body fragment, a status text or anything from an error.
+ * Handling is unchanged — every reason is the same OutcomeUnknown.
  */
 import { SecretValue } from "../contract/credential";
+import type { OutcomeUnknownReason } from "../contract/errors";
 import { META_TOKEN_URL } from "./endpoints";
 import { graphErrorFields, type MetaGraphErrorFields } from "./errors";
 
@@ -37,7 +42,7 @@ export interface MetaTokenExchangeRequest {
 export type MetaTokenOutcome =
   | { readonly kind: "token"; readonly accessToken: SecretValue; readonly expiresInSeconds: number }
   | { readonly kind: "graph_error"; readonly error: MetaGraphErrorFields }
-  | { readonly kind: "ambiguous" };
+  | { readonly kind: "ambiguous"; readonly reason: OutcomeUnknownReason };
 
 export interface MetaTokenTransport {
   exchange(request: MetaTokenExchangeRequest): Promise<MetaTokenOutcome>;
@@ -49,16 +54,18 @@ export interface MetaTokenTransportOptions {
   readonly maxResponseBytes?: number;
 }
 
-const AMBIGUOUS: MetaTokenOutcome = Object.freeze({ kind: "ambiguous" });
+const ambiguous = (reason: OutcomeUnknownReason): MetaTokenOutcome => Object.freeze({ kind: "ambiguous", reason });
 
-/** The response body as UTF-8 text, or undefined when it exceeds the bound or isn't valid UTF-8. */
-async function boundedText(response: Response, maxBytes: number): Promise<string | undefined> {
+type BodyText = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: "response_too_large" | "response_not_utf8" };
+
+/** The response body as UTF-8 text, or why it wasn't read: over the bound, or not valid UTF-8. */
+async function boundedText(response: Response, maxBytes: number): Promise<BodyText> {
   const declared = Number(response.headers.get("content-length") ?? Number.NaN);
   if (Number.isFinite(declared) && declared > maxBytes) {
     await response.body?.cancel();
-    return undefined;
+    return { ok: false, reason: "response_too_large" };
   }
-  if (response.body === null) return "";
+  if (response.body === null) return { ok: true, text: "" };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -68,7 +75,7 @@ async function boundedText(response: Response, maxBytes: number): Promise<string
     total += value.byteLength;
     if (total > maxBytes) {
       await reader.cancel();
-      return undefined;
+      return { ok: false, reason: "response_too_large" };
     }
     chunks.push(value);
   }
@@ -79,9 +86,9 @@ async function boundedText(response: Response, maxBytes: number): Promise<string
     offset += chunk.byteLength;
   }
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return { ok: true, text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
   } catch {
-    return undefined;
+    return { ok: false, reason: "response_not_utf8" };
   }
 }
 
@@ -94,19 +101,29 @@ function parseJson(text: string): unknown {
 }
 
 /**
- * A 2xx body → a validated token, or undefined when it isn't the documented `{access_token, token_type, expires_in}`.
- * `expires_in` is REQUIRED (Step 7G-D2A): a credential is never accepted without a known expiry, and none is invented.
+ * A 2xx body → a validated token, or the first check of the documented `{access_token, token_type, expires_in}` it
+ * fails (by field and absent/invalid only, never the value). `expires_in` is REQUIRED (Step 7G-D2A): a credential is
+ * never accepted without a known expiry, and none is invented.
  */
-function tokenOf(body: unknown): MetaTokenOutcome | undefined {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
+function tokenOf(body: unknown): MetaTokenOutcome {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return ambiguous("token_response_not_object");
   const record = body as Record<string, unknown>;
   const accessToken = record["access_token"];
-  if (typeof accessToken !== "string" || !ACCESS_TOKEN.test(accessToken)) return undefined;
+  if (accessToken === undefined) return ambiguous("token_response_access_token_missing");
+  if (typeof accessToken !== "string" || !ACCESS_TOKEN.test(accessToken)) return ambiguous("token_response_access_token_invalid");
   const tokenType = record["token_type"];
-  if (tokenType !== undefined && (typeof tokenType !== "string" || tokenType === "")) return undefined;
+  if (tokenType !== undefined && (typeof tokenType !== "string" || tokenType === "")) return ambiguous("token_response_token_type_invalid");
   const expiresIn = record["expires_in"];
-  if (typeof expiresIn !== "number" || !Number.isSafeInteger(expiresIn) || expiresIn <= 0 || expiresIn > MAX_EXPIRES_IN_SECONDS) return undefined;
+  if (expiresIn === undefined) return ambiguous("token_response_expires_in_missing");
+  if (typeof expiresIn !== "number" || !Number.isSafeInteger(expiresIn) || expiresIn <= 0 || expiresIn > MAX_EXPIRES_IN_SECONDS) return ambiguous("token_response_expires_in_invalid");
   return Object.freeze({ kind: "token", accessToken: new SecretValue(accessToken), expiresInSeconds: expiresIn });
+}
+
+/** A non-2xx, non-3xx status whose body isn't a Graph error: its class only. */
+function unrecognizedStatus(status: number): OutcomeUnknownReason {
+  if (status >= 500 && status <= 599) return "unrecognized_5xx_response";
+  if (status >= 400 && status <= 499) return "unrecognized_4xx_response";
+  return "unrecognized_status_response";
 }
 
 export function createMetaTokenTransport(options: MetaTokenTransportOptions = {}): MetaTokenTransport {
@@ -116,8 +133,10 @@ export function createMetaTokenTransport(options: MetaTokenTransportOptions = {}
 
   return {
     async exchange(request) {
-      let text: string | undefined;
+      let body: BodyText;
       let status: number;
+      // Our own signal: whether IT fired is what tells a timeout from any other failure (the error is never read).
+      const signal = AbortSignal.timeout(timeoutMs);
       try {
         const url = new URL(META_TOKEN_URL);
         url.search = new URLSearchParams([
@@ -132,23 +151,23 @@ export function createMetaTokenTransport(options: MetaTokenTransportOptions = {}
           credentials: "omit",
           referrerPolicy: "no-referrer",
           headers: { accept: "application/json" },
-          signal: AbortSignal.timeout(timeoutMs),
+          signal,
         });
         status = response.status;
         if (response.type === "opaqueredirect" || (status >= 300 && status < 400)) {
           await response.body?.cancel();
-          return AMBIGUOUS;
+          return ambiguous("unexpected_redirect");
         }
-        text = await boundedText(response, maxBytes);
+        body = await boundedText(response, maxBytes);
       } catch {
         // Network failure, timeout or abort: the request may have reached Meta. Nothing of the error is kept.
-        return AMBIGUOUS;
+        return ambiguous(signal.aborted ? "timeout" : "network_error");
       }
-      if (text === undefined) return AMBIGUOUS;
-      const body = parseJson(text);
-      if (status >= 200 && status < 300) return tokenOf(body) ?? AMBIGUOUS;
-      const error = graphErrorFields(body);
-      return error === null ? AMBIGUOUS : Object.freeze({ kind: "graph_error", error });
+      if (!body.ok) return ambiguous(body.reason);
+      const parsed = parseJson(body.text);
+      if (status >= 200 && status < 300) return tokenOf(parsed);
+      const error = graphErrorFields(parsed);
+      return error === null ? ambiguous(unrecognizedStatus(status)) : Object.freeze({ kind: "graph_error", error });
     },
   };
 }

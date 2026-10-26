@@ -118,7 +118,7 @@ export function createMetaAuthorizationPort(app: MetaAppCredentials, options: Me
       const operation = "exchangeCode";
       if (input.pkceVerifier !== null || parseRedirectUri(input.redirectUri) === undefined) throw new PermanentRejectedError(operation, "invalid_request");
       const outcome = await transport.exchange({ clientId, clientSecret, redirectUri: input.redirectUri, code: input.code });
-      if (outcome.kind === "ambiguous") throw new OutcomeUnknownError(operation);
+      if (outcome.kind === "ambiguous") throw new OutcomeUnknownError(operation, outcome.reason);
       if (outcome.kind === "graph_error") throw metaGraphError(operation, outcome.error, "discover_assets");
       const expiresAt = isoInstant(new Date(now().getTime() + outcome.expiresInSeconds * 1000));
       const credential = providerCredential(newId(), outcome.accessToken.expose());

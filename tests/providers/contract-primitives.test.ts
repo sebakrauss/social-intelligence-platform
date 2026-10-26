@@ -16,6 +16,7 @@ import {
   parsePkceChallenge,
   parsePkceVerifier,
   parseRedirectUri,
+  OUTCOME_UNKNOWN_REASONS,
   OutcomeUnknownError,
   PermanentRejectedError,
   PermissionMissingError,
@@ -110,6 +111,19 @@ describe("errors", () => {
       expect(Object.keys(json).sort()).toEqual(["details", "kind", "operation", "retry"]);
       for (const value of Object.values(json.details)) expect(value === null || typeof value === "string" || typeof value === "number").toBe(true);
     }
+  });
+
+  it("OutcomeUnknown may name ONE closed diagnostic reason; unclassified it serializes exactly as before (Step 7G-H5.5-P12-C0-R5A)", () => {
+    expect(new OutcomeUnknownError("exchangeCode").toJSON()).toEqual({ kind: "outcome_unknown", operation: "exchangeCode", retry: "verify_first", details: {} });
+    expect(new OutcomeUnknownError("exchangeCode").reason).toBeNull();
+    for (const reason of OUTCOME_UNKNOWN_REASONS) {
+      const error = new OutcomeUnknownError("exchangeCode", reason);
+      // Same kind, retry and message: the reason is diagnostic only.
+      expect([error.kind, error.retry, error.message]).toEqual(["outcome_unknown", "verify_first", "provider_outcome_unknown"]);
+      expect(error.toJSON().details).toEqual({ reason });
+      expect(reason).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
+    }
+    expect(new Set(OUTCOME_UNKNOWN_REASONS).size).toBe(OUTCOME_UNKNOWN_REASONS.length);
   });
 
   it("make retry semantics explicit, with OutcomeUnknown the only non-definite failure", () => {

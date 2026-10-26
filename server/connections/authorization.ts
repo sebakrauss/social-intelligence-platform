@@ -16,10 +16,12 @@
  *
  * Only the claim winner exchanges, so a replayed or concurrent callback can never exchange again. If the process
  * dies after the claim, the attempt stays EXCHANGING and is recovered as OUTCOME_UNKNOWN later (never replayed).
- * Logs carry IDs and closed codes only: never the state, the code, the verifier or the credential.
+ * Logs carry IDs and closed codes only: never the state, the code, the verifier or the credential. An ambiguous
+ * exchange also logs its closed sub-reason (Step 7G-H5.5-P12-C0-R5A), as an event name, and is handled exactly the same.
  */
 import { parseCorrelationId } from "@/domain/correlation";
 import {
+  OutcomeUnknownError,
   ProviderError,
   isProviderError,
   parseOAuthState,
@@ -201,6 +203,8 @@ export async function completeConnectionAuthorization(
   } catch (error) {
     const code = exchangeOutcome(error);
     if (!(error instanceof ProviderError)) log.warn("connections.authorization.exchange_unexpected_error", { outcome: "error", workspaceId });
+    // Step 7G-H5.5-P12-C0-R5A: an ambiguous exchange names its closed sub-reason in the event (never a value). Same handling.
+    if (error instanceof OutcomeUnknownError && error.reason !== null) log.info(`connections.authorization.exchange_ambiguous.${error.reason}`, { outcome: "error", workspaceId });
     return failWith(code, code === "OUTCOME_UNKNOWN" ? "outcome_unknown" : "exchange_failed");
   }
 

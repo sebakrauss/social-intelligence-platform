@@ -74,6 +74,8 @@ export function defineMetaReconnectSuite(getTarget: () => DbTarget): void {
   let clockMs = Date.now();
   const clock = (): Date => new Date((clockMs += 1));
   let exchanges = 0;
+  /** Every log line the web side wrote (sanitized JSON), for the R5-shape event and secrecy checks. */
+  const logLines: string[] = [];
   /** The next token exchange's outcome (default: a synthetic token). */
   let nextExchange: MetaTokenOutcome | undefined;
 
@@ -184,7 +186,7 @@ export function defineMetaReconnectSuite(getTarget: () => DbTarget): void {
     web = runtimeDatabase(target, "web", 2);
     worker = runtimeDatabase(target, "worker", 2);
     keyring = createLocalKeyring(randomBytes(32), { NODE_ENV: "test" });
-    logger = createLogger({ sink: () => undefined, now: clock });
+    logger = createLogger({ sink: (line) => logLines.push(line), now: clock });
     access = createCredentialAccess(createCredentialOpener(keyring.unwrapper), "test");
     const transport: MetaTokenTransport = {
       exchange() {
@@ -283,8 +285,33 @@ export function defineMetaReconnectSuite(getTarget: () => DbTarget): void {
       nextExchange = { kind: "graph_error", error: { code: 190, subcode: null, oauthException: true } };
       await unchanged(t, connection, granted, { status: "restart_required", reason: "exchange_failed" }, 1);
       exchanges = 0;
-      nextExchange = { kind: "ambiguous" };
+      nextExchange = { kind: "ambiguous", reason: "network_error" };
       await unchanged(t, connection, granted, { status: "restart_required", reason: "outcome_unknown" }, 1);
+    });
+
+    it("the R5 LIVE shape: valid state, ONE ambiguous exchange → attempt OUTCOME_UNKNOWN, everything preserved, zero downstream authority, and the closed sub-reason logged without any secret (Step 7G-H5.5-P12-C0-R5A)", async () => {
+      const t = await tenant();
+      const connection = await connected(t);
+      const active = await seedAccount(t, connection, "ACTIVE");
+      logLines.length = 0;
+      nextExchange = { kind: "ambiguous", reason: "token_response_expires_in_missing" };
+      const before = await connectionRow(connection);
+      const state = stateOf(await reconnectMeta(depsFor(t.owner), { workspaceId: t.workspaceId, connectionId: connection }));
+      expect(await callback(t.owner, granted(state))).toEqual({ status: "restart_required", reason: "outcome_unknown" });
+      expect(exchanges).toBe(1); // exactly one exchange, never retried
+      expect(await oracle("select status, failure_code from connections.connect_attempts where reconnect_connection_id = $1", [connection])).toEqual([{ status: "OUTCOME_UNKNOWN", failure_code: null }]);
+      expect(await connectionRow(connection)).toEqual(before);
+      expect(await credentials(connection)).toBe(1);
+      expect(await events(connection, "REAUTHORIZED")).toBe(0);
+      expect(await discoveryRows(connection)).toHaveLength(1); // the initial one only
+      expect(await markedDiscoveries(connection)).toBe(0);
+      expect(await credentialRequests([active])).toEqual([]);
+      expect(await countOf("select count(*)::int as n from connections.connected_account_events where connected_account_id = $1 and event_type = 'REEVALUATION_REQUESTED'", [active])).toBe(0);
+      // The sub-reason is an event name (closed vocabulary), followed by the unchanged close event.
+      const events_ = logLines.map((line) => (JSON.parse(line) as { event: string }).event).filter((event) => event.startsWith("connections.authorization.exchange_"));
+      expect(events_).toEqual(["connections.authorization.exchange_ambiguous.token_response_expires_in_missing", "connections.authorization.exchange_closed.outcome_unknown"]);
+      const rendered = logLines.join("\n");
+      for (const secret of [TOKEN_MARKER, CODE_MARKER, state, "synthetic-meta-app-secret-marker", "client_secret", "access_token="]) expect(rendered).not.toContain(secret);
     });
   });
 

@@ -8,12 +8,15 @@
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
+  OUTCOME_UNKNOWN_REASONS,
+  OutcomeUnknownError,
   ProviderError,
   SecretValue,
   parseOAuthState,
   parseRedirectUri,
   type CallbackQuery,
   type OAuthState,
+  type OutcomeUnknownReason,
   type PkceChallenge,
   type ProviderErrorKind,
   type RedirectUri,
@@ -72,6 +75,7 @@ function fakeFetch(reply: Reply): { readonly fetch: MetaFetch; readonly calls: C
 }
 const json = (status: number, body: unknown, headers: Record<string, string> = {}): Promise<Response> =>
   Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } }));
+const exchangeRequest = (): MetaTokenExchangeRequest => ({ clientId: CLIENT_ID, clientSecret: new SecretValue(SECRET_MARKER), redirectUri: REDIRECT, code: new SecretValue(CODE_MARKER) });
 const tokenBody = (overrides: Record<string, unknown> = {}) => ({ access_token: TOKEN_MARKER, token_type: "bearer", expires_in: 5400, ...overrides });
 const graphError = (fields: Record<string, unknown>) => ({ error: { message: BODY_MARKER, error_user_msg: BODY_MARKER, fbtrace_id: "synthetic-trace", ...fields } });
 
@@ -277,40 +281,66 @@ describe("Meta authorization port · token exchange", () => {
     expect(calls).toHaveLength(0);
   });
 
-  const ambiguous: readonly (readonly [string, Reply, { readonly timeoutMs?: number; readonly maxResponseBytes?: number }])[] = [
-    ["a network error", () => Promise.reject(new TypeError(`fetch failed ${BODY_MARKER}`)), {}],
-    ["a timeout", (call) => new Promise((_resolve, reject) => { call.init.signal?.addEventListener("abort", () => { reject(new Error(BODY_MARKER)); }); }), { timeoutMs: 20 }],
-    ["a 5xx without a Graph error", () => Promise.resolve(new Response(`<html>${BODY_MARKER}</html>`, { status: 502 })), {}],
-    ["a redirect", () => Promise.resolve(new Response(null, { status: 302, headers: { location: "https://elsewhere.example.test/" } })), {}],
-    ["an oversized body (declared)", () => json(200, tokenBody(), { "content-length": "999999" }), { maxResponseBytes: 128 }],
-    ["an oversized body (streamed)", () => Promise.resolve(new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(tokenBody({ padding: "x".repeat(200) })))); controller.close(); } }), { status: 200 })), { maxResponseBytes: 128 }],
-    ["malformed JSON", () => Promise.resolve(new Response(`{"access_token": "${TOKEN_MARKER}"`, { status: 200 })), {}],
-    ["invalid UTF-8", () => Promise.resolve(new Response(new Uint8Array([0x7b, 0xff, 0x7d]), { status: 200 })), {}],
-    ["a JSON array", () => json(200, [tokenBody()]), {}],
-    ["a missing access_token", () => json(200, tokenBody({ access_token: undefined })), {}],
-    ["an empty access_token", () => json(200, tokenBody({ access_token: "" })), {}],
-    ["an access_token with whitespace", () => json(200, tokenBody({ access_token: `${TOKEN_MARKER} x` })), {}],
-    ["a non-string token_type", () => json(200, tokenBody({ token_type: 1 })), {}],
-    ["a missing expires_in (no default lifetime is invented)", () => json(200, tokenBody({ expires_in: undefined })), {}],
-    ["a null expires_in", () => json(200, tokenBody({ expires_in: null })), {}],
-    ["a boolean expires_in", () => json(200, tokenBody({ expires_in: true })), {}],
-    ["expires_in = 0", () => json(200, tokenBody({ expires_in: 0 })), {}],
-    ["expires_in < 0", () => json(200, tokenBody({ expires_in: -1 })), {}],
-    ["fractional expires_in", () => json(200, tokenBody({ expires_in: 1.5 })), {}],
-    ["string expires_in", () => json(200, tokenBody({ expires_in: "5400" })), {}],
-    ["absurd expires_in", () => json(200, tokenBody({ expires_in: Number.MAX_SAFE_INTEGER })), {}],
-    ["expires_in just above the ten-year bound", () => json(200, tokenBody({ expires_in: 10 * 365 * 24 * 3600 + 1 })), {}],
-    ["a non-finite expires_in (JSON overflow)", () => Promise.resolve(new Response(`{"access_token":"${TOKEN_MARKER}","token_type":"bearer","expires_in":1e400}`, { status: 200 })), {}],
-    ["a 4xx that is not a Graph error", () => json(400, { message: BODY_MARKER }), {}],
+  const ambiguous: readonly (readonly [string, Reply, { readonly timeoutMs?: number; readonly maxResponseBytes?: number }, OutcomeUnknownReason])[] = [
+    ["a network error", () => Promise.reject(new TypeError(`fetch failed ${BODY_MARKER}`)), {}, "network_error"],
+    ["a timeout", (call) => new Promise((_resolve, reject) => { call.init.signal?.addEventListener("abort", () => { reject(new Error(BODY_MARKER)); }); }), { timeoutMs: 20 }, "timeout"],
+    ["a 5xx without a Graph error", () => Promise.resolve(new Response(`<html>${BODY_MARKER}</html>`, { status: 502 })), {}, "unrecognized_5xx_response"],
+    ["a redirect", () => Promise.resolve(new Response(null, { status: 302, headers: { location: "https://elsewhere.example.test/" } })), {}, "unexpected_redirect"],
+    ["an oversized body (declared)", () => json(200, tokenBody(), { "content-length": "999999" }), { maxResponseBytes: 128 }, "response_too_large"],
+    ["an oversized body (streamed)", () => Promise.resolve(new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(tokenBody({ padding: "x".repeat(200) })))); controller.close(); } }), { status: 200 })), { maxResponseBytes: 128 }, "response_too_large"],
+    ["malformed JSON", () => Promise.resolve(new Response(`{"access_token": "${TOKEN_MARKER}"`, { status: 200 })), {}, "token_response_not_object"],
+    ["invalid UTF-8", () => Promise.resolve(new Response(new Uint8Array([0x7b, 0xff, 0x7d]), { status: 200 })), {}, "response_not_utf8"],
+    ["a JSON array", () => json(200, [tokenBody()]), {}, "token_response_not_object"],
+    ["a missing access_token", () => json(200, tokenBody({ access_token: undefined })), {}, "token_response_access_token_missing"],
+    ["an empty access_token", () => json(200, tokenBody({ access_token: "" })), {}, "token_response_access_token_invalid"],
+    ["an access_token with whitespace", () => json(200, tokenBody({ access_token: `${TOKEN_MARKER} x` })), {}, "token_response_access_token_invalid"],
+    ["a non-string token_type", () => json(200, tokenBody({ token_type: 1 })), {}, "token_response_token_type_invalid"],
+    ["a missing expires_in (no default lifetime is invented)", () => json(200, tokenBody({ expires_in: undefined })), {}, "token_response_expires_in_missing"],
+    ["a null expires_in", () => json(200, tokenBody({ expires_in: null })), {}, "token_response_expires_in_invalid"],
+    ["a boolean expires_in", () => json(200, tokenBody({ expires_in: true })), {}, "token_response_expires_in_invalid"],
+    ["expires_in = 0", () => json(200, tokenBody({ expires_in: 0 })), {}, "token_response_expires_in_invalid"],
+    ["expires_in < 0", () => json(200, tokenBody({ expires_in: -1 })), {}, "token_response_expires_in_invalid"],
+    ["fractional expires_in", () => json(200, tokenBody({ expires_in: 1.5 })), {}, "token_response_expires_in_invalid"],
+    ["string expires_in", () => json(200, tokenBody({ expires_in: "5400" })), {}, "token_response_expires_in_invalid"],
+    ["absurd expires_in", () => json(200, tokenBody({ expires_in: Number.MAX_SAFE_INTEGER })), {}, "token_response_expires_in_invalid"],
+    ["expires_in just above the ten-year bound", () => json(200, tokenBody({ expires_in: 10 * 365 * 24 * 3600 + 1 })), {}, "token_response_expires_in_invalid"],
+    ["a non-finite expires_in (JSON overflow)", () => Promise.resolve(new Response(`{"access_token":"${TOKEN_MARKER}","token_type":"bearer","expires_in":1e400}`, { status: 200 })), {}, "token_response_expires_in_invalid"],
+    ["a 4xx that is not a Graph error", () => json(400, { message: BODY_MARKER }), {}, "unrecognized_4xx_response"],
   ];
 
-  it.each(ambiguous)("%s → OutcomeUnknown after exactly one request (no retry), leaking nothing", async (_label, reply, options) => {
+  it.each(ambiguous)("%s → OutcomeUnknown (%s) after exactly one request (no retry), leaking nothing", async (_label, reply, options, reason) => {
     const { calls, exchange } = portWith(reply, options);
     const error = await rejection(exchange());
-    expect(error.toJSON()).toEqual({ kind: "outcome_unknown", operation: "exchangeCode", retry: "verify_first", details: {} });
+    // Step 7G-H5.5-P12-C0-R5A: the same OutcomeUnknown, now naming its closed sub-reason (and nothing else).
+    expect(error.toJSON()).toEqual({ kind: "outcome_unknown", operation: "exchangeCode", retry: "verify_first", details: { reason } });
+    expect(error).toBeInstanceOf(OutcomeUnknownError);
     expect(calls).toHaveLength(1);
     const [call] = calls as [Call];
     expectNoneOf(error, [SECRET_MARKER, CODE_MARKER, TOKEN_MARKER, BODY_MARKER, call.url, "graph.facebook.com", "client_secret"]);
+  });
+
+  it("the table exercises every closed reason the token exchange can produce", () => {
+    const covered = new Set(ambiguous.map(([, , , reason]) => reason));
+    // `unrecognized_status_response` guards a 1xx/6xx-class status fetch never surfaces; every other reason is reached above.
+    expect(OUTCOME_UNKNOWN_REASONS.filter((reason) => !covered.has(reason))).toEqual(["unrecognized_status_response"]);
+  });
+});
+
+describe("Meta token exchange · ambiguity sub-reasons (Step 7G-H5.5-P12-C0-R5A)", () => {
+  it("the transport itself returns `ambiguous` with exactly one closed reason and no other field", async () => {
+    const fake = fakeFetch(() => json(200, tokenBody({ expires_in: undefined })));
+    const outcome = await createMetaTokenTransport({ fetch: fake.fetch }).exchange(exchangeRequest());
+    expect(outcome).toEqual({ kind: "ambiguous", reason: "token_response_expires_in_missing" });
+    expect(Object.keys(outcome)).toEqual(["kind", "reason"]);
+    expectNoneOf(outcome, [SECRET_MARKER, CODE_MARKER, TOKEN_MARKER]);
+  });
+
+  it("a Graph error stays a Graph error, and a valid token stays a token (no reason attached to either)", async () => {
+    const graph = await createMetaTokenTransport({ fetch: fakeFetch(() => json(400, { error: { type: "OAuthException", code: 100, message: BODY_MARKER } })).fetch }).exchange(exchangeRequest());
+    expect(graph).toEqual({ kind: "graph_error", error: { code: 100, subcode: null, oauthException: true } });
+    const token = await createMetaTokenTransport({ fetch: fakeFetch(() => json(200, tokenBody())).fetch }).exchange(exchangeRequest());
+    expect(token.kind).toBe("token");
+    expect(Object.keys(token).sort()).toEqual(["accessToken", "expiresInSeconds", "kind"]);
   });
 });
 

@@ -17,6 +17,7 @@ import {
   AUTHORIZATION_OPERATIONS,
   INTERACTION_KINDS,
   MUTATION_OPERATIONS,
+  OUTCOME_UNKNOWN_REASONS,
   PAGE_CURSOR_MAX_LENGTH,
   READ_OPERATIONS,
   type AuthorizationOperation,
@@ -188,6 +189,22 @@ describe("Meta authorization adapter (Step 7G-D): offline, authorization only", 
     expect(authorization).toMatch(/pkce: "not_supported"/);
     for (const code of [authorization, transport]) expect(code).not.toMatch(/"scope"|code_challenge|code_verifier|client_token|appsecret_proof/);
     expect(transport).not.toMatch(/config_id/);
+  });
+
+  it("ambiguity sub-reasons (Step 7G-H5.5-P12-C0-R5A) are closed literals or the reviewed classifiers, never runtime values; the error is never read", () => {
+    const transport = codeOf(`${META}/oauth-transport.ts`);
+    const allowed = new Set([...OUTCOME_UNKNOWN_REASONS.map((reason) => `"${reason}"`), "reason", "body.reason", 'signal.aborted ? "timeout" : "network_error"', "unrecognizedStatus(status)"]);
+    const calls = [...transport.matchAll(/\bambiguous\(([^)]*\)?)\)/g)].map((match) => match[1] ?? "");
+    expect(calls).toHaveLength(10); // 6 token-response checks, redirect, the catch, the body read, the unrecognized status
+    for (const argument of calls) expect(allowed.has(argument), argument).toBe(true);
+    // `ok: false` reasons are the two body literals only; the classifiers return literals only.
+    expect([...transport.matchAll(/ok: false, reason: ("[a-z0-9_]+")/g)].map((match) => match[1]).sort()).toEqual(['"response_not_utf8"', '"response_too_large"', '"response_too_large"']);
+    // No catch binds the error: nothing of it can be classified, kept or rendered.
+    expect(transport).not.toMatch(/catch\s*\(/);
+    // The callback logs the reason as an event name, from the typed error's closed field only.
+    const callback = codeOf("server/connections/authorization.ts");
+    expect([...callback.matchAll(/exchange_ambiguous\.\$\{([^}]+)\}/g)].map((match) => match[1])).toEqual(["error.reason"]);
+    expect(callback).toMatch(/if \(error instanceof OutcomeUnknownError && error\.reason !== null\) log\.info\(`connections\.authorization\.exchange_ambiguous\.\$\{error\.reason\}`, \{ outcome: "error", workspaceId \}\);/);
   });
 });
 

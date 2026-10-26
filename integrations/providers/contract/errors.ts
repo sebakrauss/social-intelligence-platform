@@ -63,6 +63,29 @@ export type NotEligibleReason = (typeof NOT_ELIGIBLE_REASONS)[number];
 export const CREDENTIAL_INVALID_REASONS = ["expired", "revoked", "malformed", "unknown"] as const;
 export type CredentialInvalidReason = (typeof CREDENTIAL_INVALID_REASONS)[number];
 
+/**
+ * Why an outcome is unknown, when the adapter can tell (Step 7G-H5.5-P12-C0-R5A). Diagnostic only: every reason is the
+ * same OutcomeUnknownError (verify before any resend). Each names a transport branch or the token-response check that
+ * failed, never a value: no body, token, code or field content is carried. `null` when the adapter doesn't classify.
+ */
+export const OUTCOME_UNKNOWN_REASONS = [
+  "network_error",
+  "timeout",
+  "unexpected_redirect",
+  "response_too_large",
+  "response_not_utf8",
+  "unrecognized_4xx_response",
+  "unrecognized_5xx_response",
+  "unrecognized_status_response",
+  "token_response_not_object",
+  "token_response_access_token_missing",
+  "token_response_access_token_invalid",
+  "token_response_token_type_invalid",
+  "token_response_expires_in_missing",
+  "token_response_expires_in_invalid",
+] as const;
+export type OutcomeUnknownReason = (typeof OUTCOME_UNKNOWN_REASONS)[number];
+
 export const PERMANENT_REJECTION_CODES = ["invalid_request", "invalid_cursor", "content_policy", "duplicate", "limit_exceeded", "unknown"] as const;
 export type PermanentRejectionCode = (typeof PERMANENT_REJECTION_CODES)[number];
 
@@ -236,13 +259,16 @@ export class OutcomeUnknownError extends ProviderError {
   override readonly name = "OutcomeUnknownError";
   readonly kind = "outcome_unknown";
   readonly retry = "verify_first";
+  /** A closed diagnostic sub-reason, or null (unclassified). Never changes kind, retry or handling. */
+  readonly reason: OutcomeUnknownReason | null;
 
-  constructor(operation: ProviderOperation) {
+  constructor(operation: ProviderOperation, reason: OutcomeUnknownReason | null = null) {
     super("outcome_unknown", operation);
+    this.reason = reason;
   }
 
   protected details() {
-    return {};
+    return this.reason === null ? {} : { reason: this.reason };
   }
 }
 
