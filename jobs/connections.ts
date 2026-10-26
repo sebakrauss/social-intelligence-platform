@@ -182,6 +182,15 @@ export function composeReadContentValidation(environment: Environment, attempts:
   return { access: createCredentialAccess(opening.opener, opening.contextEnv), read: createMetaReadPort() };
 }
 
+/**
+ * The read_interactions validation diagnostic's composition (Step 7G-H5.5-P12-B2; jobs/integration-read-interactions-
+ * validation.ts): exactly the read_content diagnostic's — this plane's opener and worker identity with ONE KMS attempt,
+ * and the Meta read port. Delegates, so the opener stays composed in one place.
+ */
+export function composeReadInteractionsValidation(environment: Environment, attempts: AwsSingleAttempt): { readonly access: ProviderCredentialAccess; readonly read: ProviderReadPort } {
+  return composeReadContentValidation(environment, attempts);
+}
+
 /** Discovery dependencies for one run: the composed access/providers and this run's scoped steps. */
 export function discoveryDependencies(context: TenantStepJobContext, base: JobComposition): DiscoveryDependencies {
   return {

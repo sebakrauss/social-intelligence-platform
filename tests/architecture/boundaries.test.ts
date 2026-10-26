@@ -179,6 +179,21 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["meta-authorization-web-composition-only", "jobs/integration-read-content-validation.ts", "integrations/providers/meta/oauth-transport.ts"],
   ["meta-read-integration-composition-only", "jobs/trigger/integration/read-content-validation.ts", "integrations/providers/meta/read-port.ts"],
   ["read-content-validation-reads-only", "jobs/integration-read-content-validation.ts", "integrations/providers/contract/mutation-port.ts"],
+  // read_interactions validation diagnostic (Step 7G-H5.5-P12-B2): the same three boundaries, its own module and task
+  ["read-interactions-validation-module-task-only", "jobs/trigger/integration/connections-uses-read-interactions-validation.ts", "jobs/integration-read-interactions-validation.ts"],
+  ["read-interactions-validation-module-task-only", "jobs/trigger/main/uses-read-interactions-validation.ts", "jobs/integration-read-interactions-validation.ts"],
+  ["read-interactions-validation-module-task-only", "server/uses-read-interactions-validation.ts", "jobs/integration-read-interactions-validation.ts"],
+  ["jobs-are-entry-points", "server/uses-read-interactions-validation.ts", "jobs/integration-read-interactions-validation.ts"],
+  ["read-interactions-validation-task-thin", "jobs/trigger/integration/read-interactions-validation.ts", "jobs/connections.ts"],
+  ["read-interactions-validation-task-thin", "jobs/trigger/integration/read-interactions-validation.ts", "integrations/providers/meta/read-port.ts"],
+  ["meta-read-integration-composition-only", "jobs/trigger/integration/read-interactions-validation.ts", "integrations/providers/meta/read-port.ts"],
+  ["read-interactions-validation-reads-only", "jobs/integration-read-interactions-validation.ts", "modules/capability/index.ts"],
+  ["read-interactions-validation-reads-only", "jobs/integration-read-interactions-validation.ts", "jobs/moves.ts"],
+  ["plane-integration-no-delivery", "jobs/integration-read-interactions-validation.ts", "jobs/moves.ts"],
+  ["read-interactions-validation-reads-only", "jobs/integration-read-interactions-validation.ts", "mutations/executor.ts"],
+  ["read-interactions-validation-reads-only", "jobs/integration-read-interactions-validation.ts", "integrations/providers/meta/oauth-transport.ts"],
+  ["meta-authorization-web-composition-only", "jobs/integration-read-interactions-validation.ts", "integrations/providers/meta/oauth-transport.ts"],
+  ["read-interactions-validation-reads-only", "jobs/integration-read-interactions-validation.ts", "integrations/providers/contract/mutation-port.ts"],
   // Integration worker AWS identity (Step 7G-H5.6B): no first-party STS; the adapter only in the integration composition
   ["no-first-party-sts", "server/assumes-role.ts", "../../../../node_modules/@aws-sdk/client-sts/dist-es/index.js"],
   ["integration-worker-identity-composition-only", "jobs/trigger/main/uses-worker-identity.ts", "jobs/integration-aws-identity.ts"],
@@ -279,6 +294,16 @@ describe("read_content validation diagnostic dependency depth (Step 7G-H5.5-P5-B
     "domain/ids.ts",
   ])("allows exactly the required %s", (target) => {
     expect(denied.test(target)).toBe(false);
+  });
+});
+
+describe("read_interactions validation diagnostic dependency depth (Step 7G-H5.5-P12-B2): the read_content denial, verbatim", () => {
+  const find = (name: string) => config.forbidden.find((candidate) => candidate.name === name) as { readonly from?: { readonly path?: string }; readonly to?: { readonly path?: string } } | undefined;
+
+  it("applies to the diagnostic module only and denies exactly the read_content diagnostic's subtrees", () => {
+    expect(find("read-interactions-validation-reads-only")?.from?.path).toBe("^jobs/integration-read-interactions-validation\\.ts$");
+    expect(find("read-interactions-validation-reads-only")?.to?.path).toBe(find("read-content-validation-reads-only")?.to?.path);
+    expect(find("read-interactions-validation-task-thin")?.to?.path).toBe(find("read-content-validation-task-thin")?.to?.path?.replace("integration-read-content-validation", "integration-read-interactions-validation"));
   });
 });
 

@@ -52,6 +52,7 @@ CHECK admits only `^[a-z][a-z0-9_.:-]{0,127}$`; guard-tested).
 | `negativeBasis` | `provider_documentation` / `provider_non_eligibility_observation` for a negative; `null` for a positive |
 | `reviewer` | a ROLE (e.g. `TL`), never a person's name |
 | `status` | `draft` / `accepted` / `rejected`; only `accepted` can back an entry |
+| `interactionKinds` | `read_interactions` ONLY (Step 7G-H5.5-P12-B2): the interaction kinds ONE controlled LIVE validation proved on BOTH operations — non-empty, distinct, in canonical order (`comment`, `reply`), always containing `comment`; never `any`, never reply-only. Every other capability: absent or `null` (records written before the field, e.g. the two `read_content` records, are valid unchanged) |
 
 Never in a record: access tokens or any credential; Meta (or any provider) ids of pages, accounts, users, businesses or
 apps; workspace, connection, account or credential ids; AWS ids, ARNs, session or request ids; secrets; raw provider
@@ -96,3 +97,20 @@ minimality claim.
 2. The record is written as `draft`, reviewed by the TL, and set to `accepted` (or `rejected`) in a commit.
 3. Only then may a later gate register the implementation evidence and add the catalog entry — which still requires a
    deliberate catalog revision decision (Meta README › Catalog version).
+
+## read_interactions evidence semantics (Step 7G-H5.5-P12-B2)
+
+`CAPABILITY_REQUIRED_OPERATIONS.read_interactions` = `["getInteraction", "listInteractions"]` (never the content reads,
+which a diagnostic may use only to find a target). Meta Facebook and Instagram `read_interactions` are registered in
+`OFFLINE_IMPLEMENTED_OPERATIONS` (requirement A) — nothing LIVE, no record, no catalog entry.
+
+A `read_interactions` record states `interactionKinds`: for EVERY kind it names, the validation listed at least one
+interaction of that kind AND re-read one of them with `getInteraction`, correlated on identity (same interaction ref,
+content ref, interaction kind, author ref and parent ref; a comment's parent is null, a reply's is present and
+stable). `["comment"]` and `["comment", "reply"]` are the only admissible values; a list-only observation, an
+offline implementation or a provider feature never adds a kind.
+
+How a record's kinds decide an entry's state (SUPPORTED, or a limitation for kinds not proven) is a LATER gate's rule.
+Until it exists, every positive `read_interactions` entry is refused (`INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED`),
+whatever its record proves.
+

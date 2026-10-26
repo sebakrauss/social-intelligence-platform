@@ -96,7 +96,7 @@ describe("dispatch path", () => {
     expect(users(/\brunSystemJob\(/).filter((file) => !file.startsWith("platform/jobs/"))).toEqual(["jobs/trigger/main/delivery.ts"]);
     // Step 7E.7-B: the one direct task outside the wrappers is the integration-only KMS diagnostic (no registry entry,
     // no schedule — tests/unit/jobs/integration-kms-diagnostic.test.ts).
-    expect(users(/\btask\(\{/)).toEqual(["jobs/trigger/define.ts", "jobs/trigger/integration/kms-worker-auth-diagnostic.ts", "jobs/trigger/integration/read-content-validation.ts", "jobs/trigger/main/delivery.ts"]);
+    expect(users(/\btask\(\{/)).toEqual(["jobs/trigger/define.ts", "jobs/trigger/integration/kms-worker-auth-diagnostic.ts", "jobs/trigger/integration/read-content-validation.ts", "jobs/trigger/integration/read-interactions-validation.ts", "jobs/trigger/main/delivery.ts"]);
     expect(users(/\bschedules\.task\(/)).toEqual(["jobs/trigger/main/delivery.ts"]);
     expect(codeOf("jobs/trigger/define.ts")).toMatch(/runTenantJob\(/);
     expect(codeOf("jobs/trigger/define.ts")).toMatch(/runTenantStepJob\(/);
@@ -132,3 +132,31 @@ describe("read_content validation diagnostic: the selected getContent kind (Step
     expect(code).not.toMatch(/selectedContentKind[^;\n]*(histogram|contentKinds|got\.)/);
   });
 });
+
+describe("read_interactions validation diagnostic: evidence only from what both operations proved (Step 7G-H5.5-P12-B2)", () => {
+  const MODULE = "jobs/integration-read-interactions-validation.ts";
+
+  it("is its own task and module, never an extension of the read_content diagnostic", () => {
+    const code = codeOf(MODULE);
+    expect(code).toMatch(/export const READ_INTERACTIONS_VALIDATION_TASK_ID = "integration\.read_interactions_validation";/);
+    expect(code).not.toMatch(/integration-read-content-validation|runReadContentValidation/);
+    expect(codeOf("jobs/integration-read-content-validation.ts")).not.toMatch(/listInteractions|getInteraction|read_interactions/);
+  });
+
+  it("re-reads the FIRST listed interaction of each provable kind; Instagram can prove only comments", () => {
+    const code = codeOf(MODULE);
+    expect(code).toMatch(/const first = items\.find\(\(item\) => item\.interactionKind === kind\);/);
+    expect(code).toMatch(/read\.getInteraction\(providerAccess, first\.ref\)/);
+    expect(code).toMatch(/facebook: Object\.freeze\(\["comment", "reply"\] as const\),\n {2}instagram: Object\.freeze\(\["comment"\] as const\),/);
+    expect(code).toMatch(/const reply = provable\.includes\("reply"\) \? await reread\("reply", "get_reply"\)/);
+  });
+
+  it("correlates on identity only and offers evidence only from validated kinds that include comment", () => {
+    const code = codeOf(MODULE);
+    expect(code).toMatch(/const correlated = refCorrelated && contentCorrelated && kindCorrelated && authorCorrelated && parentCorrelated;/);
+    expect(code).not.toMatch(/(got|first)\.(text|author\.displayName|author\.handle|visibility)\b/);
+    expect(code).toMatch(/allObservedValidated && validated\.includes\("comment"\) \? validated : null/);
+    expect(code).not.toMatch(/evidence[^\n]*(observed|provable|INTERACTION_KINDS)[^\n]*\? (observed|provable)/);
+  });
+});
+

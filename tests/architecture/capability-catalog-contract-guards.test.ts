@@ -166,7 +166,10 @@ describe("evidence records and implementation evidence", () => {
   it("P5-B (A, static): every OFFLINE registration names contract operations the adapter actually implements — the exact declared set", () => {
     const readPort = codeOf("integrations/providers/meta/read-port.ts");
     // Facebook Page (P5-B) and Instagram professional account (P11-B) read_content: offline-implemented, never evidence.
-    expect(OFFLINE_IMPLEMENTED_OPERATIONS.map((op) => [op.provider, op.platform, op.capability])).toEqual([["meta", "facebook", "read_content"], ["meta", "instagram", "read_content"]]);
+    // Step 7G-H5.5-P12-B2: Facebook and Instagram read_interactions, registered together with their declared set.
+    expect(OFFLINE_IMPLEMENTED_OPERATIONS.map((op) => [op.provider, op.platform, op.capability])).toEqual([
+      ["meta", "facebook", "read_content"], ["meta", "instagram", "read_content"], ["meta", "facebook", "read_interactions"], ["meta", "instagram", "read_interactions"],
+    ]);
     for (const op of OFFLINE_IMPLEMENTED_OPERATIONS) {
       expect(op.operations).toEqual(CAPABILITY_REQUIRED_OPERATIONS[op.capability]);
       for (const name of op.operations) {
@@ -218,7 +221,9 @@ describe("evidence records and implementation evidence", () => {
       expect(check({ platform: "instagram" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
       expect(check({ platform: "instagram" })).not.toContain("IMPLEMENTATION_INCOMPLETE");
       expect(check({ assetClass: "ad_account" })).toContain("EVIDENCE_SCOPE_MISMATCH");
-      for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
+      for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content" && key !== "read_interactions")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
+      // Step 7G-H5.5-P12-B2: read_interactions now declares its set, so the refusal is the scope, the set and the pending publication rule.
+      expect(check({ capability: "read_interactions" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_OPERATIONS_INCOMPLETE", "IMPLEMENTATION_EVIDENCE_MISSING", "INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED"]));
     });
 
     it("the record's permissions are exact: adding the user-content permission or dropping one is refused", () => {
@@ -277,7 +282,9 @@ describe("evidence records and implementation evidence", () => {
       expect(check({ platform: "facebook" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
       expect(check({ evidence: FIRST_RECORD_ID })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
       expect(check({ assetClass: "ad_account" })).toContain("EVIDENCE_SCOPE_MISMATCH");
-      for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
+      for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content" && key !== "read_interactions")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
+      // Step 7G-H5.5-P12-B2: read_interactions now declares its set, so the refusal is the scope, the set and the pending publication rule.
+      expect(check({ capability: "read_interactions" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_OPERATIONS_INCOMPLETE", "IMPLEMENTATION_EVIDENCE_MISSING", "INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED"]));
     });
 
     it("the record's permissions are exact: adding pages_show_list or dropping one is refused; it cannot back UNSUPPORTED", () => {
@@ -296,10 +303,14 @@ describe("evidence records and implementation evidence", () => {
     const readPort = codeOf("integrations/providers/meta/read-port.ts");
     for (const op of ["describeAccount", "listContent", "getContent", "listInteractions", "getInteraction"]) expect(metaOperationImplemented(op, readPort, false), op).toBe(true);
     for (const op of ["getCurrentState", "retrievePaidContext"]) expect(metaOperationImplemented(op, readPort, false), op).toBe(false);
-    // P12-B1 implements the interaction reads offline WITHOUT registering them: no offline registration, no declared
-    // operation set and no live registration exist for read_interactions until P12-B2.
-    expect(OFFLINE_IMPLEMENTED_OPERATIONS.some((op) => op.capability === "read_interactions")).toBe(false);
-    expect(CAPABILITY_REQUIRED_OPERATIONS.read_interactions).toBeUndefined();
+    // P12-B2 registers the interaction reads OFFLINE only because (a) the adapter implements both operations (checked
+    // above) and (b) the capability now declares exactly that set; no LIVE registration exists for read_interactions.
+    expect(CAPABILITY_REQUIRED_OPERATIONS.read_interactions).toEqual(["getInteraction", "listInteractions"]);
+    for (const op of OFFLINE_IMPLEMENTED_OPERATIONS.filter((registration) => registration.capability === "read_interactions")) {
+      expect(op.operations).toEqual(CAPABILITY_REQUIRED_OPERATIONS[op.capability]);
+      for (const name of op.operations) expect(metaOperationImplemented(name, readPort, false), name).toBe(true);
+    }
+    expect(OFFLINE_IMPLEMENTED_OPERATIONS.filter((op) => op.capability === "read_interactions").map((op) => op.platform)).toEqual(["facebook", "instagram"]);
     expect(IMPLEMENTED_PLATFORM_OPERATIONS.some((op) => op.capability === "read_interactions")).toBe(false);
     expect(existsSync(path.join(REPOSITORY_ROOT, "integrations/providers/meta/mutation-port.ts"))).toBe(false);
     for (const op of MUTATION_OPERATIONS) expect(metaOperationImplemented(op, readPort, false)).toBe(false);
@@ -308,6 +319,15 @@ describe("evidence records and implementation evidence", () => {
 });
 
 describe("documents state the contract", () => {
+  it("P12-B2: both READMEs state the read_interactions contract — kinds field, offline-only registration, the pending publication rule, the separate diagnostic", () => {
+    const evidence = raw(`${EVIDENCE_DIR}/README.md`);
+    for (const phrase of ["| `interactionKinds` | `read_interactions` ONLY", "never `any`, never reply-only", "`INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED`", "a list-only observation, an\noffline implementation or a provider feature never adds a kind"]) expect(evidence, phrase).toContain(phrase);
+    const meta = raw(META_README);
+    const section = meta.slice(meta.indexOf("## read_interactions validation contract and diagnostic (Step 7G-H5.5-P12-B2)"));
+    expect(section.length).toBeGreaterThan(0);
+    for (const phrase of ["`integration.read_interactions_validation`", "INTEGRATION now discovers 5 tasks (2 product + 3 diagnostics); MAIN stays at 6.", "the platform catalog stays r4", "Instagram never re-reads a reply", "never evidence"]) expect(section, phrase).toContain(phrase);
+  });
+
   it("the evidence contract README defines the record fields, the forbidden content and the blocker", () => {
     const doc = raw(`${EVIDENCE_DIR}/README.md`);
     for (const field of ["`id`", "`provider`", "`platform`", "`assetClass`", "`accountKind`", "`capability`", "`contentKind`, `source`", "`operations`", "`validatedOn`", "`sourceRevision`", "`requiredPermissions`", "`scenario`", "`observedResult`", "`polarity`", "`negativeBasis`", "`reviewer`", "`status`"]) {

@@ -163,6 +163,9 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
   /** Step 7G-H5.5-P5-B: the read_content validation diagnostic also opts in (one KMS attempt), through the composition. */
   const READ_DIAGNOSTIC = "jobs/integration-read-content-validation.ts";
   const READ_DIAGNOSTIC_TASK = "jobs/trigger/integration/read-content-validation.ts";
+  /** Step 7G-H5.5-P12-B2: the read_interactions validation diagnostic opts in the same way, through a delegating composition. */
+  const INTERACTIONS_DIAGNOSTIC = "jobs/integration-read-interactions-validation.ts";
+  const INTERACTIONS_DIAGNOSTIC_TASK = "jobs/trigger/integration/read-interactions-validation.ts";
   const SEAL_COMPOSITION = "server/connections/credential-crypto.ts";
   const runtime = sourceFiles(RUNTIME_ROOTS);
   const users = (pattern: RegExp): string[] => findReferences(runtime, [pattern]).map(([file]) => file).sort();
@@ -182,7 +185,15 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
   it("only the diagnostics opt in; the product compositions (open and seal) never pass the option", () => {
     expect(users(/\bKMS_DIAGNOSTIC_AWS_ATTEMPTS\b/)).toEqual([DIAGNOSTIC]);
     expect(users(/\bREAD_CONTENT_VALIDATION_AWS_ATTEMPTS\b/)).toEqual([READ_DIAGNOSTIC]);
-    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT, READ_DIAGNOSTIC, READ_DIAGNOSTIC_TASK].sort());
+    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT, READ_DIAGNOSTIC, READ_DIAGNOSTIC_TASK, INTERACTIONS_DIAGNOSTIC, INTERACTIONS_DIAGNOSTIC_TASK].sort());
+    expect(users(/\bREAD_INTERACTIONS_VALIDATION_AWS_ATTEMPTS\b/)).toEqual([INTERACTIONS_DIAGNOSTIC]);
+    expect(codeOf(INTERACTIONS_DIAGNOSTIC_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/);
+    expect(codeOf(INTERACTIONS_DIAGNOSTIC)).toMatch(/export const READ_INTERACTIONS_VALIDATION_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
+    expect(count(INTERACTIONS_DIAGNOSTIC, /composeReadInteractionsValidation\(environment, READ_INTERACTIONS_VALIDATION_AWS_ATTEMPTS\)/)).toBe(1);
+    expect(users(/\bcomposeReadInteractionsValidation\(/)).toEqual([COMPOSITION, INTERACTIONS_DIAGNOSTIC].sort());
+    // It delegates to the read_content composition: the opener is still composed in exactly one place.
+    expect(codeOf(COMPOSITION)).toMatch(/export function composeReadInteractionsValidation\(environment: Environment, attempts: AwsSingleAttempt\)/);
+    expect(count(COMPOSITION, /\n {2}return composeReadContentValidation\(environment, attempts\);\n\}/)).toBe(1);
     expect(codeOf(READ_DIAGNOSTIC_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/);
     expect(codeOf(READ_DIAGNOSTIC)).toMatch(/export const READ_CONTENT_VALIDATION_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
     expect(count(READ_DIAGNOSTIC, /composeReadContentValidation\(environment, READ_CONTENT_VALIDATION_AWS_ATTEMPTS\)/)).toBe(1);

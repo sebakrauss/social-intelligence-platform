@@ -976,3 +976,44 @@ is always present for user comments under the granted permissions; whether Insta
 comments with `from.id` equal to the IG user id; the exact permissions each read needs (P12-A2: documentation is
 internally inconsistent, so no permission set is claimed here and none is minimal); whether a page of long comments fits
 the 64 KiB body bound (an oversized page fails closed).
+
+## read_interactions validation contract and diagnostic (Step 7G-H5.5-P12-B2) — OFFLINE, NOT LIVE-VALIDATED
+
+**Contract.** `CAPABILITY_REQUIRED_OPERATIONS.read_interactions` = `getInteraction` + `listInteractions`; the Meta
+Facebook and Instagram adapters (P12-B1) are registered OFFLINE only; the evidence record gains `interactionKinds`
+(api-validation README › read_interactions evidence semantics). No LIVE registration, record, catalog entry, limitation
+code or migration: the platform catalog stays r4 with its two read_content entries, and every Meta `read_interactions`
+scope stays UNKNOWN_NOT_VALIDATED. A positive `read_interactions` entry is refused until the kinds → state rule exists.
+
+**Diagnostic.** A separate operator-only INTEGRATION task, `integration.read_interactions_validation`
+(jobs/integration-read-interactions-validation.ts; never an extension of `integration.read_content_validation`).
+INTEGRATION now discovers 5 tasks (2 product + 3 diagnostics); MAIN stays at 6. Same security model as the read_content
+diagnostic: input exactly `{ acknowledge: "INTEGRATION_READ_INTERACTIONS_VALIDATION_V1", workspace_id,
+connected_account_id }` (no provider, content or comment id, no cursor); pinned PRODUCTION release, plane, `staging`
+tier, Node 22, no staging stub, KMS keyring; one task attempt, one KMS attempt, its own queue of one, 120 s; writes
+nothing.
+
+Sequence, ONE credential opening, window [now − 30 days, now), first provider page of each list: listContent → the
+FIRST listed item → listInteractions on it → getInteraction of the FIRST listed comment and (Facebook only) the FIRST
+listed reply. Each re-read is correlated on identity only (interaction, content, kind, author and parent refs — never
+text, name, handle or visibility). Instagram never re-reads a reply: its slice cannot prove one.
+
+| Path | Facebook Meta GETs | Instagram Meta GETs |
+|---|---|---|
+| no content | 2 | 1 |
+| content, no interactions | 4 | 2 |
+| comment(s) only | 6 | 3 |
+| comment and reply | 8 | — |
+
+**Evidence eligibility.** `evidenceInteractionKinds` = the canonical kinds both listed and re-read with full
+correlation, non-null only when it contains `comment` and every structural check held. Facebook comment-only →
+`INCONCLUSIVE_COMMENT_ONLY` with `["comment"]` (limited evidence; replies not proven); comment and reply →
+`READ_INTERACTIONS_LIST_AND_GET_SUCCEEDED` with `["comment", "reply"]`; a reply without a comment →
+`INCONCLUSIVE_REPLY_WITHOUT_COMMENT`, never evidence. Instagram comment → `READ_INTERACTIONS_LIST_AND_GET_SUCCEEDED`
+with `["comment"]`, never a reply. Failures are closed classes: `PERMISSION_MISSING`, `TARGET_NOT_ELIGIBLE`,
+`MALFORMED_RESPONSE` (an unreadable or fail-closed provider page), `PROVIDER_FAILURE`, `CORRELATION_FAILURE`.
+
+**Output.** Closed values, counts and booleans only — platform, account kind, the selected content's kind and reported
+source, item and kind counts, author-role and visibility histograms, per-pair correlations, stages and the expected
+Meta GETs. Never a text, caption, name, handle, provider id, ref, cursor, raw reference, token or raw response.
+

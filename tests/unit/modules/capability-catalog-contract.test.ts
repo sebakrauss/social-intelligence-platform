@@ -378,10 +378,10 @@ describe("positive entries (SUPPORTED / AVAILABLE_WITH_LIMITATION) fail closed",
 });
 
 describe("P5-B: read_content requires the exact operation SET listContent + getContent, implemented AND validated live", () => {
-  it("the declared sets: read_content = getContent + listContent; no other capability declares one (no name inference)", () => {
+  it("the declared sets: read_content = getContent + listContent, read_interactions = getInteraction + listInteractions (P12-B2); no other capability declares one (no name inference)", () => {
     expect(READ_CONTENT_REQUIRED_OPERATIONS).toEqual(["getContent", "listContent"]);
-    expect(CAPABILITY_REQUIRED_OPERATIONS).toEqual({ read_content: ["getContent", "listContent"] });
-    for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content")) {
+    expect(CAPABILITY_REQUIRED_OPERATIONS).toEqual({ read_content: ["getContent", "listContent"], read_interactions: ["getInteraction", "listInteractions"] });
+    for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content" && key !== "read_interactions")) {
       // Even a fully evidenced entry of another capability is refused: its operation set is undeclared.
       const other = `api-validation:meta.facebook.${capability}.20261101-01`;
       const record = { ...RECORD, id: other, capability };
@@ -394,6 +394,8 @@ describe("P5-B: read_content requires the exact operation SET listContent + getC
     expect(OFFLINE_IMPLEMENTED_OPERATIONS).toEqual([
       { provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"] },
       { provider: "meta", platform: "instagram", capability: "read_content", operations: ["getContent", "listContent"] },
+      { provider: "meta", platform: "facebook", capability: "read_interactions", operations: ["getInteraction", "listInteractions"] },
+      { provider: "meta", platform: "instagram", capability: "read_interactions", operations: ["getInteraction", "listInteractions"] },
     ]);
     // Live validation: Facebook (P5-C9-B) and Instagram (P11-D), each resting on its own accepted record.
     expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => [op.platform, op.capability, op.evidence])).toEqual([

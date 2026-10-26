@@ -36,6 +36,12 @@
  * UNKNOWN_NOT_VALIDATED. Accepting evidence never changes the catalog by itself, and every further entry stays
  * fail-closed: it needs its own accepted positive record of exactly its scope and a matching implementation
  * registration; any other scope is refused (EVIDENCE_SCOPE_MISMATCH).
+ *
+ * read_interactions (Step 7G-H5.5-P12-B2): its operation set is declared (getInteraction + listInteractions) and the
+ * Facebook and Instagram adapters are registered OFFLINE; a record of this capability must state EXACTLY which
+ * interaction kinds one controlled LIVE validation demonstrated (`interactionKinds`, closed, canonical, comment
+ * required). How those kinds decide an entry's state (SUPPORTED vs a limitation) is a later gate's rule, so until it
+ * exists every positive read_interactions entry is refused (INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED).
  */
 import type { PlatformKey } from "@/domain/platforms";
 import type { CapabilityCatalog, CatalogEntry } from "./catalog";
@@ -60,11 +66,28 @@ export const ACCOUNT_INFRASTRUCTURE_OPERATIONS: readonly string[] = Object.freez
 export const READ_CONTENT_REQUIRED_OPERATIONS: readonly string[] = Object.freeze(["getContent", "listContent"]);
 
 /**
- * The EXACT provider-contract operation set (sorted) each capability's verdict rests on — declared, never inferred
- * from names. Only read_content is declared (P5-B); every other capability has no set, so no positive entry is
- * admissible for it (REQUIRED_OPERATIONS_UNDEFINED) until a gate declares one.
+ * read_interactions = BOTH provider-contract interaction reads (Step 7G-H5.5-P12-B2): listing one content item's
+ * interactions and the authoritative single-interaction read. listContent / getContent are never part of this set (a
+ * diagnostic may use them only to find a content target).
  */
-export const CAPABILITY_REQUIRED_OPERATIONS: Readonly<Partial<Record<CapabilityKey, readonly string[]>>> = Object.freeze({ read_content: READ_CONTENT_REQUIRED_OPERATIONS });
+export const READ_INTERACTIONS_REQUIRED_OPERATIONS: readonly string[] = Object.freeze(["getInteraction", "listInteractions"]);
+
+/**
+ * The EXACT provider-contract operation set (sorted) each capability's verdict rests on — declared, never inferred
+ * from names. read_content (P5-B) and read_interactions (P12-B2) are declared; every other capability has no set, so
+ * no positive entry is admissible for it (REQUIRED_OPERATIONS_UNDEFINED) until a gate declares one.
+ */
+export const CAPABILITY_REQUIRED_OPERATIONS: Readonly<Partial<Record<CapabilityKey, readonly string[]>>> = Object.freeze({
+  read_content: READ_CONTENT_REQUIRED_OPERATIONS,
+  read_interactions: READ_INTERACTIONS_REQUIRED_OPERATIONS,
+});
+
+/**
+ * The interaction kinds a read_interactions record may state, in canonical order. Mirrors the provider contract's
+ * INTERACTION_KINDS (this domain module may not import the contract; a unit test pins them equal). No wildcard.
+ */
+export const EVIDENCE_INTERACTION_KINDS = ["comment", "reply"] as const;
+export type EvidenceInteractionKind = (typeof EVIDENCE_INTERACTION_KINDS)[number];
 
 /** One registration of a capability's operations on one platform (operations: provider contract names, sorted). */
 export interface OperationSetRegistration {
@@ -80,11 +103,15 @@ export interface OperationSetRegistration {
  * the live provider, so never evidence by itself (requirement A only). The architecture guard proves each one is
  * actually implemented by the adapter. Step 7G-H5.5-P5-B: Facebook Page read_content (listContent + getContent). Step
  * 7G-H5.5-P11-B: Instagram professional-account read_content (listContent + getContent); validated live and registered
- * below by Step 7G-H5.5-P11-D.
+ * below by Step 7G-H5.5-P11-D. Step 7G-H5.5-P12-B1/B2: Facebook Page and Instagram professional-account
+ * read_interactions (listInteractions + getInteraction) — offline only; registered here by P12-B2 together with the
+ * declared operation set and the `interactionKinds` record rule, never before them.
  */
 export const OFFLINE_IMPLEMENTED_OPERATIONS: readonly OperationSetRegistration[] = Object.freeze([
   Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS }),
   Object.freeze({ provider: "meta", platform: "instagram", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS }),
+  Object.freeze({ provider: "meta", platform: "facebook", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS }),
+  Object.freeze({ provider: "meta", platform: "instagram", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS }),
 ]);
 
 /**
@@ -146,6 +173,12 @@ export interface ApiValidationRecord {
   /** A role (e.g. "TL"), never a person's name. */
   readonly reviewer: string;
   readonly status: (typeof RECORD_STATUSES)[number];
+  /**
+   * read_interactions ONLY (Step 7G-H5.5-P12-B2): the interaction kinds the validation exercised on BOTH operations —
+   * non-empty, distinct, in EVIDENCE_INTERACTION_KINDS order, always including `comment`. Every other capability has
+   * none: absent or null (records written before this field, e.g. the read_content ones, stay valid unchanged).
+   */
+  readonly interactionKinds?: readonly EvidenceInteractionKind[] | null;
 }
 
 export type RecordViolation =
@@ -161,7 +194,9 @@ export type RecordViolation =
   | "POLARITY_BASIS_INCONSISTENT"
   | "TEXT_MISSING_OR_OVERSIZED"
   | "TEXT_SUSPECTED_IDENTIFIER"
-  | "STATUS_UNKNOWN";
+  | "STATUS_UNKNOWN"
+  | "INTERACTION_KINDS_MALFORMED"
+  | "INTERACTION_KINDS_NOT_APPLICABLE";
 
 export type EntryViolation =
   | "AUTHORIZATION_SEMANTICS_OPEN"
@@ -186,7 +221,8 @@ export type EntryViolation =
   | "INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE"
   | "UNSUPPORTED_NAMES_PERMISSIONS"
   | "LIMITATION_INCONSISTENT"
-  | "DUPLICATE_SCOPE";
+  | "DUPLICATE_SCOPE"
+  | "INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED";
 
 export interface CatalogContractContext {
   readonly records: readonly ApiValidationRecord[];
@@ -209,6 +245,19 @@ const textOk = (value: string): boolean => value.trim().length > 0 && value.leng
 const textSuspicious = (value: string): boolean => /\d{8,}/.test(value) || /:\/\//.test(value);
 const validDate = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().startsWith(value);
 
+/**
+ * A read_interactions record's kinds: an array of closed values, non-empty, distinct and in canonical order — which
+ * makes `["reply", "comment"]` and duplicates malformed — and always containing `comment` (no reply-only evidence).
+ * Membership uses own keys of a frozen array only, so no inherited or wildcard name ("any") passes.
+ */
+export function isEvidenceInteractionKindSet(value: unknown): value is readonly EvidenceInteractionKind[] {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const positions = value.map((kind) => (typeof kind === "string" ? (EVIDENCE_INTERACTION_KINDS as readonly string[]).indexOf(kind) : -1));
+  if (positions.some((position) => position < 0)) return false;
+  if (positions.some((position, i) => i > 0 && position <= (positions[i - 1] ?? -1))) return false;
+  return value[0] === "comment";
+}
+
 /** Every way an evidence record breaks the schema (empty = valid). Never inspects anything but the record. */
 export function apiValidationRecordViolations(record: ApiValidationRecord): readonly RecordViolation[] {
   const out = new Set<RecordViolation>();
@@ -229,6 +278,11 @@ export function apiValidationRecordViolations(record: ApiValidationRecord): read
   if (!texts.every(textOk)) out.add("TEXT_MISSING_OR_OVERSIZED");
   if (texts.some(textSuspicious)) out.add("TEXT_SUSPECTED_IDENTIFIER");
   if (!(RECORD_STATUSES as readonly string[]).includes(record.status)) out.add("STATUS_UNKNOWN");
+  // Step 7G-H5.5-P12-B2: the kinds belong to read_interactions alone — required there, absent or null everywhere else.
+  const kinds: unknown = record.interactionKinds ?? null;
+  if (record.capability === "read_interactions") {
+    if (!isEvidenceInteractionKindSet(kinds)) out.add("INTERACTION_KINDS_MALFORMED");
+  } else if (kinds !== null) out.add("INTERACTION_KINDS_NOT_APPLICABLE");
   return [...out];
 }
 
@@ -275,6 +329,9 @@ export function platformEntryViolations(entry: CatalogEntry, context: CatalogCon
     const named = [...(required ?? []), ...offline.flatMap((op) => op.operations), ...implemented.flatMap((op) => op.operations), ...(record?.operations ?? [])];
     if (named.some((op) => ACCOUNT_INFRASTRUCTURE_OPERATIONS.includes(op))) out.add("INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE");
     if ((entry.state === "AVAILABLE_WITH_LIMITATION") !== (entry.limitation !== null)) out.add("LIMITATION_INCONSISTENT");
+    // Step 7G-H5.5-P12-B2: which state a record's interaction kinds justify is not defined yet (a later gate), so no
+    // positive read_interactions entry is admissible — never a SUPPORTED entry implied by offline reply support.
+    if (entry.capability === "read_interactions") out.add("INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED");
   } else if (entry.state === "UNSUPPORTED") {
     // Never "unsupported because a permission is absent": an authoritative negative names no permission.
     if (entry.requiredPermissions.length > 0) out.add("UNSUPPORTED_NAMES_PERMISSIONS");

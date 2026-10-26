@@ -3,7 +3,7 @@
  *
  *   MAIN          trigger.config.ts → jobs/trigger/main         relay, sweepers, Move saga (6 tasks)
  *   INTEGRATION   trigger.integration.config.ts → jobs/trigger/integration   the only opener tasks (2 product tasks +
- *                                                                             2 operator-only diagnostics = 4 tasks)
+ *                                                                             3 operator-only diagnostics = 5 tasks)
  *
  * These prove the split statically: explicit planes in the registry, disjoint discovery, the TRANSITIVE import graph of
  * each plane (the opener never reachable from main; the system database and delivery never reachable from integration),
@@ -26,8 +26,8 @@ const depcruise = require(path.join(root, ".dependency-cruiser.cjs")) as { optio
 
 const MAIN_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_sweep", "connections.move.release_source", "connections.move.activate_destination", "connections.move.reject_destination"];
 const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account"];
-/** Step 7E.7-B / 7G-H5.5-P5-B: integration-only, operator-triggered diagnostics — discovered by the integration config, never registered. */
-const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic", "integration.read_content_validation"];
+/** Step 7E.7-B / 7G-H5.5-P5-B / 7G-H5.5-P12-B2: integration-only, operator-triggered diagnostics — discovered by the integration config, never registered. */
+const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic", "integration.read_content_validation", "integration.read_interactions_validation"];
 const PLANE_DIRS = { main: "jobs/trigger/main", integration: "jobs/trigger/integration" } as const;
 const OPENER = /^(jobs\/connections\.ts|platform\/crypto\/credentials\/(open|local-opener|local-keyring|aead|aws-kms-unwrapper|aws-kms-opener)\.ts)$/;
 const MAIN_ONLY = /^(jobs\/main-runtime\.ts|jobs\/moves\.ts|platform\/outbox\/delivery\.ts|platform\/db\/(system-scope|outbox-delivery)\.ts)$/;
@@ -79,8 +79,8 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     const integration = discoveredTasks(PLANE_DIRS.integration);
     expect(main).toEqual([...MAIN_TASKS].sort());
     expect(integration).toEqual([...INTEGRATION_TASKS, ...INTEGRATION_DIAGNOSTIC_TASKS].sort());
-    // The paired release expects exactly the discovered counts: INTEGRATION 4, MAIN 6 (P5-B adds no MAIN task).
-    expect(integration).toHaveLength(4);
+    // The paired release expects exactly the discovered counts: INTEGRATION 5, MAIN 6 (P5-B and P12-B2 add no MAIN task).
+    expect(integration).toHaveLength(5);
     expect(main).toHaveLength(6);
     expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", integration.length], ["main", main.length]]);
     expect(main.filter((task) => integration.includes(task))).toEqual([]);

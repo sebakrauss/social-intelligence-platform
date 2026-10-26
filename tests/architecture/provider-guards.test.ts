@@ -458,6 +458,11 @@ describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cu
     const diagnostic = codeOf("jobs/integration-read-content-validation.ts");
     expect(diagnostic).toMatch(/readonly pagination: "more" \| "end" \| null;/);
     expect(diagnostic).not.toMatch(/\bcursor\s*:|next\.cursor/);
+    // Step 7G-H5.5-P12-B2: the read_interactions diagnostic too — one first page of each list, its kind only, no cursor.
+    const interactions = codeOf("jobs/integration-read-interactions-validation.ts");
+    expect(interactions).toMatch(/readonly pagination: "more" \| "end" \| null;/);
+    expect(interactions).not.toMatch(/\bcursor\s*:|next\.cursor|rawReference|\.text\b|displayName|handle\b/);
+    expect(interactions.match(/, window, null\)/g)).toHaveLength(2);
   });
 });
 
