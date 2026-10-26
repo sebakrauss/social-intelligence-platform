@@ -11,9 +11,10 @@
  *     malformed. error_description and unknown parameters are ignored and never surfaced.
  *   - Exchange: exactly one GET to the token endpoint (./oauth-transport), never retried here. A token becomes a
  *     ProviderCredential v1: a locally generated opaque UUID (never derived from the token, the app or a Meta
- *     account) and the access token as its SecretValue. The expiry comes from expires_in, which a successful
- *     response must carry: never null, never a default. Granted scopes are not reported by the exchange, so they are
- *     empty (capability reads them later). No long-lived exchange, no refresh.
+ *     account) and the access token as its SecretValue. The expiry comes from expires_in when Meta reports it; when it
+ *     doesn't, expiresAt is null = expiry UNKNOWN (never "never expires", never "expired"; Step 7G-H5.5-P12-C0-R5F) and
+ *     no lifetime is defaulted. Granted scopes are not reported by the exchange, so they are empty (capability reads
+ *     them later). No long-lived exchange, no refresh.
  *
  * Errors are the normalized taxonomy only (./errors). A response that might have redeemed the code without our
  * receiving the credential — no response, timeout, redirect, unreadable or unexpected body — is OutcomeUnknown.
@@ -120,7 +121,8 @@ export function createMetaAuthorizationPort(app: MetaAppCredentials, options: Me
       const outcome = await transport.exchange({ clientId, clientSecret, redirectUri: input.redirectUri, code: input.code });
       if (outcome.kind === "ambiguous") throw new OutcomeUnknownError(operation, outcome.reason);
       if (outcome.kind === "graph_error") throw metaGraphError(operation, outcome.error, "discover_assets");
-      const expiresAt = isoInstant(new Date(now().getTime() + outcome.expiresInSeconds * 1000));
+      // Unknown stays unknown: no default lifetime. Actual expiry/revocation is learned from provider credential errors.
+      const expiresAt = outcome.expiresInSeconds === null ? null : isoInstant(new Date(now().getTime() + outcome.expiresInSeconds * 1000));
       const credential = providerCredential(newId(), outcome.accessToken.expose());
       return Object.freeze({
         data: Object.freeze({ credential, expiresAt, grantedScopes: Object.freeze([]) }),

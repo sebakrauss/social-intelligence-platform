@@ -14,7 +14,7 @@ repository, chat or evidence.
 | Login | Facebook Login for Business (`config_id`, not `scope`) |
 | Token type | User Access Token |
 | PKCE | NOT_SUPPORTED in the first slice (confidential client; single-use state with TTL). No OIDC flow |
-| Long-lived token exchange | DEFERRED: the first slice stores the authorization-code token with its provider expiry |
+| Long-lived token exchange | DEFERRED: the first slice stores the authorization-code token with its provider expiry when Meta reports one; otherwise with expiry unknown (see Expiry below) |
 | Refresh | REAUTHORIZATION in the first slice (no refresh token, no worker sealer) |
 | Require App Secret | OFF: no `appsecret_proof` on reads |
 | Client Token | NOT USED: outside the architecture, no variable exists for it |
@@ -92,7 +92,8 @@ Graph changelog dates its versions). Placeholders in braces stand for runtime va
   `redirect_uri`: "This argument is required and must be the same as the original request_uri that you used when
   starting the OAuth login process".
 - Response (S2): `{"access_token": …, "token_type": …, "expires_in": …}`. S1 calls a user access token "short-lived".
-  No refresh token, user id or scope is documented in the response.
+  No refresh token, user id or scope is documented in the response. `expires_in` is NOT always present: a LIVE
+  re-authorization (Step 7G-H5.5-P12-C0-R5D, 2026-10-26) returned a valid token response without it.
 
 **Callback.**
 
@@ -114,7 +115,7 @@ Graph changelog dates its versions). Placeholders in braces stand for runtime va
 
 - That a user-token configuration returns a `code` with the override.
 - Whether Meta echoes `state` on a denial.
-- The exact `expires_in` of the short-lived user token.
+- The exact `expires_in` of the short-lived user token, and when Meta omits it (observed LIVE on a re-authorization; the reason is not established).
 
 ## Implementation status (Step 7G-D)
 
@@ -126,7 +127,7 @@ Graph changelog dates its versions). Placeholders in braces stand for runtime va
 | Token exchange | one GET per call; no retry (TOKEN_EXCHANGE_RETRY = NONE); manual redirects refused; 10 s timeout; 64 KiB body bound |
 | Ambiguous exchange (no response, timeout, redirect, unreadable or unexpected body) | OutcomeUnknown: the code is treated as spent |
 | Credential | ProviderCredential v1: `randomUUID()` id, access token as SecretValue, `grantedScopes: []` |
-| Expiry | `expires_in` REQUIRED on success (positive whole seconds, at most ten years): missing or invalid → OutcomeUnknown, no credential, no default lifetime; a successful Meta exchange never yields `expiresAt = null` |
+| Expiry | `expires_in` OPTIONAL on an otherwise valid success (Step 7G-H5.5-P12-C0-R5F, from LIVE evidence R5D). Present: positive whole seconds, at most ten years → `expiresAt = issuedAt + expires_in`; present but malformed → OutcomeUnknown (`token_response_expires_in_invalid`), no credential stored. Absent: the token is accepted with `expiresAt = null` = expiry UNKNOWN — never "never expires", never "expired"; no lifetime is inferred or defaulted. Actual expiry or revocation is learned from provider credential errors (e.g. 190 / 463) |
 | Long-lived token exchange · refresh | NOT_IMPLEMENTED |
 | Client Token | NOT_USED |
 | Composition | `server/connections/runtime.ts` only: no Meta variables → no Meta port; partial → MetaAppConfigError (names only); all three → adapter |

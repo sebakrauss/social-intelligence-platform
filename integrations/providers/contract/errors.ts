@@ -67,6 +67,7 @@ export type CredentialInvalidReason = (typeof CREDENTIAL_INVALID_REASONS)[number
  * Why an outcome is unknown, when the adapter can tell (Step 7G-H5.5-P12-C0-R5A). Diagnostic only: every reason is the
  * same OutcomeUnknownError (verify before any resend). Each names a transport branch or the token-response check that
  * failed, never a value: no body, token, code or field content is carried. `null` when the adapter doesn't classify.
+ * An absent token expiry is NOT an outcome-unknown condition (Step 7G-H5.5-P12-C0-R5F: expiry unknown, accepted).
  */
 export const OUTCOME_UNKNOWN_REASONS = [
   "network_error",
@@ -81,7 +82,6 @@ export const OUTCOME_UNKNOWN_REASONS = [
   "token_response_access_token_missing",
   "token_response_access_token_invalid",
   "token_response_token_type_invalid",
-  "token_response_expires_in_missing",
   "token_response_expires_in_invalid",
 ] as const;
 export type OutcomeUnknownReason = (typeof OUTCOME_UNKNOWN_REASONS)[number];

@@ -191,11 +191,45 @@ describe("Meta authorization adapter (Step 7G-D): offline, authorization only", 
     expect(transport).not.toMatch(/config_id/);
   });
 
+  it("no credential lifetime is ever invented (Step 7G-H5.5-P12-C0-R5F): expiry is the reported expires_in or null (unknown)", () => {
+    const transport = codeOf(`${META}/oauth-transport.ts`);
+    const authorization = codeOf(`${META}/authorization.ts`);
+    // The token's expiry field is set in exactly two places: null when absent, or the validated value.
+    expect([...transport.matchAll(/expiresInSeconds: ([A-Za-z0-9_.]+)\s*\}\)/g)].map((match) => match[1])).toEqual(["null", "expiresIn"]);
+    expect(transport).toMatch(/if \(expiresIn === undefined\) return Object\.freeze\(\{ kind: "token", accessToken: new SecretValue\(accessToken\), expiresInSeconds: null \}\);/);
+    // The adapter computes expiresAt once: unknown stays null, a reported lifetime is added to the issue time.
+    expect([...authorization.matchAll(/expiresAt =/g)]).toHaveLength(1);
+    expect(authorization).toMatch(/const expiresAt = outcome\.expiresInSeconds === null \? null : isoInstant\(new Date\(now\(\)\.getTime\(\) \+ outcome\.expiresInSeconds \* 1000\)\);/);
+    for (const code of [transport, authorization]) {
+      // No defaulting of an expiry (`??`/`||` on an expiry-bearing expression) and no default-lifetime constant.
+      for (const line of code.split("\n").filter((l) => /expir/i.test(l))) expect(line, line).not.toMatch(/\?\?|\|\|\s*\d/);
+      expect(code).not.toMatch(/DEFAULT_\w*(LIFETIME|EXPIR|TTL)|5184000|86400|60 \* 60 \* 24|24 \* 60 \* 60/);
+    }
+    // The only duration literal is the declared upper BOUND for a reported expires_in (never a default).
+    expect([...transport.matchAll(/\d+ \* \d+ \* \d+/g)].map((match) => match[0])).toEqual(["10 * 365 * 24"]);
+    expect(transport).toMatch(/const MAX_EXPIRES_IN_SECONDS = 10 \* 365 \* 24 \* 3600;/);
+  });
+
+  it("a stored credential expiry has no runtime reader, so nothing can read null as permanent or expired (Step 7G-H5.5-P12-C0-R5F)", () => {
+    const store = codeOf("modules/connections/persistence/store.ts");
+    // The worker loads identity and envelope bytes only; the expiry column is never selected or returned.
+    expect(store).toMatch(/sql`select connection_id, envelope from credentials\.load_envelope\(\$\{credentialId\}::uuid\)`/);
+    expect(store).toMatch(/return row === undefined \? undefined : \{ connectionId: row\.connection_id, envelope: new Uint8Array\(row\.envelope\) \};/);
+    expect(findReferences(sourceFiles(RUNTIME), [/load_envelope/]).map(([file]) => file)).toEqual(["modules/connections/persistence/store.ts"]);
+    // Outside the Meta exchange (producer) and its pass-through to storage, no runtime code compares a credential expiry.
+    // The contract's own type declarations (CodeExchangeResult, CredentialRefreshResult) define `IsoInstant | null`; they read nothing.
+    const PASS_THROUGH = ["integrations/providers/contract/authorization-port.ts", "integrations/providers/contract/dto.ts", `${META}/authorization.ts`, `${META}/oauth-transport.ts`, "server/connections/authorization.ts", "server/commands/connections.ts", "modules/connections/application/authorization.ts", "modules/connections/application/ports.ts", "modules/connections/persistence/store.ts"];
+    const readers = sourceFiles(RUNTIME)
+      .filter((file) => !file.startsWith("integrations/providers/simulator/") && !PASS_THROUGH.includes(file))
+      .filter((file) => /credential[^\n]{0,80}expiresAt|expiresAt[^\n]{0,80}credential|provider_credentials[^\n]{0,120}expires_at/i.test(codeOf(file)));
+    expect(readers).toEqual([]);
+  });
+
   it("ambiguity sub-reasons (Step 7G-H5.5-P12-C0-R5A) are closed literals or the reviewed classifiers, never runtime values; the error is never read", () => {
     const transport = codeOf(`${META}/oauth-transport.ts`);
     const allowed = new Set([...OUTCOME_UNKNOWN_REASONS.map((reason) => `"${reason}"`), "reason", "body.reason", 'signal.aborted ? "timeout" : "network_error"', "unrecognizedStatus(status)"]);
     const calls = [...transport.matchAll(/\bambiguous\(([^)]*\)?)\)/g)].map((match) => match[1] ?? "");
-    expect(calls).toHaveLength(10); // 6 token-response checks, redirect, the catch, the body read, the unrecognized status
+    expect(calls).toHaveLength(9); // 5 token-response checks (an absent expires_in is not one: R5F), redirect, the catch, the body read, the unrecognized status
     for (const argument of calls) expect(allowed.has(argument), argument).toBe(true);
     // `ok: false` reasons are the two body literals only; the classifiers return literals only.
     expect([...transport.matchAll(/ok: false, reason: ("[a-z0-9_]+")/g)].map((match) => match[1]).sort()).toEqual(['"response_not_utf8"', '"response_too_large"', '"response_too_large"']);

@@ -40,7 +40,8 @@ export interface MetaTokenExchangeRequest {
 }
 
 export type MetaTokenOutcome =
-  | { readonly kind: "token"; readonly accessToken: SecretValue; readonly expiresInSeconds: number }
+  /** `expiresInSeconds` is null when Meta didn't report `expires_in`: expiry UNKNOWN (never "never expires"). */
+  | { readonly kind: "token"; readonly accessToken: SecretValue; readonly expiresInSeconds: number | null }
   | { readonly kind: "graph_error"; readonly error: MetaGraphErrorFields }
   | { readonly kind: "ambiguous"; readonly reason: OutcomeUnknownReason };
 
@@ -102,8 +103,9 @@ function parseJson(text: string): unknown {
 
 /**
  * A 2xx body → a validated token, or the first check of the documented `{access_token, token_type, expires_in}` it
- * fails (by field and absent/invalid only, never the value). `expires_in` is REQUIRED (Step 7G-D2A): a credential is
- * never accepted without a known expiry, and none is invented.
+ * fails (by field and absent/invalid only, never the value). `expires_in` is OPTIONAL (Step 7G-H5.5-P12-C0-R5F): absent
+ * → the token with `expiresInSeconds: null` (expiry unknown; no lifetime is ever invented); present → it must be valid,
+ * or the response is refused.
  */
 function tokenOf(body: unknown): MetaTokenOutcome {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return ambiguous("token_response_not_object");
@@ -114,7 +116,7 @@ function tokenOf(body: unknown): MetaTokenOutcome {
   const tokenType = record["token_type"];
   if (tokenType !== undefined && (typeof tokenType !== "string" || tokenType === "")) return ambiguous("token_response_token_type_invalid");
   const expiresIn = record["expires_in"];
-  if (expiresIn === undefined) return ambiguous("token_response_expires_in_missing");
+  if (expiresIn === undefined) return Object.freeze({ kind: "token", accessToken: new SecretValue(accessToken), expiresInSeconds: null });
   if (typeof expiresIn !== "number" || !Number.isSafeInteger(expiresIn) || expiresIn <= 0 || expiresIn > MAX_EXPIRES_IN_SECONDS) return ambiguous("token_response_expires_in_invalid");
   return Object.freeze({ kind: "token", accessToken: new SecretValue(accessToken), expiresInSeconds: expiresIn });
 }

@@ -21,7 +21,7 @@ import {
 } from "@/integrations/providers/contract";
 import { createMetaAuthorizationPort } from "@/integrations/providers/meta/authorization";
 import { META_DIALOG_URL } from "@/integrations/providers/meta/endpoints";
-import type { MetaTokenOutcome, MetaTokenTransport } from "@/integrations/providers/meta/oauth-transport";
+import { createMetaTokenTransport, type MetaTokenOutcome, type MetaTokenTransport } from "@/integrations/providers/meta/oauth-transport";
 import type { CredentialSealing, ProviderCredentialAccess } from "@/modules/connections";
 import { createLocalKeyring, type LocalKeyring } from "@/platform/crypto/credentials/local-keyring";
 import { createCredentialOpener } from "@/platform/crypto/credentials/open";
@@ -78,6 +78,8 @@ export function defineMetaReconnectSuite(getTarget: () => DbTarget): void {
   const logLines: string[] = [];
   /** The next token exchange's outcome (default: a synthetic token). */
   let nextExchange: MetaTokenOutcome | undefined;
+  /** When set, the next exchange runs the REAL token transport over this 200 JSON body (in-process fetch; no request leaves). */
+  let nextTokenBody: Record<string, unknown> | undefined;
 
   const oracle = async <T extends pg.QueryResultRow>(query: string, values: readonly unknown[] = []): Promise<T[]> => (await privileged.query<T>(query, [...values])).rows;
   const countOf = async (query: string, values: readonly unknown[]): Promise<number> => (await oracle<{ n: number }>(query, values))[0]?.n ?? -1;
@@ -189,8 +191,14 @@ export function defineMetaReconnectSuite(getTarget: () => DbTarget): void {
     logger = createLogger({ sink: (line) => logLines.push(line), now: clock });
     access = createCredentialAccess(createCredentialOpener(keyring.unwrapper), "test");
     const transport: MetaTokenTransport = {
-      exchange() {
+      exchange(request) {
         exchanges += 1;
+        const body = nextTokenBody;
+        nextTokenBody = undefined;
+        if (body !== undefined) {
+          const fetch = () => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+          return createMetaTokenTransport({ fetch }).exchange(request);
+        }
         const outcome = nextExchange ?? { kind: "token", accessToken: new SecretValue(TOKEN_MARKER), expiresInSeconds: 3600 };
         nextExchange = undefined;
         return Promise.resolve(outcome);
@@ -209,6 +217,7 @@ export function defineMetaReconnectSuite(getTarget: () => DbTarget): void {
   beforeEach(() => {
     exchanges = 0;
     nextExchange = undefined;
+    nextTokenBody = undefined;
   });
 
   afterAll(async () => {
@@ -260,6 +269,57 @@ export function defineMetaReconnectSuite(getTarget: () => DbTarget): void {
     });
   });
 
+  describe("a token without expires_in is accepted with expiry UNKNOWN (Step 7G-H5.5-P12-C0-R5F; real transport parsing)", () => {
+    const credentialRows = (connection: string) =>
+      oracle<{ id: string; credential_version: number; expires_at: Date | null }>("select id, credential_version, expires_at from credentials.provider_credentials where connection_id = $1 order by credential_version", [connection]);
+
+    it("an initial authorization succeeds, stores the credential with expires_at NULL, and validates normally", async () => {
+      const t = await tenant();
+      nextTokenBody = { access_token: TOKEN_MARKER, token_type: "bearer" };
+      const result = await callback(t.owner, granted(stateOf(await connectMeta(depsFor(t.owner), t.workspaceId))));
+      if (result.status !== "connected") throw new Error(`connect failed: ${JSON.stringify(result)}`);
+      const rows = await credentialRows(result.connectionId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.expires_at).toBeNull();
+      expect((await connectionRow(result.connectionId))?.active_credential_id).toBe(rows[0]?.id);
+      const [initial] = await discoveryRows(result.connectionId);
+      if (initial === undefined) throw new Error("no discovery");
+      expect(initial.subject_ids).toEqual({ connection_id: result.connectionId });
+      expect(await discover(initial)).toMatchObject({ kind: "validated", status: "ACTIVE", capabilityRefresh: null });
+    });
+
+    it("the critical reconnect: reauthorized, SAME connection, ONE new credential (version +1, expires_at NULL), the old one destroyed, REAUTHORIZED, the R1 continuation, and its capability refresh", async () => {
+      const t = await tenant();
+      const connection = await connected(t); // its credential has a known expiry (expires_in 3600)
+      const active = await seedAccount(t, connection, "ACTIVE");
+      const inactive = await seedAccount(t, connection, "INACTIVE");
+      const before = await connectionRow(connection);
+      const [old] = await credentialRows(connection);
+      expect(old?.expires_at).not.toBeNull();
+      nextTokenBody = { access_token: TOKEN_MARKER, token_type: "bearer" };
+      const state = stateOf(await reconnectMeta(depsFor(t.owner), { workspaceId: t.workspaceId, connectionId: connection }));
+      expect(await callback(t.owner, granted(state))).toEqual({ status: "reauthorized", connectionId: connection });
+      expect(exchanges).toBe(1);
+      expect(await metaConnections(t.workspaceId)).toBe(1);
+      const rows = await credentialRows(connection);
+      expect(rows).toHaveLength(1); // the previous envelope was shredded in the same transaction
+      const [fresh] = rows;
+      expect(fresh?.id).not.toBe(old?.id);
+      expect(fresh?.credential_version).toBe((before?.version ?? 0) + 1);
+      expect(fresh?.expires_at).toBeNull();
+      expect((await connectionRow(connection))?.active_credential_id).toBe(fresh?.id);
+      expect(await events(connection, "REAUTHORIZED")).toBe(1);
+      const discoveries = await discoveryRows(connection);
+      expect(discoveries).toHaveLength(2);
+      const marked = discoveries[1];
+      if (marked === undefined) throw new Error("no reconnect discovery");
+      expect(marked.subject_ids).toEqual({ connection_id: connection, [REFRESH]: fresh?.id });
+      expect(await discover(marked)).toMatchObject({ kind: "validated", capabilityRefresh: { kind: "requested", requested: 1, alreadyRequested: 0 } });
+      expect(await credentialRequests([active, inactive])).toEqual([{ subject_ids: { connected_account_id: active, credential_id: fresh?.id } }]);
+      expect(await countOf("select count(*)::int as n from connections.connected_account_events where connected_account_id = any($1::uuid[]) and event_type = 'REEVALUATION_REQUESTED'", [[active, inactive]])).toBe(0);
+    });
+  });
+
   describe("a reconnect that doesn't complete changes nothing and creates no continuation", () => {
     const unchanged = async (t: Tenant, connection: string, query: (state: string) => CallbackQuery, expected: unknown, exchanged: number) => {
       const before = await connectionRow(connection);
@@ -289,12 +349,12 @@ export function defineMetaReconnectSuite(getTarget: () => DbTarget): void {
       await unchanged(t, connection, granted, { status: "restart_required", reason: "outcome_unknown" }, 1);
     });
 
-    it("the R5 LIVE shape: valid state, ONE ambiguous exchange → attempt OUTCOME_UNKNOWN, everything preserved, zero downstream authority, and the closed sub-reason logged without any secret (Step 7G-H5.5-P12-C0-R5A)", async () => {
+    it("expires_in PRESENT but malformed (real transport parsing): restart_required, the closed `expires_in_invalid` reason logged without secrets, everything preserved, zero downstream authority", async () => {
       const t = await tenant();
       const connection = await connected(t);
       const active = await seedAccount(t, connection, "ACTIVE");
       logLines.length = 0;
-      nextExchange = { kind: "ambiguous", reason: "token_response_expires_in_missing" };
+      nextTokenBody = { access_token: TOKEN_MARKER, token_type: "bearer", expires_in: "5400" };
       const before = await connectionRow(connection);
       const state = stateOf(await reconnectMeta(depsFor(t.owner), { workspaceId: t.workspaceId, connectionId: connection }));
       expect(await callback(t.owner, granted(state))).toEqual({ status: "restart_required", reason: "outcome_unknown" });
@@ -307,9 +367,8 @@ export function defineMetaReconnectSuite(getTarget: () => DbTarget): void {
       expect(await markedDiscoveries(connection)).toBe(0);
       expect(await credentialRequests([active])).toEqual([]);
       expect(await countOf("select count(*)::int as n from connections.connected_account_events where connected_account_id = $1 and event_type = 'REEVALUATION_REQUESTED'", [active])).toBe(0);
-      // The sub-reason is an event name (closed vocabulary), followed by the unchanged close event.
       const events_ = logLines.map((line) => (JSON.parse(line) as { event: string }).event).filter((event) => event.startsWith("connections.authorization.exchange_"));
-      expect(events_).toEqual(["connections.authorization.exchange_ambiguous.token_response_expires_in_missing", "connections.authorization.exchange_closed.outcome_unknown"]);
+      expect(events_).toEqual(["connections.authorization.exchange_ambiguous.token_response_expires_in_invalid", "connections.authorization.exchange_closed.outcome_unknown"]);
       const rendered = logLines.join("\n");
       for (const secret of [TOKEN_MARKER, CODE_MARKER, state, "synthetic-meta-app-secret-marker", "client_secret", "access_token="]) expect(rendered).not.toContain(secret);
     });

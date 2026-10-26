@@ -253,14 +253,25 @@ describe("Meta authorization port · token exchange", () => {
     expectNoneOf(result, [TOKEN_MARKER, SECRET_MARKER, CODE_MARKER]);
   });
 
-  it("each exchange gets a fresh opaque identifier and always a known, positive expiry (never null)", async () => {
+  it("each exchange gets a fresh opaque identifier; a reported expires_in is a known expiry, computed from the issue time", async () => {
     const { exchange } = portWith(() => json(200, tokenBody({ expires_in: 60 })));
     const first = await exchange();
     const second = await exchange();
     expect(first.data.credential.id).not.toBe(second.data.credential.id);
-    for (const result of [first, second]) {
-      expect(result.data.expiresAt).not.toBeNull();
-      expect(result.data.expiresAt).toBe("2026-10-17T12:01:00.000Z");
+    for (const result of [first, second]) expect(result.data.expiresAt).toBe("2026-10-17T12:01:00.000Z");
+  });
+
+  it("an absent expires_in (Step 7G-H5.5-P12-C0-R5F, LIVE evidence) is accepted as expiry UNKNOWN: expiresAt null, no default lifetime", async () => {
+    // The key is absent (JSON.stringify drops undefined); everything else is the documented valid response.
+    for (const body of [tokenBody({ expires_in: undefined }), tokenBody({ expires_in: undefined, token_type: undefined })]) {
+      const { calls, exchange } = portWith(() => json(200, body));
+      const result = await exchange();
+      expect(calls).toHaveLength(1);
+      expect(result.data.expiresAt).toBeNull();
+      expect(result.data.credential.id).toMatch(UUID);
+      expect(result.data.credential.secret.expose()).toBe(TOKEN_MARKER);
+      expect(Object.keys(result.data).sort()).toEqual(["credential", "expiresAt", "grantedScopes"]);
+      expectNoneOf(result, [SECRET_MARKER, CODE_MARKER]);
     }
   });
 
@@ -295,7 +306,6 @@ describe("Meta authorization port · token exchange", () => {
     ["an empty access_token", () => json(200, tokenBody({ access_token: "" })), {}, "token_response_access_token_invalid"],
     ["an access_token with whitespace", () => json(200, tokenBody({ access_token: `${TOKEN_MARKER} x` })), {}, "token_response_access_token_invalid"],
     ["a non-string token_type", () => json(200, tokenBody({ token_type: 1 })), {}, "token_response_token_type_invalid"],
-    ["a missing expires_in (no default lifetime is invented)", () => json(200, tokenBody({ expires_in: undefined })), {}, "token_response_expires_in_missing"],
     ["a null expires_in", () => json(200, tokenBody({ expires_in: null })), {}, "token_response_expires_in_invalid"],
     ["a boolean expires_in", () => json(200, tokenBody({ expires_in: true })), {}, "token_response_expires_in_invalid"],
     ["expires_in = 0", () => json(200, tokenBody({ expires_in: 0 })), {}, "token_response_expires_in_invalid"],
@@ -328,9 +338,9 @@ describe("Meta authorization port · token exchange", () => {
 
 describe("Meta token exchange · ambiguity sub-reasons (Step 7G-H5.5-P12-C0-R5A)", () => {
   it("the transport itself returns `ambiguous` with exactly one closed reason and no other field", async () => {
-    const fake = fakeFetch(() => json(200, tokenBody({ expires_in: undefined })));
+    const fake = fakeFetch(() => json(200, tokenBody({ expires_in: 0 })));
     const outcome = await createMetaTokenTransport({ fetch: fake.fetch }).exchange(exchangeRequest());
-    expect(outcome).toEqual({ kind: "ambiguous", reason: "token_response_expires_in_missing" });
+    expect(outcome).toEqual({ kind: "ambiguous", reason: "token_response_expires_in_invalid" });
     expect(Object.keys(outcome)).toEqual(["kind", "reason"]);
     expectNoneOf(outcome, [SECRET_MARKER, CODE_MARKER, TOKEN_MARKER]);
   });
@@ -341,6 +351,17 @@ describe("Meta token exchange · ambiguity sub-reasons (Step 7G-H5.5-P12-C0-R5A)
     const token = await createMetaTokenTransport({ fetch: fakeFetch(() => json(200, tokenBody())).fetch }).exchange(exchangeRequest());
     expect(token.kind).toBe("token");
     expect(Object.keys(token).sort()).toEqual(["accessToken", "expiresInSeconds", "kind"]);
+  });
+
+  it("expires_in: absent → a token with expiresInSeconds null; present and valid → that number; present and invalid → ambiguous (Step 7G-H5.5-P12-C0-R5F)", async () => {
+    const exchangeWith = (body: unknown) => createMetaTokenTransport({ fetch: fakeFetch(() => json(200, body)).fetch }).exchange(exchangeRequest());
+    const absent = await exchangeWith(tokenBody({ expires_in: undefined }));
+    expect(absent.kind === "token" ? absent.expiresInSeconds : "not a token").toBeNull();
+    const valid = await exchangeWith(tokenBody({ expires_in: 5184000 }));
+    expect(valid.kind === "token" ? valid.expiresInSeconds : "not a token").toBe(5184000);
+    for (const invalid of [null, 0, -1, 1.5, "5400", true, Number.MAX_SAFE_INTEGER, 10 * 365 * 24 * 3600 + 1]) {
+      expect(await exchangeWith(tokenBody({ expires_in: invalid })), String(invalid)).toEqual({ kind: "ambiguous", reason: "token_response_expires_in_invalid" });
+    }
   });
 });
 
