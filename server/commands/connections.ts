@@ -14,6 +14,7 @@ import {
   AUTHORIZABLE_PROVIDERS,
   EXCHANGE_FAILURE_CODES,
   completeExchange,
+  discoveryRequest,
   failExchange,
   getConnection,
   listConnections,
@@ -157,18 +158,21 @@ export function createConnectionCommands(deps: ConnectionCommandDependencies) {
         newId: env.newId,
       });
       if (output.kind !== "connection_unavailable") {
-        // Validation/discovery runs in the job runtime (D5): IDs only, keyed by the credential it validates.
-        await tx.outbox.append({
-          id: env.newId(),
-          topic: DISCOVER_ASSETS_TOPIC,
-          organizationId: context.organizationId,
-          workspaceId: context.workspaceId,
-          subjectIds: { connection_id: output.connection.id },
-          correlationId: env.correlationId,
-          initiator: { type: "user", userId: context.userId },
-          dispatchKey: `${DISCOVER_ASSETS_TOPIC}:${output.connection.id}:${output.credentialId}`,
-          createdAt: env.now,
-        });
+        // Validation/discovery runs in the job runtime (D5): IDs only, keyed by the credential it validates. Only a
+        // successful RE-authorization asks it to refresh capabilities for that credential (Step 7G-H5.5-P12-C0-R1).
+        await tx.outbox.append(
+          discoveryRequest({
+            id: env.newId(),
+            organizationId: context.organizationId,
+            workspaceId: context.workspaceId,
+            connectionId: output.connection.id,
+            credentialId: output.credentialId,
+            capabilityRefresh: output.kind === "reauthorized" ? { kind: "credential", credentialId: output.credentialId } : null,
+            correlationId: env.correlationId,
+            initiator: { type: "user", userId: context.userId },
+            createdAt: env.now,
+          }),
+        );
       }
       return { output, scope };
     },

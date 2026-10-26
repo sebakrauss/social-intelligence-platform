@@ -177,6 +177,11 @@ export interface ConnectionWorkerStore {
     lock(id: string): Promise<ConnectedAccount | undefined>;
     /** ACTIVE → INACTIVE (MOVED, with the move id) iff still ACTIVE. */
     release(id: string, moveId: string, now: Date): Promise<boolean>;
+    /**
+     * Read only (Step 7G-H5.5-P12-C0-R1): the ACTIVE connected accounts of ONE connection in the bound workspace, in
+     * (platform, provider asset id, id) order. Never INACTIVE ones, never another connection's or workspace's.
+     */
+    listActiveForConnection(connectionId: string): Promise<readonly ConnectedAccount[]>;
   };
   readonly accountEvents: { append(event: ConnectedAccountEvent): Promise<void> };
   readonly discoveredAssets: {
@@ -202,6 +207,11 @@ export interface ConnectionWorkerStore {
     route(moveId: string, step: "activate_destination" | "reject_destination", correlationId: string, now: Date): Promise<RouteResult>;
   };
   readonly outbox: OutboxWriter;
+  /**
+   * Step 7G-H5.5-P12-C0-R1: appends a capability-evaluation request unless its dispatch key is already taken
+   * (system.outbox's unique key): `exists` is the idempotent repeat, never an error.
+   */
+  readonly capabilityRequests: { requestOnce(message: OutboxMessage): Promise<"appended" | "exists"> };
   readonly audit: AuditLog;
   /** R6: claims a domain effect in THIS transaction. */
   claimEffect(effectKey: string): Promise<"claimed" | "already_applied">;

@@ -668,6 +668,7 @@ export function defineMovesSuite(getTarget: () => DbTarget): void {
           const store = createPostgresConnectionWorkerStore(tx, {
             audit: createPostgresAuditLog(tx),
             outbox: createPostgresOutbox(tx),
+            capabilityRequests: { requestOnce: () => Promise.reject(new Error("unused by the Move saga")) },
             claimEffect: (key) => claimEffect(tx, { workspaceId: world.A1, effectKey: key, task: RELEASE }),
           });
           const outcome = await releaseSource(store, {

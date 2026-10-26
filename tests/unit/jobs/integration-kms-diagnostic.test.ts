@@ -854,7 +854,7 @@ describe("the existing integration tasks stay inert with APP_DEPLOYMENT_ENV=stag
     };
     const run = discoverConnectionAssets(
       { inScope: (work) => work(store as never), access: composition.access, providers: composition.providers, clock: () => new Date(), newId: randomUUID },
-      { workspaceId, connectionId: connection.id, outboxId: randomUUID(), correlationId },
+      { workspaceId, connectionId: connection.id, outboxId: randomUUID(), correlationId, capabilityRefresh: null },
     );
     await expect(run).rejects.toMatchObject({ code: "NOT_FOUND" });
     // The credential was loaded but never opened: no helper run, no Decrypt, no other request.

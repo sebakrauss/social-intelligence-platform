@@ -33,7 +33,8 @@ export const PRODUCTION_TASKS = defineTaskRegistry([
     lane: 3,
     retry: RETRY_POLICIES.transient,
     concurrency: { by: "subject", subject: "connection_id" },
-    subjects: ["connection_id"],
+    // Step 7G-H5.5-P12-C0-R1: a re-authorization's discovery also names the credential whose capabilities it refreshes.
+    subjects: ["connection_id", "capability_refresh_credential_id"],
   },
   {
     name: "connections.move.release_source",
@@ -69,6 +70,7 @@ export const PRODUCTION_TASKS = defineTaskRegistry([
     lane: 3,
     retry: RETRY_POLICIES.transient,
     concurrency: { by: "subject", subject: "connected_account_id" },
-    subjects: ["connected_account_id"],
+    // Step 7G-H5.5-P12-C0-R1: a credential-bound request also names its credential (checked before any opening).
+    subjects: ["connected_account_id", "credential_id"],
   },
 ]);

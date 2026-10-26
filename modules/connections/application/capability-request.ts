@@ -20,6 +20,12 @@
  *                    same transaction, so every accepted request is a NEW authority under a NEW key; a consumed one
  *                    (any run outcome) is never re-armed or reused. At most 27 + 1 + 36 + 1 + 7 + 36 = 108 characters,
  *                    inside system.outbox's dispatch_key contract (^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$).
+ *   credential       capability.evaluate_account:{account}:credential.{credential} — the system's refresh after a
+ *                    successful RE-authorization (Step 7G-H5.5-P12-C0-R1): {credential} is the id of the replacement
+ *                    credential, so one replacement yields at most one request per account (27 + 1 + 36 + 1 + 11 + 36 =
+ *                    112 characters). Requested only by the discovery that validated that credential, and only while it
+ *                    is still the connection's active credential; the request also carries it as the `credential_id`
+ *                    subject, so the worker refuses it (before any credential opening) once another one replaced it.
  *
  * Reconciliation recomputes the activation key from the account's latest activation event, so it and the activation
  * can never request the same evaluation twice: the second writer finds the key taken.
@@ -33,7 +39,12 @@ export type EvaluationReason =
   | { readonly kind: "unrecorded" }
   | { readonly kind: "catalog"; readonly catalogId: string; readonly catalogRevision: number }
   /** An explicit recovery request: `eventId` is its REEVALUATION_REQUESTED account event (a UUID). */
-  | { readonly kind: "reevaluation"; readonly eventId: string };
+  | { readonly kind: "reevaluation"; readonly eventId: string }
+  /** The system refresh after a successful re-authorization: `credentialId` is the replacement credential (a UUID). */
+  | { readonly kind: "credential"; readonly credentialId: string };
+
+/** The subject naming the credential a `credential` request is bound to (identifiers only; absent for every other reason). */
+export const CAPABILITY_EVALUATION_CREDENTIAL_SUBJECT = "credential_id";
 
 function reasonRef(reason: EvaluationReason): string {
   switch (reason.kind) {
@@ -47,6 +58,10 @@ function reasonRef(reason: EvaluationReason): string {
       // Fail closed: only an event id (canonical UUID) can name a recovery authority.
       if (!isUuid(reason.eventId)) throw new TypeError("reevaluation eventId must be a UUID");
       return `reeval.${reason.eventId}`;
+    case "credential":
+      // Fail closed: only a credential id (canonical UUID) can name a credential-bound refresh.
+      if (!isUuid(reason.credentialId)) throw new TypeError("credential refresh credentialId must be a UUID");
+      return `credential.${reason.credentialId}`;
   }
 }
 
@@ -69,7 +84,10 @@ export function capabilityEvaluationRequest(input: {
     topic: CAPABILITY_EVALUATION_TOPIC,
     organizationId: input.organizationId,
     workspaceId: input.workspaceId,
-    subjectIds: { connected_account_id: input.connectedAccountId },
+    subjectIds:
+      input.reason.kind === "credential"
+        ? { connected_account_id: input.connectedAccountId, [CAPABILITY_EVALUATION_CREDENTIAL_SUBJECT]: input.reason.credentialId }
+        : { connected_account_id: input.connectedAccountId },
     correlationId: input.correlationId,
     initiator: input.initiator,
     dispatchKey: capabilityEvaluationDispatchKey(input.connectedAccountId, input.reason),

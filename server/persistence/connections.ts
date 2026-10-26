@@ -27,11 +27,23 @@ function jobOutbox(scope: TenantJobScope): OutboxWriter {
   };
 }
 
+/** Appends a request once per dispatch key; a newly appended row is reported for the post-commit relay wake-up. */
+function requestOnce(scope: TenantJobScope): ConnectionWorkerStore["capabilityRequests"] {
+  return {
+    async requestOnce(message) {
+      const outcome = await appendOutboxOnce(scope.tx, message);
+      if (outcome === "appended") scope.noteOutbox(message);
+      return outcome;
+    },
+  };
+}
+
 export function connectionWorkerStore(scope: TenantJobScope): ConnectionWorkerStore {
   return createPostgresConnectionWorkerStore(scope.tx, {
     audit: createPostgresAuditLog(scope.tx),
     outbox: jobOutbox(scope),
     claimEffect: scope.claimEffect,
+    capabilityRequests: requestOnce(scope),
   });
 }
 
@@ -47,13 +59,7 @@ export function capabilityRefreshStores(scope: TenantJobScope): { readonly conne
  */
 export function capabilityReconcileStores(scope: TenantJobScope): { readonly accounts: CapabilityReconcileStore; readonly capability: CapabilityProfileStore } {
   return {
-    accounts: createPostgresCapabilityReconcileStore(scope.tx, {
-      async requestOnce(message) {
-        const outcome = await appendOutboxOnce(scope.tx, message);
-        if (outcome === "appended") scope.noteOutbox(message);
-        return outcome;
-      },
-    }),
+    accounts: createPostgresCapabilityReconcileStore(scope.tx, requestOnce(scope)),
     capability: createPostgresCapabilityStore(scope.tx),
   };
 }
@@ -79,6 +85,7 @@ export function readContentValidationLookup(tx: DatabaseTransaction): ReadConten
     audit: { append: refuseWrite },
     outbox: { append: refuseWrite, routed: refuseWrite },
     claimEffect: refuseWrite,
+    capabilityRequests: { requestOnce: refuseWrite },
   });
   return Object.freeze({
     account: (id: string) => store.connectedAccounts.get(id),

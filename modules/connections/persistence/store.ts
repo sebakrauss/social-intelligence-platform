@@ -585,7 +585,12 @@ export function createPostgresConnectionStore(tx: DatabaseTransaction): Connecti
  * `extras.outbox.routed` so they get the post-commit relay wake-up (G5). */
 export function createPostgresConnectionWorkerStore(
   tx: DatabaseTransaction,
-  extras: { readonly audit: AuditLog; readonly outbox: OutboxWriter; readonly claimEffect: (effectKey: string) => Promise<"claimed" | "already_applied"> },
+  extras: {
+    readonly audit: AuditLog;
+    readonly outbox: OutboxWriter;
+    readonly claimEffect: (effectKey: string) => Promise<"claimed" | "already_applied">;
+    readonly capabilityRequests: ConnectionWorkerStore["capabilityRequests"];
+  },
 ): ConnectionWorkerStore {
   return {
     connections: {
@@ -633,6 +638,15 @@ export function createPostgresConnectionWorkerStore(
           .returning({ id: connectedAccounts.id });
         return rows.length === 1;
       },
+      async listActiveForConnection(connectionId) {
+        return (
+          await tx
+            .select()
+            .from(connectedAccounts)
+            .where(and(eq(connectedAccounts.connectionId, connectionId), eq(connectedAccounts.status, "ACTIVE")))
+            .orderBy(asc(connectedAccounts.platform), asc(connectedAccounts.providerAssetId), asc(connectedAccounts.id))
+        ).map(toAccount);
+      },
     },
     accountEvents: {
       async append(event) {
@@ -672,6 +686,7 @@ export function createPostgresConnectionWorkerStore(
       },
     },
     outbox: extras.outbox,
+    capabilityRequests: extras.capabilityRequests,
     discoveredAssets: {
       async find(connectionId, platform, providerAssetId) {
         const rows = await tx

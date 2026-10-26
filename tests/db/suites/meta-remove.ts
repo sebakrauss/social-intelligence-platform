@@ -673,6 +673,7 @@ export function defineMetaRemoveSuite(getTarget: () => DbTarget): void {
           createPostgresConnectionWorkerStore(tx, {
             audit: createPostgresAuditLog(tx),
             outbox: createPostgresOutbox(tx),
+            capabilityRequests: { requestOnce: () => Promise.reject(new Error("unused by the Move saga")) },
             claimEffect: (key) => claimEffect(tx, { workspaceId: ws(t.workspaceId), effectKey: key, task: ACTIVATE }),
           }),
           { workspaceId: ws(t.workspaceId), moveId, outboxId: randomUUID(), correlationId: "corr-f4c-activate-01" as never, now: clock(), newId: randomUUID },
@@ -694,6 +695,7 @@ export function defineMetaRemoveSuite(getTarget: () => DbTarget): void {
           createPostgresConnectionWorkerStore(tx, {
             audit: createPostgresAuditLog(tx),
             outbox: createPostgresOutbox(tx),
+            capabilityRequests: { requestOnce: () => Promise.reject(new Error("unused by the Move saga")) },
             claimEffect: (key) => claimEffect(tx, { workspaceId: ws(t.workspaceId), effectKey: key, task: ACTIVATE }),
           }),
           { workspaceId: ws(t.workspaceId), moveId, outboxId: randomUUID(), correlationId: "corr-f4c-activate-02" as never, now: clock(), newId: randomUUID },

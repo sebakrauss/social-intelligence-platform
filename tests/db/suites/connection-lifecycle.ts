@@ -534,7 +534,7 @@ export function defineConnectionLifecycleSuite(getTarget: () => DbTarget): void 
     it("validates the connection: normalized assets, CONNECTING → ACTIVE, event and system audit; idempotent per outbox row", async () => {
       const { connectionId } = await connectFresh(world.A1);
       const row = await latestDiscovery(connectionId);
-      expect(await discover(row)).toEqual({ kind: "validated", status: "ACTIVE", assets: 3 });
+      expect(await discover(row)).toEqual({ kind: "validated", status: "ACTIVE", assets: 3, capabilityRefresh: null });
       const assets = await oracle<{ platform: string; provider_asset_id: string; asset_class: string }>(
         "select platform, provider_asset_id, asset_class from connections.discovered_assets where connection_id = $1 order by provider_asset_id", [connectionId]);
       expect(assets).toEqual([

@@ -110,9 +110,9 @@ describe("no automatic recovery, no scheduler or reconcile wiring", () => {
     expect(referencing(/\brequestCapabilityReevaluations\b/)).toEqual([MODULE_INDEX, "modules/connections/application/capability-reconcile.ts"].sort());
   });
 
-  it("capability.evaluate_account is unchanged: same plane, lane, retry policy, concurrency and subjects", () => {
+  it("capability.evaluate_account is unchanged: same plane, lane, retry policy and concurrency; subjects gain only the credential of a credential-bound request (Step 7G-H5.5-P12-C0-R1)", () => {
     const task = PRODUCTION_TASKS.get("capability.evaluate_account");
-    expect(task).toMatchObject({ scope: "workspace", executionPlane: "integration", lane: 3, concurrency: { by: "subject", subject: "connected_account_id" }, subjects: ["connected_account_id"] });
+    expect(task).toMatchObject({ scope: "workspace", executionPlane: "integration", lane: 3, concurrency: { by: "subject", subject: "connected_account_id" }, subjects: ["connected_account_id", "credential_id"] });
     expect(task?.retry).toEqual(PRODUCTION_TASKS.get("connections.move.reject_destination")?.retry);
   });
 });

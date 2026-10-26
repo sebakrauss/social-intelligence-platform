@@ -12,6 +12,11 @@
  * credential, unreadable envelope…) is a DATED input ("facts unavailable" observed now) → nothing can be SUPPORTED. Transient, rate-limited and
  * ambiguous outcomes are rethrown for the job's retry policy and never rewrite the profile. No data volume is read.
  * Linking an account (Step 5F) will call this after activation; Step 5E exposes it without a scheduler or task.
+ *
+ * Credential-bound requests (Step 7G-H5.5-P12-C0-R1): a request made for ONE replacement credential passes it as
+ * `expectedCredentialId`. If the connection's active credential is no longer that one, step 1 ends the run as
+ * `superseded` — before any credential is loaded or opened, so no KMS Decrypt, no provider call and no profile write;
+ * it never falls back to the newer credential (that one has its own request).
  */
 import type { WorkspaceId } from "@/domain/ids";
 import { AppError } from "@/domain/errors";
@@ -38,7 +43,7 @@ export interface CapabilityRefreshDependencies {
 }
 
 export type CapabilityRefreshOutcome =
-  | { readonly kind: "skipped"; readonly reason: "not_found" | "inactive" | "no_credential" }
+  | { readonly kind: "skipped"; readonly reason: "not_found" | "inactive" | "no_credential" | "superseded" }
   | { readonly kind: "evaluated"; readonly factsAvailable: boolean; readonly profile: CapabilityProfile; readonly write: ProfileWriteOutcome };
 
 /** Definite "facts can't be obtained" answers (→ evaluate without facts); anything else is rethrown. */
@@ -50,7 +55,13 @@ function definiteFactsFailure(error: unknown): boolean {
 
 export async function refreshAccountCapabilities(
   deps: CapabilityRefreshDependencies,
-  input: { readonly workspaceId: WorkspaceId; readonly connectedAccountId: string; readonly observations?: readonly CapabilityObservation[] },
+  input: {
+    readonly workspaceId: WorkspaceId;
+    readonly connectedAccountId: string;
+    readonly observations?: readonly CapabilityObservation[];
+    /** Set for a credential-bound request: the evaluation runs only while this is still the active credential. */
+    readonly expectedCredentialId?: string;
+  },
 ): Promise<CapabilityRefreshOutcome> {
   const loaded = await deps.inScope(async ({ connections }) => {
     const account = await connections.connectedAccounts.get(input.connectedAccountId);
@@ -59,6 +70,8 @@ export async function refreshAccountCapabilities(
     const connection = await connections.connections.get(account.connectionId);
     if (connection === undefined || connection.status === "REMOVED") return "not_found" as const;
     if (connection.activeCredentialId === null) return "no_credential" as const;
+    // A credential-bound request evaluates its own credential or nothing — checked before the envelope is even loaded.
+    if (input.expectedCredentialId !== undefined && connection.activeCredentialId !== input.expectedCredentialId) return "superseded" as const;
     const credential = await connections.credentials.load(connection.activeCredentialId);
     if (credential?.connectionId !== connection.id) return "no_credential" as const;
     return { account, connection, credentialId: connection.activeCredentialId, envelope: credential.envelope };

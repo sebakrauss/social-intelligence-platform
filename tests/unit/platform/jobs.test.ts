@@ -123,7 +123,8 @@ describe("task registry", () => {
     expect(PRODUCTION_TASKS.tenant("connections.discover_assets")).toMatchObject({
       lane: 3,
       concurrency: { by: "subject", subject: "connection_id" },
-      subjects: ["connection_id"],
+      // Step 7G-H5.5-P12-C0-R1: a re-authorization's discovery may also name its credential-refresh continuation.
+      subjects: ["connection_id", "capability_refresh_credential_id"],
     });
     // Step 5F: the saga steps serialize per move; release_source alone carries the definer-derived account and counterpart.
     expect(PRODUCTION_TASKS.tenant("connections.move.release_source")).toMatchObject({
@@ -137,7 +138,8 @@ describe("task registry", () => {
     expect(PRODUCTION_TASKS.tenant("capability.evaluate_account")).toMatchObject({
       lane: 3,
       concurrency: { by: "subject", subject: "connected_account_id" },
-      subjects: ["connected_account_id"],
+      // Step 7G-H5.5-P12-C0-R1: a credential-bound request also names its credential.
+      subjects: ["connected_account_id", "credential_id"],
     });
     expect(PRODUCTION_TASKS.system("outbox.dispatch_sweep")?.schedule?.cron).toBe(SWEEPER_SCHEDULES.dispatchSweep);
     expect(PRODUCTION_TASKS.system("outbox.outcome_sweep")?.schedule?.cron).toBe(SWEEPER_SCHEDULES.outcomeSweep);

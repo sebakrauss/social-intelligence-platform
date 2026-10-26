@@ -15,6 +15,14 @@
  *   transient / rate_limited / outcome_unknown / keyring outage → rethrown: the job's retry policy handles it and
  *     nothing is changed or destroyed.
  * No raw provider response is stored: only identifiers, platform, class and a sanitized display name.
+ *
+ * Credential refresh (Step 7G-H5.5-P12-C0-R1): a discovery authority created by a successful RE-authorization carries
+ * a typed continuation — `{ kind: "credential", credentialId }`, the replacement credential, as the identifier-only
+ * subject CAPABILITY_REFRESH_SUBJECT — built by `discoveryRequest` and nowhere else. ONLY such a discovery, and only
+ * when it ends `validated` while that credential is STILL the connection's active credential, requests one
+ * capability evaluation per ACTIVE connected account of the connection (reason `credential`, deterministic key, in
+ * the same transaction as the R6 claim). The initial authorization, any other discovery and every non-validated
+ * result request nothing; the continuation is never inferred from status, credential version or history.
  */
 import type { ConnectionStatus } from "@/domain/connections";
 import { AppError } from "@/domain/errors";
@@ -29,9 +37,59 @@ import {
   type ConnectionEventReason,
   type ConnectionProblemCode,
 } from "../domain/model";
+import type { OutboxMessage } from "@/platform/outbox";
+import { capabilityEvaluationRequest } from "./capability-request";
 import { CredentialUnreadableError, type ConnectionWorkerStore, type DiscoveryProviders, type ProviderCredentialAccess } from "./ports";
 
 export const DISCOVER_ASSETS_TASK = "connections.discover_assets";
+
+/** The identifier-only subject carrying a discovery's credential-refresh continuation (absent: none). */
+export const CAPABILITY_REFRESH_SUBJECT = "capability_refresh_credential_id";
+
+/** What a discovery does for capabilities once it validates: nothing, or refresh them for one replacement credential. */
+export type CapabilityRefresh = { readonly kind: "credential"; readonly credentialId: string } | null;
+
+/**
+ * The ONE builder of a discovery authority (`connections.discover_assets`), keyed by the credential it validates.
+ * `capabilityRefresh` is set only by a successful re-authorization; every other caller passes null.
+ */
+export function discoveryRequest(input: {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly workspaceId: string;
+  readonly connectionId: string;
+  readonly credentialId: string;
+  readonly capabilityRefresh: CapabilityRefresh;
+  readonly correlationId: string;
+  readonly initiator: OutboxMessage["initiator"];
+  readonly createdAt: Date;
+}): OutboxMessage {
+  // The continuation can only name the credential this discovery validates: never another one.
+  if (input.capabilityRefresh !== null && input.capabilityRefresh.credentialId !== input.credentialId) throw new TypeError("capability refresh must name the validated credential");
+  return {
+    id: input.id,
+    topic: DISCOVER_ASSETS_TASK,
+    organizationId: input.organizationId,
+    workspaceId: input.workspaceId,
+    subjectIds:
+      input.capabilityRefresh === null
+        ? { connection_id: input.connectionId }
+        : { connection_id: input.connectionId, [CAPABILITY_REFRESH_SUBJECT]: input.capabilityRefresh.credentialId },
+    correlationId: input.correlationId,
+    initiator: input.initiator,
+    dispatchKey: `${DISCOVER_ASSETS_TASK}:${input.connectionId}:${input.credentialId}`,
+    createdAt: input.createdAt,
+  };
+}
+
+/** A run's continuation, from its validated identifier subjects (the payload parser already checked every value is a UUID). */
+export function capabilityRefreshOf(subjectIds: Readonly<Record<string, string>>): CapabilityRefresh {
+  const credentialId = subjectIds[CAPABILITY_REFRESH_SUBJECT];
+  return credentialId === undefined ? null : { kind: "credential", credentialId };
+}
+
+/** What the credential refresh did on a validated discovery (null: the discovery carried none). */
+export type CapabilityRefreshResult = null | { readonly kind: "superseded" } | { readonly kind: "requested"; readonly requested: number; readonly alreadyRequested: number };
 
 export interface DiscoveryDependencies {
   /** Runs `work` in a fresh worker transaction bound to the job's single workspace. */
@@ -47,11 +105,13 @@ export interface DiscoveryInput {
   readonly connectionId: string;
   readonly outboxId: string;
   readonly correlationId: CorrelationId;
+  /** Set only for a discovery a successful re-authorization created (see `discoveryRequest`). */
+  readonly capabilityRefresh: CapabilityRefresh;
 }
 
 export type DiscoveryOutcome =
   | { readonly kind: "skipped"; readonly reason: "not_found" | "no_credential" | "obsolete" | "already_applied" }
-  | { readonly kind: "validated"; readonly status: ConnectionStatus; readonly assets: number }
+  | { readonly kind: "validated"; readonly status: ConnectionStatus; readonly assets: number; readonly capabilityRefresh: CapabilityRefreshResult }
   | { readonly kind: "failed"; readonly status: ConnectionStatus; readonly problem: DiscoveryProblem };
 
 /** The definite discovery problems: each is both a connection problem code and a connection event reason. */
@@ -183,6 +243,37 @@ export async function discoverConnectionAssets(deps: DiscoveryDependencies, inpu
       validationReason(connection.status),
       changed ? ["connection.validated", "connection.status_changed"] : ["connection.validated"],
     );
-    return { kind: "validated", status: "ACTIVE", assets: result.assets.length };
+    const capabilityRefresh = await refreshCapabilities(store, deps, input, connection, now);
+    return { kind: "validated", status: "ACTIVE", assets: result.assets.length, capabilityRefresh };
   });
+}
+
+/**
+ * The credential refresh of a validated discovery, inside its transaction (after the R6 claim): only for a continuation,
+ * only while its credential is still active — a replaced one requests nothing (`superseded`) — and one request per
+ * ACTIVE account of THIS connection, each under its deterministic key (a repeat is `alreadyRequested`).
+ */
+async function refreshCapabilities(store: ConnectionWorkerStore, deps: DiscoveryDependencies, input: DiscoveryInput, connection: Connection, now: Date): Promise<CapabilityRefreshResult> {
+  const refresh = input.capabilityRefresh;
+  if (refresh === null) return null;
+  if (connection.activeCredentialId !== refresh.credentialId) return { kind: "superseded" };
+  let requested = 0;
+  let alreadyRequested = 0;
+  for (const account of await store.connectedAccounts.listActiveForConnection(connection.id)) {
+    const outcome = await store.capabilityRequests.requestOnce(
+      capabilityEvaluationRequest({
+        id: deps.newId(),
+        organizationId: connection.organizationId,
+        workspaceId: connection.workspaceId,
+        connectedAccountId: account.id,
+        reason: { kind: "credential", credentialId: refresh.credentialId },
+        correlationId: input.correlationId,
+        initiator: { type: "system" },
+        createdAt: now,
+      }),
+    );
+    if (outcome === "appended") requested += 1;
+    else alreadyRequested += 1;
+  }
+  return { kind: "requested", requested, alreadyRequested };
 }

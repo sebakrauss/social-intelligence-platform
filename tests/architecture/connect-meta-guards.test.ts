@@ -133,6 +133,8 @@ describe("Managed accounts (Step 7G-H5): local configuration only", () => {
       // Step 7G-H5.5-P2-B1: the explicit recovery request (reason reevaluation, keyed by its REEVALUATION_REQUESTED event).
       "modules/connections/application/capability-reevaluation.ts",
       "modules/connections/application/capability-request.ts",
+      // Step 7G-H5.5-P12-C0-R1: the credential refresh of a re-authorization's validated discovery (reason credential).
+      "modules/connections/application/discovery.ts",
       "modules/connections/application/moves.ts",
       COMMAND,
     ]);

@@ -21,8 +21,10 @@
  */
 import { randomUUID } from "node:crypto";
 import {
+  CAPABILITY_EVALUATION_CREDENTIAL_SUBJECT,
   CredentialCodecError,
   CredentialUnreadableError,
+  capabilityRefreshOf,
   decodeProviderCredential,
   discoverConnectionAssets,
   refreshAccountCapabilities,
@@ -214,6 +216,8 @@ export async function runDiscoverAssets(context: TenantStepJobContext, base?: Jo
     connectionId,
     outboxId: context.payload.outboxId,
     correlationId,
+    // The continuation a successful re-authorization put on THIS authority (Step 7G-H5.5-P12-C0-R1); never inferred.
+    capabilityRefresh: capabilityRefreshOf(context.payload.subjectIds),
   });
 }
 
@@ -221,6 +225,8 @@ export async function runDiscoverAssets(context: TenantStepJobContext, base?: Jo
 export async function runEvaluateAccountCapabilities(context: TenantStepJobContext, base?: JobComposition): Promise<CapabilityRefreshOutcome> {
   const workspaceId = parseWorkspaceId(context.payload.workspaceId);
   const connectedAccountId = context.payload.subjectIds["connected_account_id"];
+  // A credential-bound request (Step 7G-H5.5-P12-C0-R1) evaluates only while its credential is still active.
+  const expectedCredentialId = context.payload.subjectIds[CAPABILITY_EVALUATION_CREDENTIAL_SUBJECT];
   if (workspaceId === undefined || connectedAccountId === undefined) throw new NonRetryableJobError("invalid_payload");
   const resolved = base ?? (composition ??= composeJobProviders(process.env));
   return refreshAccountCapabilities(
@@ -231,6 +237,6 @@ export async function runEvaluateAccountCapabilities(context: TenantStepJobConte
       clock: () => new Date(),
       environment: process.env,
     },
-    { workspaceId, connectedAccountId },
+    expectedCredentialId === undefined ? { workspaceId, connectedAccountId } : { workspaceId, connectedAccountId, expectedCredentialId },
   );
 }

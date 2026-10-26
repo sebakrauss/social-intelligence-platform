@@ -68,10 +68,15 @@ export {
   type RemovalOutput,
 } from "./application/management";
 export {
+  CAPABILITY_REFRESH_SUBJECT,
   DISCOVER_ASSETS_TASK,
+  capabilityRefreshOf,
   discoverConnectionAssets,
+  discoveryRequest,
   problemFor,
   sanitizeDisplayName,
+  type CapabilityRefresh,
+  type CapabilityRefreshResult,
   type DiscoveryDependencies,
   type DiscoveryInput,
   type DiscoveryOutcome,
@@ -79,7 +84,7 @@ export {
 } from "./application/discovery";
 export { CredentialCodecError, decodeProviderCredential, encodeProviderCredential } from "./application/credential-codec";
 export { refreshAccountCapabilities, type CapabilityRefreshDependencies, type CapabilityRefreshOutcome } from "./application/capability-refresh";
-export { capabilityEvaluationDispatchKey, capabilityEvaluationRequest, type EvaluationReason } from "./application/capability-request";
+export { CAPABILITY_EVALUATION_CREDENTIAL_SUBJECT, capabilityEvaluationDispatchKey, capabilityEvaluationRequest, type EvaluationReason } from "./application/capability-request";
 export { CAPABILITY_RECONCILE_MAX_BATCH, requestCapabilityReevaluations, type CapabilityReconcileOutcome } from "./application/capability-reconcile";
 export {
   CAPABILITY_REEVALUATION_COOLDOWN_MS,
