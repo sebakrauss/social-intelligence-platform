@@ -1001,17 +1001,26 @@ connected_account_id }` (no provider, content or comment id, no cursor); pinned 
 tier, Node 22, no staging stub, KMS keyring; one task attempt, one KMS attempt, its own queue of one, 120 s; writes
 nothing.
 
-Sequence, ONE credential opening, window [now − 30 days, now), first provider page of each list: listContent → the
-FIRST listed item → listInteractions on it → getInteraction of the FIRST listed comment and (Facebook only) the FIRST
-listed reply. Each re-read is correlated on identity only (interaction, content, kind, author and parent refs — never
-text, name, handle or visibility). Instagram never re-reads a reply: its slice cannot prove one.
+Sequence, ONE credential opening, window [now − 30 days, now), first provider page of each list: listContent → a
+BOUNDED candidate scan (Step 7G-H5.5-P12-C4): listInteractions on the first, then the next in-window item of that one
+content page, in provider order, for at most `READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT` = 3 items; the FIRST
+candidate with at least one interaction is selected, a provider error ends the scan (fail closed), and with none the run
+is `INCONCLUSIVE_EMPTY_INTERACTIONS` → getInteraction of the selected candidate's FIRST listed comment and (Facebook
+only) its FIRST listed reply. The output adds `candidateLimit`, `candidatesInspected` and `selectedCandidatePosition`
+(1-based, or null) — counts and positions only. Why: LIVE runs P12-C2/C3 always took position 1 of three in-window
+posts, a newer post without interactions, and never reached the prepared one. Each re-read is correlated on identity
+only (interaction, content, kind, author and parent refs — never text, name, handle or visibility).
+Instagram never re-reads a reply: its slice cannot prove one.
 
-| Path | Facebook Meta GETs | Instagram Meta GETs |
+| Path (k = candidates inspected, 1 ≤ k ≤ 3) | Facebook Meta GETs | Instagram Meta GETs |
 |---|---|---|
 | no content | 2 | 1 |
-| content, no interactions | 4 | 2 |
-| comment(s) only | 6 | 3 |
-| comment and reply | 8 | — |
+| content, no interactions on any of the k candidates | 2 + 2k (max 8) | 1 + k (max 4) |
+| comment(s) only on candidate k | 4 + 2k (max 10) | 2 + k (max 5) |
+| comment and reply on candidate k | 6 + 2k (max **12**) | — |
+
+Worst case: Facebook 2·(1 + N + 2) = **12**, Instagram 1 + N + 1 = **5**, with N = 3. No cursor is ever sent and no
+next page is ever fetched.
 
 **Evidence eligibility.** `evidenceInteractionKinds` = the canonical kinds both listed and re-read with full
 correlation, non-null only when it contains `comment` and every structural check held. Facebook comment-only →

@@ -35,6 +35,7 @@ import {
   READ_INTERACTIONS_VALIDATION_ACCOUNT_KINDS,
   READ_INTERACTIONS_VALIDATION_ACKNOWLEDGEMENT,
   READ_INTERACTIONS_VALIDATION_AWS_ATTEMPTS,
+  READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT,
   READ_INTERACTIONS_VALIDATION_FAILURES,
   READ_INTERACTIONS_VALIDATION_META_REQUESTS_PER_OPERATION,
   READ_INTERACTIONS_VALIDATION_PLATFORMS,
@@ -117,6 +118,8 @@ interface Graph {
   readonly contents?: unknown;
   readonly comments?: unknown;
   readonly commentsStatus?: number;
+  /** Per content item (post or media id): its comments page and status, overriding `comments`/`commentsStatus` (Step 7G-H5.5-P12-C4). */
+  readonly commentsByContent?: Readonly<Record<string, { readonly body: unknown; readonly status?: number }>>;
   readonly nodes?: Readonly<Record<string, unknown>>;
 }
 
@@ -131,7 +134,10 @@ function metaWorld(graph: Graph) {
     if (fields === "access_token") return json(200, { id: PAGE, access_token: PAGE_TOKEN });
     if (parsed.pathname.endsWith("/published_posts")) return json(200, graph.contents ?? withNext([post(POST)]));
     if (fields === META_INSTAGRAM_MEDIA_FIELDS) return json(200, graph.contents ?? { data: [media(MEDIA)] });
-    if (segments[1] === "comments" && (fields === META_FACEBOOK_COMMENT_FIELDS || fields === META_INSTAGRAM_COMMENT_FIELDS)) return json(graph.commentsStatus ?? 200, graph.comments ?? { data: [] });
+    if (segments[1] === "comments" && (fields === META_FACEBOOK_COMMENT_FIELDS || fields === META_INSTAGRAM_COMMENT_FIELDS)) {
+      const own = (graph.commentsByContent ?? {})[segments[0] ?? ""];
+      return own === undefined ? json(graph.commentsStatus ?? 200, graph.comments ?? { data: [] }) : json(own.status ?? 200, own.body);
+    }
     if (fields === META_FACEBOOK_COMMENT_NODE_FIELDS || fields === META_INSTAGRAM_COMMENT_FIELDS) {
       const node = (graph.nodes ?? {})[segments[0] ?? ""];
       return node === undefined ? json(400, { error: { code: 100, error_subcode: 33, message: BODY_MARKER } }) : json(200, node);
@@ -207,7 +213,7 @@ async function refused(promise: Promise<unknown>): Promise<ReadInteractionsValid
   throw new Error("expected the diagnostic to refuse");
 }
 
-const OUTCOME_KEYS = ["accountKind", "authorization", "comment", "content", "evidenceInteractionKinds", "expectedMetaRequests", "graphVersion", "interactionKindsObserved", "interactionKindsValidated", "interactions", "maxListPages", "platform", "positiveEvidenceEligible", "reply", "result", "stages", "windowDays"];
+const OUTCOME_KEYS = ["accountKind", "authorization", "candidateLimit", "candidatesInspected", "comment", "content", "evidenceInteractionKinds", "expectedMetaRequests", "graphVersion", "interactionKindsObserved", "interactionKindsValidated", "interactions", "maxListPages", "platform", "positiveEvidenceEligible", "reply", "result", "selectedCandidatePosition", "stages", "windowDays"];
 const CONTENT_KEYS = ["allItemsFromManagedAccount", "error", "itemCount", "selectedContentKind", "selectedSource", "succeeded"];
 const INTERACTIONS_KEYS = ["allOnSelectedContent", "attempted", "authorRoles", "commentCount", "error", "inWindowItemCount", "itemCount", "pagination", "parentShapeConsistent", "replyCount", "succeeded", "visibility"];
 const PAIR_KEYS = ["attempted", "authorCorrelated", "contentCorrelated", "correlated", "error", "kindCorrelated", "observed", "parentCorrelated", "refCorrelated", "succeeded"];
@@ -229,6 +235,11 @@ function expectOutcomeSchema(outcome: ReadInteractionsValidationOutcome): void {
   expect(Object.keys(outcome.interactions.visibility).sort()).toEqual([...INTERACTION_VISIBILITY].sort());
   expect(outcome.positiveEvidenceEligible).toBe(outcome.evidenceInteractionKinds !== null);
   expect(outcome.expectedMetaRequests).toBe(READ_INTERACTIONS_VALIDATION_META_REQUESTS_PER_OPERATION[outcome.platform] * outcome.stages.length);
+  // The scan is bounded and its counters agree with the stages it reached (Step 7G-H5.5-P12-C4).
+  expect(outcome.candidateLimit).toBe(READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT);
+  expect(outcome.candidatesInspected).toBe(outcome.stages.filter((stage) => stage === "list_interactions").length);
+  expect(outcome.candidatesInspected).toBeLessThanOrEqual(READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT);
+  expect(outcome.selectedCandidatePosition === null || (outcome.selectedCandidatePosition >= 1 && outcome.selectedCandidatePosition <= outcome.candidatesInspected)).toBe(true);
   const walk = (value: unknown, at: string): void => {
     if (typeof value === "string") expect(CLOSED_STRINGS.has(value), `${at}=${value}`).toBe(true);
     else if (Array.isArray(value)) value.forEach((item, i) => { walk(item, `${at}[${String(i)}]`); });
@@ -508,6 +519,124 @@ describe("Instagram: /media → /comments → the comment node, with the User to
     const outcome = await ig({ comments: { error: { code: 200, message: BODY_MARKER } }, commentsStatus: 403 }).run();
     expectOutcomeSchema(outcome);
     expect([outcome.result, outcome.authorization, outcome.expectedMetaRequests]).toEqual(["PERMISSION_MISSING", "PERMISSION_MISSING_OBSERVED", 2]);
+  });
+});
+
+// ── Bounded candidate scan (Step 7G-H5.5-P12-C4) ─────────────────────────────────────────────────────────────
+
+describe("the bounded candidate scan: the first in-window content item WITH an interaction, at most CANDIDATE_LIMIT", () => {
+  const P1 = `${PAGE}_990000000000101`;
+  const P2 = `${PAGE}_990000000000102`;
+  const P3 = `${PAGE}_990000000000103`;
+  const P4 = `${PAGE}_990000000000104`;
+  const C2 = "990000000000102_770000000000201";
+  const R2 = "990000000000102_770000000000202";
+  const C3 = "990000000000103_770000000000301";
+  const R3 = "990000000000103_770000000000302";
+  const M1 = "17900000000000101";
+  const M2 = "17900000000000102";
+  const IGC2 = "17950000000000201";
+  const posts = (...ids: string[]) => ({ data: ids.map(post) });
+  const empty = { body: { data: [] } };
+  const commentsOf = (graph: Graph): string[] => graph.commentsByContent === undefined ? [] : Object.keys(graph.commentsByContent);
+  const commentListCalls = (h: ReturnType<typeof harness>) => h.world.calls.filter((url) => url.pathname.endsWith("/comments")).map((url) => decodeURIComponent(url.pathname.split("/")[2] ?? ""));
+  const fbOn = (postId: string, commentId: string, replyId?: string): NonNullable<Graph["nodes"]> => ({
+    [commentId]: fbComment(commentId, { object: { id: postId } }),
+    ...(replyId === undefined ? {} : { [replyId]: { ...fbReply(replyId, commentId), object: { id: postId } } }),
+  });
+
+  it("is a fixed limit of 3 content candidates", () => {
+    expect(READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT).toBe(3);
+  });
+
+  it("position 1 has no interactions, position 2 has comment + reply → position 2 is selected; full evidence; 10 GETs", async () => {
+    const graph: Graph = { contents: posts(P1, P2, P3), commentsByContent: { [P1]: empty, [P2]: { body: { data: [fbComment(C2), fbReply(R2, C2)] } } }, nodes: fbOn(P2, C2, R2) };
+    const h = harness(graph);
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.result, outcome.selectedCandidatePosition, outcome.candidatesInspected, outcome.evidenceInteractionKinds]).toEqual(["READ_INTERACTIONS_LIST_AND_GET_SUCCEEDED", 2, 2, ["comment", "reply"]]);
+    expect([outcome.stages, outcome.expectedMetaRequests, h.world.calls.length]).toEqual([["list_content", "list_interactions", "list_interactions", "get_comment", "get_reply"], 10, 10]);
+    // The scan stops at the selected candidate: position 3 is never listed.
+    expect(commentListCalls(h)).toEqual([P1, P2]);
+    expect(outcome.interactions).toMatchObject({ itemCount: 2, commentCount: 1, replyCount: 1, allOnSelectedContent: true });
+  });
+
+  it("Facebook worst case: positions 1 and 2 empty, position 3 has comment + reply → 12 GETs (2·(1 + N + 2)), never more", async () => {
+    const graph: Graph = { contents: posts(P1, P2, P3, P4), commentsByContent: { [P1]: empty, [P2]: empty, [P3]: { body: { data: [fbComment(C3), fbReply(R3, C3)] } } }, nodes: fbOn(P3, C3, R3) };
+    const h = harness(graph);
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.result, outcome.selectedCandidatePosition, outcome.expectedMetaRequests, h.world.calls.length]).toEqual(["READ_INTERACTIONS_LIST_AND_GET_SUCCEEDED", 3, 12, 12]);
+    expect(commentListCalls(h)).toEqual([P1, P2, P3]);
+  });
+
+  it("all N candidates empty → INCONCLUSIVE_EMPTY_INTERACTIONS; the (N+1)th item is never listed", async () => {
+    const graph: Graph = { contents: posts(P1, P2, P3, P4), commentsByContent: { [P1]: empty, [P2]: empty, [P3]: empty, [P4]: { body: { data: [fbComment(C2)] } } } };
+    const h = harness(graph);
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.result, outcome.selectedCandidatePosition, outcome.candidatesInspected, outcome.evidenceInteractionKinds]).toEqual(["INCONCLUSIVE_EMPTY_INTERACTIONS", null, 3, null]);
+    expect([outcome.expectedMetaRequests, h.world.calls.length]).toEqual([8, 8]);
+    expect(commentListCalls(h)).toEqual([P1, P2, P3]);
+    expect(commentsOf(graph)).toContain(P4); // present in the world, deliberately never reached
+  });
+
+  it("the bound holds however many items the content page carries (10 empty posts → exactly 3 comment lists)", async () => {
+    const ids = Array.from({ length: 10 }, (_v, i) => `${PAGE}_9900000000002${String(i).padStart(2, "0")}`);
+    const h = harness({ contents: posts(...ids), comments: { data: [] } });
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.content.itemCount, outcome.candidatesInspected, commentListCalls(h).length, outcome.expectedMetaRequests]).toEqual([10, 3, 3, 8]);
+  });
+
+  it("a comment without a reply on the selected Facebook candidate → INCONCLUSIVE_COMMENT_ONLY (limited evidence [comment])", async () => {
+    const graph: Graph = { contents: posts(P1, P2), commentsByContent: { [P1]: empty, [P2]: { body: { data: [fbComment(C2)] } } }, nodes: fbOn(P2, C2) };
+    const outcome = await harness(graph).run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.result, outcome.selectedCandidatePosition, outcome.evidenceInteractionKinds, outcome.expectedMetaRequests]).toEqual(["INCONCLUSIVE_COMMENT_ONLY", 2, ["comment"], 8]);
+  });
+
+  it("Instagram: media 1 has no comments, media 2 has one → media 2 selected; 4 GETs; worst case 5 (1 + N + 1)", async () => {
+    const two: Graph = { contents: { data: [media(M1), media(M2)] }, commentsByContent: { [M1]: empty, [M2]: { body: { data: [igComment(IGC2, { media: { id: M2 } })] } } }, nodes: { [IGC2]: igComment(IGC2, { media: { id: M2 } }) } };
+    const h = harness(two, { target: IG_FOUND });
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.result, outcome.selectedCandidatePosition, outcome.evidenceInteractionKinds, outcome.expectedMetaRequests, h.world.calls.length]).toEqual(["READ_INTERACTIONS_LIST_AND_GET_SUCCEEDED", 2, ["comment"], 4, 4]);
+    const M3 = "17900000000000103";
+    const IGC3 = "17950000000000301";
+    const worst: Graph = { contents: { data: [media(M1), media(M2), media(M3)] }, commentsByContent: { [M1]: empty, [M2]: empty, [M3]: { body: { data: [igComment(IGC3, { media: { id: M3 } })] } } }, nodes: { [IGC3]: igComment(IGC3, { media: { id: M3 } }) } };
+    const w = harness(worst, { target: IG_FOUND });
+    const worstOutcome = await w.run();
+    expectOutcomeSchema(worstOutcome);
+    expect([worstOutcome.selectedCandidatePosition, worstOutcome.expectedMetaRequests, w.world.calls.length]).toEqual([3, 5, 5]);
+  });
+
+  it("a provider error during the scan fails closed: PROVIDER_FAILURE, no later candidate, never evidence", async () => {
+    const graph: Graph = { contents: posts(P1, P2, P3), commentsByContent: { [P1]: empty, [P2]: { body: `<html>${BODY_MARKER}</html>`, status: 502 }, [P3]: { body: { data: [fbComment(C3)] } } }, nodes: fbOn(P3, C3) };
+    const h = harness(graph);
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.result, outcome.selectedCandidatePosition, outcome.candidatesInspected, outcome.evidenceInteractionKinds, outcome.interactions.succeeded]).toEqual(["PROVIDER_FAILURE", null, 2, null, false]);
+    expect(commentListCalls(h)).toEqual([P1, P2]);
+  });
+
+  it("a permission error during the scan → PERMISSION_MISSING (read_interactions), no later candidate", async () => {
+    const graph: Graph = { contents: posts(P1, P2, P3), commentsByContent: { [P1]: empty, [P2]: { body: { error: { code: 10, message: BODY_MARKER } }, status: 403 } } };
+    const h = harness(graph);
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.result, outcome.authorization, outcome.interactions.error, outcome.candidatesInspected]).toEqual(["PERMISSION_MISSING", "PERMISSION_MISSING_OBSERVED", { kind: "permission_missing", detail: "read_interactions" }, 2]);
+    expect(commentListCalls(h)).toEqual([P1, P2]);
+  });
+
+  it("no pagination is followed anywhere in the scan: no cursor is sent, no next URL is fetched", async () => {
+    const graph: Graph = { contents: withNext([post(P1), post(P2), post(P3)]), commentsByContent: { [P1]: { body: withNext([]) }, [P2]: { body: withNext([]) }, [P3]: { body: withNext([]) } } };
+    const h = harness(graph);
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect(h.world.calls.some((url) => url.searchParams.has("after"))).toBe(false);
+    expect(h.world.calls.some((url) => url.href.includes("/next"))).toBe(false);
+    expect([outcome.result, outcome.interactions.pagination, outcome.candidatesInspected]).toEqual(["INCONCLUSIVE_EMPTY_INTERACTIONS", "more", 3]);
   });
 });
 

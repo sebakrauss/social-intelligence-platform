@@ -27,8 +27,12 @@
  *
  * Sequence (ONE credential opening, ONE KMS Decrypt; window [now − 30 days, now); first provider page of each list):
  *   1. listContent; with no item the run ends (INCONCLUSIVE_EMPTY_CONTENT) — never an arbitrary target;
- *   2. listInteractions of the FIRST listed content item; with no interaction the run ends (INCONCLUSIVE_EMPTY_INTERACTIONS);
- *   3. getInteraction of the FIRST listed comment, if any, and of the FIRST listed reply, if any (each re-read once).
+ *   2. a BOUNDED candidate scan (Step 7G-H5.5-P12-C4): listInteractions of the first, then the next in-window content
+ *      item of that ONE page, in provider order, for at most READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT items — the
+ *      FIRST candidate with at least one interaction is selected; a provider error ends the scan (fail closed); with
+ *      no interaction on any inspected candidate the run ends (INCONCLUSIVE_EMPTY_INTERACTIONS);
+ *   3. getInteraction of the selected candidate's FIRST listed comment, if any, and FIRST listed reply, if any (each
+ *      re-read once).
  * Each re-read is correlated with the listed object on identity only — interaction ref, content ref, kind, author ref
  * and parent ref (never text, name, handle or visibility, which may legitimately change).
  *
@@ -37,7 +41,8 @@
  * INCONCLUSIVE_COMMENT_ONLY for reply support) or ["comment", "reply"]; Instagram ["comment"] only (its first slice
  * reads no replies). A reply without a comment is never evidence (INCONCLUSIVE_REPLY_WITHOUT_COMMENT). Nothing is
  * inferred from the offline implementation. Meta GETs per operation: Facebook 2 (the port derives a Page token
- * before each read), Instagram 1 (the User token directly) — Facebook 2/4/6/8, Instagram 1/2/3 for the stages reached.
+ * before each read), Instagram 1 (the User token directly) — at most Facebook 2·(1 + N + 2) = 12 and Instagram
+ * 1 + N + 1 = 5 with N = 3 candidates (expectedMetaRequests = per-operation GETs × stages reached).
  *
  * Writes NOTHING: no capability profile, catalog, evidence, outbox, ingestion, audit or effect claim (the lookup is
  * read-only and its write dependencies refuse). Provider errors are reported as closed classes, never thrown provider
@@ -93,6 +98,12 @@ export const READ_INTERACTIONS_VALIDATION_TRIGGER_ENVIRONMENT = "PRODUCTION";
 /** One window [now − 30 days, now) for both lists, and at most ONE provider page of each. */
 export const READ_INTERACTIONS_VALIDATION_WINDOW_DAYS = 30;
 export const READ_INTERACTIONS_VALIDATION_MAX_LIST_PAGES = 1;
+/**
+ * Content candidates the scan may inspect (Step 7G-H5.5-P12-C4): the first N in-window items of the ONE content page, in
+ * provider order — the smallest N that covers the three in-window posts observed LIVE (P12-C2/C3), so a newer post
+ * without interactions can no longer hide the prepared one. Never a cursor, never a second page.
+ */
+export const READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT = 3;
 /** The platforms the diagnostic reads (Meta content-bearing accounts) and the account kind each one is. */
 export const READ_INTERACTIONS_VALIDATION_PLATFORMS = ["facebook", "instagram"] as const;
 export type ReadInteractionsValidationPlatform = (typeof READ_INTERACTIONS_VALIDATION_PLATFORMS)[number];
@@ -215,6 +226,11 @@ export interface ReadInteractionsValidationOutcome {
   readonly graphVersion: typeof META_GRAPH_VERSION;
   readonly windowDays: typeof READ_INTERACTIONS_VALIDATION_WINDOW_DAYS;
   readonly maxListPages: typeof READ_INTERACTIONS_VALIDATION_MAX_LIST_PAGES;
+  readonly candidateLimit: typeof READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT;
+  /** Content candidates whose interactions were listed (0 when no content was listed). */
+  readonly candidatesInspected: number;
+  /** 1-based position, in the content page, of the candidate whose interactions were found; null when none had any. */
+  readonly selectedCandidatePosition: number | null;
   readonly stages: readonly ReadInteractionsStage[];
   /** The Meta GETs the implemented sequence made for the stages reached (READ_INTERACTIONS_VALIDATION_META_REQUESTS_PER_OPERATION × stages). */
   readonly expectedMetaRequests: number;
@@ -223,7 +239,7 @@ export interface ReadInteractionsValidationOutcome {
     readonly itemCount: number;
     /** Every listed item belongs to the managed account. */
     readonly allItemsFromManagedAccount: boolean | null;
-    /** The selected (first listed) item's normalized kind and reported source; null when nothing was selected. */
+    /** The reported candidate's normalized kind and reported source (the selected one, else the last inspected); null without content. */
     readonly selectedContentKind: ContentKind | null;
     readonly selectedSource: ContentSource | null;
     readonly error: ReadInteractionsErrorClass | null;
@@ -426,7 +442,7 @@ export async function runReadInteractionsValidation(
       const providerAccess = { credential, account: managed };
       const stages: ReadInteractionsStage[] = ["list_content"];
 
-      // 1. The content target: the FIRST listed item, never a caller-named one.
+      // 1. The content page: candidates are its in-window items in provider order, never a caller-named one.
       let contents: readonly ContentDto[] = [];
       let contentError: ReadInteractionsErrorClass | null = null;
       try {
@@ -435,15 +451,18 @@ export async function runReadInteractionsValidation(
         if (!isProviderError(error)) throw error;
         contentError = errorClassOf(error);
       }
-      const selected = contents[0];
-      const content = Object.freeze({
-        succeeded: contentError === null,
-        itemCount: contents.length,
-        allItemsFromManagedAccount: contentError === null ? contents.every((item) => sameProviderObject(item.account, managed)) : null,
-        selectedContentKind: selected?.contentKind ?? null,
-        selectedSource: selected?.reportedSource ?? null,
-        error: contentError,
-      });
+      /** The content facts, about the reported candidate (the selected one, else the last inspected, else the first listed). */
+      const contentFacts = (reported: ContentDto | undefined): ReadInteractionsValidationOutcome["content"] =>
+        Object.freeze({
+          succeeded: contentError === null,
+          itemCount: contents.length,
+          allItemsFromManagedAccount: contentError === null ? contents.every((item) => sameProviderObject(item.account, managed)) : null,
+          selectedContentKind: reported?.contentKind ?? null,
+          selectedSource: reported?.reportedSource ?? null,
+          error: contentError,
+        });
+      let candidatesInspected = 0;
+      let selectedCandidatePosition: number | null = null;
 
       const outcome = (fields: {
         readonly result: ReadInteractionsValidationResult;
@@ -452,6 +471,7 @@ export async function runReadInteractionsValidation(
         readonly evidence: readonly InteractionKind[] | null;
         readonly errors: readonly (ReadInteractionsErrorClass | null)[];
         readonly anySuccess: boolean;
+        readonly content: ReadInteractionsValidationOutcome["content"];
         readonly interactions: ReadInteractionsValidationOutcome["interactions"];
         readonly comment: ReadInteractionsPairOutcome;
         readonly reply: ReadInteractionsPairOutcome;
@@ -468,9 +488,12 @@ export async function runReadInteractionsValidation(
           graphVersion: META_GRAPH_VERSION,
           windowDays: READ_INTERACTIONS_VALIDATION_WINDOW_DAYS,
           maxListPages: READ_INTERACTIONS_VALIDATION_MAX_LIST_PAGES,
+          candidateLimit: READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT,
+          candidatesInspected,
+          selectedCandidatePosition,
           stages: Object.freeze([...stages]),
           expectedMetaRequests: perOperation * stages.length,
-          content,
+          content: fields.content,
           interactions: fields.interactions,
           comment: fields.comment,
           reply: fields.reply,
@@ -481,27 +504,42 @@ export async function runReadInteractionsValidation(
         authorRoles: Object.freeze(histogram(AUTHOR_ROLES)), visibility: Object.freeze(histogram(INTERACTION_VISIBILITY)), error: null,
       });
       const none = Object.freeze([] as InteractionKind[]);
-      if (contentError !== null || selected === undefined) {
+      const [firstListed] = contents;
+      if (contentError !== null || firstListed === undefined) {
         return outcome({
           result: contentError === null ? "INCONCLUSIVE_EMPTY_CONTENT" : failureResult(contentError),
           observed: none, validated: none, evidence: null, errors: [contentError], anySuccess: contentError === null,
-          interactions: NOT_LISTED, comment: NOT_OBSERVED, reply: NOT_OBSERVED,
+          content: contentFacts(firstListed), interactions: NOT_LISTED, comment: NOT_OBSERVED, reply: NOT_OBSERVED,
         });
       }
 
-      // 2. The selected content's interactions: ONE provider page.
-      stages.push("list_interactions");
+      // 2. The bounded candidate scan: ONE provider page of interactions per candidate, at most CANDIDATE_LIMIT
+      //    candidates; the first with an interaction is selected; a provider error ends the scan (fail closed).
+      let selected: ContentDto = firstListed;
       let items: readonly InteractionDto[] = [];
       let pagination: "more" | "end" | null = null;
       let listError: ReadInteractionsErrorClass | null = null;
-      try {
-        const page = (await read.listInteractions(providerAccess, { kind: "content", content: selected.ref }, window, null)).data;
-        items = page.items;
-        pagination = page.next.kind;
-      } catch (error) {
-        if (!isProviderError(error)) throw error;
-        listError = errorClassOf(error);
+      for (const [index, candidate] of contents.slice(0, READ_INTERACTIONS_VALIDATION_CANDIDATE_LIMIT).entries()) {
+        stages.push("list_interactions");
+        candidatesInspected += 1;
+        selected = candidate;
+        try {
+          const page = (await read.listInteractions(providerAccess, { kind: "content", content: candidate.ref }, window, null)).data;
+          items = page.items;
+          pagination = page.next.kind;
+        } catch (error) {
+          if (!isProviderError(error)) throw error;
+          listError = errorClassOf(error);
+          items = [];
+          pagination = null;
+          break;
+        }
+        if (items.length > 0) {
+          selectedCandidatePosition = index + 1;
+          break;
+        }
       }
+      const content = contentFacts(selected);
       const listed = listError === null;
       const roles = histogram(AUTHOR_ROLES);
       const visibility = histogram(INTERACTION_VISIBILITY);
@@ -531,7 +569,7 @@ export async function runReadInteractionsValidation(
         return outcome({
           result: listed ? "INCONCLUSIVE_EMPTY_INTERACTIONS" : failureResult(listError ?? { kind: "permanent_rejected", detail: "unknown" }),
           observed, validated: none, evidence: null, errors: [listError], anySuccess: listed,
-          interactions, comment: NOT_OBSERVED, reply: NOT_OBSERVED,
+          content, interactions, comment: NOT_OBSERVED, reply: NOT_OBSERVED,
         });
       }
 
@@ -581,7 +619,7 @@ export async function runReadInteractionsValidation(
       const evidence = (result === "READ_INTERACTIONS_LIST_AND_GET_SUCCEEDED" || result === "INCONCLUSIVE_COMMENT_ONLY") && allObservedValidated && validated.includes("comment") ? validated : null;
       return outcome({
         result, observed, validated, evidence, errors: [listError, comment.error, reply.error], anySuccess: comment.succeeded === true || reply.succeeded === true,
-        interactions, comment, reply,
+        content, interactions, comment, reply,
       });
     });
   } catch (error) {
