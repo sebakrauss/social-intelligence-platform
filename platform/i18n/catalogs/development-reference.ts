@@ -74,6 +74,9 @@ export const developmentReferenceCatalog: Catalog = {
   "connections.settings.unavailable": "Connections aren't available right now. Try again in a moment.",
   "connections.meta.connect": "Connect Meta",
   "connections.meta.existing": "This workspace already has a Meta connection.",
+  "connections.reconnect.explainer":
+    "Reconnect asks Meta to authorize this same connection again, for example after you changed what Wrenkind may access in Meta. Your managed accounts stay as they are. Once Meta confirms and the connection is validated, Wrenkind requests a fresh capability check of those accounts.",
+  "connections.reconnect.submit": "Reconnect Meta",
   "connections.status.provider_unavailable": "Connecting Meta isn't available right now.",
   "connections.status.authorization_in_progress": "A Meta authorization you started is still in progress. Finish it, or try again in a few minutes.",
   "connections.status.authorization_start_failed": "Meta authorization couldn't start. Try again.",

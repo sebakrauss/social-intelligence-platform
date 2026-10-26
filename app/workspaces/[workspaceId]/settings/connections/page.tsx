@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { removeMetaConnectionAction, requestCapabilityRecheckAction, saveManagedAccountsAction, startMetaConnectionAction } from "@/server/connections/actions";
+import { reconnectMetaConnectionAction, removeMetaConnectionAction, requestCapabilityRecheckAction, saveManagedAccountsAction, startMetaConnectionAction } from "@/server/connections/actions";
 import {
   ASSET_PLATFORM_MESSAGES,
   CAPABILITY_RECHECK_OFFER_MESSAGES,
@@ -22,7 +22,11 @@ export const dynamic = "force-dynamic";
  * Connect Meta is one form posting the workspace id to a server action. Whether that button shows is UX only — the
  * atomic start decides. A Meta connection that isn't REMOVED (including a FAILED or DISCONNECTED one) blocks a fresh
  * connect; each has an inline Remove form (Step 7G-F4C) with a visible acknowledgement — a LOCAL removal that does not
- * revoke anything inside Meta. REMOVED ones show their status only. No reconnect here. Minimal and utilitarian.
+ * revoke anything inside Meta. REMOVED ones show their status only. Minimal and utilitarian.
+ *
+ * Reconnect Meta (Step 7G-H5.5-P12-C0-R2): each Meta connection that isn't REMOVED also has ONE Reconnect form posting
+ * the workspace and connection ids, which re-authorizes that same connection with Meta. The page names nothing else:
+ * no credential, evaluation or refresh — what follows a successful re-authorization is the backend's decision.
  *
  * Managed accounts (Step 7G-H5): an ACTIVE Meta connection lists its persisted discovered Facebook Pages and Instagram
  * professional accounts (never a live Meta read) with what this workspace manages now, kept visibly apart from the
@@ -69,6 +73,14 @@ export default async function WorkspaceConnectionsPage({
                     connectionId={connection.id}
                     assets={state.manageableAssets.filter((asset) => asset.connectionId === connection.id)}
                   />
+                ) : null}
+                {connection.provider === "meta" && connection.status !== "REMOVED" ? (
+                  <form action={reconnectMetaConnectionAction}>
+                    <input name="workspaceId" type="hidden" value={state.workspaceId} />
+                    <input name="connectionId" type="hidden" value={connection.id} />
+                    <p>{t("connections.reconnect.explainer")}</p>
+                    <button type="submit">{t("connections.reconnect.submit")}</button>
+                  </form>
                 ) : null}
                 {connection.provider === "meta" && connection.status !== "REMOVED" ? (
                   <form action={removeMetaConnectionAction}>

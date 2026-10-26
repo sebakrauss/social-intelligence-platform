@@ -81,7 +81,7 @@ describe("Managed accounts on the Connections page", () => {
     expect(checkbox(html, INSTAGRAM)).not.toMatch(/checked/);
     expect(checkbox(html, FACEBOOK)).toMatch(/name="discoveredAssetId"/);
     expect(html).toContain(`name="connectionId" value="${CONNECTION}"`);
-    expect(forms(html)).toBe(2); // Remove + Managed accounts (Connect Meta is closed by the existing connection)
+    expect(forms(html)).toBe(3); // Reconnect + Remove + Managed accounts (Connect Meta is closed by the existing connection)
     expect(html).not.toContain(text(t("connections.status.accounts_saved")));
   });
 
@@ -102,7 +102,7 @@ describe("Managed accounts on the Connections page", () => {
     expect(html).toContain(text(t("connections.accounts.empty")));
     expect(html).not.toContain(text(t("connections.accounts.save")));
     expect(html).not.toContain(text(t("connections.settings.unavailable")));
-    expect(forms(html)).toBe(1); // Remove only
+    expect(forms(html)).toBe(2); // Reconnect + Remove only
   });
 
   it("only an ACTIVE Meta connection offers Managed accounts", async () => {
@@ -244,5 +244,35 @@ describe("Capability re-check on the Connections page (Step 7G-H5.5-P2-B2)", () 
     const html = await render(hostile);
     expect(html).not.toContain("<b onclick");
     expect(html).toContain("&lt;b onclick=x&gt;n&lt;/b&gt;");
+  });
+});
+
+describe("Reconnect Meta on the Connections page (Step 7G-H5.5-P12-C0-R2)", () => {
+  /** The rendered Reconnect form (the one whose button says Reconnect), or undefined. */
+  const reconnectForm = (html: string): string | undefined =>
+    [...html.matchAll(/<form\b[\s\S]*?<\/form>/g)].map((match) => match[0]).find((form) => form.includes(text(t("connections.reconnect.submit"))));
+
+  it("every Meta connection that isn't REMOVED offers ONE Reconnect, posting only the workspace and that connection's ids", async () => {
+    for (const status of ["CONNECTING", "ACTIVE", "DEGRADED", "FAILED", "DISCONNECTED"] as const) {
+      const html = await render(ready(null, status));
+      const form = reconnectForm(html);
+      expect(form, status).toBeDefined();
+      expect([...(form ?? "").matchAll(/<input\b[^>]*>/g)].map((match) => match[0])).toEqual([
+        `<input type="hidden" name="workspaceId" value="${WS}"/>`,
+        `<input type="hidden" name="connectionId" value="${CONNECTION}"/>`,
+      ]);
+      expect(form).toContain(text(t("connections.reconnect.explainer")));
+      expect([...html.matchAll(new RegExp(text(t("connections.reconnect.submit")), "g"))]).toHaveLength(1);
+    }
+  });
+
+  it("a REMOVED connection, and the not-allowed / not-found / unavailable states, offer no Reconnect", async () => {
+    expect(reconnectForm(await render(ready(null, "REMOVED")))).toBeUndefined();
+    for (const kind of ["not_allowed", "workspace_not_found", "unavailable"] as const) expect(reconnectForm(await render({ kind }))).toBeUndefined();
+  });
+
+  it("the page names no credential, refresh marker or evaluation authority anywhere", async () => {
+    const html = await render(ready({ facebook: true, instagram: true }));
+    expect(html).not.toMatch(/credential_id|credentialId|capability_refresh|capabilityRefresh|evaluate_account|reauthorized/);
   });
 });

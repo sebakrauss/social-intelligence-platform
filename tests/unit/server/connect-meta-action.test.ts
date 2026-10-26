@@ -18,6 +18,7 @@ const WS = "3b241101-e2bb-4255-8caf-4136c566a962";
 const STATE = `v1.${WS}.${"A".repeat(43)}`;
 const DIALOG = `${META_DIALOG_URL}?client_id=synthetic-app&state=synthetic`;
 const SETTINGS = `/workspaces/${WS}/settings/connections`;
+const CONNECTION = "6f1c2e0a-8b3d-4c5e-9f70-112233445566";
 
 interface ActionTestState {
   auth: boolean;
@@ -76,7 +77,7 @@ vi.mock("@/server/connections/runtime", async (importOriginal) => {
   };
 });
 
-const { startMetaConnectionAction } = await import("@/server/connections/actions");
+const { reconnectMetaConnectionAction, startMetaConnectionAction } = await import("@/server/connections/actions");
 
 const form = (fields: Readonly<Record<string, string>>): FormData => {
   const data = new FormData();
@@ -188,5 +189,81 @@ describe("startMetaConnectionAction", () => {
     expect(location).toBe(`${SETTINGS}?status=unavailable`);
     expect(location).not.toMatch(/ECONNREFUSED|web_login|synthetic-password-marker|db\.internal|55P03/);
     expect(env.authorizationRequests).toBe(0);
+  });
+});
+
+describe("reconnectMetaConnectionAction (Step 7G-H5.5-P12-C0-R2)", () => {
+  const reconnectStart = { workspaceId: WS, correlationId: undefined, input: { provider: "meta", reconnectConnectionId: CONNECTION } };
+
+  it("targets the routed existing connection: the same start with it as the reconnect target, then the validated Meta dialog", async () => {
+    expect(await locationOf(reconnectMetaConnectionAction(form({ workspaceId: WS, connectionId: CONNECTION })))).toBe(DIALOG);
+    expect(env.requests).toEqual([reconnectStart]);
+    expect(env.authorizationRequests).toBe(1);
+  });
+
+  it("browser-supplied provider, credential, refresh marker, evaluation and redirect fields are ignored", async () => {
+    const hostile = form({
+      workspaceId: WS,
+      connectionId: CONNECTION,
+      provider: "simulator",
+      reconnectConnectionId: "00000000-0000-4000-8000-000000000000",
+      credentialId: "00000000-0000-4000-8000-000000000001",
+      credential_id: "00000000-0000-4000-8000-000000000001",
+      capability_refresh_credential_id: "00000000-0000-4000-8000-000000000001",
+      capabilityRefresh: "credential",
+      kind: "reauthorized",
+      redirect: "https://evil.example",
+      returnTo: "//evil.example",
+    });
+    expect(await locationOf(reconnectMetaConnectionAction(hostile))).toBe(DIALOG);
+    expect(env.requests).toEqual([reconnectStart]);
+    expect(JSON.stringify(env.requests)).not.toMatch(/credential|refresh|reauthorized|evil|simulator|0000-4000/);
+  });
+
+  it("a connection that isn't a UUID is connection_not_found without any start", async () => {
+    for (const connectionId of ["", "not-a-uuid", "../../admin", "https://evil.example"]) {
+      expect(await locationOf(reconnectMetaConnectionAction(form({ workspaceId: WS, connectionId })))).toBe(`${SETTINGS}?status=connection_not_found`);
+    }
+    expect(await locationOf(reconnectMetaConnectionAction(form({ workspaceId: WS })))).toBe(`${SETTINGS}?status=connection_not_found`);
+    expect([env.requests, env.authorizationRequests]).toEqual([[], 0]);
+  });
+
+  it("a foreign, missing, REMOVED or non-Meta connection (NOT_FOUND) reads as connection_not_found; other refusals are closed statuses; no URL is built", async () => {
+    const cases: [PipelineResult<StartOutcome>, string][] = [
+      [failed("NOT_FOUND"), "connection_not_found"],
+      [failed("PERMISSION_DENIED"), "not_allowed"],
+      [failed("INVALID_INPUT"), "provider_unavailable"],
+      [failed("CONFLICT"), "unavailable"],
+    ];
+    for (const [answer, status] of cases) {
+      env.answer = answer;
+      expect(await locationOf(reconnectMetaConnectionAction(form({ workspaceId: WS, connectionId: CONNECTION })))).toBe(`${SETTINGS}?status=${status}`);
+    }
+    expect(env.authorizationRequests).toBe(0);
+  });
+
+  it("signed-out and unverified callers can't reconnect; an invalid workspace fails closed to /onboarding", async () => {
+    env.answer = { status: "unauthenticated", correlationId: "c" };
+    expect(await locationOf(reconnectMetaConnectionAction(form({ workspaceId: WS, connectionId: CONNECTION })))).toBe("/sign-in");
+    env.answer = { status: "verification_required", correlationId: "c" };
+    expect(await locationOf(reconnectMetaConnectionAction(form({ workspaceId: WS, connectionId: CONNECTION })))).toBe("/sign-in?status=verification_required");
+    env.requests = [];
+    expect(await locationOf(reconnectMetaConnectionAction(form({ workspaceId: "not-a-uuid", connectionId: CONNECTION })))).toBe("/onboarding");
+    expect(env.requests).toEqual([]);
+    expect(env.authorizationRequests).toBe(0);
+  });
+
+  it("an adapter URL off Meta's dialog, or a failing composition, never leaves the app and leaks nothing", async () => {
+    env.url = "https://evil.example/v25.0/dialog/oauth?state=x";
+    expect(await locationOf(reconnectMetaConnectionAction(form({ workspaceId: WS, connectionId: CONNECTION })))).toBe(`${SETTINGS}?status=authorization_start_failed`);
+    env.throws = true;
+    const location = await locationOf(reconnectMetaConnectionAction(form({ workspaceId: WS, connectionId: CONNECTION })));
+    expect(location).toBe(`${SETTINGS}?status=unavailable`);
+    expect(location).not.toMatch(/ECONNREFUSED|web_login|synthetic-password-marker|db\.internal|55P03/);
+  });
+
+  it("Connect Meta is unchanged: it never carries a reconnect target", async () => {
+    expect(await locationOf(startMetaConnectionAction(form({ workspaceId: WS, connectionId: CONNECTION })))).toBe(DIALOG);
+    expect(env.requests).toEqual([{ workspaceId: WS, correlationId: undefined, input: { provider: "meta" } }]);
   });
 });

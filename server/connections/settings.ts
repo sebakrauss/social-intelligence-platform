@@ -6,6 +6,11 @@
  *   - Connect Meta runs the atomic start with the provider FIXED to "meta". The browser routes only the workspace id
  *     (untrusted; the pipeline resolves it live). Whether a fresh Meta connect is open is decided by that start under
  *     its lock; the page's view of it is UX only.
+ *   - Reconnect Meta (Step 7G-H5.5-P12-C0-R2) re-authorizes ONE existing Meta connection: the same atomic start with the
+ *     provider FIXED to "meta" and the routed connection id as its reconnect target. The browser routes only the
+ *     workspace and connection ids (untrusted; resolved live by the pipeline and RLS). Success keeps the same logical
+ *     connection (the completion replaces its credential); whether a capability refresh follows is decided by the
+ *     backend from that completion alone — nothing here names a credential, an evaluation or a continuation.
  *   - Remove Meta (Step 7G-F4C) runs connections.connection.remove with the expected provider FIXED to "meta", only
  *     after the visible acknowledgement; it is a LOCAL removal: Wrenkind deletes its stored credential and deactivates
  *     the connection's accounts. It does NOT revoke the authorization inside Meta.
@@ -177,6 +182,18 @@ export function connectOutcome(result: StartResult): ConnectOutcome {
 /** The fresh Meta start. The provider is this constant; nothing else from the browser but the routed workspace id. */
 export async function connectMeta(deps: ConnectionAuthorizationDependencies, workspaceId: unknown): Promise<ConnectOutcome> {
   return connectOutcome(await startConnectionAuthorization(deps, { workspaceId, provider: "meta" }));
+}
+
+/**
+ * Re-authorize an existing Meta connection. The provider is this constant; the browser routes only the workspace and
+ * connection ids (parsed here, resolved live by the pipeline and RLS). A connection that doesn't exist, isn't this
+ * workspace's, isn't Meta's, is REMOVED or isn't a UUID is the same `connection_not_found`; nothing is started for it.
+ */
+export async function reconnectMeta(deps: ConnectionAuthorizationDependencies, input: { readonly workspaceId: unknown; readonly connectionId: unknown }): Promise<ConnectOutcome> {
+  if (!isUuid(input.connectionId)) return { kind: "status", status: "connection_not_found" };
+  const result = await startConnectionAuthorization(deps, { workspaceId: input.workspaceId, provider: "meta", reconnectConnectionId: input.connectionId });
+  if (result.status === "error" && result.code === "NOT_FOUND") return { kind: "status", status: "connection_not_found" };
+  return connectOutcome(result);
 }
 
 /** The one acknowledgement value the Remove form submits. UX intent only: authorization is the pipeline's. */

@@ -6,6 +6,8 @@
  *
  *   connect   reads ONE value, the routed workspace id. The only external redirect is the authorization URL the
  *             orchestration has already matched to Meta's exact dialog endpoint.
+ *   reconnect reads the routed workspace id and ONE connection id (Step 7G-H5.5-P12-C0-R2): the same start as connect,
+ *             with that connection as the reconnect target. The only external redirect is the same validated Meta dialog.
  *   remove    reads the routed workspace id, the connection id and the visible acknowledgement. No external redirect.
  *   accounts  reads the routed workspace id, the connection id and the checked discovered-asset ids. No external
  *             redirect; no provider, KMS or job is reached.
@@ -23,7 +25,7 @@ import { createLogger, stdoutSink } from "@/platform/observability";
 import { requestAuth } from "@/server/auth/request-auth";
 import { workspaceConnectionsPath } from "@/server/routes";
 import { connectionAuthorizationRuntime } from "./runtime";
-import { connectMeta, removeMeta, requestCapabilityRecheck, saveManagedAccounts, type ConnectOutcome } from "./settings";
+import { connectMeta, reconnectMeta, removeMeta, requestCapabilityRecheck, saveManagedAccounts, type ConnectOutcome } from "./settings";
 import { connectionSettingsPipeline } from "./settings-runtime";
 
 const log = createLogger({ sink: stdoutSink, base: { module: "server.connections" } });
@@ -57,6 +59,13 @@ export async function startMetaConnectionAction(form: FormData): Promise<void> {
   // Not a workspace id at all: nothing to route to, nothing reflected.
   if (workspaceId === undefined) redirect("/onboarding");
   redirect(destination(await run("connect_meta", (auth) => connectMeta(connectionAuthorizationRuntime(auth), workspaceId)), workspaceId));
+}
+
+export async function reconnectMetaConnectionAction(form: FormData): Promise<void> {
+  const workspaceId = parseWorkspaceId(form.get("workspaceId"));
+  if (workspaceId === undefined) redirect("/onboarding");
+  const connectionId = form.get("connectionId");
+  redirect(destination(await run("reconnect_meta", (auth) => reconnectMeta(connectionAuthorizationRuntime(auth), { workspaceId, connectionId })), workspaceId));
 }
 
 export async function removeMetaConnectionAction(form: FormData): Promise<void> {

@@ -3,8 +3,9 @@
  * and server-only; the provider is fixed; Meta's endpoint expectation comes from server composition; the fresh-connection
  * lock exists only in the connections persistence boundary, transaction-scoped and bounded; Remove Meta (Step 7G-F4C)
  * reuses the existing remove command with the provider fixed, closes old fresh attempts only through one write-only
- * definer, and never calls Meta; there is still no reconnect surface. Managed accounts (Step 7G-H5) save the whole
- * checked set through one command with the provider fixed, from persisted discovery only: no provider, KMS or job.
+ * definer, and never calls Meta. Managed accounts (Step 7G-H5) save the whole checked set through one command with the
+ * provider fixed, from persisted discovery only: no provider, KMS or job. Reconnect Meta (Step 7G-H5.5-P12-C0-R2) is the
+ * same start with the routed connection as its reconnect target, and names no credential, evaluation or continuation.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -41,13 +42,17 @@ describe("Connect Meta surface (Step 7G-F4)", () => {
     }
   });
 
-  it("the actions are a server-action module; connect reads only workspaceId, remove only workspaceId + connectionId + acknowledgement; provider fixed to meta", () => {
+  it("the actions are a server-action module; connect reads only workspaceId, reconnect workspaceId + connectionId, remove workspaceId + connectionId + acknowledgement; provider fixed to meta", () => {
     expect(readFileSync(path.join(REPOSITORY_ROOT, ACTIONS), "utf8").startsWith('"use server";')).toBe(true);
     const actions = codeOf(ACTIONS);
-    const connect = actions.slice(actions.indexOf("export async function startMetaConnectionAction"), actions.indexOf("export async function removeMetaConnectionAction"));
+    const connect = actions.slice(actions.indexOf("export async function startMetaConnectionAction"), actions.indexOf("export async function reconnectMetaConnectionAction"));
+    const reconnect = actions.slice(actions.indexOf("export async function reconnectMetaConnectionAction"), actions.indexOf("export async function removeMetaConnectionAction"));
     const removeAndAfter = actions.slice(actions.indexOf("export async function removeMetaConnectionAction"));
     const fields = (code: string): (string | undefined)[] => [...code.matchAll(/form\.get\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1]);
     expect(fields(connect)).toEqual(["workspaceId"]);
+    // Reconnect (Step 7G-H5.5-P12-C0-R2): the routed workspace id and ONE connection id, nothing else.
+    expect(fields(reconnect)).toEqual(["workspaceId", "connectionId"]);
+    expect(reconnect).toMatch(/reconnectMeta\(connectionAuthorizationRuntime\(auth\), \{ workspaceId, connectionId \}\)/);
     const accounts = actions.slice(actions.indexOf("export async function saveManagedAccountsAction"), actions.indexOf("export async function requestCapabilityRecheckAction"));
     const recheck = actions.slice(actions.indexOf("export async function requestCapabilityRecheckAction"));
     const remove = removeAndAfter.slice(0, removeAndAfter.indexOf("export async function saveManagedAccountsAction"));
@@ -58,26 +63,31 @@ describe("Connect Meta surface (Step 7G-F4)", () => {
     // Capability re-check (Step 7G-H5.5-P2-B2): the routed workspace id and ONE connected account id, nothing else.
     expect(fields(recheck)).toEqual(["workspaceId", "connectedAccountId"]);
     expect(recheck).toMatch(/requestCapabilityRecheck\(connectionSettingsPipeline\(auth\), \{ workspaceId, connectedAccountId \}\)/);
-    expect(fields(actions)).toHaveLength(8);
+    expect(fields(actions)).toHaveLength(10);
     expect([...actions.matchAll(/form\.getAll\(/g)]).toHaveLength(1);
     expect(actions).not.toMatch(/form\.(entries|keys|values|has)\(|Object\.fromEntries/);
     expect(codeOf(SETTINGS)).toMatch(/input: \{ connectionId: input\.connectionId, expectedProvider: "meta", discoveredAssetIds \}/);
     expect(codeOf(SETTINGS)).toMatch(/startConnectionAuthorization\(deps, \{ workspaceId, provider: "meta" \}\)/);
     expect(codeOf(SETTINGS)).toMatch(/input: \{ connectionId: input\.connectionId, expectedProvider: "meta" \}/);
-    for (const file of SURFACE) expect(codeOf(file), file).not.toMatch(/reconnectConnectionId|provider: "simulator"/);
+    for (const file of SURFACE) expect(codeOf(file), file).not.toMatch(/provider: "simulator"/);
+    // The reconnect target is set in exactly one place: the reconnect start, from the routed connection id.
+    for (const file of SURFACE.filter((f) => f !== SETTINGS)) expect(codeOf(file), file).not.toMatch(/reconnectConnectionId/);
+    expect([...codeOf(SETTINGS).matchAll(/reconnectConnectionId/g)]).toHaveLength(1);
+    expect(codeOf(SETTINGS)).toMatch(/startConnectionAuthorization\(deps, \{ workspaceId: input\.workspaceId, provider: "meta", reconnectConnectionId: input\.connectionId \}\)/);
   });
 
-  it("the page renders and reads only; exactly four forms: Connect Meta, the per-connection Remove, Managed accounts and the per-account capability re-check", () => {
+  it("the page renders and reads only; exactly five forms: the per-connection Reconnect and Remove, Connect Meta, Managed accounts and the per-account capability re-check", () => {
     const page = codeOf(PAGE);
-    expect(page).not.toMatch(/"use client"|connectMeta|removeMeta\(|startConnectionAuthorization|connectionAuthorizationRuntime|recoverStale|\.start\b|onClick|confirm\(/);
+    expect(page).not.toMatch(/"use client"|\bconnectMeta\b|\breconnectMeta\(|removeMeta\(|startConnectionAuthorization|connectionAuthorizationRuntime|recoverStale|\.start\b|onClick|confirm\(/);
     expect(page).toMatch(/export const dynamic = "force-dynamic"/);
     expect([...page.matchAll(/<form action=\{(\w+)\}>/g)].map((match) => match[1])).toEqual([
+      "reconnectMetaConnectionAction",
       "removeMetaConnectionAction",
       "startMetaConnectionAction",
       "saveManagedAccountsAction",
       "requestCapabilityRecheckAction",
     ]);
-    expect([...page.matchAll(/<form\b/g)]).toHaveLength(4);
+    expect([...page.matchAll(/<form\b/g)]).toHaveLength(5);
     // The re-check form posts only the workspace and account ids, and only when the server read model offers it.
     expect(page).toMatch(/\{offer\.allowed \? \(\s*<form action=\{requestCapabilityRecheckAction\}>/);
     expect(page).toMatch(/name="connectedAccountId" type="hidden" value=\{asset\.connectedAccountId\}/);
@@ -90,14 +100,37 @@ describe("Connect Meta surface (Step 7G-F4)", () => {
     expect(page).toMatch(/name="acknowledgement" type="checkbox" value=\{REMOVE_ACKNOWLEDGEMENT\} required/);
   });
 
-  it("no reconnect surface; removal only through the existing remove command; no remote Meta revocation", () => {
+  it("removal only through the existing remove command; no remote Meta revocation", () => {
     for (const file of SURFACE) {
       const code = codeOf(file);
-      expect(code, file).not.toMatch(/reconnect/i);
       expect(code, file).not.toMatch(/removeConnection\(|commands\.remove\b|\/permissions|deauthori[sz]e|revoke|graph\.facebook|unsubscribe/i);
     }
     const commandUsers = sourceFiles(PRODUCTION_ROOTS).filter((file) => /connectionRemoveCommand/.test(codeOf(file)));
     expect(commandUsers.sort()).toEqual(["server/commands/connections.ts", SETTINGS]);
+  });
+
+  it("Reconnect (Step 7G-H5.5-P12-C0-R2): one form per non-REMOVED Meta connection, posting only the routed ids, through the one reconnect start", () => {
+    const page = codeOf(PAGE);
+    const form = page.slice(page.indexOf("<form action={reconnectMetaConnectionAction}>"), page.indexOf("</form>", page.indexOf("<form action={reconnectMetaConnectionAction}>")));
+    expect(page).toMatch(/connection\.provider === "meta" && connection\.status !== "REMOVED" \? \(\s*<form action=\{reconnectMetaConnectionAction\}>/);
+    expect([...form.matchAll(/<input name="(\w+)" type="hidden" value=\{([^}]+)\} \/>/g)].map((match) => [match[1], match[2]])).toEqual([
+      ["workspaceId", "state.workspaceId"],
+      ["connectionId", "connection.id"],
+    ]);
+    expect([...form.matchAll(/<input\b/g)]).toHaveLength(2);
+    // One caller of the reconnect start: the reconnect action. The settings orchestration is its only definition.
+    expect(sourceFiles(PRODUCTION_ROOTS).filter((file) => /\breconnectMeta\(/.test(codeOf(file))).sort()).toEqual([ACTIONS, SETTINGS]);
+    expect(sourceFiles(PRODUCTION_ROOTS).filter((file) => /reconnectMetaConnectionAction/.test(codeOf(file))).sort()).toEqual([PAGE, ACTIONS].sort());
+  });
+
+  it("the product surface can't name the backend continuation: no credential, refresh marker, evaluation request, discovery or outbox", () => {
+    for (const file of SURFACE) {
+      expect(codeOf(file), file).not.toMatch(
+        /capability_refresh_credential_id|capabilityRefresh|CAPABILITY_REFRESH|credential_id|credentialId|discoveryRequest|DISCOVER_ASSETS|discover_assets|capabilityEvaluationRequest|evaluate_account|outbox|kind: "credential"|reauthorized/,
+      );
+    }
+    // The continuation is still built only from the completion's own result (R1), never from the start or the browser.
+    expect(codeOf("server/commands/connections.ts")).toMatch(/capabilityRefresh: output\.kind === "reauthorized" \? \{ kind: "credential", credentialId: output\.credentialId \} : null,/);
   });
 
   it("the onboarding ready state links each workspace through the validated Settings path helper only", () => {

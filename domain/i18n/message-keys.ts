@@ -69,6 +69,8 @@ export const MESSAGE_KEYS = [
   "connections.settings.unavailable",
   "connections.meta.connect",
   "connections.meta.existing",
+  "connections.reconnect.explainer",
+  "connections.reconnect.submit",
   "connections.status.provider_unavailable",
   "connections.status.authorization_in_progress",
   "connections.status.authorization_start_failed",
