@@ -129,6 +129,7 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     class: "append_only_history",
     // owner_move_audit (0010): only connections.record_move_audit (human initiator of a LOCAL move, Move actions).
     // owner_reconciliation_audit (0019): only ingestion.request_reconciliation (its run's initiator, its one action).
+    // append_own (narrowed by 0020): only the action pipeline's own actions, bound to the transaction's tenant context.
     policies: ["append_bound_workspace INSERT app_worker", "append_own INSERT authenticated", "owner_move_audit INSERT app_owner", "owner_reconciliation_audit INSERT app_owner"],
     privileges: { authenticated: ["INSERT"], app_worker: ["INSERT"] },
   },
@@ -468,4 +469,6 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "ingestion.reconciliation_watermark_guard()": [],
   // Step H6-C3b (0019): the only web-facing reconciliation request; the worker path is internal (operator, LIVE).
   "ingestion.request_reconciliation(uuid,text,timestamp with time zone,jsonb)": ["app_worker", "authenticated"],
+  // Step H6-C3d (0020): the bound workspace's organization, for its own members only (the narrowed append_own).
+  "audit.bound_workspace_organization()": ["authenticated"],
 };

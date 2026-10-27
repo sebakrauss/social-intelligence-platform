@@ -315,8 +315,9 @@ export function definePersistenceSuite(getTarget: () => DbTarget): void {
       const organizationId = await createOrganization(owner);
       const workspaceId = await createWorkspace(owner, organizationId);
       const leaky = withUserScope(web, { sub: owner }, workspaceId, (tx) =>
-        tx.execute(sql`insert into audit.audit_events (id, occurred_at, action, actor_type, actor_user_id, workspace_id, target_type, target_id, correlation_id, outcome, change)
-          values (${randomUUID()}, now(), 'workspace.mode_changed', 'user', ${owner}, ${workspaceId}, 'workspace', ${workspaceId}, 'corr-leaky-audit', 'succeeded',
+        // A row the 0020 policy admits (the pipeline's own shape), so only the change-summary CHECK can refuse it.
+        tx.execute(sql`insert into audit.audit_events (id, occurred_at, action, actor_type, actor_user_id, organization_id, workspace_id, target_type, target_id, correlation_id, outcome, change)
+          values (${randomUUID()}, now(), 'workspace.mode_changed', 'user', ${owner}, ${organizationId}, ${workspaceId}, 'workspace', ${workspaceId}, 'corr-leaky-audit', 'succeeded',
                   ${JSON.stringify({ kind: "workspace_mode", previous: "STANDARD", current: "MONITOR_ONLY", note: "person@example.test" })}::jsonb)`));
       expect((await sqlState(leaky)).code).toBe("23514");
     });

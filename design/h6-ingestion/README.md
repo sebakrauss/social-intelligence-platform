@@ -164,3 +164,47 @@ code constant.
 `getInteraction` re-read. Directly confirmed removal is H6-E.
 
 Applying 0019 to dev-v2 is its own gate (H6-C3c).
+
+## H6-C3d — audit provenance before H6-C4 (migration 0020)
+
+**The issue.** 0003's `append_own` let any member append a self-attributed audit event with any action the CHECK
+admits, in any workspace or organization (it checked only `actor_type = 'user'` and `actor_user_id = auth.uid()`). A
+member could fabricate `connected_account.reconciliation_requested` without going through 0019's boundary.
+
+**Who produces audit events (inventory at 214f168):**
+
+| Producer | Role | Actions |
+|---|---|---|
+| Action pipeline, step 7 (`server/pipeline`) | `authenticated`, actor = the verified user | the 20 literal actions of `server/commands` |
+| `ingestion.request_reconciliation` (0019) | `app_owner` definer | `connected_account.reconciliation_requested` |
+| `connections.record_move_audit` (0010) | `app_owner` definer | `moved_out`, `moved_in`, `move_failed`, `move_rejected` |
+| Discovery worker | `app_worker`, actor `system` | `connection.validated`, `connection.status_changed` |
+
+No flow is a pure "direct user event": every pipeline action accompanies a real mutation in the same transaction. The
+database can't tell the pipeline's INSERT from another one by the same role (`app.bind_workspace` takes no secret).
+
+**TL decision: narrow allowlist.** 0020 replaces `append_own`'s WITH CHECK in place (`ALTER POLICY`; DROP is
+forbidden by the migration lint). A member's direct append must be one of the pipeline's actions, bound to the tenant
+context the way the pipeline writes it:
+
+- (a) workspace-scoped commands: the sealed workspace, its organization, and a live member of that workspace;
+- (b) organization-scoped commands: no workspace bound, a live member of that organization, and any named workspace one
+  of that organization's;
+- (c) user-scoped commands: no workspace bound, and the actor's own new membership.
+
+The domain allows self-removal, so a removal record that targets the actor themselves is admitted once their
+membership is gone. One helper backs the policy: `audit.bound_workspace_organization()`, a definer that returns the
+bound workspace's organization only to a live member of that organization. It is not an oracle, unlike
+`app.current_workspace_organization()`, which stays reserved for the job runtime.
+
+Out of a member's reach: `reconciliation_requested`, the four Move saga actions and `connection.validated`. The ledger
+stays append-only: no runtime role may read, update or delete. The vocabulary is unchanged and no historical row is
+touched.
+
+**Documented residuals:**
+
+- A member can still append one of the pipeline's actions within their own workspace or organization. Emitting these
+  from an authoritative database boundary (definers or row triggers) is a later gate.
+- A self-targeted removal record can't prove the removed membership existed.
+
+Applying 0020 to dev-v2 is its own gate (H6-C3e).

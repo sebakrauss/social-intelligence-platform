@@ -269,11 +269,10 @@ export function defineReconciliationRequestSuite(getTarget: () => DbTarget): voi
       }
       // Nor create a run directly (no INSERT grant).
       expect(await sqlState(asMember(t, t.members.OWNER, (tx) => tx.execute(sql`insert into ingestion.reconciliation_runs (id) values (${randomUUID()})`)))).toMatchObject({ code: "42501" });
-      // A member's self-attributed audit append is the action pipeline's pre-existing path (0003 append_own, unchanged):
-      // it records only that member's own claim and creates no run and no planner row — it is not a request.
-      await asMember(t, t.members.OWNER, (tx) => tx.execute(sql`insert into audit.audit_events (id, occurred_at, action, actor_type, actor_user_id, organization_id, workspace_id, target_type, target_id, correlation_id, outcome)
-        values (${randomUUID()}, now(), 'connected_account.reconciliation_requested', 'user', ${t.members.OWNER}, ${t.organizationId}, ${t.workspaceId}, 'connected_account', ${t.account}, ${correlation()}, 'succeeded')`));
-      expect(await writes(t)).toEqual({ runs: 0, audit: 1, outbox: 0 });
+      // Nor write the request's audit event: since 0020 it is the boundary's alone (append_own admits only pipeline actions).
+      expect(await sqlState(asMember(t, t.members.OWNER, (tx) => tx.execute(sql`insert into audit.audit_events (id, occurred_at, action, actor_type, actor_user_id, organization_id, workspace_id, target_type, target_id, correlation_id, outcome)
+        values (${randomUUID()}, now(), 'connected_account.reconciliation_requested', 'user', ${t.members.OWNER}, ${t.organizationId}, ${t.workspaceId}, 'connected_account', ${t.account}, ${correlation()}, 'succeeded')`)))).toMatchObject({ code: "42501" });
+      expect(await writes(t)).toEqual({ runs: 0, audit: 0, outbox: 0 });
     });
   });
 }

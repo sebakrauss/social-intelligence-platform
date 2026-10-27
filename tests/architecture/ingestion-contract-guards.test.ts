@@ -208,9 +208,9 @@ describe("H6-C3b: the reconciliation request boundary (0019)", () => {
 });
 
 describe("scope of this gate", () => {
-  it("H6-A1 and H6-C1 added no migration; H6-B adds exactly 0017; 22. H6-C2 adds exactly 0018; H6-C3b exactly 0019 right after it", () => {
+  it("H6-A1 and H6-C1 added no migration; H6-B adds exactly 0017; 22. H6-C2 adds exactly 0018; H6-C3b exactly 0019; H6-C3d exactly 0020", () => {
     const names = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    expect(names.slice(-4)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql", "0018_reconciliation_runtime.sql", "0019_reconciliation_request.sql"]);
+    expect(names.slice(-5)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql", "0018_reconciliation_runtime.sql", "0019_reconciliation_request.sql", "0020_audit_command_provenance.sql"]);
   });
 
   it("21. 0018 is reconciliation persistence only: no provider-event inbox, raw webhook body, subscription or receipt", () => {
