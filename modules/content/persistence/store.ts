@@ -11,23 +11,29 @@ import { contentItems } from "./tables";
 
 
 
+const columns = {
+  id: contentItems.id,
+  platform: contentItems.platform,
+  connectedAccountId: contentItems.connectedAccountId,
+  providerAssetId: contentItems.providerAssetId,
+  providerContentId: contentItems.providerContentId,
+  contentKind: contentItems.contentKind,
+  reportedSource: contentItems.reportedSource,
+  latestObservedAt: contentItems.latestObservedAt,
+};
+
 export function createPostgresContentItemStore(tx: DatabaseTransaction): ContentItemStore {
   return {
     async findByProviderId(platform, providerContentId) {
       const rows = await tx
-        .select({
-          id: contentItems.id,
-          platform: contentItems.platform,
-          connectedAccountId: contentItems.connectedAccountId,
-          providerAssetId: contentItems.providerAssetId,
-          providerContentId: contentItems.providerContentId,
-          contentKind: contentItems.contentKind,
-          reportedSource: contentItems.reportedSource,
-          latestObservedAt: contentItems.latestObservedAt,
-        })
+        .select(columns)
         .from(contentItems)
         .where(and(eq(contentItems.platform, platform), eq(contentItems.providerContentId, providerContentId)))
         .limit(1);
+      return rows[0];
+    },
+    async findById(id) {
+      const rows = await tx.select(columns).from(contentItems).where(eq(contentItems.id, id)).limit(1);
       return rows[0];
     },
     async insert(item) {

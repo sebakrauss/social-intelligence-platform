@@ -1,5 +1,6 @@
 /** ingestion module public API (TA §7.1, L1; H6-A1 pure domain contracts; H6-B canonical ingestion application services). */
 export {
+  RECONCILE_ACCOUNT_TOPIC,
   RECONCILE_SLICE_TOPIC,
   RECONCILIATION_DEFAULTS,
   SLICE_CURSOR_MAX_AGE_MS,
@@ -38,6 +39,7 @@ export {
   OPEN_RUN_STATES,
   OPEN_SLICE_STATES,
   RECONCILIATION_RUN_STATES,
+  RECONCILIATION_RUNTIME,
   RECONCILIATION_SLICE_STATES,
   defaultBudgetSnapshot,
   type IngestionConflictClass,
@@ -50,3 +52,24 @@ export { orderParentsFirst } from "./application/ordering";
 export { recordIngestionCoverage, type RecordCoverageInput } from "./application/record-coverage";
 export { SourceFactRejectedError, interactionSourceFactFromDto, textHashOf, type SourceFactContext } from "./application/source-fact-mapping";
 export type { IngestionClock, IngestionEventStore, IngestionStores } from "./application/ports";
+export {
+  acceptObservedInteraction,
+  planReconciliation,
+  requestReconciliation,
+  runReconciliationSlice,
+  type ObservedOutcome,
+  type PlanOutcome,
+  type ReconciliationClock,
+  type ReconciliationScope,
+  type RequestReconciliationOutcome,
+  type SliceDependencies,
+  type SliceOutcome,
+} from "./application/reconciliation";
+export type {
+  ObservedEventAuthority,
+  ReconciliationAuthorityStore,
+  ReconciliationRunRecord,
+  ReconciliationSliceRecord,
+  ReconciliationStore,
+  ReconciliationWatermarkRecord,
+} from "./application/reconciliation-ports";

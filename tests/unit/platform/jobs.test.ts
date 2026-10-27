@@ -117,6 +117,10 @@ describe("task registry", () => {
       "connections.move.activate_destination",
       "connections.move.reject_destination",
       "capability.evaluate_account",
+      // Step H6-C3: reconciliation (MAIN planner, INTEGRATION slice) and the H6 terminal consumer.
+      "ingestion.reconcile_account",
+      "ingestion.reconcile_slice",
+      "interactions.observed",
     ];
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS, ...tenantTasks].sort());
     expect(PRODUCTION_TASKS.tasks.filter((task) => task.scope === "system").map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS].sort());
@@ -141,6 +145,17 @@ describe("task registry", () => {
       // Step 7G-H5.5-P12-C0-R1: a credential-bound request also names its credential.
       subjects: ["connected_account_id", "credential_id"],
     });
+    expect(PRODUCTION_TASKS.tenant("ingestion.reconcile_account")).toMatchObject({
+      executionPlane: "main", lane: 3, concurrency: { by: "subject", subject: "connected_account_id" }, subjects: ["connected_account_id", "reconciliation_run_id"],
+    });
+    expect(PRODUCTION_TASKS.tenant("ingestion.reconcile_slice")).toMatchObject({
+      executionPlane: "integration", lane: 3, concurrency: { by: "subject", subject: "connected_account_id" }, subjects: ["connected_account_id", "reconciliation_slice_id"],
+    });
+    expect(PRODUCTION_TASKS.tenant("interactions.observed")).toMatchObject({
+      executionPlane: "main", lane: 2, concurrency: { by: "none" }, subjects: ["ingestion_event_id", "interaction_id", "conversation_id", "source_text_version_id"],
+    });
+    // No reconciliation task has a schedule (TL D-C1: explicit requests only; cadence is a later gate).
+    for (const name of ["ingestion.reconcile_account", "ingestion.reconcile_slice", "interactions.observed"]) expect(PRODUCTION_TASKS.get(name)).not.toHaveProperty("schedule");
     expect(PRODUCTION_TASKS.system("outbox.dispatch_sweep")?.schedule?.cron).toBe(SWEEPER_SCHEDULES.dispatchSweep);
     expect(PRODUCTION_TASKS.system("outbox.outcome_sweep")?.schedule?.cron).toBe(SWEEPER_SCHEDULES.outcomeSweep);
     expect(PRODUCTION_TASKS.system("outbox.relay")?.schedule).toBeUndefined();

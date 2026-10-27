@@ -12,6 +12,7 @@ import {
   INITIAL_IMPORT_POLICY,
   OPEN_RUN_STATES,
   OPEN_SLICE_STATES,
+  RECONCILIATION_RUNTIME,
   RECONCILIATION_RUN_STATES,
   RECONCILIATION_SLICE_STATES,
   defaultBudgetSnapshot,
@@ -105,5 +106,21 @@ describe("reconciliation runtime vocabularies (H6-C2, migration 0018)", () => {
       listingPagesPerSlice: 1, interactionPagesPerSlice: 5, continuationsPerContent: 2, interactionPagesPerContent: 15, contentItems: 10, overlapSeconds: 86_400,
     });
     expect(defaultBudgetSnapshot().interactionPagesPerContent).toBe(maxInteractionPagesPerContent());
+  });
+});
+
+describe("reconciliation runtime limits (H6-C3)", () => {
+  it("the run operation cap is 40 (8 for a LIVE acceptance); leases outlive a task; attempts and back-off are bounded", () => {
+    expect(RECONCILIATION_RUNTIME).toEqual({
+      operationsPerRun: 40,
+      liveAcceptanceOperationsPerRun: 8,
+      sliceLeaseMs: 600_000,
+      maxSliceAttempts: 6,
+      rateLimitDefaultBackoffSeconds: 60,
+      windowFloor: "2000-01-01T00:00:00.000Z",
+    });
+    // A run's structural maximum (1 listing page + 10 contents × 15 pages) is far above the cap: the cap is what binds.
+    expect(1 + 10 * 15).toBeGreaterThan(RECONCILIATION_RUNTIME.operationsPerRun);
+    expect(Object.isFrozen(RECONCILIATION_RUNTIME)).toBe(true);
   });
 });

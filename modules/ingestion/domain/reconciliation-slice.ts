@@ -60,8 +60,10 @@ export const RECONCILIATION_DEFAULTS = Object.freeze({
 export const maxInteractionPagesPerContent = (defaults: typeof RECONCILIATION_DEFAULTS = RECONCILIATION_DEFAULTS): number =>
   defaults.interactionPagesPerSlice * (1 + defaults.continuationsPerContent);
 
-/** Dispatch-key prefix of one persistent slice row. */
+/** Dispatch-key prefix of one persistent slice row (and the INTEGRATION task's name). */
 export const RECONCILE_SLICE_TOPIC = "ingestion.reconcile_slice" as const;
+/** The MAIN planner's task name; its dispatch key is `ingestion.reconcile_account:{run id}`. */
+export const RECONCILE_ACCOUNT_TOPIC = "ingestion.reconcile_account" as const;
 
 export const SLICE_UNITS = ["content_listing", "content_interactions"] as const;
 export type SliceUnit = (typeof SLICE_UNITS)[number];

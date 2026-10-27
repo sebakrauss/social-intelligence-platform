@@ -28,6 +28,8 @@ export interface NewContentItem {
 
 export interface ContentItemStore {
   findByProviderId(platform: string, providerContentId: string): Promise<ContentItemRecord | undefined>;
+  /** By canonical id (Step H6-C3: a reconciliation slice names its content row). */
+  findById(id: string): Promise<ContentItemRecord | undefined>;
   insert(item: NewContentItem): Promise<void>;
   /** Bookkeeping only: the latest time the content was seen (never moves backwards). */
   noteObserved(id: string, observedAt: Date): Promise<void>;

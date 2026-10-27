@@ -4,6 +4,7 @@
  * one IDs-only `interactions.observed` outbox row naming it — in the caller's transaction, so both commit or roll back
  * with the state they describe. The outbox row carries UUID subject ids only (H6-A1 `interactionsObservedOutboxRow`).
  */
+import { eq } from "drizzle-orm";
 import { pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { appendOutboxOnce, type DatabaseTransaction } from "@/platform/db";
 import type { OutboxNotice } from "@/platform/outbox";
@@ -64,6 +65,21 @@ export function createPostgresIngestionEventStore(tx: DatabaseTransaction, noteA
       // The dispatch key is the fresh event id: an existing one would be a duplicated event, never a no-op.
       if (appended !== "appended") throw new Error("ingestion_event_dispatch_key_taken");
       noteAppended(message);
+    },
+    async authority(eventId) {
+      const rows = await tx
+        .select({
+          id: ingestionEvents.id,
+          interactionId: ingestionEvents.interactionId,
+          conversationId: ingestionEvents.conversationId,
+          sourceTextVersionId: ingestionEvents.sourceTextVersionId,
+          change: ingestionEvents.change,
+          arrival: ingestionEvents.arrival,
+        })
+        .from(ingestionEvents)
+        .where(eq(ingestionEvents.id, eventId))
+        .limit(1);
+      return rows[0];
     },
   };
 }

@@ -1,9 +1,10 @@
 /**
  * Execution-plane guards (Step 7E.4B.3). Two Trigger.dev projects, split by credential-opening capability:
  *
- *   MAIN          trigger.config.ts → jobs/trigger/main         relay, sweepers, Move saga (6 tasks)
- *   INTEGRATION   trigger.integration.config.ts → jobs/trigger/integration   the only opener tasks (2 product tasks +
- *                                                                             3 operator-only diagnostics = 5 tasks)
+ *   MAIN          trigger.config.ts → jobs/trigger/main         relay, sweepers, Move saga, reconciliation planner and
+ *                                                                the interactions.observed consumer (8 tasks)
+ *   INTEGRATION   trigger.integration.config.ts → jobs/trigger/integration   the only opener tasks (3 product tasks +
+ *                                                                             3 operator-only diagnostics = 6 tasks)
  *
  * These prove the split statically: explicit planes in the registry, disjoint discovery, the TRANSITIVE import graph of
  * each plane (the opener never reachable from main; the system database and delivery never reachable from integration),
@@ -24,13 +25,15 @@ const require = createRequire(import.meta.url);
 const root = path.resolve(import.meta.dirname, "../..");
 const depcruise = require(path.join(root, ".dependency-cruiser.cjs")) as { options: ICruiseOptions };
 
-const MAIN_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_sweep", "connections.move.release_source", "connections.move.activate_destination", "connections.move.reject_destination"];
-const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account"];
+const MAIN_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_sweep", "connections.move.release_source", "connections.move.activate_destination", "connections.move.reject_destination",
+  // Step H6-C3: the reconciliation planner and the H6 terminal consumer open nothing.
+  "ingestion.reconcile_account", "interactions.observed"];
+const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account", "ingestion.reconcile_slice"];
 /** Step 7E.7-B / 7G-H5.5-P5-B / 7G-H5.5-P12-B2: integration-only, operator-triggered diagnostics — discovered by the integration config, never registered. */
 const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic", "integration.read_content_validation", "integration.read_interactions_validation"];
 const PLANE_DIRS = { main: "jobs/trigger/main", integration: "jobs/trigger/integration" } as const;
 const OPENER = /^(jobs\/connections\.ts|platform\/crypto\/credentials\/(open|local-opener|local-keyring|aead|aws-kms-unwrapper|aws-kms-opener)\.ts)$/;
-const MAIN_ONLY = /^(jobs\/main-runtime\.ts|jobs\/moves\.ts|platform\/outbox\/delivery\.ts|platform\/db\/(system-scope|outbox-delivery)\.ts)$/;
+const MAIN_ONLY = /^(jobs\/main-runtime\.ts|jobs\/moves\.ts|jobs\/reconciliation\.ts|platform\/outbox\/delivery\.ts|platform\/db\/(system-scope|outbox-delivery)\.ts)$/;
 
 /** Task ids declared by the task files of one plane directory (wrapper calls and direct task definitions). */
 function discoveredTasks(dir: string): string[] {
@@ -50,7 +53,7 @@ async function reachable(dir: string): Promise<string[]> {
 }
 
 describe("registry: every task declares its plane explicitly", () => {
-  it("exactly the six main and the two integration tasks, by explicit declaration", () => {
+  it("exactly the eight main and the three integration tasks, by explicit declaration", () => {
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...MAIN_TASKS, ...INTEGRATION_TASKS].sort());
     for (const task of PRODUCTION_TASKS.tasks) expect(task.executionPlane, task.name).toBe(INTEGRATION_TASKS.includes(task.name) ? "integration" : "main");
     expect(Object.entries(PRODUCTION_TASKS.unboundRoutes).filter(([, plane]) => plane === "integration").map(([name]) => name).sort()).toEqual([...INTEGRATION_TASKS].sort());
@@ -79,9 +82,9 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     const integration = discoveredTasks(PLANE_DIRS.integration);
     expect(main).toEqual([...MAIN_TASKS].sort());
     expect(integration).toEqual([...INTEGRATION_TASKS, ...INTEGRATION_DIAGNOSTIC_TASKS].sort());
-    // The paired release expects exactly the discovered counts: INTEGRATION 5, MAIN 6 (P5-B and P12-B2 add no MAIN task).
-    expect(integration).toHaveLength(5);
-    expect(main).toHaveLength(6);
+    // The paired release expects exactly the discovered counts: INTEGRATION 6, MAIN 8 (Step H6-C3 adds 1 + 2).
+    expect(integration).toHaveLength(6);
+    expect(main).toHaveLength(8);
     expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", integration.length], ["main", main.length]]);
     expect(main.filter((task) => integration.includes(task))).toEqual([]);
     for (const task of main) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("main");

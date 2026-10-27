@@ -52,6 +52,9 @@ export function createPostgresInteractionStore(tx: DatabaseTransaction): Interac
       return (await tx.select().from(interactionRows)
         .where(and(eq(interactionRows.platform, platform), eq(interactionRows.providerInteractionId, providerInteractionId))).limit(1).for("update"))[0];
     },
+    async exists(id) {
+      return (await tx.select({ id: interactionRows.id }).from(interactionRows).where(eq(interactionRows.id, id)).limit(1)).length === 1;
+    },
     async findById(id) {
       return (await tx.select().from(interactionRows).where(eq(interactionRows.id, id)).limit(1).for("update"))[0];
     },

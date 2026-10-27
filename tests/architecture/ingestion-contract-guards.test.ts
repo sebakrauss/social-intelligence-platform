@@ -101,6 +101,38 @@ describe("no transport in the fact, no text in the event", () => {
   });
 });
 
+describe("H6-C3: the reconciliation runtime boundaries", () => {
+  const functionBody = (file: string, name: string): string => codeOf(file).split(`export async function ${name}(`)[1]?.split(/\nexport /)[0] ?? "";
+
+  it("28. the interactions.observed terminal consumer reads identifiers only: no text, provider, credential, AI or workflow", () => {
+    const consumer = functionBody("modules/ingestion/application/reconciliation.ts", "acceptObservedInteraction");
+    expect(consumer.length).toBeGreaterThan(0);
+    const handler = functionBody("jobs/reconciliation.ts", "runInteractionsObserved");
+    expect(handler.length).toBeGreaterThan(0);
+    const authority = codeOf("modules/ingestion/persistence/store.ts").split("async authority(")[1]?.split("\n    },")[0] ?? "";
+    expect(authority.length).toBeGreaterThan(0);
+    for (const [label, code] of [["consumer", consumer], ["handler", handler], ["event authority read", authority]] as const) {
+      // Identifiers (`sourceTextVersionId`, `source_text_version_id`) are allowed; the text itself never is.
+      expect(code, label).not.toMatch(/\bsourceText\b|\bsource_text\b|textVersion\(|sourceTextVersions\.|withCredential|providers|access\.|\bai\b|gateway|workflow|enqueue|appendOutbox|\.emit\(/);
+    }
+    // The consumer's own file never reaches the credential opener, a provider port or the AI gateway.
+    expect(codeOf("jobs/reconciliation.ts")).not.toMatch(/from "\.\/connections"|integrations\/providers|@\/ai\//);
+  });
+
+  it("the INTEGRATION slice is the only reconciliation code that reaches a provider; the simulator is never composed there", () => {
+    expect(codeOf("jobs/reconciliation-slice.ts")).toMatch(/import \{ composeJobProviders \} from "\.\/connections";/);
+    expect(codeOf("jobs/reconciliation-slice.ts")).not.toMatch(/simulator|staging-stub/i);
+    expect(codeOf("jobs/trigger/integration/ingestion.ts")).toMatch(/"ingestion\.reconcile_slice"/);
+    expect(codeOf("jobs/trigger/main/ingestion.ts")).not.toMatch(/reconcile_slice/);
+  });
+
+  it("no provider cursor in an outbox row or job payload: the reconciliation subjects are UUIDs only", () => {
+    const store = codeOf("modules/ingestion/persistence/reconciliation-store.ts");
+    const subjects = [...store.matchAll(/subjectIds: \{([^}]*)\}/g)].map((match) => match[1] ?? "");
+    expect(subjects).toEqual([" connected_account_id: run.connectedAccountId, reconciliation_run_id: run.id ", " connected_account_id: slice.connectedAccountId, reconciliation_slice_id: slice.id "]);
+  });
+});
+
 describe("scope of this gate", () => {
   it("H6-A1 and H6-C1 added no migration; H6-B adds exactly 0017; 22. H6-C2 adds exactly 0018 right after it", () => {
     const names = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();

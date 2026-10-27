@@ -124,6 +124,8 @@ export interface InteractionStore {
   ensureAuthor(author: NewAuthor): Promise<string>;
   findByKey(platform: string, providerInteractionId: string): Promise<InteractionRecord | undefined>;
   findById(id: string): Promise<InteractionRecord | undefined>;
+  /** Whether a canonical row with this id exists in the bound workspace (identifier only; Step H6-C3 consumer). */
+  exists(id: string): Promise<boolean>;
   insertPlaceholder(row: NewInteractionRow): Promise<void>;
   insertObserved(row: NewInteractionRow, fields: ObservedFields): Promise<void>;
   /** A placeholder becomes the observed interaction (once; the scope guard forbids the reverse). */

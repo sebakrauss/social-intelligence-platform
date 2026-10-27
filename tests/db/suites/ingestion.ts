@@ -452,7 +452,7 @@ export function defineIngestionSuite(getTarget: () => DbTarget): void {
       const before = await snapshot(t.workspaceId);
       const failing = (stores: IngestionStores): IngestionStores => ({
         ...stores,
-        events: { emit: async (...args) => { await stores.events.emit(...args); throw new Error("injected_event_failure"); } },
+        events: { ...stores.events, emit: async (...args) => { await stores.events.emit(...args); throw new Error("injected_event_failure"); } },
       });
       await expect(ingest(t, factOf(t, sim, "fb_page_aurora", dto), content, FB, { wrap: failing })).rejects.toThrow("injected_event_failure");
       expect(await snapshot(t.workspaceId)).toEqual(before);

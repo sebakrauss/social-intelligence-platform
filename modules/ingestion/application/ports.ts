@@ -8,10 +8,13 @@ import type { ConversationStore } from "@/modules/conversations";
 import type { CoverageStore } from "@/modules/coverage";
 import type { InteractionStore } from "@/modules/interactions";
 import type { IngestionEventRecord } from "../domain/events";
+import type { ObservedEventAuthority } from "./reconciliation-ports";
 
 export interface IngestionEventStore {
   /** Writes the event record and its IDs-only outbox row (`outboxId`: a fresh UUID for the outbox row). */
   emit(record: IngestionEventRecord, organizationId: string, now: Date, outboxId: string): Promise<void>;
+  /** The event's identifiers and closed facts (Step H6-C3, the terminal consumer): never text. */
+  authority(eventId: string): Promise<ObservedEventAuthority | undefined>;
 }
 
 export interface IngestionStores {

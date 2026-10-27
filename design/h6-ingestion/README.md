@@ -117,3 +117,18 @@ Widenings: `coverage_records.reason` gains `TRAVERSAL_INCOMPLETE`; `audit_events
 `connected_account.reconciliation_requested`. Triggers refuse only authority-breaking transitions (a finished run or
 slice never changes again, a slice is claimed only by incrementing its attempt, counters never decrease, the epoch is
 fixed). Every other transition is the application's (H6-C3). Applying 0018 to dev-v2 is its own gate (H6-C2b).
+
+## H6-C3 — reconciliation runtime (simulator only)
+
+Three tenant tasks, registered in the production registry (no schedule, TL D-C1):
+
+| Task | Plane | Does |
+|---|---|---|
+| `ingestion.reconcile_account` | MAIN | Re-checks account, connection, `ingestion.provider_pause`, rate-limit back-off and capability (read_content and read_interactions at post·unknown); never a credential. Unavailable → SKIPPED_UNAVAILABLE (a gap is written only over already-synced intervals). Otherwise RUNNING + the content_listing slice. |
+| `ingestion.reconcile_slice` | INTEGRATION | Claim (attempt + 1, lease; a cursor older than 15 min is dropped) → per page: re-check every authority + reserve one run operation, then one provider read outside any transaction → commit: share-locked re-check (a removal discards the answer), ingest parents-first with one savepoint per fact (an authority conflict is recorded alone), coverage, watermark, the slice's final or CONTINUED state, and the next slice's outbox row. |
+| `interactions.observed` | MAIN | Terminal H6 consumer: the IDs-only event names one canonical event of the workspace → `accepted_terminal`. No text, provider, credential, AI or workflow. |
+
+The request service (`requestReconciliation`) runs in the job scope: 0018 lets only the job runtime write runs, so the
+H6-C4 web action needs its own write path for the request (a reviewed definer or an Owner/Admin INSERT policy). The run
+operation cap (40; 8 for a LIVE acceptance) is enforced against the persisted `operations_used`, but 0018's budget
+snapshot has no column for the cap itself.

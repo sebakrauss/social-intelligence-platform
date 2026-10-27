@@ -68,3 +68,25 @@ export function defaultBudgetSnapshot(defaults: typeof RECONCILIATION_DEFAULTS =
     overlapSeconds: defaults.overlapMs / 1000,
   });
 }
+
+/**
+ * Runtime limits of the reconciliation tasks (Step H6-C3). `operationsPerRun` (TL: 40; a LIVE acceptance uses 8) is
+ * enforced against the run's persisted `operations_used` counter — every provider read attempt reserves one first,
+ * retries included. 0018's budget snapshot has no column for it, so the cap governing a run is this constant (or the
+ * explicit override a caller passes), not a stored value: see the H6-C3 report.
+ */
+export const RECONCILIATION_RUNTIME = Object.freeze({
+  operationsPerRun: 40,
+  liveAcceptanceOperationsPerRun: 8,
+  /** A claimed slice's lease (longer than a task's maximum duration). */
+  sliceLeaseMs: 10 * 60 * 1000,
+  /** Claims of one slice across retries and crash re-dispatches before it is FAILED_TRANSIENT. */
+  maxSliceAttempts: 6,
+  /** Back-off when the provider rate-limits without a Retry-After. */
+  rateLimitDefaultBackoffSeconds: 60,
+  /**
+   * The lower bound of a first traversal's window: no lower bound in practice. Not a coverage claim — before a
+   * content's epoch, coverage is HISTORY_DEPTH_NOT_VALIDATED.
+   */
+  windowFloor: "2000-01-01T00:00:00.000Z",
+});
