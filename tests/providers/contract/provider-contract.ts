@@ -92,9 +92,21 @@ export function defineProviderContractSuite(makeHarness: () => ProviderContractH
       });
 
       it("re-fetching an interaction returns the same identity", async () => {
-        const fetched = expectResult(await h.read.getInteraction(h.contentAccess, h.mutationTarget));
+        // A re-read needs the provenance of a listing on the same port (Step 7G-H5.5-P12-C9): never a bare id.
+        const listing = await collectPages((cursor) => h.read.listInteractions(h.contentAccess, { kind: "content", content: h.paginatedContent }, h.window, cursor));
+        const listed = listing.items.find((item) => providerObjectKey(item.ref) === providerObjectKey(h.mutationTarget));
+        if (listed === undefined) throw new Error("the mutation target is not listed on the paginated content");
+        const fetched = expectResult(await h.read.getInteraction(h.contentAccess, { kind: "listed", listed }));
         expect(fetched.ref).toEqual(h.mutationTarget);
-        expect(expectResult(await h.read.getInteraction(h.contentAccess, h.mutationTarget)).ref).toEqual(fetched.ref);
+        expect(expectResult(await h.read.getInteraction(h.contentAccess, { kind: "listed", listed })).ref).toEqual(fetched.ref);
+      });
+
+      it("refuses a bare or reconstructed interaction target before any request (invalid_request)", async () => {
+        for (const target of [h.mutationTarget, { kind: "listed", listed: { ref: h.mutationTarget } }]) {
+          const error = await rejection(h.read.getInteraction(h.contentAccess, target as never));
+          expect(error).toBeInstanceOf(ProviderError);
+          expect((error as ProviderError).toJSON()).toMatchObject({ kind: "permanent_rejected", operation: "getInteraction", details: { reasonCode: "invalid_request" } });
+        }
       });
     });
 

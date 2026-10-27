@@ -23,6 +23,7 @@ import {
   type IsoInstant,
   type PageCursor,
   type ProviderErrorKind,
+  type ProviderObjectRef,
   type TimeWindow,
 } from "@/integrations/providers/contract";
 import {
@@ -152,15 +153,33 @@ function instagramGraph(world: World = {}): Reply {
 
 function harness(reply: Reply) {
   const calls: Call[] = [];
+  /** While set, a comments-edge request is answered with this page (the prelisting of a re-read, Step 7G-H5.5-P12-C9). */
+  let edge: unknown;
   const fetch: MetaGraphFetch = (url, init) => {
     const call = { url: new URL(url), init };
     calls.push(call);
+    const segments = call.url.pathname.split("/").slice(2);
+    if (edge !== undefined && segments.length === 2 && segments[1] === "comments") return json(200, edge);
     return reply(call.url, call);
   };
   const port = createMetaReadPort({ transport: createMetaGraphTransport({ fetch }) });
+  /**
+   * A re-read the only way the contract allows: list on THIS port (one edge page carrying `item`), then pass the exact
+   * listed DTO back. The prelisting's requests are cleared so a test sees only the re-read's own requests.
+   */
+  const reread = async (access: typeof FB_ACCESS, scope: ProviderObjectRef<"content">, item: Record<string, unknown>, id: string) => {
+    edge = { data: [item] };
+    const page = (await port.listInteractions(access, { kind: "content", content: scope }, WINDOW, null)).data;
+    edge = undefined;
+    const listed = page.items.find((candidate) => candidate.ref.id === id);
+    if (listed === undefined) throw new Error("prelisting did not list the interaction");
+    calls.length = 0;
+    return port.getInteraction(access, { kind: "listed", listed });
+  };
   return {
     port,
     calls,
+    reread,
     tokens: () => calls.map((call) => call.url.searchParams.get("access_token")),
     paths: () => calls.map((call) => `${call.url.pathname}?${call.url.searchParams.get("fields") ?? ""}`),
   };
@@ -171,7 +190,9 @@ function facebook(reply: Reply) {
   return {
     ...h,
     list: (cursor: PageCursor | null = null, window: TimeWindow = WINDOW, content = FB_POST_REF) => h.port.listInteractions(FB_ACCESS, { kind: "content", content }, window, cursor),
-    get: (id: string = FB_COMMENT) => h.port.getInteraction(FB_ACCESS, providerObjectRef("facebook", "interaction", id)),
+    /** Re-reads `id` after listing it as `listedAs` (default: a top-level comment, or a reply to `parent`). */
+    get: (id: string = FB_COMMENT, listedAs?: Record<string, unknown>, parent?: string) =>
+      h.reread(FB_ACCESS, FB_POST_REF, listedAs ?? (parent === undefined ? fbComment(id) : fbComment(id, { parent: { id: parent } })), id),
   };
 }
 
@@ -180,7 +201,8 @@ function instagram(reply: Reply) {
   return {
     ...h,
     list: (cursor: PageCursor | null = null, window: TimeWindow = WINDOW, content = IG_MEDIA_REF) => h.port.listInteractions(IG_ACCESS, { kind: "content", content }, window, cursor),
-    get: (id: string = IG_COMMENT) => h.port.getInteraction(IG_ACCESS, providerObjectRef("instagram", "interaction", id)),
+    /** Re-reads `id` after listing it as `listedAs` (default: a top-level comment on the scoped media). */
+    get: (id: string = IG_COMMENT, listedAs?: Record<string, unknown>) => h.reread(IG_ACCESS, IG_MEDIA_REF, listedAs ?? igComment(id), id),
   };
 }
 
@@ -240,9 +262,12 @@ describe("Facebook · transport: a Page token derived per operation, then ONE co
     const { list, get, paths } = facebook(facebookGraph({ pages: FB_STREAM, nodes: { [FB_COMMENT]: fbNode(FB_COMMENT) } }));
     await list();
     await list();
+    expect(paths().filter((path) => path.endsWith("?access_token"))).toHaveLength(2);
+    expect(paths()).toHaveLength(4);
+    // The re-read (its prelisting cleared by the helper) derives its own token again.
     await get();
-    expect(paths().filter((path) => path.endsWith("?access_token"))).toHaveLength(3);
-    expect(paths()).toHaveLength(6);
+    expect(paths().filter((path) => path.endsWith("?access_token"))).toHaveLength(1);
+    expect(paths()).toHaveLength(2);
   });
 
   it("never reads replies edges, reactions, likes, attachments, private replies or the post itself", async () => {
@@ -389,34 +414,54 @@ describe("Facebook · normalization: comment and reply from one stream", () => {
   );
 });
 
-describe("Facebook · getInteraction: object.id is the only content authority", () => {
-  it("a comment node becomes the same DTO a list would give, on the post named by object", async () => {
+describe("Facebook · getInteraction: the listing edge is the content authority, object only corroborates (Step 7G-H5.5-P12-C9)", () => {
+  it("a comment node becomes the same DTO a list would give, on the post it was listed under", async () => {
     const { data } = await facebook(facebookGraph({ nodes: { [FB_COMMENT]: fbNode(FB_COMMENT, { is_hidden: false }) } })).get();
     expectInteraction(data, "meta");
     expect(data).toMatchObject({ ref: providerObjectRef("facebook", "interaction", FB_COMMENT), content: FB_POST_REF, parent: null, interactionKind: "comment", visibility: "visible" });
   });
 
-  it("a reply node keeps its parent and its post", async () => {
-    const { data } = await facebook(facebookGraph({ nodes: { [FB_REPLY]: fbNode(FB_REPLY, { parent: { id: FB_COMMENT } }) } })).get(FB_REPLY);
+  it("a listed comment whose node carries NO object is accepted on the listed post (the LIVE shape, P12-C7)", async () => {
+    const { data } = await facebook(facebookGraph({ nodes: { [FB_COMMENT]: fbComment(FB_COMMENT) } })).get();
+    expect(data).toMatchObject({ ref: providerObjectRef("facebook", "interaction", FB_COMMENT), content: FB_POST_REF, parent: null, interactionKind: "comment" });
+  });
+
+  it("a listed reply whose node carries NO object, with the listed parent, is accepted — direct edge authority, never inherited", async () => {
+    const { data } = await facebook(facebookGraph({ nodes: { [FB_REPLY]: fbReply(FB_REPLY, FB_COMMENT) } })).get(FB_REPLY, undefined, FB_COMMENT);
     expect(data).toMatchObject({ content: FB_POST_REF, parent: providerObjectRef("facebook", "interaction", FB_COMMENT), interactionKind: "reply" });
   });
 
-  it("the node's object decides the content: another post is reported as that post, never the caller's guess", async () => {
-    const { data } = await facebook(facebookGraph({ nodes: { [FB_COMMENT]: fbNode(FB_COMMENT, { object: { id: OTHER_POST } }) } })).get();
-    expect(data.content).toEqual(providerObjectRef("facebook", "content", OTHER_POST));
+  it("a reply node with object present and matching keeps its parent and its post", async () => {
+    const { data } = await facebook(facebookGraph({ nodes: { [FB_REPLY]: fbNode(FB_REPLY, { parent: { id: FB_COMMENT } }) } })).get(FB_REPLY, undefined, FB_COMMENT);
+    expect(data).toMatchObject({ content: FB_POST_REF, parent: providerObjectRef("facebook", "interaction", FB_COMMENT), interactionKind: "reply" });
+  });
+
+  it("an object naming ANOTHER post conflicts with the listing: refused, never reported as that post", async () => {
+    const error = await failure(facebook(facebookGraph({ nodes: { [FB_COMMENT]: fbNode(FB_COMMENT, { object: { id: OTHER_POST } }) } })).get());
+    expect(error.toJSON()).toEqual(rejectedAs("getInteraction", "unknown", "interaction_content_conflicts"));
+    expect(JSON.stringify(error.toJSON())).not.toMatch(new RegExp(`${FB_COMMENT}|${POST}|${OTHER_POST}`));
   });
 
   it.each([
-    ["no object", { object: undefined }, "interaction_content_missing"],
+    ["a reply node under a different parent", fbReply(FB_REPLY, "2001_3098"), FB_COMMENT],
+    ["a listed reply whose node is top-level (kind differs)", fbComment(FB_REPLY), FB_COMMENT],
+    ["a listed comment whose node is a reply (kind differs)", fbReply(FB_REPLY, FB_COMMENT), undefined],
+  ])("%s → interaction_parent_mismatch, never re-parented", async (_label, node, listedParent) => {
+    const error = await failure(facebook(facebookGraph({ nodes: { [FB_REPLY]: node } })).get(FB_REPLY, undefined, listedParent));
+    expect(error.toJSON()).toEqual(rejectedAs("getInteraction", "unknown", "interaction_parent_mismatch"));
+    expect(JSON.stringify(error.toJSON())).not.toMatch(new RegExp(`${FB_COMMENT}|${FB_REPLY}|2001_3098`));
+  });
+
+  it.each([
     ["an object without id", { object: {} }, "interaction_content_id_missing"],
     ["an object with a malformed id", { object: { id: "a b" } }, "interaction_content_malformed"],
     ["an object that is not an object", { object: "a-string" }, "interaction_content_malformed"],
     ["an object that is the parent comment", { parent: { id: FB_COMMENT }, object: { id: FB_COMMENT } }, "interaction_content_equals_parent"],
-    ["an object that is the comment itself", { object: { id: FB_REPLY } }, "interaction_content_equals_interaction"],
-    ["no from", { from: undefined }, "interaction_node_unreadable"],
-  ])("%s fails closed: the content cannot be established — the same refusal, naming %s", async (_label, patch, diagnostic) => {
+    ["an object that is the comment itself", { parent: { id: FB_COMMENT }, object: { id: FB_REPLY } }, "interaction_content_equals_interaction"],
+    ["no from", { parent: { id: FB_COMMENT }, from: undefined }, "interaction_node_unreadable"],
+  ])("%s fails closed: the content cannot be corroborated — the same refusal, naming %s", async (_label, patch, diagnostic) => {
     const { get } = facebook(facebookGraph({ nodes: { [FB_REPLY]: fbNode(FB_REPLY, patch) } }));
-    const error = await failure(get(FB_REPLY));
+    const error = await failure(get(FB_REPLY, undefined, FB_COMMENT));
     // Same kind, code and retry as before (Step 7G-H5.5-P12-C6); only the closed diagnostic is added.
     expect(error.toJSON()).toEqual(rejectedAs("getInteraction", "unknown", diagnostic));
     expect(JSON.stringify(error.toJSON())).not.toMatch(new RegExp(`${FB_COMMENT}|${FB_REPLY}|${POST}|a b|a-string`));
@@ -527,13 +572,97 @@ describe("Facebook · scope and refs", () => {
   });
 
   it.each([
+    ["a bare Facebook interaction ref", providerObjectRef("facebook", "interaction", FB_COMMENT)],
     ["an Instagram interaction ref", providerObjectRef("instagram", "interaction", FB_COMMENT)],
     ["a content ref", providerObjectRef("facebook", "content", FB_COMMENT)],
     ["a forged id", { platform: "facebook", kind: "interaction", id: "../me" }],
-  ])("getInteraction refuses %s before any request", async (_label, ref) => {
+    ["a listed target wrapping a bare ref", { kind: "listed", listed: providerObjectRef("facebook", "interaction", FB_COMMENT) }],
+    ["an unknown target kind", { kind: "webhook", listed: providerObjectRef("facebook", "interaction", FB_COMMENT) }],
+    ["null", null],
+  ])("getInteraction refuses %s before any request", async (_label, target) => {
     const { port, calls } = facebook(facebookGraph({ nodes: { [FB_COMMENT]: fbNode(FB_COMMENT) } }));
-    expect((await failure(port.getInteraction(FB_ACCESS, ref as never))).toJSON()).toEqual(rejected("getInteraction", "invalid_request"));
+    expect((await failure(port.getInteraction(FB_ACCESS, target as never))).toJSON()).toEqual(rejected("getInteraction", "invalid_request"));
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("listed provenance: only the exact DTO this port listed, for this account, is a re-read target (Step 7G-H5.5-P12-C9)", () => {
+  /** Lists FB_STREAM on a fresh port; returns the port, its calls (cleared) and the listed comment DTO. */
+  const listedOn = async (graph: Reply = facebookGraph({ pages: FB_STREAM, nodes: { [FB_COMMENT]: fbNode(FB_COMMENT) } })) => {
+    const h = harness(graph);
+    const page = (await h.port.listInteractions(FB_ACCESS, { kind: "content", content: FB_POST_REF }, WINDOW, null)).data;
+    const listed = page.items.find((item) => item.ref.id === FB_COMMENT);
+    if (listed === undefined) throw new Error("not listed");
+    h.calls.length = 0;
+    return { ...h, listed };
+  };
+  const refusedWithoutRequest = async (h: { readonly calls: readonly Call[] }, promise: Promise<unknown>) => {
+    const error = await failure(promise);
+    expect(error.toJSON()).toEqual(rejected("getInteraction", "invalid_request"));
+    expect(h.calls).toHaveLength(0);
+    expectNoneOf(error, [FB_COMMENT, POST, PAGE, USER_TOKEN, PAGE_TOKEN, TEXT_MARKER, NAME_MARKER]);
+  };
+
+  it("the listed instance itself is accepted", async () => {
+    const h = await listedOn();
+    expect((await h.port.getInteraction(FB_ACCESS, { kind: "listed", listed: h.listed })).data.ref).toEqual(h.listed.ref);
+  });
+
+  it("a fabricated DTO (equal data, never listed) is refused with zero requests", async () => {
+    const h = await listedOn();
+    const fabricated: InteractionDto = { ...h.listed, ref: providerObjectRef("facebook", "interaction", FB_COMMENT) };
+    await refusedWithoutRequest(h, h.port.getInteraction(FB_ACCESS, { kind: "listed", listed: fabricated }));
+  });
+
+  it.each([
+    ["a shallow copy", (dto: InteractionDto) => ({ ...dto })],
+    ["a deserialized value", (dto: InteractionDto) => JSON.parse(JSON.stringify(dto)) as InteractionDto],
+    ["a structured clone", (dto: InteractionDto) => structuredClone(dto)],
+  ])("%s of a listed DTO is a reconstruction, not the listed instance: refused with zero requests", async (_label, copy) => {
+    const h = await listedOn();
+    await refusedWithoutRequest(h, h.port.getInteraction(FB_ACCESS, { kind: "listed", listed: copy(h.listed) }));
+  });
+
+  it("a DTO listed by ANOTHER port instance is unknown to this one: refused with zero requests", async () => {
+    const other = await listedOn();
+    const h = await listedOn();
+    await refusedWithoutRequest(h, h.port.getInteraction(FB_ACCESS, { kind: "listed", listed: other.listed }));
+  });
+
+  it("another account (another managed Page) cannot re-read what this account listed: refused with zero requests", async () => {
+    const h = await listedOn();
+    const otherPage = { credential: CREDENTIAL, account: providerObjectRef("facebook", "asset", "1999") };
+    await refusedWithoutRequest(h, h.port.getInteraction(otherPage, { kind: "listed", listed: h.listed }));
+  });
+
+  it("another provider (an Instagram account) cannot re-read a Facebook listing: refused with zero requests", async () => {
+    const h = await listedOn();
+    await refusedWithoutRequest(h, h.port.getInteraction(IG_ACCESS, { kind: "listed", listed: h.listed }));
+    await refusedWithoutRequest(h, h.port.getInteraction({ credential: CREDENTIAL, account: providerObjectRef("instagram", "asset", PAGE) }, { kind: "listed", listed: h.listed }));
+  });
+
+  it("the provenance is recorded at listing time: mutating the caller-held DTO cannot redirect the re-read", async () => {
+    const h = await listedOn();
+    // Whether or not the DTO is frozen, a write to it (if it lands) must not change what is re-read or reported.
+    Reflect.set(h.listed, "content", providerObjectRef("facebook", "content", OTHER_POST));
+    Reflect.set(h.listed, "ref", providerObjectRef("facebook", "interaction", FB_REPLY));
+    const { data } = await h.port.getInteraction(FB_ACCESS, { kind: "listed", listed: h.listed });
+    expect(data.content).toEqual(FB_POST_REF);
+    expect(h.calls.map((call) => call.url.pathname)).toEqual([`/v25.0/${PAGE}`, `/v25.0/${FB_COMMENT}`]);
+  });
+
+  it("an Instagram port refuses an unregistered Instagram target with zero requests", async () => {
+    const ig = instagram(instagramGraph({ pages: IG_PAGE, nodes: { [IG_COMMENT]: igComment(IG_COMMENT) } }));
+    const page = (await ig.port.listInteractions(IG_ACCESS, { kind: "content", content: IG_MEDIA_REF }, WINDOW, null)).data;
+    const listed = page.items[0];
+    if (listed === undefined) throw new Error("not listed");
+    ig.calls.length = 0;
+    for (const target of [{ kind: "listed", listed: { ...listed } }, { kind: "listed", listed: JSON.parse(JSON.stringify(listed)) as InteractionDto }, providerObjectRef("instagram", "interaction", IG_COMMENT)]) {
+      expect((await failure(ig.port.getInteraction(IG_ACCESS, target as never))).toJSON()).toEqual(rejected("getInteraction", "invalid_request"));
+    }
+    expect(ig.calls).toHaveLength(0);
+    expect((await ig.port.getInteraction(IG_ACCESS, { kind: "listed", listed })).data.ref).toEqual(listed.ref);
+    expect(ig.calls).toHaveLength(1);
   });
 });
 
@@ -562,9 +691,12 @@ describe("Instagram · transport: the User token directly, ONE Graph GET per cal
   it("never derives a Page token, never reads replies (edge or expansion), likes or the media itself", async () => {
     const { list, get, calls } = instagram(instagramGraph({ pages: IG_PAGE, nodes: { [IG_COMMENT]: igComment(IG_COMMENT) } }));
     await list();
+    const seen = [...calls];
+    expect(seen).toHaveLength(1);
     await get();
-    expect(calls).toHaveLength(2);
-    for (const call of calls) {
+    expect(calls).toHaveLength(1);
+    seen.push(...calls);
+    for (const call of seen) {
       expect(call.url.searchParams.get("fields")).not.toBe("access_token");
       expect(call.url.searchParams.get("fields")).not.toBe(META_INSTAGRAM_MEDIA_FIELDS);
       expect(call.url.pathname).not.toMatch(/replies|likes|\/media$|ordered_comments/);
@@ -713,7 +845,7 @@ describe("Instagram · scope and refs", () => {
   it("a Facebook content scope or a Facebook interaction ref is refused before any request", async () => {
     const { port, calls } = instagram(instagramGraph({ pages: IG_PAGE }));
     expect((await failure(port.listInteractions(IG_ACCESS, { kind: "content", content: FB_POST_REF }, WINDOW, null))).toJSON()).toEqual(rejected("listInteractions", "invalid_request"));
-    expect((await failure(port.getInteraction(IG_ACCESS, providerObjectRef("facebook", "interaction", FB_COMMENT)))).toJSON()).toEqual(rejected("getInteraction", "invalid_request"));
+    expect((await failure(port.getInteraction(IG_ACCESS, providerObjectRef("facebook", "interaction", FB_COMMENT) as never))).toJSON()).toEqual(rejected("getInteraction", "invalid_request"));
     expect(calls).toHaveLength(0);
   });
 });
@@ -792,7 +924,7 @@ describe("cross-platform: each platform reads only its own shape", () => {
     const { port, calls } = harness(facebookGraph({ pages: FB_STREAM }));
     const tiktok = { credential: CREDENTIAL, account: providerObjectRef("tiktok", "asset", "9001") };
     expect((await failure(port.listInteractions(tiktok, { kind: "content", content: providerObjectRef("tiktok", "content", "9002") }, WINDOW, null))).toJSON()).toEqual(rejected("listInteractions", "invalid_request"));
-    expect((await failure(port.getInteraction(tiktok, providerObjectRef("tiktok", "interaction", "9003")))).toJSON()).toEqual(rejected("getInteraction", "invalid_request"));
+    expect((await failure(port.getInteraction(tiktok, providerObjectRef("tiktok", "interaction", "9003") as never))).toJSON()).toEqual(rejected("getInteraction", "invalid_request"));
     expect(calls).toHaveLength(0);
   });
 

@@ -64,11 +64,17 @@
  *
  * read_interactions (Step 7G-H5.5-P12-B1; README › read_interactions — IMPLEMENTED_OFFLINE_NOT_REGISTERED):
  * `listInteractions` of ONE known content item (an account-wide comment feed is not offered: the `account` scope is
- * TargetNotEligible for every platform, before any request) and `getInteraction`. Platform-selected like read_content:
+ * TargetNotEligible for every platform, before any request) and `getInteraction`. getInteraction re-reads ONLY an
+ * interaction this port instance listed (Step 7G-H5.5-P12-C9): its target is the exact listed DTO, whose provenance
+ * (account, content, identity, parent, kind) the port recorded at listing time; a bare id, a copy, another instance's
+ * DTO or another account's is invalid_request before any request. Platform-selected like read_content:
  *   Facebook   comments AND replies. listInteractions derives a Page token, then ONE page of `{post-id}/comments`
  *              with `filter=stream` (top-level comments and their replies in one edge, each reply carrying
- *              `parent.id`); getInteraction derives a Page token, then `{comment-id}`, whose `object.id` is its ONLY
- *              content authority (absent, or equal to its own parent, fails closed: never a guessed post).
+ *              `parent.id`); getInteraction derives a Page token, then `{comment-id}`. The listing edge is the content
+ *              authority — LIVE nodes omit `object` (P12-C7) — so `object` is OPTIONAL corroboration: absent → the
+ *              listed post; equal to it → corroborated; another post → interaction_content_conflicts; malformed,
+ *              without id, or naming the comment itself or its parent → refused as before. The node's identity and
+ *              parent must be the listed ones (another parent, or another kind → interaction_parent_mismatch).
  *   Instagram  top-level comments ONLY, with the sealed User token directly: ONE page of `{ig-media-id}/comments`, or
  *              `{ig-comment-id}`. A `parent_id` fails closed (replies are not read in this slice; never normalized as
  *              a reply); a `media.id` other than the scope's fails closed; getInteraction requires `media.id`.
@@ -81,6 +87,7 @@
  */
 import type { ProviderCredential } from "../contract/credential";
 import { PermanentRejectedError, TargetNotEligibleError, TargetNotFoundError, TransientError, type PermanentRejectionDiagnostic, type PermissionCapability, type ReadOperation } from "../contract/errors";
+import { createListedInteractionRegistry, type ListedInteractionProvenance } from "../contract/interaction-target";
 import type { AccountDescriptionDto, ContentDto, ContentKind, InteractionDto, ProviderAccess, SocialAssetDto } from "../contract/dto";
 import { isoInstant, parseIsoInstant, parseProviderObjectId, providerObjectRef, rawReference, type ProviderObjectId, type ProviderObjectRef } from "../contract/identity";
 import { BUDGET_NOT_REPORTED, parsePageCursor, type Page, type PageCursor, type TimeWindow } from "../contract/pagination";
@@ -416,10 +423,14 @@ function scopedContent(content: ProviderObjectRef<"content">, platform: "faceboo
   return id;
 }
 
-/** The interaction a getInteraction ref names, on the managed account's platform; anything else is refused before any request. */
-function requestedInteraction(ref: ProviderObjectRef<"interaction">, platform: "facebook" | "instagram"): ProviderObjectId {
+/**
+ * The interaction a recorded provenance names, on the managed account's platform; anything else is refused before any
+ * request (a provenance is recorded from this port's own DTOs, so this only fails for a cross-platform access).
+ */
+function requestedInteraction(provenance: ListedInteractionProvenance, platform: "facebook" | "instagram"): ProviderObjectId {
+  const { ref } = provenance;
   const id = parseProviderObjectId(ref.id);
-  if (ref.platform !== platform || (ref.kind as string) !== "interaction" || id === undefined) throw new PermanentRejectedError("getInteraction", "invalid_request");
+  if (ref.platform !== platform || (ref.kind as string) !== "interaction" || id === undefined || provenance.content.platform !== platform) throw new PermanentRejectedError("getInteraction", "invalid_request");
   return id;
 }
 
@@ -481,31 +492,42 @@ async function listPageComments(transport: MetaGraphTransport, access: ProviderA
   return interactionPage(createdWithin(items, bounds), list.after, cursor);
 }
 
-/** Why a Facebook comment node has no content authority, as a closed diagnostic; null when `object.id` is usable. */
-function contentAuthorityProblem(comment: MetaComment): PermanentRejectionDiagnostic | null {
+/**
+ * Whether a Facebook comment node contradicts the provenance it was listed under (Step 7G-H5.5-P12-C9), as a closed
+ * diagnostic; null when it is consistent. The content authority is the scoped edge (`{post}/comments?filter=stream`
+ * returned it under that post): `object` is optional corroboration — absent is fine (LIVE Meta omits it, P12-C7), a
+ * valid `object` equal to the listed post corroborates, and any other `object` fails closed. The node must keep the
+ * listed parent (so its derived kind cannot change).
+ */
+function contentAuthorityProblem(comment: MetaComment, provenance: ListedInteractionProvenance): PermanentRejectionDiagnostic | null {
   if (comment.objectState === "malformed") return "interaction_content_malformed";
   if (comment.objectState === "id_missing") return "interaction_content_id_missing";
-  if (comment.objectId === null) return "interaction_content_missing";
-  if (comment.objectId === comment.id) return "interaction_content_equals_interaction";
-  if (comment.objectId === comment.parentId) return "interaction_content_equals_parent";
+  if (comment.objectId !== null) {
+    if (comment.objectId === comment.id) return "interaction_content_equals_interaction";
+    if (comment.objectId === comment.parentId) return "interaction_content_equals_parent";
+    if (comment.objectId !== provenance.content.id) return "interaction_content_conflicts";
+  }
+  if (comment.parentId !== (provenance.parent?.id ?? null)) return "interaction_parent_mismatch";
   return null;
 }
 
-async function getPageComment(transport: MetaGraphTransport, access: ProviderAccess, ref: ProviderObjectRef<"interaction">): Promise<InteractionDto> {
+async function getPageComment(transport: MetaGraphTransport, access: ProviderAccess, provenance: ListedInteractionProvenance): Promise<InteractionDto> {
   const page = managedPage(access, "getInteraction");
-  const commentId = requestedInteraction(ref, "facebook");
+  const commentId = requestedInteraction(provenance, "facebook");
+  const post = scopedContent(provenance.content, "facebook");
   const token = await pageToken(transport, access, page, "getInteraction");
   const outcome = await transport.getComment(token, commentId);
   if (outcome.kind === "graph_error" && outcome.error.code === AMBIGUOUS_OBJECT_CODE && outcome.error.subcode === AMBIGUOUS_OBJECT_SUBCODE) throw new TargetNotFoundError("getInteraction");
   // An unreadable node (any field other than `object`) is the same refusal as before, now named (Step 7G-H5.5-P12-C6).
   if (outcome.kind === "unreadable") throw new PermanentRejectedError("getInteraction", "unknown", "interaction_node_unreadable");
   const comment = outcomeValue(outcome, "getInteraction", "read_interactions");
-  // `object.id` is the node's only content authority: without it, or when it names the parent comment or the comment
-  // itself, the content cannot be established — fail closed rather than guess a post. The refusal names which case it
-  // was (a closed diagnostic, never the id); the code, kind and handling are unchanged.
-  const authority = contentAuthorityProblem(comment);
-  if (authority !== null || comment.objectId === null) throw new PermanentRejectedError("getInteraction", "unknown", authority ?? "interaction_content_missing");
-  return interactionOfComment(comment, comment.objectId, page, "getInteraction");
+  // The node must be the listed interaction (the transport already refuses an echoed id that differs).
+  if (comment.id !== commentId) throw new PermanentRejectedError("getInteraction", "unknown", "interaction_node_unreadable");
+  // Any contradiction of the listed provenance fails closed, naming its case (a closed diagnostic, never an id).
+  const problem = contentAuthorityProblem(comment, provenance);
+  if (problem !== null) throw new PermanentRejectedError("getInteraction", "unknown", problem);
+  // Content from the edge that listed it: the provenance, never a node field.
+  return interactionOfComment(comment, post, page, "getInteraction");
 }
 
 /**
@@ -549,9 +571,10 @@ async function listMediaComments(transport: MetaGraphTransport, access: Provider
   return interactionPage(createdWithin(items, bounds), list.after, cursor);
 }
 
-async function getMediaComment(transport: MetaGraphTransport, access: ProviderAccess, ref: ProviderObjectRef<"interaction">): Promise<InteractionDto> {
+async function getMediaComment(transport: MetaGraphTransport, access: ProviderAccess, provenance: ListedInteractionProvenance): Promise<InteractionDto> {
   const account = managedInstagramAccount(access, "getInteraction");
-  const commentId = requestedInteraction(ref, "instagram");
+  // Instagram semantics unchanged: the provenance only names the listed comment; `media.id` stays its content authority.
+  const commentId = requestedInteraction(provenance, "instagram");
   const outcome = await transport.getInstagramComment(access.credential.secret, commentId);
   if (outcome.kind === "graph_error" && outcome.error.code === AMBIGUOUS_OBJECT_CODE && outcome.error.subcode === AMBIGUOUS_OBJECT_SUBCODE) throw new TargetNotFoundError("getInteraction");
   const comment = outcomeValue(outcome, "getInteraction", "read_interactions");
@@ -570,6 +593,8 @@ function contentOfScope(scope: InteractionScope): ProviderObjectRef<"content"> {
 export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderReadPort {
   const transport = options.transport ?? createMetaGraphTransport();
   const clock = options.clock ?? (() => new Date());
+  /** The provenance of every interaction this instance listed (weak, identity-keyed, never persisted). */
+  const listed = createListedInteractionRegistry();
   const refuse = (operation: Exclude<ReadOperation, "discoverAssets" | "describeAccount" | "listContent" | "getContent" | "listInteractions" | "getInteraction" | "parseWebhook">): Promise<never> =>
     Promise.reject(new PermanentRejectedError(operation, "invalid_request"));
 
@@ -599,11 +624,15 @@ export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderR
     async listInteractions(access, scope, window, cursor) {
       const content = contentOfScope(scope);
       const page = access.account.platform === "instagram" ? await listMediaComments(transport, access, content, window, cursor) : await listPageComments(transport, access, content, window, cursor);
-      return Object.freeze({ data: page, budget: BUDGET_NOT_REPORTED });
+      // Every returned DTO becomes a re-readable provenance of THIS port instance (Step 7G-H5.5-P12-C9).
+      return Object.freeze({ data: listed.record(access, page), budget: BUDGET_NOT_REPORTED });
     },
 
-    async getInteraction(access, ref) {
-      const interaction = access.account.platform === "instagram" ? await getMediaComment(transport, access, ref) : await getPageComment(transport, access, ref);
+    // A re-read of an interaction this port listed — never a bare id: an unrecorded, copied or foreign target is
+    // invalid_request before any request.
+    async getInteraction(access, target) {
+      const provenance = listed.resolve(access, target);
+      const interaction = access.account.platform === "instagram" ? await getMediaComment(transport, access, provenance) : await getPageComment(transport, access, provenance);
       return Object.freeze({ data: interaction, budget: BUDGET_NOT_REPORTED });
     },
     getCurrentState: () => refuse("getCurrentState"),

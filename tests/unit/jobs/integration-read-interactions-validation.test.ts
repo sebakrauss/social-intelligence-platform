@@ -417,10 +417,19 @@ describe("Facebook: listContent → listInteractions → getInteraction per obse
       deps: {
         compose: () => ({
           access: { withCredential: (_input, use) => use(providerCredential("synthetic-diagnostic-credential", USER_TOKEN)) },
-          read: { ...offContent, listInteractions: async (access, scope, window, cursor) => {
-            const page = await offContent.listInteractions(access, scope, window, cursor);
-            return { ...page, data: { ...page.data, items: page.data.items.map((item) => ({ ...item, content: providerObjectRef("facebook", "content", `${PAGE}_990000000000098`) })) } };
-          } },
+          // A port whose listing reports another content; its re-read maps its own relabelled DTOs back to the
+          // listed originals (a copy is never a target of the real port, Step 7G-H5.5-P12-C9).
+          read: (() => {
+            const relabelled = new WeakMap<InteractionDto, InteractionDto>();
+            return { ...offContent, listInteractions: async (access, scope, window, cursor) => {
+              const page = await offContent.listInteractions(access, scope, window, cursor);
+              return { ...page, data: { ...page.data, items: page.data.items.map((item) => {
+                const copy = { ...item, content: providerObjectRef("facebook", "content", `${PAGE}_990000000000098`) };
+                relabelled.set(copy, item);
+                return copy;
+              }) } };
+            }, getInteraction: (access, target) => offContent.getInteraction(access, { kind: "listed", listed: relabelled.get(target.listed) ?? target.listed }) } satisfies ProviderReadPort;
+          })(),
         }),
       },
     });
@@ -653,14 +662,30 @@ describe("the re-read node's content authority: a closed relation, never an id",
     expect([outcome.comment.contentAuthority, outcome.comment.correlated, outcome.result]).toEqual(["expected_content", true, "INCONCLUSIVE_COMMENT_ONLY"]);
   });
 
-  it("a usable node naming ANOTHER post is `other_content` — and still a CORRELATION_FAILURE, never evidence", async () => {
-    const outcome = await harness(fbWith({ object: { id: `${PAGE}_990000000000099` } })).run();
+  it("a node naming ANOTHER post conflicts with the listing edge → `content_conflicts`, refused, never evidence (Step 7G-H5.5-P12-C9)", async () => {
+    const h = harness(fbWith({ object: { id: `${PAGE}_990000000000099` } }));
+    const outcome = await h.run();
     expectOutcomeSchema(outcome);
-    expect([outcome.comment.contentAuthority, outcome.comment.contentCorrelated, outcome.result, outcome.evidenceInteractionKinds]).toEqual(["other_content", false, "CORRELATION_FAILURE", null]);
+    expect([outcome.comment.contentAuthority, outcome.comment.succeeded, outcome.comment.error, outcome.result, outcome.evidenceInteractionKinds]).toEqual(["content_conflicts", false, { kind: "permanent_rejected", detail: "unknown" }, "MALFORMED_RESPONSE", null]);
+    expect([outcome.expectedMetaRequests, h.world.calls.length]).toEqual([6, 6]);
+  });
+
+  it("a node WITHOUT object is accepted on the listing edge's content → `expected_content` (the LIVE shape, P12-C7)", async () => {
+    const h = harness(fbWith({ object: undefined }));
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.comment.contentAuthority, outcome.comment.correlated, outcome.result, outcome.evidenceInteractionKinds]).toEqual(["expected_content", true, "INCONCLUSIVE_COMMENT_ONLY", ["comment"]]);
+    expect([outcome.expectedMetaRequests, h.world.calls.length]).toEqual([6, 6]);
+  });
+
+  it("a reply node under ANOTHER parent → `parent_mismatch`, refused, never re-parented", async () => {
+    const graph: Graph = { comments: { data: [fbComment(COMMENT), fbReply(REPLY, COMMENT)] }, nodes: { [COMMENT]: fbComment(COMMENT), [REPLY]: fbReply(REPLY, "990000000000001_770000000000999") } };
+    const outcome = await harness(graph).run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.comment.contentAuthority, outcome.reply.contentAuthority, outcome.reply.succeeded, outcome.result, outcome.evidenceInteractionKinds]).toEqual(["expected_content", "parent_mismatch", false, "MALFORMED_RESPONSE", null]);
   });
 
   it.each([
-    ["no object", { object: undefined }, "content_missing"],
     ["an object without id", { object: {} }, "content_id_missing"],
     ["an object with a malformed id", { object: { id: "a b" } }, "content_malformed"],
     ["an object that is not an object", { object: "a-string" }, "content_malformed"],
@@ -682,11 +707,26 @@ describe("the re-read node's content authority: a closed relation, never an id",
     expect([outcome.comment.contentAuthority, outcome.reply.contentAuthority, outcome.reply.succeeded, outcome.result]).toEqual(["expected_content", "equals_parent", false, "MALFORMED_RESPONSE"]);
   });
 
-  it("the R5-shape LIVE failure: BOTH re-reads without object → both `content_missing`, distinguishable from a malformed one", async () => {
+  it("the C7 LIVE shape now succeeds: BOTH re-reads without object → both `expected_content`, full evidence, budget unchanged", async () => {
     const graph: Graph = { comments: { data: [fbComment(COMMENT), fbReply(REPLY, COMMENT)] }, nodes: { [COMMENT]: fbComment(COMMENT), [REPLY]: fbReply(REPLY, COMMENT) } };
-    const outcome = await harness(graph).run();
+    const h = harness(graph);
+    const outcome = await h.run();
     expectOutcomeSchema(outcome);
-    expect([outcome.comment.contentAuthority, outcome.reply.contentAuthority, outcome.result, outcome.expectedMetaRequests]).toEqual(["content_missing", "content_missing", "MALFORMED_RESPONSE", 8]);
+    expect([outcome.comment.contentAuthority, outcome.reply.contentAuthority, outcome.result, outcome.evidenceInteractionKinds, outcome.expectedMetaRequests, h.world.calls.length]).toEqual(["expected_content", "expected_content", "READ_INTERACTIONS_LIST_AND_GET_SUCCEEDED", ["comment", "reply"], 8, 8]);
+  });
+
+  it("the exact C7 reproduction (empty candidate 1; comment + reply at position 2; nodes WITHOUT object) → READ_INTERACTIONS_LIST_AND_GET_SUCCEEDED, 10 GETs", async () => {
+    const P1 = `${PAGE}_990000000000101`;
+    const P2 = `${PAGE}_990000000000102`;
+    const C2 = "990000000000102_770000000000201";
+    const R2 = "990000000000102_770000000000202";
+    const graph: Graph = { contents: { data: [post(P1), post(P2)] }, commentsByContent: { [P1]: { body: { data: [] } }, [P2]: { body: { data: [fbComment(C2), fbReply(R2, C2)] } } }, nodes: { [C2]: fbComment(C2), [R2]: fbReply(R2, C2) } };
+    const h = harness(graph);
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.result, outcome.selectedCandidatePosition, outcome.evidenceInteractionKinds, outcome.comment.contentAuthority, outcome.reply.contentAuthority]).toEqual(["READ_INTERACTIONS_LIST_AND_GET_SUCCEEDED", 2, ["comment", "reply"], "expected_content", "expected_content"]);
+    expect([outcome.comment.correlated, outcome.reply.correlated, outcome.reply.parentCorrelated]).toEqual([true, true, true]);
+    expect([outcome.stages, outcome.expectedMetaRequests, h.world.calls.length]).toEqual([["list_content", "list_interactions", "list_interactions", "get_comment", "get_reply"], 10, 10]);
   });
 
   it("Instagram: a usable node is `expected_content`; a node without media.id is `content_missing`", async () => {
@@ -698,10 +738,10 @@ describe("the re-read node's content authority: a closed relation, never an id",
     expect([missing.comment.contentAuthority, missing.result]).toEqual(["content_missing", "MALFORMED_RESPONSE"]);
   });
 
-  it("nothing re-read → contentAuthority null; the closed vocabulary is exactly eight relations", async () => {
+  it("nothing re-read → contentAuthority null; the closed vocabulary is exactly ten relations", async () => {
     const outcome = await harness({ comments: { data: [] } }).run();
     expect([outcome.comment.contentAuthority, outcome.reply.contentAuthority]).toEqual([null, null]);
-    expect(READ_INTERACTIONS_CONTENT_AUTHORITIES).toEqual(["expected_content", "other_content", "content_missing", "content_malformed", "content_id_missing", "equals_interaction", "equals_parent", "node_unreadable"]);
+    expect(READ_INTERACTIONS_CONTENT_AUTHORITIES).toEqual(["expected_content", "other_content", "content_missing", "content_malformed", "content_id_missing", "equals_interaction", "equals_parent", "node_unreadable", "content_conflicts", "parent_mismatch"]);
   });
 });
 

@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import { OutcomeUnknownError, TargetNotEligibleError, TargetNotFoundError, TransientError, isDefiniteFailure, providerObjectRef } from "@/integrations/providers/contract";
-import { FULL_WINDOW, createBaselineSimulator } from "../support/simulator-harness";
+import { FULL_WINDOW, createBaselineSimulator, listedTarget } from "../support/simulator-harness";
 
 const sim = createBaselineSimulator();
 const { world, read, mutation } = sim;
@@ -22,7 +22,7 @@ describe("public reply", () => {
     const receipt = (await mutation.replyPublicly(fb, comment("fb_c_001"), "¡Hola! Te respondemos en un momento.", { key: "intent-1" })).data;
     expect(world.interactionCount()).toBe(before + 1);
     expect(receipt.createdInteraction).not.toBeNull();
-    const created = (await read.getInteraction(fb, receipt.createdInteraction ?? comment("x"))).data;
+    const created = (await read.getInteraction(fb, await listedTarget(read, fb, receipt.createdInteraction?.id ?? "missing"))).data;
     expect(created).toMatchObject({ interactionKind: "reply", parent: comment("fb_c_001"), author: { role: "account_identity" }, text: "¡Hola! Te respondemos en un momento." });
   });
 
@@ -109,7 +109,7 @@ describe("ambiguity is preserved (R6)", () => {
     const created = world.interactions().filter((i) => i.parent === "fb_c_001" && i.text === "Respuesta ambigua");
     expect(created).toHaveLength(1);
     // Reconciliation (Step 9) can find it through the read port, so it must never be resent blindly.
-    const found = (await read.getInteraction(fb, comment(created[0]?.id ?? "missing"))).data;
+    const found = (await read.getInteraction(fb, await listedTarget(read, fb, created[0]?.id ?? "missing"))).data;
     expect(found).toMatchObject({ parent: comment("fb_c_001"), author: { role: "account_identity" } });
   });
 

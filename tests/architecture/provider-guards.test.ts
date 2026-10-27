@@ -424,19 +424,28 @@ describe("Meta read_interactions (Step 7G-H5.5-P12-B1): Facebook comments + repl
     expect(instagramMapper).toMatch(/interactionKind: "comment",/);
     expect(instagramMapper).not.toMatch(/"reply"/);
     for (const mapper of [facebookMapper, instagramMapper]) expect(mapper).not.toMatch(/token|secret|credential|"organic"|"paid"|"mixed"|reportedSource/);
-    // Step 7G-H5.5-P12-C6: the same refusal set (no object, an odd object, one naming the comment itself or its parent,
-    // an unreadable node), the same error and code — each now NAMES its case with a closed diagnostic, never an id.
+    // Step 7G-H5.5-P12-C6 → C9: the listing edge is the Facebook content authority; `object` only corroborates. The
+    // odd-object refusals are unchanged; a conflicting object or another parent is refused; each NAMES its case with a
+    // closed diagnostic, never an id. No object is NOT a refusal any more.
     const authority = between(readPort(), "function contentAuthorityProblem(", "async function getPageComment(");
     expect(authority).toMatch(/if \(comment\.objectState === "malformed"\) return "interaction_content_malformed";/);
     expect(authority).toMatch(/if \(comment\.objectState === "id_missing"\) return "interaction_content_id_missing";/);
-    expect(authority).toMatch(/if \(comment\.objectId === null\) return "interaction_content_missing";/);
+    expect(authority).toMatch(/if \(comment\.objectId !== null\) \{/);
     expect(authority).toMatch(/if \(comment\.objectId === comment\.id\) return "interaction_content_equals_interaction";/);
     expect(authority).toMatch(/if \(comment\.objectId === comment\.parentId\) return "interaction_content_equals_parent";/);
-    expect(readPort()).toMatch(/if \(authority !== null \|\| comment\.objectId === null\) throw new PermanentRejectedError\("getInteraction", "unknown", authority \?\? "interaction_content_missing"\);/);
+    expect(authority).toMatch(/if \(comment\.objectId !== provenance\.content\.id\) return "interaction_content_conflicts";/);
+    expect(authority).toMatch(/if \(comment\.parentId !== \(provenance\.parent\?\.id \?\? null\)\) return "interaction_parent_mismatch";/);
+    expect(authority).not.toMatch(/interaction_content_missing/);
+    const facebookReread = between(readPort(), "async function getPageComment(", "function interactionOfInstagramComment(");
+    expect(facebookReread).toMatch(/const post = scopedContent\(provenance\.content, "facebook"\);/);
+    expect(facebookReread).toMatch(/if \(comment\.id !== commentId\) throw new PermanentRejectedError\("getInteraction", "unknown", "interaction_node_unreadable"\);/);
+    expect(facebookReread).toMatch(/if \(problem !== null\) throw new PermanentRejectedError\("getInteraction", "unknown", problem\);/);
+    expect(facebookReread).toMatch(/return interactionOfComment\(comment, post, page, "getInteraction"\);/);
+    expect(facebookReread).not.toMatch(/comment\.objectId \?\?|objectId as|providerObjectRef\("facebook", "content", comment/);
     expect(readPort()).toMatch(/if \(outcome\.kind === "unreadable"\) throw new PermanentRejectedError\("getInteraction", "unknown", "interaction_node_unreadable"\);/);
     expect(readPort()).toMatch(/if \(comment\.mediaId === null\) throw new PermanentRejectedError\("getInteraction", "unknown", "interaction_content_missing"\);/);
-    // The diagnostic never carries a value: every literal passed is a closed vocabulary member.
-    expect([...readPort().matchAll(/PermanentRejectedError\("getInteraction", "unknown", ([^)]+)\)/g)].map((m) => m[1])).toEqual(['"interaction_node_unreadable"', 'authority ?? "interaction_content_missing"', '"interaction_content_missing"']);
+    // The diagnostic never carries a value: every argument passed is a closed vocabulary member or the closed result.
+    expect([...readPort().matchAll(/PermanentRejectedError\("getInteraction", "unknown", ([^)]+)\)/g)].map((m) => m[1])).toEqual(['"interaction_node_unreadable"', '"interaction_node_unreadable"', "problem", '"interaction_content_missing"']);
     // No account-wide comment feed, on any platform.
     expect(readPort()).toMatch(/if \(scope\.kind === "account"\) throw new TargetNotEligibleError\("listInteractions", "unsupported_for_target"\);/);
   });
@@ -459,7 +468,10 @@ describe("Meta read_interactions (Step 7G-H5.5-P12-B1): Facebook comments + repl
       "`comment` and `reply`",
       "`comment` only (top-level)",
       "a missing `from` or `from.id` fails the WHOLE page",
-      "Facebook's ONLY\ncontent authority is `object.id`",
+      "Facebook's content authority is the listing edge, never a bare id",
+      "`object.id` is optional corroboration",
+      "there is no bare-id fallback",
+      "A reply has DIRECT authority from the edge that listed it",
       "no permission set is claimed here and none is minimal",
     ]) expect(section, phrase).toContain(phrase);
   });
@@ -545,5 +557,46 @@ describe("provider fixtures", () => {
     for (const file of [...jsonFiles("simulator"), ...jsonFiles("golden")]) {
       expect(readFileSync(file, "utf8"), file).not.toMatch(/\b(?:https?|wss?):\/\//i);
     }
+  });
+});
+
+describe("interaction re-reads require listed provenance (Step 7G-H5.5-P12-C9): never a bare id, no fallback, no persistence", () => {
+  const CONTRACT = "integrations/providers/contract";
+
+  it("the contract takes an InteractionTarget — a closed union whose only kind is the listed DTO", () => {
+    const port = codeOf(`${CONTRACT}/read-port.ts`);
+    expect(port).toMatch(/getInteraction\(access: ProviderAccess, target: InteractionTarget\): Promise<ProviderResult<InteractionDto>>;/);
+    expect(port).not.toMatch(/getInteraction\([^)]*ProviderObjectRef/);
+    const target = codeOf(`${CONTRACT}/interaction-target.ts`);
+    expect(target).toMatch(/export type InteractionTarget = \{ readonly kind: "listed"; readonly listed: InteractionDto \};/);
+  });
+
+  it("the registry is weak, identity-keyed, per instance and in memory only: no persistence, no I/O, no bare-id lookup", () => {
+    const target = codeOf(`${CONTRACT}/interaction-target.ts`);
+    expect(target).toMatch(/const issued = new WeakMap<InteractionDto, ListedInteractionProvenance>\(\);/);
+    expect(target).toMatch(/issued\.get\(listed as InteractionDto\)/);
+    expect(target).not.toMatch(/new Map\b|new Set\b|\.ref\.id\]|issued\.get\([^l]|JSON|localStorage|import .*(?:fs|db|platform|pg|drizzle)/);
+    expect(target).toMatch(/if \(provenance === undefined \|\| !sameProviderObject\(provenance\.account, access\.account\)\) throw new PermanentRejectedError\("getInteraction", "invalid_request"\);/);
+    expect([...target.matchAll(/^import .* from "(.+)";$/gm)].map((m) => m[1]).sort()).toEqual(["./dto", "./errors", "./identity", "./pagination"]);
+  });
+
+  it.each([
+    ["Meta", "integrations/providers/meta/read-port.ts"],
+    ["the simulator", "integrations/providers/simulator/read-port.ts"],
+  ])("%s records every listed page and resolves the target before any request", (_label, file) => {
+    const code = codeOf(file);
+    expect(code.match(/createListedInteractionRegistry\(\)/g)).toHaveLength(1);
+    expect(code).toMatch(/listed\.record\(access, /);
+    expect(code.match(/listed\.resolve\(access, target\)/g)).toHaveLength(1);
+    const reread = code.slice(code.indexOf("getInteraction(access, target)"));
+    // resolve comes first: before any transport call or simulated execution.
+    expect(reread.indexOf("listed.resolve(access, target)")).toBeLessThan(Math.min(...["transport", "world.execute"].map((m) => (reread.indexOf(m) < 0 ? Number.MAX_SAFE_INTEGER : reread.indexOf(m)))));
+  });
+
+  it("no production caller passes a bare ref: every getInteraction call names a listed target", () => {
+    const files = sourceFiles(["app", "ui", "server", "domain", "modules", "mutations", "integrations", "ai", "jobs", "platform", "db"]);
+    const calls = files.flatMap((file) => [...codeOf(file).matchAll(/\.getInteraction\(([^,]+), ([^)]*)\)/g)].map((m) => [file, m[2] ?? ""] as const));
+    for (const [file, argument] of calls) expect(argument, file).toMatch(/^\{ kind: "listed", listed: /);
+    expect(calls.length).toBeGreaterThan(0);
   });
 });

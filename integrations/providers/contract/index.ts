@@ -124,6 +124,7 @@ export {
   type WebhookRequest,
 } from "./webhooks";
 export type { InteractionScope, ProviderReadPort } from "./read-port";
+export { createListedInteractionRegistry, type InteractionTarget, type ListedInteractionProvenance, type ListedInteractionRegistry } from "./interaction-target";
 export {
   CALLBACK_DENIAL_REASONS,
   CALLBACK_MALFORMED_REASONS,

@@ -146,7 +146,9 @@ describe("read_interactions validation diagnostic: evidence only from what both 
   it("re-reads the FIRST listed interaction of each provable kind; Instagram can prove only comments", () => {
     const code = codeOf(MODULE);
     expect(code).toMatch(/const first = items\.find\(\(item\) => item\.interactionKind === kind\);/);
-    expect(code).toMatch(/read\.getInteraction\(providerAccess, first\.ref\)/);
+    // Step 7G-H5.5-P12-C9: the exact listed DTO instance, never a bare ref.
+    expect(code).toMatch(/read\.getInteraction\(providerAccess, \{ kind: "listed", listed: first \}\)/);
+    expect(code).not.toMatch(/getInteraction\([^)]*\.ref\)/);
     expect(code).toMatch(/facebook: Object\.freeze\(\["comment", "reply"\] as const\),\n {2}instagram: Object\.freeze\(\["comment"\] as const\),/);
     expect(code).toMatch(/const reply = provable\.includes\("reply"\) \? await reread\("reply", "get_reply"\)/);
   });

@@ -101,6 +101,9 @@ export const PERMANENT_REJECTION_DIAGNOSTICS = [
   "interaction_content_equals_interaction",
   "interaction_content_equals_parent",
   "interaction_node_unreadable",
+  // Step 7G-H5.5-P12-C9: a node's reported content or parent contradicts the provenance it was listed under.
+  "interaction_content_conflicts",
+  "interaction_parent_mismatch",
 ] as const;
 export type PermanentRejectionDiagnostic = (typeof PERMANENT_REJECTION_DIAGNOSTICS)[number];
 

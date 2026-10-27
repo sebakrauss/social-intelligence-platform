@@ -197,8 +197,10 @@ export type ReadInteractionsAuthorizationClass = "AUTHORIZED_READS_OBSERVED" | "
 /**
  * How the re-read node established its content (Step 7G-H5.5-P12-C6) — a closed relation, never an id: the selected
  * candidate (`expected_content`) or another (`other_content`) when the node was usable; otherwise why the adapter refused
- * it (no content authority, a malformed one, one without an id, one naming the interaction itself or its parent, or a
- * node unreadable for another reason). null when nothing was re-read or the refusal named no case.
+ * it (no content authority, a malformed one, one without an id, one naming the interaction itself or its parent, a node
+ * unreadable for another reason, or — since the listing edge is the authority, Step 7G-H5.5-P12-C9 — a node whose
+ * `object` names another post or whose parent differs from the listed one). null when nothing was re-read or the
+ * refusal named no case.
  */
 export const READ_INTERACTIONS_CONTENT_AUTHORITIES = [
   "expected_content",
@@ -209,6 +211,9 @@ export const READ_INTERACTIONS_CONTENT_AUTHORITIES = [
   "equals_interaction",
   "equals_parent",
   "node_unreadable",
+  // Step 7G-H5.5-P12-C9: the node contradicts the listed provenance (another post in `object`, another parent).
+  "content_conflicts",
+  "parent_mismatch",
 ] as const;
 export type ReadInteractionsContentAuthority = (typeof READ_INTERACTIONS_CONTENT_AUTHORITIES)[number];
 
@@ -219,6 +224,8 @@ const CONTENT_AUTHORITY_OF_DIAGNOSTIC: Readonly<Record<PermanentRejectionDiagnos
   interaction_content_equals_interaction: "equals_interaction",
   interaction_content_equals_parent: "equals_parent",
   interaction_node_unreadable: "node_unreadable",
+  interaction_content_conflicts: "content_conflicts",
+  interaction_parent_mismatch: "parent_mismatch",
 });
 
 /** The refusal's closed diagnostic as a content-authority relation; null when it named none. */
@@ -618,7 +625,8 @@ export async function runReadInteractionsValidation(
         let error: ReadInteractionsErrorClass | null = null;
         let refusedAuthority: ReadInteractionsContentAuthority | null = null;
         try {
-          got = (await read.getInteraction(providerAccess, first.ref)).data;
+          // The exact DTO instance listInteractions returned: the only re-readable provenance (Step 7G-H5.5-P12-C9).
+          got = (await read.getInteraction(providerAccess, { kind: "listed", listed: first })).data;
         } catch (caught) {
           if (!isProviderError(caught)) throw caught;
           error = errorClassOf(caught);

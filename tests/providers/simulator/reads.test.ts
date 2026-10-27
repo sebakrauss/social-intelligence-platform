@@ -5,6 +5,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  ProviderError,
   TargetNotFoundError,
   providerObjectKey,
   providerObjectRef,
@@ -15,7 +16,7 @@ import {
   type PaidContextItem,
   type ProviderResult,
 } from "@/integrations/providers/contract";
-import { FULL_WINDOW, createBaselineSimulator } from "../support/simulator-harness";
+import { FULL_WINDOW, createBaselineSimulator, listedTarget } from "../support/simulator-harness";
 
 const sim = createBaselineSimulator();
 const { world, read } = sim;
@@ -23,6 +24,8 @@ const fb = sim.access("cred_meta_main", "fb_page_aurora");
 const ig = sim.access("cred_meta_main", "ig_acct_aurora");
 const tt = sim.access("cred_tiktok_main", "tt_acct_aurora");
 const fbRef = <K extends "content" | "interaction" | "author">(kind: K, id: string) => providerObjectRef("facebook", kind, id);
+/** A re-read of a Facebook interaction: listed on this port first, then the listed DTO (Step 7G-H5.5-P12-C9). */
+const reread = async (id: string) => read.getInteraction(fb, await listedTarget(read, fb, id));
 
 async function all<T>(fetch: (cursor: PageCursor | null) => Promise<ProviderResult<Page<T>>>): Promise<T[]> {
   const items: T[] = [];
@@ -95,19 +98,21 @@ describe("threads, brand replies and edits", () => {
 
   it("a native brand reply is observable as an account-identity author", async () => {
     const account = (await read.describeAccount(fb)).data;
-    const brandReply = (await read.getInteraction(fb, fbRef("interaction", "fb_c_002"))).data;
+    const brandReply = (await reread("fb_c_002")).data;
     expect(brandReply.author.role).toBe("account_identity");
     expect(brandReply.author.ref).toEqual(account.accountIdentity);
     const created = world.nativeBrandReply("fb_c_005", "¡Hola! Vuelve el lunes (sintético).");
-    const fetched = (await read.getInteraction(fb, fbRef("interaction", created))).data;
+    const fetched = (await reread(created)).data;
     expect(fetched).toMatchObject({ interactionKind: "reply", parent: fbRef("interaction", "fb_c_005"), author: { role: "account_identity" } });
   });
 
   it("an edit keeps the identity and shows a new revision; a re-fetch returns the authoritative text", async () => {
-    const before = (await read.getInteraction(fb, fbRef("interaction", "fb_c_001"))).data;
+    const target = await listedTarget(read, fb, "fb_c_001");
+    const before = (await read.getInteraction(fb, target)).data;
     world.advanceClock(60);
     world.editInteraction("fb_c_001", "¿Cuánto sale el envío a Valparaíso y a Viña?");
-    const after = (await read.getInteraction(fb, fbRef("interaction", "fb_c_001"))).data;
+    // The same listed target re-reads the edit: identity, content and parent are unchanged.
+    const after = (await read.getInteraction(fb, target)).data;
     expect(after.ref).toEqual(before.ref);
     expect(after.timestamps.createdAt).toBe(before.timestamps.createdAt);
     expect(after.textRevision).not.toBe(before.textRevision);
@@ -115,27 +120,38 @@ describe("threads, brand replies and edits", () => {
     expect(after.text).toBe("¿Cuánto sale el envío a Valparaíso y a Viña?");
     expect(after.rawReference.ref).not.toBe(before.rawReference.ref);
     // The fixture also carries an already-edited comment.
-    expect((await read.getInteraction(fb, fbRef("interaction", "fb_c_004"))).data).toMatchObject({ textRevision: "r2", editedAt: "2026-09-11T08:00:00.000Z" });
+    expect((await reread("fb_c_004")).data).toMatchObject({ textRevision: "r2", editedAt: "2026-09-11T08:00:00.000Z" });
   });
 });
 
 describe("state observations: removal is a signal, absence is not deletion", () => {
   it("a signaled removal is observable as removed_at_source (tombstone, no text)", async () => {
-    const tombstone = (await read.getInteraction(fb, fbRef("interaction", "fb_c_007"))).data;
-    expect(tombstone).toMatchObject({ availability: "removed_at_source", text: null });
+    // Removed before any listing: it is never listed, so it has no re-read target; its state is still observable.
+    expect((await interactionsOf(fb, "fb_post_organic_01")).map((i) => i.ref.id)).not.toContain("fb_c_007");
+    const refused = await read.getInteraction(fb, fbRef("interaction", "fb_c_007") as never).catch((error: unknown) => error);
+    expect(refused instanceof ProviderError ? refused.toJSON() : refused).toEqual({ kind: "permanent_rejected", operation: "getInteraction", retry: "never", details: { reasonCode: "invalid_request" } });
     expect((await read.getCurrentState(fb, fbRef("interaction", "fb_c_007"))).data).toMatchObject({ presence: "removed_at_source", basis: "provider_signal" });
+    // Listed, then removed with a signal: the re-read is a tombstone.
+    const target = await listedTarget(read, fb, "fb_c_006");
+    world.removeAtSource("fb_c_006", { signaled: true });
+    expect((await read.getInteraction(fb, target)).data).toMatchObject({ availability: "removed_at_source", text: null });
   });
 
   it("an object the provider simply doesn't return is not_returned, never 'deleted'", async () => {
-    await expect(read.getInteraction(fb, fbRef("interaction", "fb_c_008"))).rejects.toBeInstanceOf(TargetNotFoundError);
     expect((await read.getCurrentState(fb, fbRef("interaction", "fb_c_008"))).data).toMatchObject({ presence: "not_returned", basis: "direct_fetch" });
+    // Listed, then gone without a signal: the re-read is TargetNotFound.
+    const target = await listedTarget(read, fb, "fb_c_005");
+    world.removeAtSource("fb_c_005", { signaled: false });
+    await expect(read.getInteraction(fb, target)).rejects.toBeInstanceOf(TargetNotFoundError);
+    expect((await read.getCurrentState(fb, fbRef("interaction", "fb_c_005"))).data).toMatchObject({ presence: "not_returned", basis: "direct_fetch" });
   });
 
   it("deletion between a listing and the re-fetch is observed, not inferred", async () => {
-    const listed = (await interactionsOf(fb, "fb_post_organic_01")).map((i) => i.ref.id);
-    expect(listed).toContain("fb_c_005");
+    const listed = await interactionsOf(fb, "fb_post_organic_01");
+    const target = listed.find((i) => i.ref.id === "fb_c_005");
+    if (target === undefined) throw new Error("fb_c_005 not listed");
     world.removeAtSource("fb_c_005", { signaled: true });
-    expect((await read.getInteraction(fb, fbRef("interaction", "fb_c_005"))).data.availability).toBe("removed_at_source");
+    expect((await read.getInteraction(fb, { kind: "listed", listed: target })).data.availability).toBe("removed_at_source");
     expect((await interactionsOf(fb, "fb_post_organic_01")).map((i) => i.ref.id)).not.toContain("fb_c_005");
   });
 
@@ -146,7 +162,7 @@ describe("state observations: removal is a signal, absence is not deletion", () 
   });
 
   it("a native hide is observable on list, re-fetch and current state", async () => {
-    expect((await read.getInteraction(fb, fbRef("interaction", "fb_c_006"))).data.visibility).toBe("hidden");
+    expect((await reread("fb_c_006")).data.visibility).toBe("hidden");
     world.nativeUnhide("fb_c_006");
     expect((await read.getCurrentState(fb, fbRef("interaction", "fb_c_006"))).data.visibility).toBe("visible");
     world.nativeHide("fb_c_006");
@@ -164,7 +180,7 @@ describe("timestamps, raw references and identity stability", () => {
     const content = (await read.getContent(fb, fbRef("content", "fb_post_organic_01"))).data;
     expect(content.publishedAt).toBe("2026-09-10T15:00:00.000Z");
     expect(content.rawReference).toEqual({ provider: "simulator", apiVersion: "simulator-v1", ref: "sim://baseline/content/fb_post_organic_01" });
-    const interaction = (await read.getInteraction(fb, fbRef("interaction", "fb_c_001"))).data;
+    const interaction = (await reread("fb_c_001")).data;
     expect(interaction.timestamps.createdAt).toBe("2026-09-10T16:00:00.000Z");
     expect(interaction.rawReference.ref).toBe("sim://baseline/interaction/fb_c_001@r1");
   });
@@ -179,5 +195,38 @@ describe("timestamps, raw references and identity stability", () => {
   it("orders listings newest first with a stable id tiebreak", async () => {
     const ids = (await interactionsOf(tt, "tt_video_multi_20")).map((i) => i.ref.id);
     expect(ids).toEqual(["tt_c_009", "tt_c_008", "tt_c_007", "tt_c_006", "tt_c_005", "tt_c_004", "tt_c_003", "tt_c_002", "tt_c_001"]);
+  });
+});
+
+describe("re-read provenance: the same rule as the real adapters, no simulator bypass (Step 7G-H5.5-P12-C9)", () => {
+  const refusal = async (promise: Promise<unknown>) => {
+    const error = await promise.catch((e: unknown) => e);
+    return error instanceof ProviderError ? error.toJSON() : error;
+  };
+  const INVALID = { kind: "permanent_rejected", operation: "getInteraction", retry: "never", details: { reasonCode: "invalid_request" } };
+
+  it("a bare ref, a copy, a deserialized DTO, another instance's DTO or another account is refused before the simulated provider", async () => {
+    const target = await listedTarget(read, fb, "fb_c_001");
+    const otherPort = createBaselineSimulator();
+    const foreign = await listedTarget(otherPort.read, otherPort.access("cred_meta_main", "fb_page_aurora"), "fb_c_001");
+    const before = world.journal.length;
+    for (const [access, candidate] of [
+      [fb, fbRef("interaction", "fb_c_001")],
+      [fb, { kind: "listed", listed: { ...target.listed } }],
+      [fb, { kind: "listed", listed: JSON.parse(JSON.stringify(target.listed)) as InteractionDto }],
+      [fb, foreign],
+      [ig, target],
+      [tt, target],
+    ] as const) {
+      expect(await refusal(read.getInteraction(access, candidate as never))).toEqual(INVALID);
+    }
+    expect(world.journal.length).toBe(before);
+    expect((await read.getInteraction(fb, target)).data.ref).toEqual(fbRef("interaction", "fb_c_001"));
+    expect(world.journal.length).toBe(before + 1);
+  });
+
+  it("a reply listed on this port re-reads with its listed parent and content", async () => {
+    const { data } = await read.getInteraction(fb, await listedTarget(read, fb, "fb_c_003"));
+    expect(data).toMatchObject({ interactionKind: "reply", parent: fbRef("interaction", "fb_c_002"), content: fbRef("content", "fb_post_organic_01") });
   });
 });

@@ -9,9 +9,14 @@ import {
   parseOAuthState,
   parseRedirectUri,
   providerObjectRef,
+  type InteractionDto,
+  type InteractionTarget,
   type OAuthState,
+  type Page,
+  type PageCursor,
   type PkceSupport,
   type ProviderAccess,
+  type ProviderReadPort,
   type RedirectUri,
   type TimeWindow,
 } from "@/integrations/providers/contract";
@@ -34,6 +39,27 @@ export const FULL_WINDOW: TimeWindow = {
   from: parseIsoInstant("2026-09-01T00:00:00.000Z") ?? (() => { throw new Error("instant"); })(),
   to: parseIsoInstant("2026-09-15T00:00:00.000Z") ?? (() => { throw new Error("instant"); })(),
 };
+
+/** A window wide enough for every scenario interaction, including ones a test creates on the simulated clock. */
+const LISTING_WINDOW: TimeWindow = {
+  from: parseIsoInstant("2026-01-01T00:00:00.000Z") ?? (() => { throw new Error("instant"); })(),
+  to: parseIsoInstant("2027-01-01T00:00:00.000Z") ?? (() => { throw new Error("instant"); })(),
+};
+
+/**
+ * The only way to re-read an interaction (Step 7G-H5.5-P12-C9): list the account on `read` and return the exact listed
+ * DTO for `id` as a target. An interaction that is not listed (removed or vanished at source) has no target.
+ */
+export async function listedTarget(read: ProviderReadPort, access: ProviderAccess, id: string): Promise<InteractionTarget> {
+  let cursor: PageCursor | null = null;
+  for (;;) {
+    const page: Page<InteractionDto> = (await read.listInteractions(access, { kind: "account" }, LISTING_WINDOW, cursor)).data;
+    const listed = page.items.find((item) => item.ref.id === id);
+    if (listed !== undefined) return { kind: "listed", listed };
+    if (page.next.kind === "end") throw new Error("interaction not listed");
+    cursor = page.next.cursor;
+  }
+}
 
 export function createBaselineSimulator() {
   const world = new SimulatorWorld(loadScenario("baseline"));
@@ -108,9 +134,10 @@ export function simulatorContractHarness(): ProviderContractHarness {
       {
         name: "provider server error on a re-fetch",
         kind: "transient",
-        invoke: () => {
+        invoke: async () => {
+          const target = await listedTarget(read, tiktok, "tt_c_001");
           world.applyFaultPreset("transient_refetch");
-          return read.getInteraction(tiktok, tt("interaction", "tt_c_001"));
+          return read.getInteraction(tiktok, target);
         },
       },
       {
@@ -121,7 +148,12 @@ export function simulatorContractHarness(): ProviderContractHarness {
       {
         name: "re-fetch of an object the provider doesn't return",
         kind: "target_not_found",
-        invoke: () => read.getInteraction(tiktok, tt("interaction", "tt_c_does_not_exist")),
+        invoke: async () => {
+          // Listed, then gone without a signal: the re-read observes absence, never deletion.
+          const target = await listedTarget(read, tiktok, "tt_c_008");
+          world.removeAtSource("tt_c_008", { signaled: false });
+          return read.getInteraction(tiktok, target);
+        },
       },
       {
         name: "hide refused for a target with a simulated restriction",

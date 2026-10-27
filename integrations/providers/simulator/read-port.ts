@@ -8,6 +8,7 @@
  */
 import type { CredentialRefreshResult, ProviderAccess, StateObservationDto, StateTarget } from "../contract/dto";
 import { PermanentRejectedError, TargetNotEligibleError, TargetNotFoundError, type ProviderOperation } from "../contract/errors";
+import { createListedInteractionRegistry } from "../contract/interaction-target";
 import { isoInstant, type IsoInstant, type ProviderObjectRef } from "../contract/identity";
 import { parsePageCursor, type Page, type PageCursor, type TimeWindow } from "../contract/pagination";
 import { providerCredential, type ProviderCredential } from "../contract/credential";
@@ -86,6 +87,8 @@ const newestFirst = <T extends { readonly id: string }>(time: (item: T) => strin
 export function createSimulatorReadPort(world: SimulatorWorld, options: SimulatorReadPortOptions): ProviderReadPort {
   const pageSize = world.scenario.pageSize;
   const auth = (access: ProviderAccess) => ({ credential: access.credential, account: access.account.id });
+  /** Same provenance rule as the real adapters (Step 7G-H5.5-P12-C9): only an interaction this instance listed is re-readable. */
+  const listed = createListedInteractionRegistry();
 
   const ownedInteraction = (operation: ProviderOperation, access: ProviderAccess, id: string): InteractionState => {
     const state = world.interaction(id);
@@ -154,15 +157,23 @@ export function createSimulatorReadPort(world: SimulatorWorld, options: Simulato
             .sort(newestFirst((i) => i.createdAt))
             .map((i) => interactionDto(world, i));
           const scopeKey = scope.kind === "content" ? `${access.account.id}/${scope.content.id}` : `${access.account.id}/*`;
-          return paginate("listInteractions", items, pageSize, cursor, { o: "listInteractions", s: scopeKey, f: window.from, t: window.to });
+          return listed.record(access, paginate("listInteractions", items, pageSize, cursor, { o: "listInteractions", s: scopeKey, f: window.from, t: window.to }));
         }),
       );
     },
 
-    getInteraction(access, ref) {
-      return asPromise(() =>
-        world.execute("getInteraction", auth(access), [ref.id], () => interactionDto(world, ownedInteraction("getInteraction", access, ref.id))),
-      );
+    getInteraction(access, target) {
+      return asPromise(() => {
+        // Refused before the simulated provider is reached, exactly like a real adapter: no bare-id path, no bypass.
+        const provenance = listed.resolve(access, target);
+        return world.execute("getInteraction", auth(access), [provenance.ref.id], () => {
+          const dto = interactionDto(world, ownedInteraction("getInteraction", access, provenance.ref.id));
+          // The simulated node must still be the listed one: same content and parent (so the same kind).
+          if (dto.content.id !== provenance.content.id) throw new PermanentRejectedError("getInteraction", "unknown", "interaction_content_conflicts");
+          if ((dto.parent?.id ?? null) !== (provenance.parent?.id ?? null)) throw new PermanentRejectedError("getInteraction", "unknown", "interaction_parent_mismatch");
+          return dto;
+        });
+      });
     },
 
     getContent(access, ref) {

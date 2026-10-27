@@ -22,6 +22,7 @@ import type {
   SubscriptionResultDto,
 } from "./dto";
 import type { ProviderName, ProviderObjectRef } from "./identity";
+import type { InteractionTarget } from "./interaction-target";
 import type { Page, PageCursor, ProviderResult, TimeWindow } from "./pagination";
 import type { WebhookParseResult, WebhookRequest } from "./webhooks";
 
@@ -50,8 +51,13 @@ export interface ProviderReadPort {
     cursor: PageCursor | null,
   ): Promise<ProviderResult<Page<InteractionDto>>>;
 
-  /** Authoritative re-fetch (webhooks, reconciliation). Absence throws TargetNotFound; it is not deletion. */
-  getInteraction(access: ProviderAccess, ref: ProviderObjectRef<"interaction">): Promise<ProviderResult<InteractionDto>>;
+  /**
+   * Authoritative re-read of an interaction the adapter itself established (Step 7G-H5.5-P12-C9): `target` is a closed
+   * provenance (./interaction-target), today only an interaction this port returned from listInteractions — never a
+   * bare id. An unrecorded or foreign target is invalid_request before any request. Absence throws TargetNotFound; it is
+   * not deletion. Future provenances (e.g. a verified webhook) are added as new target kinds.
+   */
+  getInteraction(access: ProviderAccess, target: InteractionTarget): Promise<ProviderResult<InteractionDto>>;
 
   getContent(access: ProviderAccess, ref: ProviderObjectRef<"content">): Promise<ProviderResult<ContentDto>>;
 

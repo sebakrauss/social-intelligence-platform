@@ -8,7 +8,7 @@ import { CredentialInvalidError, RateLimitedError, providerCredential, providerO
 import { FaultConfigError, ScenarioError, SimulatorWorld, createSimulatorReadPort, parseFaultRule, parseScenario } from "@/integrations/providers/simulator";
 import { createSimulatorMutationPort } from "@/integrations/providers/simulator/mutation-port";
 import { loadScenario, rawScenario, stableSerialize } from "../support/fixtures";
-import { FULL_WINDOW, SIM_SIGNING_KEY, createBaselineSimulator } from "../support/simulator-harness";
+import { FULL_WINDOW, SIM_SIGNING_KEY, createBaselineSimulator, listedTarget } from "../support/simulator-harness";
 
 const sim = createBaselineSimulator();
 const { world, read, mutation } = sim;
@@ -50,17 +50,19 @@ describe("deterministic reset", () => {
 describe("deterministic failure injection", () => {
   it("fires exactly on the configured n-th matching call", async () => {
     world.injectFaults([{ operation: "getInteraction", on: 2, fault: { kind: "transient", reason: "server_error" } }]);
-    const ref = providerObjectRef("facebook", "interaction", "fb_c_001");
-    await expect(read.getInteraction(fb, ref)).resolves.toBeDefined();
-    await expect(read.getInteraction(fb, ref)).rejects.toMatchObject({ kind: "transient", reason: "server_error" });
-    await expect(read.getInteraction(fb, ref)).resolves.toBeDefined();
+    // The prelisting is a listInteractions call: it does not count toward the getInteraction rule.
+    const target = await listedTarget(read, fb, "fb_c_001");
+    await expect(read.getInteraction(fb, target)).resolves.toBeDefined();
+    await expect(read.getInteraction(fb, target)).rejects.toMatchObject({ kind: "transient", reason: "server_error" });
+    await expect(read.getInteraction(fb, target)).resolves.toBeDefined();
   });
 
   it("can target one object and fire on every call", async () => {
     world.injectFaults([{ operation: "getInteraction", target: "fb_c_005", on: "every", fault: { kind: "target_not_found" } }]);
-    await expect(read.getInteraction(fb, providerObjectRef("facebook", "interaction", "fb_c_005"))).rejects.toMatchObject({ kind: "target_not_found" });
-    await expect(read.getInteraction(fb, providerObjectRef("facebook", "interaction", "fb_c_005"))).rejects.toMatchObject({ kind: "target_not_found" });
-    await expect(read.getInteraction(fb, providerObjectRef("facebook", "interaction", "fb_c_001"))).resolves.toBeDefined();
+    const [targeted, other] = [await listedTarget(read, fb, "fb_c_005"), await listedTarget(read, fb, "fb_c_001")];
+    await expect(read.getInteraction(fb, targeted)).rejects.toMatchObject({ kind: "target_not_found" });
+    await expect(read.getInteraction(fb, targeted)).rejects.toMatchObject({ kind: "target_not_found" });
+    await expect(read.getInteraction(fb, other)).resolves.toBeDefined();
   });
 
   it("the same configuration yields the same journal on every run", async () => {
