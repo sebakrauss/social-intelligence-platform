@@ -208,3 +208,44 @@ touched.
 - A self-targeted removal record can't prove the removed membership existed.
 
 Applying 0020 to dev-v2 is its own gate (H6-C3e).
+
+## H6-C4 — "Sync interactions" (the web producer; source only)
+
+An Owner/Admin requests one reconciliation of one managed account from Workspace Settings › Connections, under the
+managed accounts. One form per managed account posts only the workspace id and the account id.
+
+| Layer | Piece |
+|---|---|
+| Page | `InteractionsSync` (pending button) |
+| Server action | `requestInteractionsSyncAction` (reads two fields) |
+| Surface | `requestInteractionsSync` (closed statuses) |
+| Command | `ingestion.account.request_reconciliation` (`connections.manage`, input = account id only, Monitor-only allowed) |
+| Adapter | `requestMemberReconciliation` (no time, no budget) |
+| Web unit of work | `reconciliation` port: `requestRun` only |
+| Boundary | `ingestion.request_reconciliation` (0019) |
+
+**Authority.** The pipeline's `connections.manage` check (Owner/Admin, not grantable) is only the early refusal. The
+0019 boundary decides again and writes the REQUESTED run (budget 40), its audit event and its planner row atomically.
+
+**Audit.** The command declares `auditedBy` (a `DatabaseBoundaryAudit`), so the pipeline appends no second event. If a
+boundary-audited command ever returns a draft, the pipeline fails closed. The command appends no outbox row; it only
+reports the boundary's row for the post-commit wake-up (`outbox.routed`).
+
+**Outcomes.**
+
+| Status | Meaning |
+|---|---|
+| `sync_started` | a run is requested; nothing has been imported yet |
+| `sync_already_running` | a run is already open; a product state, not an error |
+| `sync_not_found` | foreign, unknown, inactive or malformed account; nothing leaks |
+| `not_allowed` | the caller isn't Owner/Admin |
+| `unavailable` | any other failure, including an unknown answer |
+
+Run status is not shown yet, and nothing polls.
+
+**Release order (H6-C5).** This source adds a web producer of `ingestion.reconcile_account`. The deployed MAIN plane
+(@332046e) has no such task, so a relay dispatch from it would fail with `unknown_task`. Ship it with the paired Trigger
+release FIRST: both planes from the same source, with MAIN's task inventory including `ingestion.reconcile_account` and
+the paired task counts verified. Only then deploy the web from that source — never the web producer first. Source
+guards keep the topic registered on MAIN and the release-pair task counts equal to the registry; the deployment order
+itself is the H6-C5 runbook.

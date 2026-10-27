@@ -126,4 +126,11 @@ export const developmentReferenceCatalog: Catalog = {
   "connections.status.capability_recheck_account_inactive": "No re-check was requested: this account isn't managed in this workspace.",
   "connections.status.capability_recheck_connection_not_active": "No re-check was requested: this connection isn't active.",
   "connections.status.capability_recheck_not_found": "No re-check was requested: that account isn't available.",
+  "connections.sync.heading": "Sync interactions",
+  "connections.sync.explainer": "Sync interactions asks Wrenkind to read this account's recent comments and replies once, in the background. It doesn't schedule anything, change the provider's authorization or act on any comment.",
+  "connections.sync.submit": "Sync interactions",
+  "connections.sync.submitting": "Requesting…",
+  "connections.status.sync_started": "Sync started. Wrenkind will read this account's interactions in the background; nothing has been imported yet. Reload the page later.",
+  "connections.status.sync_already_running": "A sync is already in progress for this account. No new sync was started.",
+  "connections.status.sync_not_found": "No sync was started: that account isn't available.",
 };

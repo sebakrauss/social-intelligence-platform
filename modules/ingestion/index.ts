@@ -68,9 +68,11 @@ export {
   type SliceDependencies,
   type SliceOutcome,
 } from "./application/reconciliation";
+export { requestMemberReconciliation, type MemberReconciliationRequest } from "./application/member-request";
 export type {
   ObservedEventAuthority,
   ReconciliationAuthorityStore,
+  ReconciliationRequestPort,
   ReconciliationRunRecord,
   ReconciliationSliceRecord,
   ReconciliationStore,

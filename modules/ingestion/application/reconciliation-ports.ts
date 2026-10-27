@@ -102,6 +102,9 @@ export interface SliceFinish {
   readonly retryNotBefore: Date | null;
 }
 
+/** The web's ONLY reach into reconciliation (Step H6-C4): the 0019 request boundary, nothing else of the store. */
+export type ReconciliationRequestPort = Pick<ReconciliationStore, "requestRun">;
+
 export interface ReconciliationStore {
   // ── runs ─────────────────────────────────────────────────────────────────────────────────────────────
   /**

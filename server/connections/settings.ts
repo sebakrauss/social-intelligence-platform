@@ -31,6 +31,7 @@ import type { ConnectionProvider, ConnectionSettings, ConnectionSummary, Reevalu
 import type { ConnectionStatus } from "@/domain/connections";
 import { SELECTION_MAX_ASSETS, connectedAccountSelectionCommand, createConnectedAccountCommands } from "@/server/commands/connected-accounts";
 import { connectionRemoveCommand, connectionSettingsViewCommand } from "@/server/commands/connections";
+import { requestInteractionsSyncCommand } from "@/server/commands/reconciliation";
 import type { ActionPipeline } from "@/server/pipeline";
 import { startConnectionAuthorization, type ConnectionAuthorizationDependencies, type StartResult } from "./authorization";
 
@@ -70,6 +71,9 @@ export const CONNECT_STATUSES = [
   "capability_recheck_account_inactive",
   "capability_recheck_connection_not_active",
   "capability_recheck_not_found",
+  "sync_started",
+  "sync_already_running",
+  "sync_not_found",
   "unavailable",
 ] as const;
 export type ConnectStatus = (typeof CONNECT_STATUSES)[number];
@@ -95,6 +99,9 @@ export const CONNECT_STATUS_MESSAGES: { readonly [S in ConnectStatus]: MessageKe
   capability_recheck_account_inactive: "connections.status.capability_recheck_account_inactive",
   capability_recheck_connection_not_active: "connections.status.capability_recheck_connection_not_active",
   capability_recheck_not_found: "connections.status.capability_recheck_not_found",
+  sync_started: "connections.status.sync_started",
+  sync_already_running: "connections.status.sync_already_running",
+  sync_not_found: "connections.status.sync_not_found",
   unavailable: "connections.settings.unavailable",
 };
 
@@ -291,6 +298,40 @@ export async function requestCapabilityRecheck(pipeline: ActionPipeline, input: 
       return { kind: "verification_required" };
     case "error":
       if (result.error.code === "NOT_FOUND" || result.error.code === "INVALID_INPUT") return { kind: "status", status: "capability_recheck_not_found" };
+      if (result.error.code === "PERMISSION_DENIED") return { kind: "status", status: "not_allowed" };
+      return { kind: "status", status: "unavailable" };
+  }
+}
+
+/**
+ * Sync interactions (Step H6-C4): request ONE reconciliation of one managed account. The browser routes the workspace id
+ * and the account id (untrusted: parsed here, resolved live by the pipeline, RLS and the 0019 boundary); nothing else is
+ * sent — no budget, time, topic or scope. Exactly one command run, never retried. `sync_started` means a REQUESTED run
+ * exists (nothing has been read yet); an open run is `sync_already_running` — a product state, not an error. An account
+ * that doesn't exist, isn't this workspace's or isn't active is the same `sync_not_found`; any other failure, including
+ * an answer the adapter doesn't know, is plain `unavailable`. Nothing internal reaches the page.
+ */
+export async function requestInteractionsSync(pipeline: ActionPipeline, input: { readonly workspaceId: unknown; readonly connectedAccountId: unknown }): Promise<RemoveOutcome> {
+  if (!isUuid(input.connectedAccountId)) return { kind: "status", status: "sync_not_found" };
+  const result = await pipeline.run(requestInteractionsSyncCommand, { workspaceId: input.workspaceId, input: { connectedAccountId: input.connectedAccountId } });
+  switch (result.status) {
+    case "ok":
+      switch (result.value.kind) {
+        case "requested":
+          return { kind: "status", status: "sync_started" };
+        case "already_running":
+          return { kind: "status", status: "sync_already_running" };
+        case "not_found":
+          return { kind: "status", status: "sync_not_found" };
+      }
+      return { kind: "status", status: "unavailable" };
+    case "unauthenticated":
+      return { kind: "signed_out" };
+    case "verification_required":
+      return { kind: "verification_required" };
+    case "error":
+      // A foreign or unknown account, or a refusal by the boundary itself (normalized to NOT_FOUND): never a leak.
+      if (result.error.code === "NOT_FOUND" || result.error.code === "INVALID_INPUT") return { kind: "status", status: "sync_not_found" };
       if (result.error.code === "PERMISSION_DENIED") return { kind: "status", status: "not_allowed" };
       return { kind: "status", status: "unavailable" };
   }

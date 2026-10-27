@@ -1,5 +1,12 @@
 import { redirect } from "next/navigation";
-import { reconnectMetaConnectionAction, removeMetaConnectionAction, requestCapabilityRecheckAction, saveManagedAccountsAction, startMetaConnectionAction } from "@/server/connections/actions";
+import {
+  reconnectMetaConnectionAction,
+  removeMetaConnectionAction,
+  requestCapabilityRecheckAction,
+  requestInteractionsSyncAction,
+  saveManagedAccountsAction,
+  startMetaConnectionAction,
+} from "@/server/connections/actions";
 import {
   ASSET_PLATFORM_MESSAGES,
   CAPABILITY_RECHECK_OFFER_MESSAGES,
@@ -37,6 +44,10 @@ export const dynamic = "force-dynamic";
  * rest on facts that couldn't be read is offered ONE "Re-check capabilities" form posting the workspace and account
  * ids. The offer comes from the server read model and is UX only — the command decides again. A recent request shows
  * as a note without a button; current, newer-than-this-code or unmanaged accounts show nothing. Requested ≠ done.
+ *
+ * Sync interactions (Step H6-C4): each managed account has ONE "Sync interactions" form posting the workspace and
+ * account ids — nothing else (no budget, depth, platform or schedule). It requests one reconciliation; the 0019 boundary
+ * decides (Owner/Admin, one open run) and the page only shows the closed outcome. Started ≠ imported.
  */
 export default async function WorkspaceConnectionsPage({
   params,
@@ -140,6 +151,7 @@ function ManagedAccounts({ workspaceId, connectionId, assets }: { readonly works
             <PendingSubmitButton label={t("connections.accounts.save")} pendingLabel={t("connections.accounts.saving")} />
           </form>
           <CapabilityRecheck workspaceId={workspaceId} assets={assets} />
+          <InteractionsSync workspaceId={workspaceId} assets={assets} />
         </>
       )}
     </section>
@@ -178,3 +190,34 @@ function CapabilityRecheck({ workspaceId, assets }: { readonly workspaceId: stri
     </section>
   );
 }
+
+/**
+ * The managed accounts this workspace can request a sync for: one form per account, outside the Save form, posting the
+ * workspace and account ids only. The button is disabled while its request is in flight (UX only: the boundary allows
+ * one open run per account regardless).
+ */
+function InteractionsSync({ workspaceId, assets }: { readonly workspaceId: string; readonly assets: readonly ManageableAssetView[] }) {
+  const rows = assets.filter((asset) => asset.managed && asset.connectedAccountId !== null);
+  if (rows.length === 0) return null;
+  return (
+    <section>
+      <h3>{t("connections.sync.heading")}</h3>
+      <p>{t("connections.sync.explainer")}</p>
+      <ul>
+        {rows.map((asset) =>
+          asset.connectedAccountId === null ? null : (
+            <li key={asset.connectedAccountId}>
+              {asset.displayName} · {t(ASSET_PLATFORM_MESSAGES[asset.platform])}
+              <form action={requestInteractionsSyncAction}>
+                <input name="workspaceId" type="hidden" value={workspaceId} />
+                <input name="connectedAccountId" type="hidden" value={asset.connectedAccountId} />
+                <PendingSubmitButton label={t("connections.sync.submit")} pendingLabel={t("connections.sync.submitting")} />
+              </form>
+            </li>
+          ),
+        )}
+      </ul>
+    </section>
+  );
+}
+

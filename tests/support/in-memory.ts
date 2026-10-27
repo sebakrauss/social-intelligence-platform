@@ -10,6 +10,7 @@ import type { UserId } from "@/domain/ids";
 import { parseUserId } from "@/domain/ids";
 import type { AuditEvent, AuditLog } from "@/modules/audit";
 import type { ConnectionStore } from "@/modules/connections";
+import type { ReconciliationRequestPort } from "@/modules/ingestion";
 import type { OutboxMessage, OutboxWriter } from "@/platform/outbox";
 import type {
   Invitation,
@@ -123,6 +124,9 @@ export class InMemoryUnitOfWork implements UnitOfWork {
   commits = 0;
   rollbacks = 0;
   faults: InMemoryFaults = {};
+  /** Step H6-C4: the request boundary's answer for a command test (unset = not available), and what it was asked. */
+  reconciliation: ReconciliationRequestPort["requestRun"] | undefined;
+  reconciliationRequests: Parameters<ReconciliationRequestPort["requestRun"]>[0][] = [];
 
   constructor(state: InMemoryState = emptyState()) {
     this.state = state;
@@ -153,7 +157,14 @@ export class InMemoryUnitOfWork implements UnitOfWork {
     };
     try {
       const outbox: OutboxWriter = { append: (message) => done(void draft.outbox.push(message)), routed: () => undefined };
-      const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS, capability: { header: unavailable, entries: unavailable } });
+      const answer = this.reconciliation;
+      const reconciliation: ReconciliationRequestPort = {
+        requestRun: (input) => {
+          this.reconciliationRequests.push(input);
+          return answer === undefined ? unavailable() : answer(input);
+        },
+      };
+      const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS, capability: { header: unavailable, entries: unavailable }, reconciliation });
       this.state = draft;
       this.commits += 1;
       return result;

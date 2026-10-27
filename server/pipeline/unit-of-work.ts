@@ -9,6 +9,7 @@ import type { UserId, WorkspaceId } from "@/domain/ids";
 import type { AuditLog } from "@/modules/audit";
 import type { CapabilityReadStore } from "@/modules/capability";
 import type { ConnectionStore } from "@/modules/connections";
+import type { ReconciliationRequestPort } from "@/modules/ingestion";
 import type { TenancyStore } from "@/modules/tenancy";
 import type { OutboxWriter } from "@/platform/outbox";
 
@@ -19,6 +20,11 @@ export interface Transaction {
   readonly connections: ConnectionStore;
   /** Read only: capability profiles are written by the job runtime (no web write grant exists). */
   readonly capability: CapabilityReadStore;
+  /**
+   * Step H6-C4: the 0019 reconciliation request boundary ONLY (requestRun). The web holds no other reconciliation
+   * primitive; the boundary writes the run, its audit event and its planner row itself.
+   */
+  readonly reconciliation: ReconciliationRequestPort;
 }
 
 /**

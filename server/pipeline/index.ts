@@ -2,6 +2,7 @@ export type {
   AuditDraft,
   Command,
   CommandEnvironment,
+  DatabaseBoundaryAudit,
   OrganizationCommand,
   OrganizationScopedPermission,
   UserCommand,

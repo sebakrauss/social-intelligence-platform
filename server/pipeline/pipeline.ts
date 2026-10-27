@@ -155,9 +155,11 @@ export function createActionPipeline(deps: PipelineDependencies): ActionPipeline
             result = await command.execute(user, input, tx, env);
           }
 
-          // 7. Audit, in the same unit of work as the change: one event per consequential change.
+          // 7. Audit, in the same unit of work as the change: one event per consequential change. A command audited by
+          // its database boundary has had its event written already, in this transaction: the pipeline adds none.
           const audited = command.audit(result);
-          const drafts: readonly AuditDraft[] = audited === undefined ? [] : [audited].flat();
+          if (command.auditedBy !== undefined && audited !== undefined) throw new Error("boundary_audited_command_returned_a_draft");
+          const drafts: readonly AuditDraft[] = audited === undefined || command.auditedBy !== undefined ? [] : [audited].flat();
           if (drafts.length > 0) step("audit");
           for (const draft of drafts) {
             await recordAuditEvent(tx.audit, {

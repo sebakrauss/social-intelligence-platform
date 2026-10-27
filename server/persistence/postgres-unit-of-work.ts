@@ -12,7 +12,9 @@ import { AppError } from "@/domain/errors";
 import { createPostgresAuditLog } from "@/modules/audit/persistence";
 import { createPostgresConnectionStore } from "@/modules/connections/persistence";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
+import { createPostgresReconciliationStore } from "@/modules/ingestion/persistence";
 import type { CapabilityProfileStore, CapabilityReadStore } from "@/modules/capability";
+import type { ReconciliationRequestPort, ReconciliationStore } from "@/modules/ingestion";
 import { createPostgresTenancyStore } from "@/modules/tenancy/persistence";
 import { classifyDatabaseError, createPostgresOutbox, withUserScope, type RuntimeDatabase } from "@/platform/db";
 import type { Transaction, TransactionScope, UnitOfWork } from "@/server/pipeline";
@@ -31,6 +33,11 @@ export function normalizeDatabaseError(error: unknown): unknown {
 }
 
 const readOnly = (store: CapabilityProfileStore): CapabilityReadStore => ({ header: store.header, entries: store.entries });
+/**
+ * The request boundary only. Its planner row is reported by the command through `outbox.routed` (the pipeline's
+ * post-commit wake-up), so the store's own notifier is unused here.
+ */
+const requestOnly = (store: ReconciliationStore): ReconciliationRequestPort => ({ requestRun: (input) => store.requestRun(input) });
 
 export function createPostgresUnitOfWork(database: RuntimeDatabase<"web">): UnitOfWork {
   return {
@@ -43,6 +50,7 @@ export function createPostgresUnitOfWork(database: RuntimeDatabase<"web">): Unit
             outbox: createPostgresOutbox(tx),
             connections: createPostgresConnectionStore(tx),
             capability: readOnly(createPostgresCapabilityStore(tx)),
+            reconciliation: requestOnly(createPostgresReconciliationStore(tx, () => undefined)),
           }),
         );
       } catch (error) {

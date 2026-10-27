@@ -14,6 +14,10 @@
  *   recheck   reads the routed workspace id and ONE connected account id (Step 7G-H5.5-P2-B2): it requests a capability
  *             re-evaluation through the registered command. No external redirect; no provider, KMS, job or outbox write
  *             of its own; the evaluation itself is never awaited.
+ *   sync      reads the routed workspace id and ONE connected account id (Step H6-C4): it requests a reconciliation
+ *             through the registered command, whose 0019 boundary writes the run, its audit event and its planner row.
+ *             No budget, time or topic is read from the form; no provider, KMS, job or outbox write of its own; the
+ *             reconciliation itself is never awaited.
  *
  * No form field chooses a destination: every other outcome returns to a fixed internal path built from the parsed
  * workspace id. Nothing internal is logged or returned, and no form payload is logged.
@@ -25,7 +29,7 @@ import { createLogger, stdoutSink } from "@/platform/observability";
 import { requestAuth } from "@/server/auth/request-auth";
 import { workspaceConnectionsPath } from "@/server/routes";
 import { connectionAuthorizationRuntime } from "./runtime";
-import { connectMeta, reconnectMeta, removeMeta, requestCapabilityRecheck, saveManagedAccounts, type ConnectOutcome } from "./settings";
+import { connectMeta, reconnectMeta, removeMeta, requestCapabilityRecheck, requestInteractionsSync, saveManagedAccounts, type ConnectOutcome } from "./settings";
 import { connectionSettingsPipeline } from "./settings-runtime";
 
 const log = createLogger({ sink: stdoutSink, base: { module: "server.connections" } });
@@ -94,4 +98,12 @@ export async function requestCapabilityRecheckAction(form: FormData): Promise<vo
   const connectedAccountId = form.get("connectedAccountId");
   // A request, not a platform mutation: the plain settings pipeline (web unit of work) runs it; the redirect re-renders the page.
   redirect(destination(await run("request_capability_recheck", (auth) => requestCapabilityRecheck(connectionSettingsPipeline(auth), { workspaceId, connectedAccountId })), workspaceId));
+}
+
+export async function requestInteractionsSyncAction(form: FormData): Promise<void> {
+  const workspaceId = parseWorkspaceId(form.get("workspaceId"));
+  if (workspaceId === undefined) redirect("/onboarding");
+  const connectedAccountId = form.get("connectedAccountId");
+  // A request, not a platform mutation: the plain settings pipeline (web unit of work) runs it; the redirect re-renders the page.
+  redirect(destination(await run("request_interactions_sync", (auth) => requestInteractionsSync(connectionSettingsPipeline(auth), { workspaceId, connectedAccountId })), workspaceId));
 }

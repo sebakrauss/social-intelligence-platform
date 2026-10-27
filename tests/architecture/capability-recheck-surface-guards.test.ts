@@ -50,10 +50,10 @@ describe("no provider, Meta, integration, Trigger, job or AWS code on the re-che
 
 describe("the surface requests; it never decides", () => {
   it("the action reads only the routed workspace id and one account id, and runs the registered command with only that id", () => {
-    const action = section(codeOf(ACTIONS), "export async function requestCapabilityRecheckAction");
+    const action = section(codeOf(ACTIONS), "export async function requestCapabilityRecheckAction", "export async function requestInteractionsSyncAction");
     expect([...action.matchAll(/form\.get\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1])).toEqual(["workspaceId", "connectedAccountId"]);
     expect(action).not.toMatch(/form\.(getAll|entries|keys|values|has)\(/);
-    const settings = section(codeOf(SETTINGS), "export async function requestCapabilityRecheck(");
+    const settings = section(codeOf(SETTINGS), "export async function requestCapabilityRecheck(", "export async function requestInteractionsSync(");
     expect(settings).toMatch(/pipeline\.run\(requestCapabilityReevaluation, \{ workspaceId: input\.workspaceId, input: \{ connectedAccountId: input\.connectedAccountId \} \}\)/);
     expect([...settings.matchAll(/pipeline\.run\(/g)]).toHaveLength(1); // exactly one run: no automatic retry
     expect(settings).not.toMatch(/for \(|while \(|setTimeout|setInterval|retry/i);

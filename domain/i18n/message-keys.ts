@@ -120,6 +120,13 @@ export const MESSAGE_KEYS = [
   "connections.status.capability_recheck_account_inactive",
   "connections.status.capability_recheck_connection_not_active",
   "connections.status.capability_recheck_not_found",
+  "connections.sync.heading",
+  "connections.sync.explainer",
+  "connections.sync.submit",
+  "connections.sync.submitting",
+  "connections.status.sync_started",
+  "connections.status.sync_already_running",
+  "connections.status.sync_not_found",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

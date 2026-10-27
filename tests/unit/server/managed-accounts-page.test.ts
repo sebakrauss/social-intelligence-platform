@@ -143,7 +143,9 @@ describe("Managed accounts on the Connections page", () => {
 });
 
 describe("Capability re-check on the Connections page (Step 7G-H5.5-P2-B2)", () => {
-  const recheckForms = (html: string): string[] => [...html.matchAll(/<form[^>]*>(?:(?!<\/form>)[\s\S])*name="connectedAccountId"(?:(?!<\/form>)[\s\S])*<\/form>/g)].map((match) => match[0]);
+  // The re-check forms only (H6-C4's per-account sync forms also post a connectedAccountId).
+  const recheckForms = (html: string): string[] =>
+    [...html.matchAll(/<form[^>]*>(?:(?!<\/form>)[\s\S])*name="connectedAccountId"(?:(?!<\/form>)[\s\S])*<\/form>/g)].map((match) => match[0]).filter((form) => !form.includes(text(t("connections.sync.submit"))));
   const button = `>${text(t("connections.recheck.submit"))}</button>`;
 
   it.each([
@@ -162,7 +164,8 @@ describe("Capability re-check on the Connections page (Step 7G-H5.5-P2-B2)", () 
     expect(form).toContain(`name="workspaceId" value="${WS}"`);
     expect([...(form ?? "").matchAll(/<input[^>]*name="([^"]+)"/g)].map((match) => match[1])).toEqual(["workspaceId", "connectedAccountId"]);
     expect(form).toContain(button);
-    expect(html).not.toContain(INSTAGRAM_ACCOUNT); // current profile: nothing offered
+    // Current profile: no re-check offered (its H6-C4 sync form is a separate form).
+    expect(recheckForms(html).join("")).not.toContain(INSTAGRAM_ACCOUNT);
   });
 
   it.each([
@@ -274,5 +277,58 @@ describe("Reconnect Meta on the Connections page (Step 7G-H5.5-P12-C0-R2)", () =
   it("the page names no credential, refresh marker or evaluation authority anywhere", async () => {
     const html = await render(ready({ facebook: true, instagram: true }));
     expect(html).not.toMatch(/credential_id|credentialId|capability_refresh|capabilityRefresh|evaluate_account|reauthorized/);
+  });
+});
+
+describe("Sync interactions on the Connections page (Step H6-C4)", () => {
+  /** The rendered sync forms (the ones whose button says Sync interactions). */
+  const syncForms = (html: string): string[] =>
+    [...html.matchAll(/<form\b[\s\S]*?<\/form>/g)].map((match) => match[0]).filter((form) => form.includes(`>${text(t("connections.sync.submit"))}</button>`));
+
+  it("each managed account offers ONE sync form, posting only the workspace and that account's ids — no budget, depth or schedule", async () => {
+    const html = await render(ready({ facebook: true, instagram: true }));
+    expect(html).toContain(text(t("connections.sync.heading")));
+    expect(html).toContain(text(t("connections.sync.explainer")));
+    const forms = syncForms(html);
+    expect(forms).toHaveLength(2);
+    for (const [form, account] of [[forms[0], FACEBOOK_ACCOUNT], [forms[1], INSTAGRAM_ACCOUNT]] as const) {
+      expect([...(form ?? "").matchAll(/<input\b[^>]*>/g)].map((match) => match[0])).toEqual([
+        `<input type="hidden" name="workspaceId" value="${WS}"/>`,
+        `<input type="hidden" name="connectedAccountId" value="${account}"/>`,
+      ]);
+    }
+    // No form anywhere on the page carries a budget, time, topic or schedule field.
+    expect(html).not.toMatch(/name="(max_?operations|maxOperations|budget|requestedAt|requested_at|topic|schedule|depth|platform)"/i);
+    expect(html).not.toMatch(/reconcile_account|max_operations/);
+  });
+
+  it("an unmanaged account, a connection that isn't ACTIVE, and the not-allowed / not-found / unavailable states offer no sync", async () => {
+    const one = syncForms(await render(ready({ facebook: true })));
+    expect(one).toHaveLength(1);
+    expect(one[0]).toContain(FACEBOOK_ACCOUNT);
+    expect(syncForms(await render(ready({})))).toEqual([]);
+    expect(syncForms(await render(ready({ facebook: true }, "DEGRADED")))).toEqual([]);
+    for (const kind of ["not_allowed", "workspace_not_found", "unavailable"] as const) expect(syncForms(await render({ kind }))).toEqual([]);
+  });
+
+  it("the button is disabled, and says so, while its request is in flight", async () => {
+    env.pending = true;
+    const html = await render(ready({ facebook: true }));
+    expect(html).toContain(`<button type="submit" disabled="" aria-disabled="true">${text(t("connections.sync.submitting"))}</button>`);
+    expect(syncForms(html)).toEqual([]); // no enabled "Sync interactions" button while pending
+  });
+
+  it("outcome copy: started never claims completion or imported data; already running is not an error; not found leaks nothing", async () => {
+    const started = t("connections.status.sync_started");
+    expect(started).toMatch(/nothing has been imported yet/);
+    expect(started).not.toMatch(/\b(complete|completed|done|finished|synced|imported (?!yet))\b/i);
+    const running = t("connections.status.sync_already_running");
+    expect(running).toMatch(/already in progress/);
+    expect(running).not.toMatch(/\b(error|failed|couldn't|could not|try again)\b/i);
+    expect(t("connections.status.sync_not_found")).not.toMatch(/another workspace|other workspace|exists|organization/i);
+    for (const status of ["sync_started", "sync_already_running", "sync_not_found"]) {
+      const html = await render(ready({ facebook: true }), status);
+      expect(html).toContain(`<p role="status">${text(t(`connections.status.${status}` as never))}</p>`);
+    }
   });
 });

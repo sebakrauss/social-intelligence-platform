@@ -97,7 +97,12 @@ describe("H6-C3d: command-bound actions keep their authoritative producers", () 
   it("reconciliation_requested is written only by 0019's definer; no TypeScript emits it", () => {
     const writers = migrationNames().filter((n) => /insert into audit\.audit_events[\s\S]*?'connected_account\.reconciliation_requested'/.test(code(n)));
     expect(writers).toEqual(["0019_reconciliation_request.sql"]);
-    for (const file of producers()) expect(codeOf(file), file).not.toMatch(/"connected_account\.reconciliation_requested"/);
+    // Step H6-C4: the only TypeScript mention is the web command's DECLARATION that its boundary writes it (auditedBy).
+    const mentions = producers().filter((file) => /"connected_account\.reconciliation_requested"/.test(codeOf(file)));
+    expect(mentions).toEqual(["server/commands/reconciliation.ts"]);
+    const declaration = codeOf("server/commands/reconciliation.ts");
+    expect([...declaration.matchAll(/"connected_account\.reconciliation_requested"/g)]).toHaveLength(1);
+    expect(declaration).toMatch(/export const RECONCILIATION_REQUEST_AUDIT: DatabaseBoundaryAudit = Object\.freeze\(\{\s+kind: "database_boundary",\s+function: "ingestion\.request_reconciliation",\s+actions: Object\.freeze\(\["connected_account\.reconciliation_requested"\] as const\),\s+\}\);/);
   });
 
   it("the Move saga's audit is 0010's definer's only; connection.validated is the job runtime's, as `system`", () => {

@@ -33,6 +33,21 @@ export interface AuditDraft {
   readonly change?: AuditChange;
 }
 
+/**
+ * A command whose consequential change is audited by its reviewed DATABASE boundary: a SECURITY DEFINER that writes the
+ * change, its audit event and its outbox row in one statement (e.g. 0019's ingestion.request_reconciliation). The
+ * pipeline appends nothing for such a command — a second event would duplicate the boundary's (and 0020 refuses a
+ * member's direct append of these actions anyway) — and its `audit` must return undefined (the pipeline fails closed
+ * otherwise).
+ */
+export interface DatabaseBoundaryAudit {
+  readonly kind: "database_boundary";
+  /** The reviewed function that writes the audit event, schema-qualified. */
+  readonly function: string;
+  /** The only actions that function writes for this command. */
+  readonly actions: readonly AuditAction[];
+}
+
 interface CommandBase<I, O, R> {
   /** Stable identifier, e.g. "tenancy.workspace.change_mode". Used in logs, never shown to users. */
   readonly name: string;
@@ -44,6 +59,8 @@ interface CommandBase<I, O, R> {
    * all of them are appended in the same unit of work as the changes.
    */
   readonly audit: (output: O) => AuditDraft | readonly AuditDraft[] | undefined;
+  /** Set only when the audit belongs to a reviewed database boundary (see DatabaseBoundaryAudit). */
+  readonly auditedBy?: DatabaseBoundaryAudit;
   /** Maps the internal output to the caller-facing result (e.g. drops single-use secrets). */
   readonly respond: (output: O) => R;
   /** Side effects that must only happen after commit (e.g. invitation delivery). */
