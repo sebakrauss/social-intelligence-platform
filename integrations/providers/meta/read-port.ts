@@ -80,7 +80,7 @@
  * Every other read operation is refused (permanent).
  */
 import type { ProviderCredential } from "../contract/credential";
-import { PermanentRejectedError, TargetNotEligibleError, TargetNotFoundError, TransientError, type PermissionCapability, type ReadOperation } from "../contract/errors";
+import { PermanentRejectedError, TargetNotEligibleError, TargetNotFoundError, TransientError, type PermanentRejectionDiagnostic, type PermissionCapability, type ReadOperation } from "../contract/errors";
 import type { AccountDescriptionDto, ContentDto, ContentKind, InteractionDto, ProviderAccess, SocialAssetDto } from "../contract/dto";
 import { isoInstant, parseIsoInstant, parseProviderObjectId, providerObjectRef, rawReference, type ProviderObjectId, type ProviderObjectRef } from "../contract/identity";
 import { BUDGET_NOT_REPORTED, parsePageCursor, type Page, type PageCursor, type TimeWindow } from "../contract/pagination";
@@ -481,16 +481,30 @@ async function listPageComments(transport: MetaGraphTransport, access: ProviderA
   return interactionPage(createdWithin(items, bounds), list.after, cursor);
 }
 
+/** Why a Facebook comment node has no content authority, as a closed diagnostic; null when `object.id` is usable. */
+function contentAuthorityProblem(comment: MetaComment): PermanentRejectionDiagnostic | null {
+  if (comment.objectState === "malformed") return "interaction_content_malformed";
+  if (comment.objectState === "id_missing") return "interaction_content_id_missing";
+  if (comment.objectId === null) return "interaction_content_missing";
+  if (comment.objectId === comment.id) return "interaction_content_equals_interaction";
+  if (comment.objectId === comment.parentId) return "interaction_content_equals_parent";
+  return null;
+}
+
 async function getPageComment(transport: MetaGraphTransport, access: ProviderAccess, ref: ProviderObjectRef<"interaction">): Promise<InteractionDto> {
   const page = managedPage(access, "getInteraction");
   const commentId = requestedInteraction(ref, "facebook");
   const token = await pageToken(transport, access, page, "getInteraction");
   const outcome = await transport.getComment(token, commentId);
   if (outcome.kind === "graph_error" && outcome.error.code === AMBIGUOUS_OBJECT_CODE && outcome.error.subcode === AMBIGUOUS_OBJECT_SUBCODE) throw new TargetNotFoundError("getInteraction");
+  // An unreadable node (any field other than `object`) is the same refusal as before, now named (Step 7G-H5.5-P12-C6).
+  if (outcome.kind === "unreadable") throw new PermanentRejectedError("getInteraction", "unknown", "interaction_node_unreadable");
   const comment = outcomeValue(outcome, "getInteraction", "read_interactions");
-  // `object.id` is the node's only content authority: without it, or when it names the parent comment, the content
-  // cannot be established — fail closed rather than guess a post.
-  if (comment.objectId === null || comment.objectId === comment.parentId || comment.objectId === comment.id) throw new PermanentRejectedError("getInteraction", "unknown");
+  // `object.id` is the node's only content authority: without it, or when it names the parent comment or the comment
+  // itself, the content cannot be established — fail closed rather than guess a post. The refusal names which case it
+  // was (a closed diagnostic, never the id); the code, kind and handling are unchanged.
+  const authority = contentAuthorityProblem(comment);
+  if (authority !== null || comment.objectId === null) throw new PermanentRejectedError("getInteraction", "unknown", authority ?? "interaction_content_missing");
   return interactionOfComment(comment, comment.objectId, page, "getInteraction");
 }
 
@@ -542,7 +556,7 @@ async function getMediaComment(transport: MetaGraphTransport, access: ProviderAc
   if (outcome.kind === "graph_error" && outcome.error.code === AMBIGUOUS_OBJECT_CODE && outcome.error.subcode === AMBIGUOUS_OBJECT_SUBCODE) throw new TargetNotFoundError("getInteraction");
   const comment = outcomeValue(outcome, "getInteraction", "read_interactions");
   // `media.id` is the node's only content authority: without it the comment cannot be placed.
-  if (comment.mediaId === null) throw new PermanentRejectedError("getInteraction", "unknown");
+  if (comment.mediaId === null) throw new PermanentRejectedError("getInteraction", "unknown", "interaction_content_missing");
   return interactionOfInstagramComment(comment, comment.mediaId, account, "getInteraction");
 }
 

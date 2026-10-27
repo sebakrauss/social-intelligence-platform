@@ -969,7 +969,11 @@ content); Instagram additionally fails closed on a reported `media.id` other tha
 content authority is `object.id` — absent, malformed, equal to the parent comment or to the comment itself fails
 closed; Instagram's is `media.id` (absent fails closed). A get answer whose echoed id differs is unreadable; code 100 /
 subcode 33 on the node read is TargetNotFound. A Facebook comment naming itself as its parent fails closed. Any
-malformed item fails the whole page before the window is applied.
+malformed item fails the whole page before the window is applied. Each node refusal NAMES its case (Step
+7G-H5.5-P12-C6) with a closed `PermanentRejectedError.diagnostic` — `interaction_content_missing`, `_malformed`,
+`_id_missing`, `_equals_interaction`, `_equals_parent`, or `interaction_node_unreadable` — with the same code, kind and
+handling as before and never an id: LIVE run P12-C5 failed both Facebook node re-reads indistinguishably, so the next
+run must tell which `object` behavior Meta has.
 
 **Window and pagination.** The window [from, to) is applied client-side to the creation time with no ordering assumed
 and no early stop. Exactly one provider page per call; the same `meta1.` envelope, raw-cursor bounds and
@@ -1007,7 +1011,10 @@ content page, in provider order, for at most `READ_INTERACTIONS_VALIDATION_CANDI
 candidate with at least one interaction is selected, a provider error ends the scan (fail closed), and with none the run
 is `INCONCLUSIVE_EMPTY_INTERACTIONS` → getInteraction of the selected candidate's FIRST listed comment and (Facebook
 only) its FIRST listed reply. The output adds `candidateLimit`, `candidatesInspected` and `selectedCandidatePosition`
-(1-based, or null) — counts and positions only. Why: LIVE runs P12-C2/C3 always took position 1 of three in-window
+(1-based, or null) — counts and positions only — and, per re-read, `contentAuthority` (Step 7G-H5.5-P12-C6):
+`expected_content` / `other_content` for a usable node, else the refusal's relation (`content_missing`,
+`content_malformed`, `content_id_missing`, `equals_interaction`, `equals_parent`, `node_unreadable`), never an id; no
+extra request. Why the scan: LIVE runs P12-C2/C3 always took position 1 of three in-window
 posts, a newer post without interactions, and never reached the prepared one. Each re-read is correlated on identity
 only (interaction, content, kind, author and parent refs — never text, name, handle or visibility).
 Instagram never re-reads a reply: its slice cannot prove one.

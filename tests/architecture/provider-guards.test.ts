@@ -424,8 +424,19 @@ describe("Meta read_interactions (Step 7G-H5.5-P12-B1): Facebook comments + repl
     expect(instagramMapper).toMatch(/interactionKind: "comment",/);
     expect(instagramMapper).not.toMatch(/"reply"/);
     for (const mapper of [facebookMapper, instagramMapper]) expect(mapper).not.toMatch(/token|secret|credential|"organic"|"paid"|"mixed"|reportedSource/);
-    expect(readPort()).toMatch(/if \(comment\.objectId === null \|\| comment\.objectId === comment\.parentId \|\| comment\.objectId === comment\.id\) throw new PermanentRejectedError\("getInteraction", "unknown"\);/);
-    expect(readPort()).toMatch(/if \(comment\.mediaId === null\) throw new PermanentRejectedError\("getInteraction", "unknown"\);/);
+    // Step 7G-H5.5-P12-C6: the same refusal set (no object, an odd object, one naming the comment itself or its parent,
+    // an unreadable node), the same error and code — each now NAMES its case with a closed diagnostic, never an id.
+    const authority = between(readPort(), "function contentAuthorityProblem(", "async function getPageComment(");
+    expect(authority).toMatch(/if \(comment\.objectState === "malformed"\) return "interaction_content_malformed";/);
+    expect(authority).toMatch(/if \(comment\.objectState === "id_missing"\) return "interaction_content_id_missing";/);
+    expect(authority).toMatch(/if \(comment\.objectId === null\) return "interaction_content_missing";/);
+    expect(authority).toMatch(/if \(comment\.objectId === comment\.id\) return "interaction_content_equals_interaction";/);
+    expect(authority).toMatch(/if \(comment\.objectId === comment\.parentId\) return "interaction_content_equals_parent";/);
+    expect(readPort()).toMatch(/if \(authority !== null \|\| comment\.objectId === null\) throw new PermanentRejectedError\("getInteraction", "unknown", authority \?\? "interaction_content_missing"\);/);
+    expect(readPort()).toMatch(/if \(outcome\.kind === "unreadable"\) throw new PermanentRejectedError\("getInteraction", "unknown", "interaction_node_unreadable"\);/);
+    expect(readPort()).toMatch(/if \(comment\.mediaId === null\) throw new PermanentRejectedError\("getInteraction", "unknown", "interaction_content_missing"\);/);
+    // The diagnostic never carries a value: every literal passed is a closed vocabulary member.
+    expect([...readPort().matchAll(/PermanentRejectedError\("getInteraction", "unknown", ([^)]+)\)/g)].map((m) => m[1])).toEqual(['"interaction_node_unreadable"', 'authority ?? "interaction_content_missing"', '"interaction_content_missing"']);
     // No account-wide comment feed, on any platform.
     expect(readPort()).toMatch(/if \(scope\.kind === "account"\) throw new TargetNotEligibleError\("listInteractions", "unsupported_for_target"\);/);
   });

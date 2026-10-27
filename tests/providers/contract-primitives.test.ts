@@ -17,6 +17,7 @@ import {
   parsePkceVerifier,
   parseRedirectUri,
   OUTCOME_UNKNOWN_REASONS,
+  PERMANENT_REJECTION_DIAGNOSTICS,
   OutcomeUnknownError,
   PermanentRejectedError,
   PermissionMissingError,
@@ -124,6 +125,18 @@ describe("errors", () => {
       expect(reason).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
     }
     expect(new Set(OUTCOME_UNKNOWN_REASONS).size).toBe(OUTCOME_UNKNOWN_REASONS.length);
+  });
+
+  it("PermanentRejected may name ONE closed diagnostic; unclassified it serializes exactly as before (Step 7G-H5.5-P12-C6)", () => {
+    expect(new PermanentRejectedError("getInteraction", "unknown").toJSON()).toEqual({ kind: "permanent_rejected", operation: "getInteraction", retry: "never", details: { reasonCode: "unknown" } });
+    expect(new PermanentRejectedError("getInteraction", "unknown").diagnostic).toBeNull();
+    for (const diagnostic of PERMANENT_REJECTION_DIAGNOSTICS) {
+      const error = new PermanentRejectedError("getInteraction", "unknown", diagnostic);
+      expect([error.kind, error.retry, error.reasonCode, error.message]).toEqual(["permanent_rejected", "never", "unknown", "provider_permanent_rejected"]);
+      expect(error.toJSON().details).toEqual({ reasonCode: "unknown", diagnostic });
+      expect(diagnostic).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
+    }
+    expect(new Set(PERMANENT_REJECTION_DIAGNOSTICS).size).toBe(PERMANENT_REJECTION_DIAGNOSTICS.length);
   });
 
   it("make retry semantics explicit, with OutcomeUnknown the only non-definite failure", () => {

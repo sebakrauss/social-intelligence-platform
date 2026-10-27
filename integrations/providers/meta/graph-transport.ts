@@ -152,6 +152,8 @@ export const META_FACEBOOK_COMMENT_NODE_FIELDS = "id,from,message,created_time,p
 export const META_FACEBOOK_COMMENTS_PAGE_LIMIT = 10;
 
 /** One Facebook comment exactly as the whitelist reads it: closed fields, nothing else from the body. */
+export type MetaCommentObjectState = "not_requested" | "absent" | "id_missing" | "malformed" | "valid";
+
 export interface MetaComment {
   readonly id: ProviderObjectId;
   /** `from.id`: the author (required; a comment without one is not the documented shape). */
@@ -165,8 +167,14 @@ export interface MetaComment {
   readonly parentId: ProviderObjectId | null;
   /** `is_hidden` as reported; null when absent. */
   readonly isHidden: boolean | null;
-  /** `object.id` on the node read only (the edge never requests it); null when absent. */
+  /** `object.id` on the node read only (the edge never requests it); non-null exactly when objectState is "valid". */
   readonly objectId: ProviderObjectId | null;
+  /**
+   * The reported `object`'s shape (Step 7G-H5.5-P12-C6), so the read port can name WHY a node has no content authority —
+   * never the value. "not_requested" on the edge; "absent" (no `object`), "id_missing" (an `object` without `id`),
+   * "malformed" (not an object, or an `id` that fails the id rule) and "valid" on the node read.
+   */
+  readonly objectState: MetaCommentObjectState;
 }
 
 export interface MetaCommentList {
@@ -538,7 +546,17 @@ function afterOf(root: Record<string, unknown>): MetaGraphCursor | null | undefi
   return parseMetaGraphCursor(record(pagingRecord["cursors"])?.["after"]);
 }
 
-/** One Facebook comment by whitelist; `object.id` is read only when the node read requested it. */
+/** The node's `object` as a closed shape plus its id when valid. Never fails the node: the read port decides (fail closed). */
+function objectOf(value: unknown): { readonly state: Exclude<MetaCommentObjectState, "not_requested">; readonly id: ProviderObjectId | null } {
+  if (value === undefined) return { state: "absent", id: null };
+  const object = record(value);
+  if (object === undefined) return { state: "malformed", id: null };
+  if (!("id" in object)) return { state: "id_missing", id: null };
+  const id = parseProviderObjectId(object["id"]);
+  return id === undefined ? { state: "malformed", id: null } : { state: "valid", id };
+}
+
+/** One Facebook comment by whitelist; `object` is read only when the node read requested it (as a closed shape). */
 function facebookCommentOf(value: unknown, withObject: boolean): MetaComment | undefined {
   const comment = record(value);
   if (comment === undefined) return undefined;
@@ -550,9 +568,9 @@ function facebookCommentOf(value: unknown, withObject: boolean): MetaComment | u
   const createdTime = parseGraphDatetime(comment["created_time"]);
   const parentId = optionalRefId(comment["parent"]);
   const isHidden = optionalBoolean(comment["is_hidden"]);
-  const objectId = withObject ? optionalRefId(comment["object"]) : null;
-  if (id === undefined || fromId === undefined || fromName === undefined || message === undefined || createdTime === undefined || parentId === undefined || isHidden === undefined || objectId === undefined) return undefined;
-  return Object.freeze({ id, fromId, fromName, message, createdTime, parentId, isHidden, objectId });
+  const object = withObject ? objectOf(comment["object"]) : { state: "not_requested" as const, id: null };
+  if (id === undefined || fromId === undefined || fromName === undefined || message === undefined || createdTime === undefined || parentId === undefined || isHidden === undefined) return undefined;
+  return Object.freeze({ id, fromId, fromName, message, createdTime, parentId, isHidden, objectId: object.id, objectState: object.state });
 }
 
 /** `{post-id}/comments`: `data[]` of comments (whitelist) and the shared continuation. More than the limit is not the documented shape. */

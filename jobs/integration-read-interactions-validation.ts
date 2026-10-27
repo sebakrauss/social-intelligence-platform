@@ -72,6 +72,7 @@ import {
   type InteractionDto,
   type InteractionKind,
   type InteractionVisibility,
+  type PermanentRejectionDiagnostic,
   type ProviderError,
   type ProviderErrorKind,
   type ProviderReadPort,
@@ -193,6 +194,39 @@ export type ReadInteractionsValidationResult = (typeof READ_INTERACTIONS_VALIDAT
 /** What the provider answers say about authorization — an observation, never a capability verdict. */
 export type ReadInteractionsAuthorizationClass = "AUTHORIZED_READS_OBSERVED" | "PERMISSION_MISSING_OBSERVED" | "CREDENTIAL_INVALID_OBSERVED" | "NOT_DETERMINED";
 
+/**
+ * How the re-read node established its content (Step 7G-H5.5-P12-C6) — a closed relation, never an id: the selected
+ * candidate (`expected_content`) or another (`other_content`) when the node was usable; otherwise why the adapter refused
+ * it (no content authority, a malformed one, one without an id, one naming the interaction itself or its parent, or a
+ * node unreadable for another reason). null when nothing was re-read or the refusal named no case.
+ */
+export const READ_INTERACTIONS_CONTENT_AUTHORITIES = [
+  "expected_content",
+  "other_content",
+  "content_missing",
+  "content_malformed",
+  "content_id_missing",
+  "equals_interaction",
+  "equals_parent",
+  "node_unreadable",
+] as const;
+export type ReadInteractionsContentAuthority = (typeof READ_INTERACTIONS_CONTENT_AUTHORITIES)[number];
+
+const CONTENT_AUTHORITY_OF_DIAGNOSTIC: Readonly<Record<PermanentRejectionDiagnostic, ReadInteractionsContentAuthority>> = Object.freeze({
+  interaction_content_missing: "content_missing",
+  interaction_content_malformed: "content_malformed",
+  interaction_content_id_missing: "content_id_missing",
+  interaction_content_equals_interaction: "equals_interaction",
+  interaction_content_equals_parent: "equals_parent",
+  interaction_node_unreadable: "node_unreadable",
+});
+
+/** The refusal's closed diagnostic as a content-authority relation; null when it named none. */
+function contentAuthorityOfRefusal(error: ProviderError): ReadInteractionsContentAuthority | null {
+  const diagnostic = error.toJSON().details["diagnostic"];
+  return typeof diagnostic === "string" && diagnostic in CONTENT_AUTHORITY_OF_DIAGNOSTIC ? CONTENT_AUTHORITY_OF_DIAGNOSTIC[diagnostic as PermanentRejectionDiagnostic] : null;
+}
+
 /** One list → get pair, on identity only. Every correlation is null when nothing was read back. */
 export interface ReadInteractionsPairOutcome {
   /** An interaction of this kind was listed. */
@@ -206,6 +240,8 @@ export interface ReadInteractionsPairOutcome {
   readonly parentCorrelated: boolean | null;
   /** All five correlations held. */
   readonly correlated: boolean | null;
+  /** How the re-read node established its content (closed relation, never an id); null when not re-read. */
+  readonly contentAuthority: ReadInteractionsContentAuthority | null;
   readonly error: ReadInteractionsErrorClass | null;
 }
 
@@ -388,7 +424,7 @@ const canonical = (kinds: Iterable<InteractionKind>): readonly InteractionKind[]
 };
 const sameParent = (a: InteractionDto["parent"], b: InteractionDto["parent"]): boolean => (a === null || b === null ? a === b : sameProviderObject(a, b));
 
-const NOT_OBSERVED: ReadInteractionsPairOutcome = Object.freeze({ observed: false, attempted: false, succeeded: null, refCorrelated: null, contentCorrelated: null, kindCorrelated: null, authorCorrelated: null, parentCorrelated: null, correlated: null, error: null });
+const NOT_OBSERVED: ReadInteractionsPairOutcome = Object.freeze({ observed: false, attempted: false, succeeded: null, refCorrelated: null, contentCorrelated: null, kindCorrelated: null, authorCorrelated: null, parentCorrelated: null, correlated: null, contentAuthority: null, error: null });
 
 /** A credential-access failure BEFORE the provider call, as one fixed code (never retried here). */
 function accessFailure(error: unknown): ReadInteractionsValidationFailure {
@@ -580,20 +616,23 @@ export async function runReadInteractionsValidation(
         stages.push(stage);
         let got: InteractionDto | undefined;
         let error: ReadInteractionsErrorClass | null = null;
+        let refusedAuthority: ReadInteractionsContentAuthority | null = null;
         try {
           got = (await read.getInteraction(providerAccess, first.ref)).data;
         } catch (caught) {
           if (!isProviderError(caught)) throw caught;
           error = errorClassOf(caught);
+          refusedAuthority = contentAuthorityOfRefusal(caught);
         }
-        if (got === undefined) return Object.freeze({ ...NOT_OBSERVED, observed: true, attempted: true, succeeded: false, error });
+        if (got === undefined) return Object.freeze({ ...NOT_OBSERVED, observed: true, attempted: true, succeeded: false, contentAuthority: refusedAuthority, error });
         const refCorrelated = sameProviderObject(got.ref, first.ref);
         const contentCorrelated = sameProviderObject(got.content, first.content) && sameProviderObject(first.content, selected.ref);
         const kindCorrelated = got.interactionKind === first.interactionKind;
         const authorCorrelated = sameProviderObject(got.author.ref, first.author.ref);
         const parentCorrelated = sameParent(got.parent, first.parent) && (kind === "comment" ? first.parent === null : first.parent !== null);
         const correlated = refCorrelated && contentCorrelated && kindCorrelated && authorCorrelated && parentCorrelated;
-        return Object.freeze({ observed: true, attempted: true, succeeded: true, refCorrelated, contentCorrelated, kindCorrelated, authorCorrelated, parentCorrelated, correlated, error: null });
+        const contentAuthority: ReadInteractionsContentAuthority = sameProviderObject(got.content, selected.ref) ? "expected_content" : "other_content";
+        return Object.freeze({ observed: true, attempted: true, succeeded: true, refCorrelated, contentCorrelated, kindCorrelated, authorCorrelated, parentCorrelated, correlated, contentAuthority, error: null });
       };
       // Only a kind this platform's slice can prove is re-read (Instagram never spends a GET on a reply); an unprovable
       // kind that was nevertheless listed is reported as observed and fails the structural check below.

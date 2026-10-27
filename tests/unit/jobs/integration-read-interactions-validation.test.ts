@@ -32,6 +32,7 @@ import {
 import { createMetaReadPort } from "@/integrations/providers/meta/read-port";
 import type { JobRelease } from "@/platform/jobs";
 import {
+  READ_INTERACTIONS_CONTENT_AUTHORITIES,
   READ_INTERACTIONS_VALIDATION_ACCOUNT_KINDS,
   READ_INTERACTIONS_VALIDATION_ACKNOWLEDGEMENT,
   READ_INTERACTIONS_VALIDATION_AWS_ATTEMPTS,
@@ -216,9 +217,9 @@ async function refused(promise: Promise<unknown>): Promise<ReadInteractionsValid
 const OUTCOME_KEYS = ["accountKind", "authorization", "candidateLimit", "candidatesInspected", "comment", "content", "evidenceInteractionKinds", "expectedMetaRequests", "graphVersion", "interactionKindsObserved", "interactionKindsValidated", "interactions", "maxListPages", "platform", "positiveEvidenceEligible", "reply", "result", "selectedCandidatePosition", "stages", "windowDays"];
 const CONTENT_KEYS = ["allItemsFromManagedAccount", "error", "itemCount", "selectedContentKind", "selectedSource", "succeeded"];
 const INTERACTIONS_KEYS = ["allOnSelectedContent", "attempted", "authorRoles", "commentCount", "error", "inWindowItemCount", "itemCount", "pagination", "parentShapeConsistent", "replyCount", "succeeded", "visibility"];
-const PAIR_KEYS = ["attempted", "authorCorrelated", "contentCorrelated", "correlated", "error", "kindCorrelated", "observed", "parentCorrelated", "refCorrelated", "succeeded"];
+const PAIR_KEYS = ["attempted", "authorCorrelated", "contentAuthority", "contentCorrelated", "correlated", "error", "kindCorrelated", "observed", "parentCorrelated", "refCorrelated", "succeeded"];
 const CLOSED_STRINGS = new Set<string>([
-  ...CONTENT_KINDS, ...CONTENT_SOURCES, ...INTERACTION_KINDS, ...READ_INTERACTIONS_VALIDATION_PLATFORMS, ...READ_INTERACTIONS_VALIDATION_RESULTS, ...Object.values(READ_INTERACTIONS_VALIDATION_ACCOUNT_KINDS),
+  ...CONTENT_KINDS, ...CONTENT_SOURCES, ...INTERACTION_KINDS, ...READ_INTERACTIONS_CONTENT_AUTHORITIES, ...READ_INTERACTIONS_VALIDATION_PLATFORMS, ...READ_INTERACTIONS_VALIDATION_RESULTS, ...Object.values(READ_INTERACTIONS_VALIDATION_ACCOUNT_KINDS),
   "AUTHORIZED_READS_OBSERVED", "PERMISSION_MISSING_OBSERVED", "CREDENTIAL_INVALID_OBSERVED", "NOT_DETERMINED", "v25.0", "list_content", "list_interactions", "get_comment", "get_reply", "more", "end",
   "rate_limited", "transient", "permission_missing", "target_not_found", "target_not_eligible", "credential_invalid", "permanent_rejected", "outcome_unknown",
   "read_content", "read_interactions", "network", "server_error", "provider_unavailable", "unknown", "expired", "revoked", "invalid_request", "invalid_cursor", "content_policy", "unsupported_for_target",
@@ -369,7 +370,7 @@ describe("Facebook: listContent → listInteractions → getInteraction per obse
     expectOutcomeSchema(outcome);
     expect([outcome.result, outcome.stages, outcome.expectedMetaRequests, h.world.calls.length]).toEqual(["INCONCLUSIVE_COMMENT_ONLY", ["list_content", "list_interactions", "get_comment"], 6, 6]);
     expect([outcome.interactionKindsObserved, outcome.interactionKindsValidated, outcome.evidenceInteractionKinds, outcome.positiveEvidenceEligible]).toEqual([["comment"], ["comment"], ["comment"], true]);
-    expect(outcome.comment).toEqual({ observed: true, attempted: true, succeeded: true, refCorrelated: true, contentCorrelated: true, kindCorrelated: true, authorCorrelated: true, parentCorrelated: true, correlated: true, error: null });
+    expect(outcome.comment).toEqual({ observed: true, attempted: true, succeeded: true, refCorrelated: true, contentCorrelated: true, kindCorrelated: true, authorCorrelated: true, parentCorrelated: true, correlated: true, contentAuthority: "expected_content", error: null });
     expect(outcome.reply).toMatchObject({ observed: false, attempted: false });
     expect(outcome.interactions).toMatchObject({ itemCount: 2, commentCount: 2, replyCount: 0, pagination: "more", allOnSelectedContent: true, parentShapeConsistent: true });
     expect([outcome.content.selectedContentKind, outcome.content.selectedSource, outcome.accountKind, outcome.authorization]).toEqual(["post", "unknown", "facebook_page", "AUTHORIZED_READS_OBSERVED"]);
@@ -637,6 +638,70 @@ describe("the bounded candidate scan: the first in-window content item WITH an i
     expect(h.world.calls.some((url) => url.searchParams.has("after"))).toBe(false);
     expect(h.world.calls.some((url) => url.href.includes("/next"))).toBe(false);
     expect([outcome.result, outcome.interactions.pagination, outcome.candidatesInspected]).toEqual(["INCONCLUSIVE_EMPTY_INTERACTIONS", "more", 3]);
+  });
+});
+
+// ── Content authority of the re-read node (Step 7G-H5.5-P12-C6) ──────────────────────────────────────────────
+
+describe("the re-read node's content authority: a closed relation, never an id", () => {
+  const node = (patch: Record<string, unknown>) => fbComment(COMMENT, { object: { id: POST }, ...patch });
+  const fbWith = (nodePatch: Record<string, unknown>): Graph => ({ comments: { data: [fbComment(COMMENT)] }, nodes: { [COMMENT]: node(nodePatch) } });
+
+  it("a usable node on the selected candidate is `expected_content` (and correlates)", async () => {
+    const outcome = await harness(fbWith({})).run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.comment.contentAuthority, outcome.comment.correlated, outcome.result]).toEqual(["expected_content", true, "INCONCLUSIVE_COMMENT_ONLY"]);
+  });
+
+  it("a usable node naming ANOTHER post is `other_content` — and still a CORRELATION_FAILURE, never evidence", async () => {
+    const outcome = await harness(fbWith({ object: { id: `${PAGE}_990000000000099` } })).run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.comment.contentAuthority, outcome.comment.contentCorrelated, outcome.result, outcome.evidenceInteractionKinds]).toEqual(["other_content", false, "CORRELATION_FAILURE", null]);
+  });
+
+  it.each([
+    ["no object", { object: undefined }, "content_missing"],
+    ["an object without id", { object: {} }, "content_id_missing"],
+    ["an object with a malformed id", { object: { id: "a b" } }, "content_malformed"],
+    ["an object that is not an object", { object: "a-string" }, "content_malformed"],
+    ["an object naming the comment itself", { object: { id: COMMENT } }, "equals_interaction"],
+    ["a node otherwise unreadable (no from)", { from: undefined }, "node_unreadable"],
+  ])("%s → refused exactly as before (MALFORMED_RESPONSE), now naming `%s`", async (_label, patch, authority) => {
+    const h = harness(fbWith(patch));
+    const outcome = await h.run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.result, outcome.comment.succeeded, outcome.comment.error, outcome.comment.contentAuthority, outcome.evidenceInteractionKinds]).toEqual(["MALFORMED_RESPONSE", false, { kind: "permanent_rejected", detail: "unknown" }, authority, null]);
+    // Same budget as before: the diagnostic adds no request.
+    expect([outcome.expectedMetaRequests, h.world.calls.length]).toEqual([6, 6]);
+  });
+
+  it("a reply node whose object names its parent comment → `equals_parent` (the LIVE question for replies, README:981)", async () => {
+    const graph: Graph = { comments: { data: [fbComment(COMMENT), fbReply(REPLY, COMMENT)] }, nodes: { [COMMENT]: node({}), [REPLY]: { ...fbReply(REPLY, COMMENT), object: { id: COMMENT } } } };
+    const outcome = await harness(graph).run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.comment.contentAuthority, outcome.reply.contentAuthority, outcome.reply.succeeded, outcome.result]).toEqual(["expected_content", "equals_parent", false, "MALFORMED_RESPONSE"]);
+  });
+
+  it("the R5-shape LIVE failure: BOTH re-reads without object → both `content_missing`, distinguishable from a malformed one", async () => {
+    const graph: Graph = { comments: { data: [fbComment(COMMENT), fbReply(REPLY, COMMENT)] }, nodes: { [COMMENT]: fbComment(COMMENT), [REPLY]: fbReply(REPLY, COMMENT) } };
+    const outcome = await harness(graph).run();
+    expectOutcomeSchema(outcome);
+    expect([outcome.comment.contentAuthority, outcome.reply.contentAuthority, outcome.result, outcome.expectedMetaRequests]).toEqual(["content_missing", "content_missing", "MALFORMED_RESPONSE", 8]);
+  });
+
+  it("Instagram: a usable node is `expected_content`; a node without media.id is `content_missing`", async () => {
+    const ok = await harness(IG_COMMENT_GRAPH, { target: IG_FOUND }).run();
+    expectOutcomeSchema(ok);
+    expect(ok.comment.contentAuthority).toBe("expected_content");
+    const missing = await harness({ comments: { data: [igComment(IG_COMMENT)] }, nodes: { [IG_COMMENT]: igComment(IG_COMMENT, { media: undefined }) } }, { target: IG_FOUND }).run();
+    expectOutcomeSchema(missing);
+    expect([missing.comment.contentAuthority, missing.result]).toEqual(["content_missing", "MALFORMED_RESPONSE"]);
+  });
+
+  it("nothing re-read → contentAuthority null; the closed vocabulary is exactly eight relations", async () => {
+    const outcome = await harness({ comments: { data: [] } }).run();
+    expect([outcome.comment.contentAuthority, outcome.reply.contentAuthority]).toEqual([null, null]);
+    expect(READ_INTERACTIONS_CONTENT_AUTHORITIES).toEqual(["expected_content", "other_content", "content_missing", "content_malformed", "content_id_missing", "equals_interaction", "equals_parent", "node_unreadable"]);
   });
 });
 

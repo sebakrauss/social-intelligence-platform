@@ -196,6 +196,8 @@ async function failure(promise: Promise<unknown>): Promise<ProviderError> {
 }
 
 const rejected = (operation: string, reasonCode: string) => ({ kind: "permanent_rejected", operation, retry: "never", details: { reasonCode } });
+/** A refusal that names its closed diagnostic (Step 7G-H5.5-P12-C6): same kind, code and retry, never an id. */
+const rejectedAs = (operation: string, reasonCode: string, diagnostic: string) => ({ kind: "permanent_rejected", operation, retry: "never", details: { reasonCode, diagnostic } });
 const envelope = (raw: string): PageCursor => `meta1.${Buffer.from(raw, "latin1").toString("base64url")}` as PageCursor;
 const ids = (items: readonly InteractionDto[]) => items.map((item) => item.ref.id);
 
@@ -405,20 +407,24 @@ describe("Facebook · getInteraction: object.id is the only content authority", 
   });
 
   it.each([
-    ["no object", { object: undefined }],
-    ["an object without id", { object: {} }],
-    ["an object with a malformed id", { object: { id: "a b" } }],
-    ["an object that is the parent comment", { parent: { id: FB_COMMENT }, object: { id: FB_COMMENT } }],
-    ["an object that is the comment itself", { object: { id: FB_REPLY } }],
-    ["no from", { from: undefined }],
-  ])("%s fails closed: the content cannot be established", async (_label, patch) => {
+    ["no object", { object: undefined }, "interaction_content_missing"],
+    ["an object without id", { object: {} }, "interaction_content_id_missing"],
+    ["an object with a malformed id", { object: { id: "a b" } }, "interaction_content_malformed"],
+    ["an object that is not an object", { object: "a-string" }, "interaction_content_malformed"],
+    ["an object that is the parent comment", { parent: { id: FB_COMMENT }, object: { id: FB_COMMENT } }, "interaction_content_equals_parent"],
+    ["an object that is the comment itself", { object: { id: FB_REPLY } }, "interaction_content_equals_interaction"],
+    ["no from", { from: undefined }, "interaction_node_unreadable"],
+  ])("%s fails closed: the content cannot be established — the same refusal, naming %s", async (_label, patch, diagnostic) => {
     const { get } = facebook(facebookGraph({ nodes: { [FB_REPLY]: fbNode(FB_REPLY, patch) } }));
-    expect((await failure(get(FB_REPLY))).toJSON()).toEqual(rejected("getInteraction", "unknown"));
+    const error = await failure(get(FB_REPLY));
+    // Same kind, code and retry as before (Step 7G-H5.5-P12-C6); only the closed diagnostic is added.
+    expect(error.toJSON()).toEqual(rejectedAs("getInteraction", "unknown", diagnostic));
+    expect(JSON.stringify(error.toJSON())).not.toMatch(new RegExp(`${FB_COMMENT}|${FB_REPLY}|${POST}|a b|a-string`));
   });
 
   it("an answer echoing another comment id is unreadable", async () => {
     const { get } = facebook(facebookGraph({ nodes: { [FB_COMMENT]: fbNode(FB_REPLY) } }));
-    expect((await failure(get())).toJSON()).toEqual(rejected("getInteraction", "unknown"));
+    expect((await failure(get())).toJSON()).toEqual(rejectedAs("getInteraction", "unknown", "interaction_node_unreadable"));
   });
 
   it("code 100 / subcode 33 on the node read → TargetNotFound (ambiguous, never deletion or non-support); on the edge it stays a permanent rejection", async () => {
@@ -653,12 +659,13 @@ describe("Instagram · getInteraction: media.id is the only content authority", 
   });
 
   it.each([
-    ["no media", { media: undefined }],
-    ["a reply (parent_id)", { parent_id: IG_COMMENT_B }],
-    ["no from", { from: undefined }],
-  ])("%s fails closed", async (_label, patch) => {
+    // Step 7G-H5.5-P12-C6: a node without media.id names its case; the other refusals are unchanged (unnamed).
+    ["no media", { media: undefined }, rejectedAs("getInteraction", "unknown", "interaction_content_missing")],
+    ["a reply (parent_id)", { parent_id: IG_COMMENT_B }, rejected("getInteraction", "unknown")],
+    ["no from", { from: undefined }, rejected("getInteraction", "unknown")],
+  ])("%s fails closed", async (_label, patch, expected) => {
     const { get } = instagram(instagramGraph({ nodes: { [IG_COMMENT]: igComment(IG_COMMENT, patch) } }));
-    expect((await failure(get())).toJSON()).toEqual(rejected("getInteraction", "unknown"));
+    expect((await failure(get())).toJSON()).toEqual(expected);
   });
 
   it("an answer echoing another comment id is unreadable; 100/33 is TargetNotFound", async () => {
@@ -763,7 +770,7 @@ describe("cross-platform: each platform reads only its own shape", () => {
 
   it("an Instagram comment cannot be read as a Facebook comment (no message, no created_time)", async () => {
     expect((await failure(facebook(anyShape({ data: [igComment(IG_COMMENT)] })).list())).toJSON()).toEqual(rejected("listInteractions", "unknown"));
-    expect((await failure(facebook(anyShape(igComment(FB_COMMENT))).get())).toJSON()).toEqual(rejected("getInteraction", "unknown"));
+    expect((await failure(facebook(anyShape(igComment(FB_COMMENT))).get())).toJSON()).toEqual(rejectedAs("getInteraction", "unknown", "interaction_node_unreadable"));
   });
 
   it("Facebook reply semantics never leak into Instagram: a Facebook-style parent is not read; only parent_id marks a reply, and fails", async () => {

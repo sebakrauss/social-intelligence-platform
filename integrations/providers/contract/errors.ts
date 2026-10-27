@@ -89,6 +89,21 @@ export type OutcomeUnknownReason = (typeof OUTCOME_UNKNOWN_REASONS)[number];
 export const PERMANENT_REJECTION_CODES = ["invalid_request", "invalid_cursor", "content_policy", "duplicate", "limit_exceeded", "unknown"] as const;
 export type PermanentRejectionCode = (typeof PERMANENT_REJECTION_CODES)[number];
 
+/**
+ * Why an interaction node read was refused, when the adapter can tell (Step 7G-H5.5-P12-C6). Diagnostic only: every value
+ * is the same PermanentRejectedError (same code, retry and handling). Each names how the node's content authority failed
+ * (or that the node was otherwise unreadable) — never an id, a value or a body fragment. `null` when unclassified.
+ */
+export const PERMANENT_REJECTION_DIAGNOSTICS = [
+  "interaction_content_missing",
+  "interaction_content_malformed",
+  "interaction_content_id_missing",
+  "interaction_content_equals_interaction",
+  "interaction_content_equals_parent",
+  "interaction_node_unreadable",
+] as const;
+export type PermanentRejectionDiagnostic = (typeof PERMANENT_REJECTION_DIAGNOSTICS)[number];
+
 export const PROVIDER_ERROR_KINDS = [
   "rate_limited",
   "transient",
@@ -243,14 +258,17 @@ export class PermanentRejectedError extends ProviderError {
   readonly kind = "permanent_rejected";
   readonly retry = "never";
   readonly reasonCode: PermanentRejectionCode;
+  /** A closed diagnostic sub-reason, or null (unclassified). Never changes kind, code, retry or handling. */
+  readonly diagnostic: PermanentRejectionDiagnostic | null;
 
-  constructor(operation: ProviderOperation, reasonCode: PermanentRejectionCode) {
+  constructor(operation: ProviderOperation, reasonCode: PermanentRejectionCode, diagnostic: PermanentRejectionDiagnostic | null = null) {
     super("permanent_rejected", operation);
     this.reasonCode = reasonCode;
+    this.diagnostic = diagnostic;
   }
 
   protected details() {
-    return { reasonCode: this.reasonCode };
+    return this.diagnostic === null ? { reasonCode: this.reasonCode } : { reasonCode: this.reasonCode, diagnostic: this.diagnostic };
   }
 }
 
