@@ -6,7 +6,7 @@
  * missing slice is non-retryable; everything else is a recorded slice outcome.
  */
 import { randomUUID } from "node:crypto";
-import { RECONCILIATION_RUNTIME, runReconciliationSlice, type SliceOutcome } from "@/modules/ingestion";
+import { runReconciliationSlice, type SliceOutcome } from "@/modules/ingestion";
 import type { DiscoveryProviders, ProviderCredentialAccess } from "@/modules/connections";
 import { NonRetryableJobError, type TenantStepJobContext } from "@/platform/jobs";
 import { reconciliationScope } from "@/server/persistence/ingestion";
@@ -25,7 +25,7 @@ export class ReconciliationRetryableError extends Error {
 export async function runReconcileSlice(
   context: TenantStepJobContext,
   base?: { readonly access: ProviderCredentialAccess; readonly providers: DiscoveryProviders },
-  options: { readonly operationsPerRun?: number; readonly clock?: { readonly newId: () => string; readonly now: () => Date } } = {},
+  options: { readonly clock?: { readonly newId: () => string; readonly now: () => Date } } = {},
 ): Promise<SliceOutcome> {
   const sliceId = context.payload.subjectIds["reconciliation_slice_id"];
   const connectedAccountId = context.payload.subjectIds["connected_account_id"];
@@ -38,7 +38,6 @@ export async function runReconcileSlice(
       access: resolved.access,
       providers: resolved.providers,
       clock: options.clock ?? { newId: randomUUID, now: () => new Date() },
-      operationsPerRun: options.operationsPerRun ?? RECONCILIATION_RUNTIME.operationsPerRun,
       finalAttempt: context.run.attempt >= maxAttempts,
     },
     { sliceId, connectedAccountId },

@@ -132,3 +132,35 @@ The request service (`requestReconciliation`) runs in the job scope: 0018 lets o
 H6-C4 web action needs its own write path for the request (a reviewed definer or an Owner/Admin INSERT policy). The run
 operation cap (40; 8 for a LIVE acceptance) is enforced against the persisted `operations_used`, but 0018's budget
 snapshot has no column for the cap itself.
+
+## H6-C3b — the reconciliation request boundary (migration 0019)
+
+Closes the two gaps above before any web action, and freezes the third (TL decisions 1–3).
+
+**One creation path (TL 1).** `ingestion.request_reconciliation(account, correlation, requested_at, budget)` is a
+reviewed SECURITY DEFINER (`app_owner`, empty `search_path`, schema-qualified, no dynamic SQL; EXECUTE for
+`authenticated` and `app_worker` only, none for PUBLIC). In the caller's transaction, atomically, it:
+
+- binds the workspace from the sealed context, never from a parameter;
+- for a web caller, requires OWNER or ADMIN from the verified claims and live membership; the caller passes neither
+  the budget nor the time, and gets the approved defaults at statement time;
+- for the job runtime (the internal/operator path), may narrow the budget within the CHECKs and names the time;
+- finds the ACTIVE account of that workspace, else returns `not_found` (no existence oracle);
+- with an open run, returns `already_running` (a concurrent duplicate loses on the one-open index and returns the same);
+- otherwise writes one REQUESTED run (initiator = the user, or the system for the job runtime), one
+  `connected_account.reconciliation_requested` audit event and one IDs-only `ingestion.reconcile_account` outbox row,
+  and returns `requested`.
+
+A refused caller gets 42501 and nothing is written. Members still have no INSERT on runs. A RESTRICTIVE policy refuses
+their direct appends of the three reconciliation topics. `requestReconciliation` is the typed adapter: it maps the
+function's outcome and wakes the relay.
+
+**The persisted operation budget (TL 2).** `reconciliation_runs.max_operations` is NOT NULL and immutable (no UPDATE
+grant), with `1 ≤ max_operations ≤ 40` and `operations_used ≤ max_operations`. An ordinary run gets 40; a bounded LIVE
+acceptance gets 8, through the internal path only. Each read attempt reserves against the run's own column, never a
+code constant.
+
+**No removal detection (TL 3).** Absence from a listing is not removal authority. 0019 adds no tombstone, sweep or
+`getInteraction` re-read. Directly confirmed removal is H6-E.
+
+Applying 0019 to dev-v2 is its own gate (H6-C3c).

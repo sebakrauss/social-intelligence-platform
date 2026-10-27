@@ -2,9 +2,11 @@
  * The reconciliation runtime (Step H6-C3; design H6-C0; TL D-C1…D-C5; migration 0018). Application services only —
  * the job wrappers (jobs/reconciliation*.ts) resolve identifiers and map outcomes; no Trigger.dev, no provider SDK.
  *
- *   requestReconciliation   an explicit request (TL D-C1: Owner/Admin action; H6-C3 calls it from tests only):
- *                           REQUESTED run with the approved budget snapshot + `ingestion.reconcile_account` outbox
- *                           row, atomically; a second request while one is open is `already_running` (one-open index)
+ *   requestReconciliation   the job runtime's (internal/operator) adapter of the 0019 request boundary
+ *                           ingestion.request_reconciliation — the ONE creation algorithm: authorization, the one-open
+ *                           check (`already_running`), the REQUESTED run with its budget (max_operations included), the
+ *                           audit event and the `ingestion.reconcile_account` row, atomically (the web path, H6-C4,
+ *                           calls the same function under the member's claims, with no budget or time of its own)
  *   planReconciliation      MAIN: re-checks the account, connection, kill switch and capability (never a credential);
  *                           unavailable → SKIPPED_UNAVAILABLE (+ a truthful gap only over intervals already synced);
  *                           otherwise RUNNING + the first content_listing slice + its outbox row
@@ -134,47 +136,29 @@ async function gate(scope: ReconciliationScope, connectedAccountId: string, capa
 export type RequestReconciliationOutcome =
   | { readonly kind: "requested"; readonly runId: string }
   | { readonly kind: "already_running"; readonly runId: string }
-  | { readonly kind: "not_found" }
-  | { readonly kind: "inactive" };
+  | { readonly kind: "not_found" };
 
 export async function requestReconciliation(
   scope: ReconciliationScope,
   clock: ReconciliationClock,
   input: {
     readonly connectedAccountId: string;
-    readonly initiator: { readonly type: "user"; readonly userId: string } | { readonly type: "system" };
     readonly correlationId: CorrelationId;
-    /** The approved defaults unless a caller (tests, the bounded LIVE acceptance) narrows them. */
+    /** The approved defaults (40 operations) unless an internal/operator caller narrows them (e.g. LIVE acceptance: 8). */
     readonly budget?: ReconciliationBudgetSnapshot;
   },
 ): Promise<RequestReconciliationOutcome> {
-  const account = await scope.authority.account(input.connectedAccountId);
-  if (account === undefined) return { kind: "not_found" };
-  if (account.status !== "ACTIVE") return { kind: "inactive" };
-  const open = await scope.reconciliation.openRun(account.id);
-  if (open !== undefined) return { kind: "already_running", runId: open.id };
-  const now = clock.now();
-  const id = clock.newId();
-  const inserted = await scope.reconciliation.insertRun({
-    id,
-    organizationId: await scope.ingestion.organizationId(),
-    workspaceId: account.workspaceId,
-    connectedAccountId: account.id,
-    initiatorType: input.initiator.type,
-    initiatorUserId: input.initiator.type === "user" ? input.initiator.userId : null,
+  // The job runtime's (internal) path: the boundary itself authorizes, checks the open run, writes the run, its audit
+  // event and the planner row atomically. This adapter only names the time and the budget, and maps the answer.
+  const result = await scope.reconciliation.requestRun({
+    connectedAccountId: input.connectedAccountId,
     correlationId: input.correlationId,
+    requestedAt: clock.now(),
     budget: input.budget ?? defaultBudgetSnapshot(),
-    now,
   });
-  if (inserted === "already_open") {
-    const concurrent = await scope.reconciliation.openRun(account.id);
-    if (concurrent === undefined) throw new Error("reconciliation_open_run_missing");
-    return { kind: "already_running", runId: concurrent.id };
-  }
-  const run = await scope.reconciliation.lockRun(id);
-  if (run === undefined) throw new Error("reconciliation_run_missing");
-  await scope.reconciliation.enqueuePlanner(run, clock.newId(), now);
-  return { kind: "requested", runId: id };
+  if (result.outcome === "requested") return { kind: "requested", runId: result.runId };
+  if (result.outcome === "already_running") return { kind: "already_running", runId: result.runId };
+  return { kind: "not_found" };
 }
 
 // ── planner (MAIN) ──────────────────────────────────────────────────────────────────────────────────────────
@@ -238,8 +222,6 @@ export interface SliceDependencies {
   readonly access: ProviderCredentialAccess;
   readonly providers: DiscoveryProviders;
   readonly clock: ReconciliationClock;
-  /** Provider operations one run may use (TL: 40; a LIVE acceptance narrows it). */
-  readonly operationsPerRun: number;
   /** Whether this task attempt is the last the runtime will make (a transient failure then finishes the slice). */
   readonly finalAttempt: boolean;
 }
@@ -385,7 +367,8 @@ async function readSlice(deps: SliceDependencies, claimed: ClaimedSlice): Promis
       const capability = slice.unit === "content_listing" ? "read_content" : "read_interactions";
       const checked = await gate(scope, slice.connectedAccountId, capability, content?.contentKind ?? VALIDATED_SCOPE.contentKind, content?.reportedSource ?? VALIDATED_SCOPE.source);
       if (checked.kind === "blocked") return checked;
-      if (!(await scope.reconciliation.reserveRunOperation(run.id, deps.operationsPerRun, clock.now()))) return "budget" as const;
+      // The run's persisted max_operations governs (0019): every read attempt reserves one, retries included.
+      if (!(await scope.reconciliation.reserveRunOperation(run.id, clock.now()))) return "budget" as const;
       if (!(await scope.reconciliation.recordSliceOperation(slice.id, slice.attempt, 1, clock.now()))) return "superseded" as const;
       return "ok" as const;
     });

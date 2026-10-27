@@ -99,19 +99,19 @@ export function defineReconciliationPersistenceSuite(getTarget: () => DbTarget):
 
   // ── row builders (through the worker) ─────────────────────────────────────────────────────────────────────
   type RunPatch = Partial<Record<"state" | "started_at" | "completed_at" | "failure_class" | "initiator_type" | "initiator_user_id" | "budget_listing_pages_per_slice"
-    | "budget_interaction_pages_per_content" | "budget_overlap_seconds" | "operations_used" | "connected_account_id", string | number | null>>;
+    | "budget_interaction_pages_per_content" | "budget_overlap_seconds" | "operations_used" | "connected_account_id" | "max_operations", string | number | null>>;
   const insertRun = (t: Tenant, patch: RunPatch = {}, id = randomUUID()) => {
     const v = {
       state: "REQUESTED", started_at: null, completed_at: null, failure_class: null, initiator_type: "user", initiator_user_id: t.owner,
       budget_listing_pages_per_slice: budget.listingPagesPerSlice, budget_interaction_pages_per_content: budget.interactionPagesPerContent,
-      budget_overlap_seconds: budget.overlapSeconds, operations_used: 0, connected_account_id: t.account, ...patch,
+      budget_overlap_seconds: budget.overlapSeconds, operations_used: 0, connected_account_id: t.account, max_operations: budget.maxOperations, ...patch,
     };
     return asWorker(t, (tx) => tx.execute(sql`insert into ingestion.reconciliation_runs (id, organization_id, workspace_id, connected_account_id, state, initiator_type, initiator_user_id,
         correlation_id, requested_at, started_at, completed_at, budget_listing_pages_per_slice, budget_interaction_pages_per_slice, budget_continuations_per_content,
-        budget_interaction_pages_per_content, budget_content_items, budget_overlap_seconds, operations_used, failure_class, created_at, updated_at)
+        budget_interaction_pages_per_content, budget_content_items, budget_overlap_seconds, max_operations, operations_used, failure_class, created_at, updated_at)
       values (${id}, ${t.organizationId}, ${t.workspaceId}, ${v.connected_account_id}, ${v.state}, ${v.initiator_type}, ${v.initiator_user_id}, ${correlation()},
         now() - interval '1 hour', ${v.started_at}::timestamptz, ${v.completed_at}::timestamptz, ${v.budget_listing_pages_per_slice}, ${budget.interactionPagesPerSlice},
-        ${budget.continuationsPerContent}, ${v.budget_interaction_pages_per_content}, ${budget.contentItems}, ${v.budget_overlap_seconds}, ${v.operations_used},
+        ${budget.continuationsPerContent}, ${v.budget_interaction_pages_per_content}, ${budget.contentItems}, ${v.budget_overlap_seconds}, ${v.max_operations}, ${v.operations_used},
         ${v.failure_class}, now(), now())`)).then(() => id);
   };
   type SlicePatch = Partial<Record<"unit" | "content_item_id" | "sequence" | "state" | "attempt" | "leased_until" | "cursor" | "cursor_issued_at" | "pages_read" | "max_pages"
@@ -444,8 +444,8 @@ export function defineReconciliationPersistenceSuite(getTarget: () => DbTarget):
       // A row claiming A's workspace from B's binding is refused by RLS.
       expect(await code(asWorker(b, (tx) => tx.execute(sql`insert into ingestion.reconciliation_runs (id, organization_id, workspace_id, connected_account_id, state, initiator_type,
           correlation_id, requested_at, budget_listing_pages_per_slice, budget_interaction_pages_per_slice, budget_continuations_per_content, budget_interaction_pages_per_content,
-          budget_content_items, budget_overlap_seconds, created_at, updated_at)
-        values (${randomUUID()}, ${a.organizationId}, ${a.workspaceId}, ${a.account}, 'REQUESTED', 'system', ${correlation()}, now(), 1, 5, 2, 15, 10, 86400, now(), now())`)))).toBe("42501");
+          budget_content_items, budget_overlap_seconds, max_operations, created_at, updated_at)
+        values (${randomUUID()}, ${a.organizationId}, ${a.workspaceId}, ${a.account}, 'REQUESTED', 'system', ${correlation()}, now(), 1, 5, 2, 15, 10, 86400, 40, now(), now())`)))).toBe("42501");
     });
   });
 }

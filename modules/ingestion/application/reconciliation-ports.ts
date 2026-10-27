@@ -28,6 +28,7 @@ export interface ReconciliationRunRecord {
     readonly interactionPagesPerContent: number;
     readonly contentItems: number;
     readonly overlapSeconds: number;
+    readonly maxOperations: number;
   };
   readonly operationsUsed: number;
   readonly pagesUsed: number;
@@ -70,17 +71,11 @@ export interface ReconciliationWatermarkRecord {
   readonly retryNotBefore: Date | null;
 }
 
-export interface NewReconciliationRun {
-  readonly id: string;
-  readonly organizationId: string;
-  readonly workspaceId: string;
-  readonly connectedAccountId: string;
-  readonly initiatorType: "user" | "system";
-  readonly initiatorUserId: string | null;
-  readonly correlationId: string;
-  readonly budget: ReconciliationRunRecord["budget"];
-  readonly now: Date;
-}
+/** The request boundary's answer (ingestion.request_reconciliation, 0019). */
+export type ReconciliationRequestResult =
+  | { readonly outcome: "requested"; readonly runId: string; readonly outboxId: string }
+  | { readonly outcome: "already_running"; readonly runId: string }
+  | { readonly outcome: "not_found" };
 
 export interface NewReconciliationSlice {
   readonly id: string;
@@ -109,8 +104,12 @@ export interface SliceFinish {
 
 export interface ReconciliationStore {
   // ── runs ─────────────────────────────────────────────────────────────────────────────────────────────
-  /** `already_open` when the account already has a REQUESTED/RUNNING run (the one-open index). */
-  insertRun(run: NewReconciliationRun): Promise<"inserted" | "already_open">;
+  /**
+   * The ONE creation path of a run (0019 ingestion.request_reconciliation, atomic: authorization, one-open check, the
+   * REQUESTED run with its budget, its audit event and its planner outbox row). `requestedAt`/`budget` are honored only
+   * for the job runtime; a web caller must pass null for both (the boundary refuses anything else).
+   */
+  requestRun(input: { readonly connectedAccountId: string; readonly correlationId: string; readonly requestedAt: Date | null; readonly budget: ReconciliationRunRecord["budget"] | null }): Promise<ReconciliationRequestResult>;
   openRun(connectedAccountId: string): Promise<ReconciliationRunRecord | undefined>;
   /** Row-locked authoritative read. */
   lockRun(id: string): Promise<ReconciliationRunRecord | undefined>;
@@ -118,8 +117,8 @@ export interface ReconciliationStore {
   startRun(id: string, now: Date): Promise<boolean>;
   /** Open → terminal; false when it already finished. */
   finishRun(id: string, state: "COMPLETED" | "PARTIAL" | "SKIPPED_UNAVAILABLE" | "FAILED", failureClass: string | null, now: Date): Promise<boolean>;
-  /** Reserves ONE provider operation for a RUNNING run iff fewer than `cap` were used (atomic); false = exhausted. */
-  reserveRunOperation(runId: string, cap: number, now: Date): Promise<boolean>;
+  /** Reserves ONE provider operation for a RUNNING run iff fewer than its persisted max_operations were used (atomic). */
+  reserveRunOperation(runId: string, now: Date): Promise<boolean>;
   addRunUsage(runId: string, usage: { readonly pages: number; readonly contentItems: number }, now: Date): Promise<void>;
   // ── slices ───────────────────────────────────────────────────────────────────────────────────────────
   insertSlice(slice: NewReconciliationSlice): Promise<void>;
@@ -178,7 +177,6 @@ export interface ReconciliationStore {
     readonly correlationId: string;
   }): Promise<void>;
   // ── dispatch (IDs-only outbox rows, in this transaction) ─────────────────────────────────────────────
-  enqueuePlanner(run: ReconciliationRunRecord, outboxId: string, now: Date): Promise<void>;
   enqueueSlice(slice: Pick<ReconciliationSliceRecord, "id" | "organizationId" | "workspaceId" | "connectedAccountId">, correlationId: string, outboxId: string, now: Date): Promise<void>;
 }
 

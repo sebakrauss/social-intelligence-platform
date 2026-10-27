@@ -26,6 +26,8 @@ export const reconciliationRuns = ingestion.table("reconciliation_runs", {
   budgetInteractionPagesPerContent: integer("budget_interaction_pages_per_content").notNull(),
   budgetContentItems: integer("budget_content_items").notNull(),
   budgetOverlapSeconds: integer("budget_overlap_seconds").notNull(),
+  /** 0019: the run's immutable provider-operation budget. */
+  maxOperations: integer("max_operations").notNull(),
   operationsUsed: integer("operations_used").notNull(),
   pagesUsed: integer("pages_used").notNull(),
   contentItemsUsed: integer("content_items_used").notNull(),

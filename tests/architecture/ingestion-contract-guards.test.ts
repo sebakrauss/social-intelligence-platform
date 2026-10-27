@@ -15,7 +15,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { COVERAGE_REASONS } from "@/modules/coverage";
-import { INGESTION_CONFLICT_CLASSES, INTERACTIONS_OBSERVED_TOPIC } from "@/modules/ingestion";
+import { DEFAULT_MAX_OPERATIONS, INGESTION_CONFLICT_CLASSES, INTERACTIONS_OBSERVED_TOPIC, LIVE_ACCEPTANCE_MAX_OPERATIONS, RECONCILIATION_OPERATIONS_CEILING, defaultBudgetSnapshot } from "@/modules/ingestion";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 
 const MODULES = ["interactions", "conversations", "coverage", "ingestion"] as const;
@@ -129,14 +129,88 @@ describe("H6-C3: the reconciliation runtime boundaries", () => {
   it("no provider cursor in an outbox row or job payload: the reconciliation subjects are UUIDs only", () => {
     const store = codeOf("modules/ingestion/persistence/reconciliation-store.ts");
     const subjects = [...store.matchAll(/subjectIds: \{([^}]*)\}/g)].map((match) => match[1] ?? "");
-    expect(subjects).toEqual([" connected_account_id: run.connectedAccountId, reconciliation_run_id: run.id ", " connected_account_id: slice.connectedAccountId, reconciliation_slice_id: slice.id "]);
+    expect(subjects).toEqual([" connected_account_id: slice.connectedAccountId, reconciliation_slice_id: slice.id "]);
+    // H6-C3b: the planner row is the request boundary's (0019), with exactly the two UUID subjects and a hard-coded topic.
+    const request = raw("db/migrations/0019_reconciliation_request.sql");
+    expect([...request.matchAll(/jsonb_build_object\(([^)]*)\)/g)].map((match) => match[1])).toEqual(["'connected_account_id', v_account::text, 'reconciliation_run_id', v_run::text"]);
+    expect(request).toMatch(/v_account\s+uuid;/);
+    expect(request).toMatch(/v_run\s+uuid := pg_catalog\.gen_random_uuid\(\);/);
+    expect(request).toMatch(/values \(v_outbox, 'ingestion\.reconcile_account', /);
+  });
+});
+
+describe("H6-C3b: the reconciliation request boundary (0019)", () => {
+  const request = raw("db/migrations/0019_reconciliation_request.sql");
+  const code = request.replace(/--[^\n]*/g, " ");
+  const body = code.slice(code.indexOf("create function ingestion.request_reconciliation("), code.indexOf("end $$;"));
+
+  it("one reviewed SECURITY DEFINER with an empty search_path, owned by app_owner, no PUBLIC execute, no dynamic SQL", () => {
+    expect(code).toMatch(/set role app_owner;[\s\S]*create function ingestion\.request_reconciliation\([\s\S]*reset role;/);
+    expect(body).toMatch(/language plpgsql volatile security definer set search_path = '' as \$\$/);
+    expect(body).not.toMatch(/\bexecute\b|\bformat\(|quote_ident|quote_literal|set_config|set role|current_setting/i);
+    expect(code).toMatch(/revoke all on function ingestion\.request_reconciliation\(uuid, text, timestamptz, jsonb\) from public;/);
+    expect([...code.matchAll(/grant [^;]*;/g)].map((match) => match[0])).toEqual(["grant execute on function ingestion.request_reconciliation(uuid, text, timestamptz, jsonb) to authenticated, app_worker;"]);
+    expect([...code.matchAll(/create (?:or replace )?function ([a-z_.]+)\(/g)].map((match) => match[1])).toEqual(["ingestion.request_reconciliation"]);
+  });
+
+  it("the workspace and the role are never parameters: sealed context, verified claims and live membership only", () => {
+    expect(body).toMatch(/v_workspace\s+uuid := app\.current_workspace\(\);/);
+    expect(body).toMatch(/v_user := app_private\.claimed_user\(\);/);
+    expect(body).toMatch(/app\.my_workspace_role\(v_workspace\) is distinct from 'OWNER' and app\.my_workspace_role\(v_workspace\) is distinct from 'ADMIN'/);
+    expect(body).toMatch(/if p_budget is not null or p_requested_at is not null then\s+raise exception [^;]* using errcode = '42501';/);
+    const parameters = code.slice(code.indexOf("ingestion.request_reconciliation("), code.indexOf(")\nlanguage"));
+    expect(parameters).not.toMatch(/workspace|organization|role|initiator|user/);
+  });
+
+  it("the SQL defaults are the approved budget snapshot (one semantic source; the web path can't diverge)", () => {
+    const snapshot = defaultBudgetSnapshot();
+    const declared = (name: string): number => Number(new RegExp(`${name}\\s+integer := (\\d+);`).exec(body)?.[1]);
+    expect({
+      listingPagesPerSlice: declared("v_listing"),
+      interactionPagesPerSlice: declared("v_pages"),
+      continuationsPerContent: declared("v_continuations"),
+      contentItems: declared("v_items"),
+      overlapSeconds: declared("v_overlap"),
+      maxOperations: declared("v_max"),
+    }).toEqual({
+      listingPagesPerSlice: snapshot.listingPagesPerSlice,
+      interactionPagesPerSlice: snapshot.interactionPagesPerSlice,
+      continuationsPerContent: snapshot.continuationsPerContent,
+      contentItems: snapshot.contentItems,
+      overlapSeconds: snapshot.overlapSeconds,
+      maxOperations: DEFAULT_MAX_OPERATIONS,
+    });
+    expect(code).toMatch(new RegExp(`check \\(max_operations between 1 and ${String(RECONCILIATION_OPERATIONS_CEILING)}\\)`));
+    expect(code).toMatch(/check \(operations_used <= max_operations\)/);
+    expect(LIVE_ACCEPTANCE_MAX_OPERATIONS).toBeLessThan(DEFAULT_MAX_OPERATIONS);
+    // The cap the runtime reserves against is the persisted column, never a constant of the code.
+    const store = codeOf("modules/ingestion/persistence/reconciliation-store.ts");
+    expect(store).toMatch(/lt\(reconciliationRuns\.operationsUsed, reconciliationRuns\.maxOperations\)/);
+    expect(codeOf("modules/ingestion/application/reconciliation.ts")).not.toMatch(/operationsPerRun|maxOperationsPerRun/);
+  });
+
+  it("the TypeScript adapter only calls the boundary: no other code creates a run or its planner row", () => {
+    const users = sourceFiles(PRODUCTION).filter((file) => /ingestion\.request_reconciliation\(/.test(codeOf(file)));
+    // The adapter, and the function registry that pins its EXECUTE grants.
+    expect(users).toEqual(["db/schema/classification.ts", "modules/ingestion/persistence/reconciliation-store.ts"]);
+    for (const file of sourceFiles(PRODUCTION)) {
+      expect(codeOf(file), file).not.toMatch(/insert\(reconciliationRuns\)|insert into ingestion\.reconciliation_runs/);
+    }
+    expect(sourceFiles(PRODUCTION).filter((file) => /RECONCILE_ACCOUNT_TOPIC/.test(codeOf(file)) && /appendOutbox|subjectIds:/.test(codeOf(file)))).toEqual([]);
+  });
+
+  it("27. no removal detection: 0019 and the runtime never turn absence from a listing into removal (H6-E)", () => {
+    expect(code.toLowerCase()).not.toMatch(/removed_at_source|tombstone|removal|deleted_at/);
+    for (const file of ["modules/ingestion/application/reconciliation.ts", "modules/ingestion/persistence/reconciliation-store.ts", "jobs/reconciliation.ts", "jobs/reconciliation-slice.ts"]) {
+      expect(codeOf(file), file).not.toMatch(/removedAtSource|removed_at_source|tombstone|markRemoved/);
+    }
   });
 });
 
 describe("scope of this gate", () => {
-  it("H6-A1 and H6-C1 added no migration; H6-B adds exactly 0017; 22. H6-C2 adds exactly 0018 right after it", () => {
+  it("H6-A1 and H6-C1 added no migration; H6-B adds exactly 0017; 22. H6-C2 adds exactly 0018; H6-C3b exactly 0019 right after it", () => {
     const names = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    expect(names.slice(-3)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql", "0018_reconciliation_runtime.sql"]);
+    expect(names.slice(-4)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql", "0018_reconciliation_runtime.sql", "0019_reconciliation_request.sql"]);
   });
 
   it("21. 0018 is reconciliation persistence only: no provider-event inbox, raw webhook body, subscription or receipt", () => {

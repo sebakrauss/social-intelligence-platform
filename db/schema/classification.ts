@@ -128,7 +128,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   "audit.audit_events": {
     class: "append_only_history",
     // owner_move_audit (0010): only connections.record_move_audit (human initiator of a LOCAL move, Move actions).
-    policies: ["append_bound_workspace INSERT app_worker", "append_own INSERT authenticated", "owner_move_audit INSERT app_owner"],
+    // owner_reconciliation_audit (0019): only ingestion.request_reconciliation (its run's initiator, its one action).
+    policies: ["append_bound_workspace INSERT app_worker", "append_own INSERT authenticated", "owner_move_audit INSERT app_owner", "owner_reconciliation_audit INSERT app_owner"],
     privileges: { authenticated: ["INSERT"], app_worker: ["INSERT"] },
   },
   "system.outbox": {
@@ -142,6 +143,10 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "owner_move_route INSERT app_owner",
       // 0010 (G6): RESTRICTIVE — web and worker can't append the three Move saga topics themselves.
       "no_direct_move_routing INSERT app_worker,authenticated",
+      // 0019: only ingestion.request_reconciliation (the planner topic, its REQUESTED run, the same initiator).
+      "owner_reconciliation_request INSERT app_owner",
+      // 0019 (G6): RESTRICTIVE — the web can't append the reconciliation topics itself.
+      "no_direct_reconciliation_routing INSERT authenticated",
     ],
     privileges: {
       authenticated: ["INSERT"],
@@ -351,9 +356,11 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   // watermarks and conflicts are internal operational state of the job runtime only.
   "ingestion.reconciliation_runs": {
     class: "workspace_tenant",
-    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    // 0019: owner_request_* admit only ingestion.request_reconciliation (bound workspace, REQUESTED, its initiator).
+    policies: ["member_read SELECT authenticated", "owner_request_insert INSERT app_owner", "owner_request_read SELECT app_owner", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
     privileges: {
       authenticated: ["SELECT"],
+      // max_operations (0019) has no UPDATE grant: a run's budget is immutable.
       app_worker: ["INSERT", "SELECT", "UPDATE(completed_at)", "UPDATE(content_items_used)", "UPDATE(failure_class)", "UPDATE(operations_used)", "UPDATE(pages_used)", "UPDATE(started_at)", "UPDATE(state)", "UPDATE(updated_at)"],
     },
   },
@@ -417,7 +424,7 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
  * The only RESTRICTIVE policies (every other policy is permissive). A restrictive policy narrows what the listed roles'
  * permissive policies allow; flipping one either way changes isolation, so the set is pinned exactly.
  */
-export const RESTRICTIVE_POLICIES: readonly string[] = ["system.outbox no_direct_move_routing"];
+export const RESTRICTIVE_POLICIES: readonly string[] = ["system.outbox no_direct_move_routing", "system.outbox no_direct_reconciliation_routing"];
 
 /** EXECUTE grants per function (non-owner grantees). Every function in an application schema is listed. */
 export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]>> = {
@@ -459,4 +466,6 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "ingestion.reconciliation_run_guard()": [],
   "ingestion.reconciliation_slice_guard()": [],
   "ingestion.reconciliation_watermark_guard()": [],
+  // Step H6-C3b (0019): the only web-facing reconciliation request; the worker path is internal (operator, LIVE).
+  "ingestion.request_reconciliation(uuid,text,timestamp with time zone,jsonb)": ["app_worker", "authenticated"],
 };

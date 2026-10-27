@@ -5,7 +5,9 @@
  * changing again, a claim without an attempt increment, counters going down, a watermark regressing).
  *
  * The provider cursor is written only to its slice row and never returned to a log; outbox rows carry UUID subjects
- * only (`ingestion.reconcile_account:{run}`, `ingestion.reconcile_slice:{slice}`).
+ * only (`ingestion.reconcile_slice:{slice}` here; the planner's `ingestion.reconcile_account:{run}` row is written by
+ * the 0019 request boundary itself). A run is created ONLY through that boundary (requestRun): authorization, the
+ * one-open check, the budget, the audit event and the planner row live in one reviewed SQL function.
  */
 import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { appendOutboxOnce, postgresError, type DatabaseTransaction } from "@/platform/db";
@@ -16,7 +18,7 @@ import type {
   ReconciliationStore,
   ReconciliationWatermarkRecord,
 } from "../application/reconciliation-ports";
-import { RECONCILE_ACCOUNT_TOPIC, RECONCILE_SLICE_TOPIC, SLICE_UNITS, sliceDispatchKey, type SliceUnit } from "../domain/reconciliation-slice";
+import { RECONCILE_SLICE_TOPIC, SLICE_UNITS, sliceDispatchKey, type SliceUnit } from "../domain/reconciliation-slice";
 import { RECONCILIATION_RUN_STATES, RECONCILIATION_SLICE_STATES, type ReconciliationRunState, type ReconciliationSliceState } from "../domain/reconciliation-state";
 import { authorityConflicts, reconciliationRuns, reconciliationSlices, reconciliationWatermarks } from "./reconciliation-tables";
 
@@ -58,6 +60,7 @@ const runRecord = (row: RunRow): ReconciliationRunRecord => ({
     interactionPagesPerContent: row.budgetInteractionPagesPerContent,
     contentItems: row.budgetContentItems,
     overlapSeconds: row.budgetOverlapSeconds,
+    maxOperations: row.maxOperations,
   },
   operationsUsed: row.operationsUsed,
   pagesUsed: row.pagesUsed,
@@ -106,35 +109,27 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
     if ((await appendOutboxOnce(tx, message)) === "appended") noteAppended(message);
   };
   return {
-    async insertRun(run) {
-      const inserted = await tx
-        .insert(reconciliationRuns)
-        .values({
-          id: run.id,
-          organizationId: run.organizationId,
-          workspaceId: run.workspaceId,
-          connectedAccountId: run.connectedAccountId,
-          state: "REQUESTED",
-          initiatorType: run.initiatorType,
-          initiatorUserId: run.initiatorUserId,
-          correlationId: run.correlationId,
-          requestedAt: run.now,
-          budgetListingPagesPerSlice: run.budget.listingPagesPerSlice,
-          budgetInteractionPagesPerSlice: run.budget.interactionPagesPerSlice,
-          budgetContinuationsPerContent: run.budget.continuationsPerContent,
-          budgetInteractionPagesPerContent: run.budget.interactionPagesPerContent,
-          budgetContentItems: run.budget.contentItems,
-          budgetOverlapSeconds: run.budget.overlapSeconds,
-          operationsUsed: 0,
-          pagesUsed: 0,
-          contentItemsUsed: 0,
-          createdAt: run.now,
-          updatedAt: run.now,
-        })
-        // The one-open-run partial unique index is the authority: a concurrent open run makes this insert a no-op.
-        .onConflictDoNothing()
-        .returning({ id: reconciliationRuns.id });
-      return inserted.length === 1 ? "inserted" : "already_open";
+    async requestRun(input) {
+      const budget = input.budget === null ? null : JSON.stringify({
+        listing_pages_per_slice: input.budget.listingPagesPerSlice,
+        interaction_pages_per_slice: input.budget.interactionPagesPerSlice,
+        continuations_per_content: input.budget.continuationsPerContent,
+        content_items: input.budget.contentItems,
+        overlap_seconds: input.budget.overlapSeconds,
+        max_operations: input.budget.maxOperations,
+      });
+      const result = await tx.execute<{ outcome: string; reconciliation_run_id: string | null; outbox_id: string | null }>(sql`
+        select outcome, reconciliation_run_id, outbox_id
+          from ingestion.request_reconciliation(${input.connectedAccountId}::uuid, ${input.correlationId}, ${input.requestedAt}::timestamptz, ${budget}::jsonb)`);
+      const row = result.rows[0];
+      if (row?.outcome === "requested" && row.reconciliation_run_id !== null && row.outbox_id !== null) {
+        // The definer inserted the planner row in THIS transaction: same post-commit wake-up as an appended one.
+        noteAppended({ id: row.outbox_id, correlationId: input.correlationId });
+        return { outcome: "requested", runId: row.reconciliation_run_id, outboxId: row.outbox_id };
+      }
+      if (row?.outcome === "already_running" && row.reconciliation_run_id !== null) return { outcome: "already_running", runId: row.reconciliation_run_id };
+      if (row?.outcome === "not_found") return { outcome: "not_found" };
+      throw new Error("reconciliation_request_incoherent");
     },
     async openRun(connectedAccountId) {
       const rows = await tx.select().from(reconciliationRuns).where(and(eq(reconciliationRuns.connectedAccountId, connectedAccountId), OPEN_RUN)).limit(1);
@@ -155,10 +150,11 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
         .where(and(eq(reconciliationRuns.id, id), OPEN_RUN)).returning({ id: reconciliationRuns.id });
       return rows.length === 1;
     },
-    async reserveRunOperation(runId, cap, now) {
+    async reserveRunOperation(runId, now) {
+      // The run's own persisted budget (0019), never a deployment constant.
       const rows = await tx.update(reconciliationRuns)
         .set({ operationsUsed: sql`${reconciliationRuns.operationsUsed} + 1`, updatedAt: now })
-        .where(and(eq(reconciliationRuns.id, runId), eq(reconciliationRuns.state, "RUNNING"), lt(reconciliationRuns.operationsUsed, cap)))
+        .where(and(eq(reconciliationRuns.id, runId), eq(reconciliationRuns.state, "RUNNING"), lt(reconciliationRuns.operationsUsed, reconciliationRuns.maxOperations)))
         .returning({ id: reconciliationRuns.id });
       return rows.length === 1;
     },
@@ -341,21 +337,6 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
         observedAt: conflict.observedAt,
         correlationId: conflict.correlationId,
         createdAt: conflict.observedAt,
-      });
-    },
-    async enqueuePlanner(run, outboxId, now) {
-      await append({
-        id: outboxId,
-        topic: RECONCILE_ACCOUNT_TOPIC,
-        organizationId: run.organizationId,
-        workspaceId: run.workspaceId,
-        subjectIds: { connected_account_id: run.connectedAccountId, reconciliation_run_id: run.id },
-        correlationId: run.correlationId,
-        // The run row carries who asked; the job runtime appends as the system (0004: a worker appends only
-        // policy/system rows — a user-initiated outbox row is written by that user's own web transaction).
-        initiator: { type: "system" },
-        dispatchKey: `${RECONCILE_ACCOUNT_TOPIC}:${run.id}`,
-        createdAt: now,
       });
     },
     async enqueueSlice(slice, correlationId, outboxId, now) {

@@ -47,7 +47,14 @@ export const INGESTION_CONFLICT_CLASSES = [
 ] as const;
 export type IngestionConflictClass = (typeof INGESTION_CONFLICT_CLASSES)[number];
 
-/** The limits that governed one run, persisted on it (TL D-C3, D-C4). */
+/** The hard ceiling of a run's provider-operation budget (0019 CHECK: 1 ≤ max_operations ≤ 40). */
+export const RECONCILIATION_OPERATIONS_CEILING = 40;
+/** The ordinary run's provider-operation budget (TL, H6-C3b). */
+export const DEFAULT_MAX_OPERATIONS = 40;
+/** The bounded LIVE acceptance's provider-operation budget (TL, H6-C3b): an internal/operator path only. */
+export const LIVE_ACCEPTANCE_MAX_OPERATIONS = 8;
+
+/** The limits that governed one run, persisted on it (TL D-C3, D-C4; H6-C3b: its provider-operation budget too). */
 export interface ReconciliationBudgetSnapshot {
   readonly listingPagesPerSlice: number;
   readonly interactionPagesPerSlice: number;
@@ -55,6 +62,8 @@ export interface ReconciliationBudgetSnapshot {
   readonly interactionPagesPerContent: number;
   readonly contentItems: number;
   readonly overlapSeconds: number;
+  /** Provider operations the run may use (every read attempt, retries included). */
+  readonly maxOperations: number;
 }
 
 /** The snapshot of the approved defaults (what a run requested today persists). */
@@ -66,18 +75,15 @@ export function defaultBudgetSnapshot(defaults: typeof RECONCILIATION_DEFAULTS =
     interactionPagesPerContent: defaults.interactionPagesPerSlice * (1 + defaults.continuationsPerContent),
     contentItems: defaults.contentItemsPerRun,
     overlapSeconds: defaults.overlapMs / 1000,
+    maxOperations: DEFAULT_MAX_OPERATIONS,
   });
 }
 
 /**
- * Runtime limits of the reconciliation tasks (Step H6-C3). `operationsPerRun` (TL: 40; a LIVE acceptance uses 8) is
- * enforced against the run's persisted `operations_used` counter — every provider read attempt reserves one first,
- * retries included. 0018's budget snapshot has no column for it, so the cap governing a run is this constant (or the
- * explicit override a caller passes), not a stored value: see the H6-C3 report.
+ * Runtime limits of the reconciliation tasks (Step H6-C3). The provider-operation budget is NOT here: since 0019 it is
+ * the run's persisted `max_operations`, reserved against `operations_used` before every read attempt.
  */
 export const RECONCILIATION_RUNTIME = Object.freeze({
-  operationsPerRun: 40,
-  liveAcceptanceOperationsPerRun: 8,
   /** A claimed slice's lease (longer than a task's maximum duration). */
   sliceLeaseMs: 10 * 60 * 1000,
   /** Claims of one slice across retries and crash re-dispatches before it is FAILED_TRANSIENT. */

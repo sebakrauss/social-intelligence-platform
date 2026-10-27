@@ -8,7 +8,10 @@ import { describe, expect, it } from "vitest";
 import { parseInstant, type Instant } from "@/domain/instant";
 import { AUTHORITY_CONFLICTS } from "@/modules/interactions";
 import {
+  DEFAULT_MAX_OPERATIONS,
   INGESTION_CONFLICT_CLASSES,
+  LIVE_ACCEPTANCE_MAX_OPERATIONS,
+  RECONCILIATION_OPERATIONS_CEILING,
   INITIAL_IMPORT_POLICY,
   OPEN_RUN_STATES,
   OPEN_SLICE_STATES,
@@ -103,24 +106,25 @@ describe("reconciliation runtime vocabularies (H6-C2, migration 0018)", () => {
 
   it("the budget snapshot a run persists is the approved defaults, with the effective 15 pages per content", () => {
     expect(defaultBudgetSnapshot()).toEqual({
-      listingPagesPerSlice: 1, interactionPagesPerSlice: 5, continuationsPerContent: 2, interactionPagesPerContent: 15, contentItems: 10, overlapSeconds: 86_400,
+      listingPagesPerSlice: 1, interactionPagesPerSlice: 5, continuationsPerContent: 2, interactionPagesPerContent: 15, contentItems: 10, overlapSeconds: 86_400, maxOperations: 40,
     });
     expect(defaultBudgetSnapshot().interactionPagesPerContent).toBe(maxInteractionPagesPerContent());
   });
 });
 
 describe("reconciliation runtime limits (H6-C3)", () => {
-  it("the run operation cap is 40 (8 for a LIVE acceptance); leases outlive a task; attempts and back-off are bounded", () => {
+  it("leases outlive a task; attempts and back-off are bounded; the operation budget lives on the run (40, LIVE 8)", () => {
     expect(RECONCILIATION_RUNTIME).toEqual({
-      operationsPerRun: 40,
-      liveAcceptanceOperationsPerRun: 8,
       sliceLeaseMs: 600_000,
       maxSliceAttempts: 6,
       rateLimitDefaultBackoffSeconds: 60,
       windowFloor: "2000-01-01T00:00:00.000Z",
     });
+    // H6-C3b: the operation budget is the run's persisted max_operations — 40 by default (the ceiling), 8 for LIVE.
+    expect([DEFAULT_MAX_OPERATIONS, LIVE_ACCEPTANCE_MAX_OPERATIONS, RECONCILIATION_OPERATIONS_CEILING]).toEqual([40, 8, 40]);
+    expect(defaultBudgetSnapshot().maxOperations).toBe(40);
     // A run's structural maximum (1 listing page + 10 contents × 15 pages) is far above the cap: the cap is what binds.
-    expect(1 + 10 * 15).toBeGreaterThan(RECONCILIATION_RUNTIME.operationsPerRun);
+    expect(1 + 10 * 15).toBeGreaterThan(DEFAULT_MAX_OPERATIONS);
     expect(Object.isFrozen(RECONCILIATION_RUNTIME)).toBe(true);
   });
 });

@@ -23,7 +23,7 @@ import { SimulatorWorld, createSimulatorReadPort, parseScenario, type FaultRule 
 import { PLATFORM_CATALOG, evaluateAndStore, type FactsInput } from "@/modules/capability";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
 import type { DiscoveryProviders, ProviderCredentialAccess } from "@/modules/connections";
-import { ingestInteractionFact, interactionSourceFactFromDto, requestReconciliation, type RequestReconciliationOutcome } from "@/modules/ingestion";
+import { defaultBudgetSnapshot, ingestInteractionFact, interactionSourceFactFromDto, requestReconciliation, type RequestReconciliationOutcome } from "@/modules/ingestion";
 import { parseInteractionSourceFact } from "@/modules/interactions";
 import { withWorkspaceJobScope, type RuntimeDatabase } from "@/platform/db";
 import { runTenantJob, runTenantStepJob } from "@/platform/jobs";
@@ -137,7 +137,7 @@ export function defineReconciliationRuntimeSuite(getTarget: () => DbTarget): voi
   };
 
   /** One isolated world: simulator, counting read port, runtime with the REAL handlers, and the delivery loop. */
-  const harness = async (options: { readonly operationsPerRun?: number; readonly beforeRead?: (operation: string, target: string | undefined) => Promise<void> } = {}) => {
+  const harness = async (options: { readonly beforeRead?: (operation: string, target: string | undefined) => Promise<void> } = {}) => {
     const world = new SimulatorWorld(presentScenario());
     const clock = (): Date => new Date(world.nowMs());
     const ids = { newId: randomUUID, now: clock };
@@ -162,7 +162,7 @@ export function defineReconciliationRuntimeSuite(getTarget: () => DbTarget): voi
     const deps = { registry: PRODUCTION_TASKS, worker, logger };
     const handlers = new Map<string, FakeHandler>([
       ["ingestion.reconcile_account", (payload, run) => runTenantJob(deps, "ingestion.reconcile_account", payload, run, (context) => runReconcileAccount(context, ids))],
-      [SLICE, (payload, run) => runTenantStepJob(deps, SLICE, payload, run, (context) => runReconcileSlice(context, { access, providers }, { operationsPerRun: options.operationsPerRun ?? 40, clock: ids }))],
+      [SLICE, (payload, run) => runTenantStepJob(deps, SLICE, payload, run, (context) => runReconcileSlice(context, { access, providers }, { clock: ids }))],
       ["interactions.observed", (payload, run) => runTenantJob(deps, "interactions.observed", payload, run, (context) => runInteractionsObserved(context))],
     ]);
     const runtime = new FakeJobRuntime(handlers, (task) => PRODUCTION_TASKS.get(task)?.retry ?? { maxAttempts: 1, factor: 2, minDelayMs: 100, maxDelayMs: 1_000, randomize: false });
@@ -187,7 +187,7 @@ export function defineReconciliationRuntimeSuite(getTarget: () => DbTarget): voi
     };
     const request = (account: string, budget?: Parameters<typeof requestReconciliation>[2]["budget"]): Promise<RequestReconciliationOutcome> =>
       withWorkspaceJobScope(worker, t.workspaceId, (tx) => requestReconciliation(reconciliationScope({ tx, noteOutbox: () => undefined }), ids, {
-        connectedAccountId: account, initiator: { type: "user", userId: t.owner }, correlationId: correlation(), ...(budget === undefined ? {} : { budget }),
+        connectedAccountId: account, correlationId: correlation(), ...(budget === undefined ? {} : { budget }),
       }));
     const reconcile = async (account: string, budget?: Parameters<typeof requestReconciliation>[2]["budget"]) => {
       const requested = await request(account, budget);
@@ -409,7 +409,7 @@ export function defineReconciliationRuntimeSuite(getTarget: () => DbTarget): voi
       h.world.advanceClock(60);
       const brandReply = h.world.audienceReply(brandRoot, "fb_user_01", "Synthetic reply to the brand.");
       h.world.advanceClock(600);
-      const id = await h.reconcile(h.t.fb, { listingPagesPerSlice: 1, interactionPagesPerSlice: 1, continuationsPerContent: 2, interactionPagesPerContent: 3, contentItems: 10, overlapSeconds: 86_400 });
+      const id = await h.reconcile(h.t.fb, { listingPagesPerSlice: 1, interactionPagesPerSlice: 1, continuationsPerContent: 2, interactionPagesPerContent: 3, contentItems: 10, overlapSeconds: 86_400, maxOperations: 40 });
       const organic = (await slices(id)).filter((s) => s.unit === "content_interactions" && s.content_item_id !== null);
       const organicContent = (await oracle<{ id: string }>("select id from content.content_items where workspace_id = $1 and provider_content_id = 'fb_post_organic_01'", [h.t.workspaceId]))[0]?.id;
       const chain = organic.filter((s) => s.content_item_id === organicContent);
@@ -433,7 +433,7 @@ export function defineReconciliationRuntimeSuite(getTarget: () => DbTarget): voi
 
     it("15. an expired cursor is dropped at claim: the window restarts ONCE, bounded, without duplicates", async () => {
       const h = await harness();
-      const requested = await h.request(h.t.fb, { listingPagesPerSlice: 1, interactionPagesPerSlice: 1, continuationsPerContent: 2, interactionPagesPerContent: 3, contentItems: 10, overlapSeconds: 86_400 });
+      const requested = await h.request(h.t.fb, { listingPagesPerSlice: 1, interactionPagesPerSlice: 1, continuationsPerContent: 2, interactionPagesPerContent: 3, contentItems: 10, overlapSeconds: 86_400, maxOperations: 40 });
       if (requested.kind !== "requested") throw new Error("request");
       const organicChain = async () => {
         const content = (await oracle<{ id: string }>("select id from content.content_items where workspace_id = $1 and provider_content_id = 'fb_post_organic_01'", [h.t.workspaceId]))[0]?.id;
@@ -457,8 +457,9 @@ export function defineReconciliationRuntimeSuite(getTarget: () => DbTarget): voi
 
     it("the run operation budget is reserved before every read: exhausted mid-slice → no further provider call, PARTIAL, TRAVERSAL_INCOMPLETE", async () => {
       // 3 operations: the listing, the boosted post's single page, then the organic post's FIRST page only.
-      const h = await harness({ operationsPerRun: 3 });
-      const id = await h.reconcile(h.t.fb);
+      const h = await harness();
+      // A narrowed budget through the sanctioned internal path (the 0019 boundary, worker caller).
+      const id = await h.reconcile(h.t.fb, { ...defaultBudgetSnapshot(), maxOperations: 3 });
       expect(await run(id)).toMatchObject({ state: "PARTIAL", operations_used: 3 });
       expect(h.calls).toHaveLength(3);
       const chain = (await slices(id)).filter((s) => s.unit === "content_interactions");
