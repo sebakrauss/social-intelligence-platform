@@ -7,6 +7,8 @@
  * (Facebook Page and Instagram professional account, five granted permissions) evaluate to ten UNKNOWN rows each.
  * Step 7G-H5.5-P5-C9-C: platform r3 holds exactly one entry (Facebook read_content · post · unknown, backed by the
  * first accepted record); the same LIVE-shaped facts now add one SUPPORTED row for that exact scope on Facebook only.
+ * Step 7G-H5.5-P12-D2b: platform r5 adds the Facebook and Instagram read_interactions · post · unknown entries; the
+ * P3-era grant set lacks their comment permissions, so those rows are NOT_AUTHORIZED (never UNSUPPORTED).
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -106,7 +108,30 @@ const INSTAGRAM_RECORD: ApiValidationRecord = Object.freeze({
   sourceRevision: "cd2c86365e71c589847a7b35e115ff1b4ac30ba8",
   requiredPermissions: Object.freeze(["instagram_basic", "pages_read_engagement"]),
 });
-const TODAY_WITH_RECORD: CatalogContractContext = { ...TODAY, records: [FIRST_RECORD, INSTAGRAM_RECORD] };
+/** The accepted read_interactions records as fixtures (Step 7G-H5.5-P12-D2b; the architecture guard pins the files). */
+const FB_INTERACTIONS_EVIDENCE = "api-validation:meta.facebook.read_interactions.20261027-01";
+const FB_INTERACTIONS_RECORD: ApiValidationRecord = Object.freeze({
+  ...FIRST_RECORD,
+  id: FB_INTERACTIONS_EVIDENCE,
+  capability: "read_interactions",
+  operations: Object.freeze(["getInteraction", "listInteractions"]),
+  validatedOn: "2026-10-27",
+  sourceRevision: "e972010918aebcb22c552d809b82830084b7bd3b",
+  requiredPermissions: Object.freeze(["pages_read_engagement", "pages_read_user_content", "pages_show_list"]),
+  interactionKinds: Object.freeze(["comment", "reply"] as const),
+});
+const IG_INTERACTIONS_EVIDENCE = "api-validation:meta.instagram.read_interactions.20261026-01";
+const IG_INTERACTIONS_RECORD: ApiValidationRecord = Object.freeze({
+  ...INSTAGRAM_RECORD,
+  id: IG_INTERACTIONS_EVIDENCE,
+  capability: "read_interactions",
+  operations: Object.freeze(["getInteraction", "listInteractions"]),
+  validatedOn: "2026-10-26",
+  sourceRevision: "6a29b0578b49704063f17eefb3ecd92051a7baa0",
+  requiredPermissions: Object.freeze(["instagram_basic", "instagram_manage_comments", "pages_read_engagement"]),
+  interactionKinds: Object.freeze(["comment"] as const),
+});
+const TODAY_WITH_RECORD: CatalogContractContext = { ...TODAY, records: [FIRST_RECORD, INSTAGRAM_RECORD, FB_INTERACTIONS_RECORD, IG_INTERACTIONS_RECORD] };
 const R3_ENTRY: CatalogEntry = {
   platform: "facebook", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
   requiredPermissions: ["pages_read_engagement", "pages_show_list"], validation: "validated", evidence: FIRST_EVIDENCE,
@@ -115,25 +140,31 @@ const R4_INSTAGRAM_ENTRY: CatalogEntry = {
   platform: "instagram", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
   requiredPermissions: ["instagram_basic", "pages_read_engagement"], validation: "validated", evidence: INSTAGRAM_EVIDENCE,
 };
+const R5_FACEBOOK_INTERACTIONS_ENTRY: CatalogEntry = {
+  platform: "facebook", assetClass: "content_bearing", capability: "read_interactions", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
+  requiredPermissions: ["pages_read_engagement", "pages_read_user_content", "pages_show_list"], validation: "validated", evidence: FB_INTERACTIONS_EVIDENCE,
+};
+const R5_INSTAGRAM_INTERACTIONS_ENTRY: CatalogEntry = {
+  platform: "instagram", assetClass: "content_bearing", capability: "read_interactions", contentKind: "post", source: "unknown", state: "AVAILABLE_WITH_LIMITATION",
+  limitation: { code: "REPLIES_NOT_READ", value: null }, requiredPermissions: ["instagram_basic", "instagram_manage_comments", "pages_read_engagement"], validation: "validated",
+  evidence: IG_INTERACTIONS_EVIDENCE,
+};
 
-describe("P11-E: platform catalog r4 holds exactly the two evidenced entries (Facebook unchanged + Instagram)", () => {
-  it("platform r4, label platform-catalog-r4, exactly two frozen entries: facebook and instagram · content_bearing · read_content · post · unknown · SUPPORTED", () => {
-    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label, PLATFORM_CATALOG.entries.length]).toEqual(["platform", 4, "platform-catalog-r4", 2]);
+describe("P11-E → P12-D2b: platform catalog r5 holds exactly the four evidenced entries (r4 unchanged + two read_interactions)", () => {
+  it("platform r5, label platform-catalog-r5, exactly four frozen entries: r4's two read_content entries, then Facebook and Instagram read_interactions · post · unknown", () => {
+    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label, PLATFORM_CATALOG.entries.length]).toEqual(["platform", 5, "platform-catalog-r5", 4]);
     expect(Object.isFrozen(PLATFORM_CATALOG) && Object.isFrozen(PLATFORM_CATALOG.entries)).toBe(true);
-    expect(PLATFORM_CATALOG.entries).toEqual([R3_ENTRY, R4_INSTAGRAM_ENTRY]);
-    for (const entry of PLATFORM_CATALOG.entries) expect(Object.isFrozen(entry) && Object.isFrozen(entry.requiredPermissions)).toBe(true);
-    // The Instagram capability needs its two read-path permissions only: pages_show_list is not one of them.
-    expect(PLATFORM_CATALOG.entries[1]?.requiredPermissions).not.toContain("pages_show_list");
+    expect(PLATFORM_CATALOG.entries).toEqual([R3_ENTRY, R4_INSTAGRAM_ENTRY, R5_FACEBOOK_INTERACTIONS_ENTRY, R5_INSTAGRAM_INTERACTIONS_ENTRY]);
+    for (const entry of PLATFORM_CATALOG.entries) expect(Object.isFrozen(entry) && Object.isFrozen(entry.requiredPermissions) && (entry.limitation === null || Object.isFrozen(entry.limitation))).toBe(true);
+    // The Instagram capabilities need their read-path permissions only: pages_show_list is not one of them.
+    for (const index of [1, 3]) expect(PLATFORM_CATALOG.entries[index]?.requiredPermissions).not.toContain("pages_show_list");
   });
 
-  it("the catalog is admissible with both accepted records — and each entry fails closed without its own", () => {
+  it("the catalog is admissible with all four accepted records — and each entry fails closed without its own", () => {
     expect(platformCatalogViolations(PLATFORM_CATALOG, TODAY_WITH_RECORD)).toEqual([]);
-    expect(platformCatalogViolations(PLATFORM_CATALOG, TODAY)).toEqual([
-      { index: 0, violations: ["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"] },
-      { index: 1, violations: ["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"] },
-    ]);
-    // No cross-platform reuse: each record backs only its own platform's entry.
-    expect(platformCatalogViolations(PLATFORM_CATALOG, { ...TODAY, records: [FIRST_RECORD] })).toEqual([{ index: 1, violations: ["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"] }]);
+    expect(platformCatalogViolations(PLATFORM_CATALOG, TODAY)).toEqual([0, 1, 2, 3].map((index) => ({ index, violations: ["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"] })));
+    // No cross-platform or cross-capability reuse: each record backs only its own entry.
+    expect(platformCatalogViolations(PLATFORM_CATALOG, { ...TODAY, records: [FIRST_RECORD] })).toEqual([1, 2, 3].map((index) => ({ index, violations: ["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"] })));
     expect(platformEntryViolations({ ...R4_INSTAGRAM_ENTRY, evidence: FIRST_EVIDENCE }, TODAY_WITH_RECORD)).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_PERMISSIONS_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
     expect(platformEntryViolations({ ...R3_ENTRY, evidence: INSTAGRAM_EVIDENCE }, TODAY_WITH_RECORD)).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_PERMISSIONS_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
   });
@@ -142,8 +173,8 @@ describe("P11-E: platform catalog r4 holds exactly the two evidenced entries (Fa
     const entries = PLATFORM_CATALOG.entries;
     for (const source of ["organic", "paid", "mixed", ANY]) expect(entries.filter((e) => e.source === source), source).toEqual([]);
     for (const contentKind of [ANY, ...CAPABILITY_CONTENT_KINDS.filter((k) => k !== "post")]) expect(entries.filter((e) => e.contentKind === contentKind), contentKind).toEqual([]);
-    expect(entries.map((e) => e.platform)).toEqual(["facebook", "instagram"]);
-    expect(entries.filter((e) => e.assetClass !== "content_bearing" || e.capability !== "read_content")).toEqual([]);
+    expect(entries.map((e) => e.platform)).toEqual(["facebook", "instagram", "facebook", "instagram"]);
+    expect(entries.filter((e) => e.assetClass !== "content_bearing" || (e.capability !== "read_content" && e.capability !== "read_interactions"))).toEqual([]);
   });
 
   it("the Instagram entry fails closed on any defect: wrong evidence id, wrong permissions (including adding pages_show_list), other scope", () => {
@@ -175,7 +206,7 @@ describe("P11-E: platform catalog r4 holds exactly the two evidenced entries (Fa
   });
 });
 
-describe("P5-C9-C (under r4): what the Facebook entry means for profiles (existing evaluator, unchanged)", () => {
+describe("P5-C9-C (under r5): what the Facebook read_content entry means for profiles (existing evaluator, unchanged)", () => {
   const T = new Date("2026-10-23T08:00:00.000Z");
   const both = ["pages_read_engagement", "pages_show_list"];
   const fbFacts = (granted: readonly string[]): AccountFacts => ({ kind: "available", assetClass: "content_bearing", grantedPermissions: granted, linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: T });
@@ -206,7 +237,7 @@ describe("P5-C9-C (under r4): what the Facebook entry means for profiles (existi
 
   it("E: the Facebook entry never reaches Instagram — an Instagram account holding only the Facebook permissions is NOT_AUTHORIZED on its own entry", () => {
     const profile = evaluate(both, "instagram");
-    expect(profile.entries).toHaveLength(11);
+    expect(profile.entries).toHaveLength(12);
     expect(resolveEntry(profile.entries, "read_content", "post", "unknown")).toMatchObject({ state: "NOT_AUTHORIZED", reasons: ["ACCOUNT_PERMISSION_MISSING"], evidence: INSTAGRAM_EVIDENCE });
   });
 
@@ -219,21 +250,22 @@ describe("P5-C9-C (under r4): what the Facebook entry means for profiles (existi
       }
   });
 
-  it("staleness: platform profiles evaluated at r2 or r3 are not current against r4 (PROFILE_STALE until an explicit Re-check)", () => {
-    expect(isCurrentProfile({ catalogId: "platform", catalogRevision: 2 }, "meta")).toBe(false);
-    expect(isCurrentProfile({ catalogId: "platform", catalogRevision: 3 }, "meta")).toBe(false);
-    expect(isCurrentProfile({ catalogId: "platform", catalogRevision: 4 }, "meta")).toBe(true);
-    expect(evaluate(both).catalogRevision).toBe(4);
+  it("staleness: platform profiles evaluated at r2, r3 or r4 are not current against r5 (PROFILE_STALE until an explicit Re-check)", () => {
+    for (const revision of [2, 3, 4]) expect(isCurrentProfile({ catalogId: "platform", catalogRevision: revision }, "meta"), String(revision)).toBe(false);
+    expect(isCurrentProfile({ catalogId: "platform", catalogRevision: 5 }, "meta")).toBe(true);
+    expect(evaluate(both).catalogRevision).toBe(5);
   });
 
-  it("a fresh r4 Facebook profile: 11 rows, exactly one SUPPORTED (read_content / post / unknown)", () => {
+  it("a fresh r5 Facebook profile with the read_content permissions only: 12 rows, read_content SUPPORTED, read_interactions NOT_AUTHORIZED (pages_read_user_content missing)", () => {
     const profile = evaluate(both);
-    expect([profile.catalogRevision, profile.entries.length]).toEqual([4, 11]);
-    expect(profile.entries.filter((e) => e.state === "SUPPORTED").map((e) => [e.capability, e.contentKind, e.source])).toEqual([["read_content", "post", "unknown"]]);
+    expect([profile.catalogRevision, profile.entries.length]).toEqual([5, 12]);
+    expect(profile.entries.filter((e) => e.state !== "UNKNOWN_NOT_VALIDATED").map((e) => [e.capability, e.contentKind, e.source, e.state])).toEqual([
+      ["read_content", "post", "unknown", "SUPPORTED"], ["read_interactions", "post", "unknown", "NOT_AUTHORIZED"],
+    ]);
   });
 });
 
-describe("P11-E: what the r4 Instagram entry means for profiles (existing evaluator, unchanged)", () => {
+describe("P11-E (under r5): what the Instagram read_content entry means for profiles (existing evaluator, unchanged)", () => {
   const T = new Date("2026-10-23T16:00:00.000Z");
   const required = ["instagram_basic", "pages_read_engagement"];
   const igFacts = (granted: readonly string[]): AccountFacts => ({ kind: "available", assetClass: "content_bearing", grantedPermissions: granted, linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: T });
@@ -277,12 +309,13 @@ describe("P11-E: what the r4 Instagram entry means for profiles (existing evalua
     expect(others).toBe(39);
   });
 
-  it("a fresh r4 Instagram profile: 11 rows, exactly one SUPPORTED (read_content / post / unknown); r3 is stale against r4", () => {
+  it("a fresh r5 Instagram profile with the read_content permissions only: 12 rows, read_content SUPPORTED, read_interactions NOT_AUTHORIZED; r4 is stale against r5", () => {
     const profile = evaluate(required);
-    expect([profile.catalogId, profile.catalogRevision, profile.entries.length]).toEqual(["platform", 4, 11]);
+    expect([profile.catalogId, profile.catalogRevision, profile.entries.length]).toEqual(["platform", 5, 12]);
     expect(profile.entries.filter((e) => e.state === "SUPPORTED").map((e) => [e.capability, e.contentKind, e.source])).toEqual([["read_content", "post", "unknown"]]);
-    expect(profile.entries.filter((e) => e.state !== "SUPPORTED").every((e) => e.state === "UNKNOWN_NOT_VALIDATED" && e.contentKind === ANY && e.source === ANY)).toBe(true);
-    expect(isCurrentProfile({ catalogId: "platform", catalogRevision: 3 }, "meta")).toBe(false);
+    expect(profile.entries.filter((e) => e.state === "NOT_AUTHORIZED").map((e) => [e.capability, e.contentKind, e.source, e.reasons])).toEqual([["read_interactions", "post", "unknown", ["ACCOUNT_PERMISSION_MISSING"]]]);
+    expect(profile.entries.filter((e) => e.state !== "SUPPORTED" && e.state !== "NOT_AUTHORIZED").every((e) => e.state === "UNKNOWN_NOT_VALIDATED" && e.contentKind === ANY && e.source === ANY)).toBe(true);
+    expect(isCurrentProfile({ catalogId: "platform", catalogRevision: 4 }, "meta")).toBe(false);
   });
 });
 
@@ -307,16 +340,18 @@ describe("P4-B / P4-C contract history", () => {
     expect(violations({})).not.toContain("NOT_A_CATALOG_STATE");
   });
 
-  it("exactly two live-validated registrations exist (Facebook P5-C9-B, Instagram P11-D read_content): every other platform × capability still fails G2", () => {
+  it("exactly four live-validated registrations exist (Meta read_content P5-C9-B / P11-D, read_interactions P12-D2b): every other platform × capability still fails G2", () => {
     expect(IMPLEMENTED_PLATFORM_OPERATIONS).toEqual([
       { provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"], evidence: "api-validation:meta.facebook.read_content.20261023-01" },
       { provider: "meta", platform: "instagram", capability: "read_content", operations: ["getContent", "listContent"], evidence: "api-validation:meta.instagram.read_content.20261023-01" },
+      { provider: "meta", platform: "facebook", capability: "read_interactions", operations: ["getInteraction", "listInteractions"], interactionKinds: ["comment", "reply"], evidence: FB_INTERACTIONS_EVIDENCE },
+      { provider: "meta", platform: "instagram", capability: "read_interactions", operations: ["getInteraction", "listInteractions"], interactionKinds: ["comment"], evidence: IG_INTERACTIONS_EVIDENCE },
     ]);
     for (const capability of CAPABILITY_KEYS)
       for (const platform of ["facebook", "instagram", "tiktok"] as const) {
         const v = platformEntryViolations({ ...ENTRY, platform, capability }, { ...TODAY, records: [RECORD] });
-        // The registered Meta read_content operations rest on OTHER records than this synthetic one: still refused.
-        const registered = platform !== "tiktok" && capability === "read_content";
+        // The registered Meta operations rest on OTHER records than this synthetic one: still refused.
+        const registered = platform !== "tiktok" && (capability === "read_content" || capability === "read_interactions");
         expect(v, `${platform}:${capability}`).toContain(registered ? "IMPLEMENTATION_EVIDENCE_MISMATCH" : "IMPLEMENTATION_EVIDENCE_MISSING");
       }
   });
@@ -394,13 +429,15 @@ describe("P5-B: read_content requires the exact operation SET listContent + getC
     expect(OFFLINE_IMPLEMENTED_OPERATIONS).toEqual([
       { provider: "meta", platform: "facebook", capability: "read_content", operations: ["getContent", "listContent"] },
       { provider: "meta", platform: "instagram", capability: "read_content", operations: ["getContent", "listContent"] },
-      { provider: "meta", platform: "facebook", capability: "read_interactions", operations: ["getInteraction", "listInteractions"] },
-      { provider: "meta", platform: "instagram", capability: "read_interactions", operations: ["getInteraction", "listInteractions"] },
+      { provider: "meta", platform: "facebook", capability: "read_interactions", operations: ["getInteraction", "listInteractions"], interactionKinds: ["comment", "reply"] },
+      { provider: "meta", platform: "instagram", capability: "read_interactions", operations: ["getInteraction", "listInteractions"], interactionKinds: ["comment"] },
     ]);
-    // Live validation: Facebook (P5-C9-B) and Instagram (P11-D), each resting on its own accepted record.
+    // Live validation: each resting on its own accepted record (read_content P5-C9-B / P11-D; read_interactions P12-D2b).
     expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => [op.platform, op.capability, op.evidence])).toEqual([
       ["facebook", "read_content", "api-validation:meta.facebook.read_content.20261023-01"],
       ["instagram", "read_content", "api-validation:meta.instagram.read_content.20261023-01"],
+      ["facebook", "read_interactions", FB_INTERACTIONS_EVIDENCE],
+      ["instagram", "read_interactions", IG_INTERACTIONS_EVIDENCE],
     ]);
     // A holds; B exists but for another evidence id than this synthetic entry's (and this context has no record).
     const today = platformEntryViolations({ ...ENTRY, contentKind: "post", source: "organic" }, TODAY);
@@ -423,7 +460,7 @@ describe("P5-B: read_content requires the exact operation SET listContent + getC
     expect(platformEntryViolations(instagram, TODAY)).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING"]));
     // Another (unaccepted) Instagram evidence id is not the registered one.
     expect(platformEntryViolations({ ...instagram, evidence: "api-validation:meta.instagram.read_content.20261101-01" }, TODAY)).toEqual(expect.arrayContaining(["EVIDENCE_RECORD_MISSING", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
-    expect(PLATFORM_CATALOG.entries.filter((entry) => entry.platform === "instagram")).toEqual([R4_INSTAGRAM_ENTRY]);
+    expect(PLATFORM_CATALOG.entries.filter((entry) => entry.platform === "instagram" && entry.capability === "read_content")).toEqual([R4_INSTAGRAM_ENTRY]);
   });
 
   it("one of the two operations is never enough — offline, in the record, or in the live registration", () => {
@@ -483,21 +520,25 @@ describe("evidence records carry no identifying or secret material", () => {
   });
 });
 
-describe("G3 — LIVE-shaped P3 facts: no UNSUPPORTED, and SUPPORTED only on each platform's exact r4 entry (fixtures only)", () => {
+describe("G3 — LIVE-shaped P3 facts: no UNSUPPORTED; SUPPORTED only on each platform's exact read_content entry; read_interactions NOT_AUTHORIZED (fixtures only)", () => {
   const LIVE_GRANTED = ["business_management", "instagram_basic", "pages_read_engagement", "pages_show_list", "public_profile"];
   const liveFacts: AccountFacts = { kind: "available", assetClass: "content_bearing", grantedPermissions: LIVE_GRANTED, linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: new Date("2026-10-22T12:47:03.097Z") };
 
   for (const platform of ["facebook", "instagram"] as const) {
-    it(`${platform}: 10 × UNKNOWN_NOT_VALIDATED / CATALOG_NOT_VALIDATED (scope any/any) on platform r4 + exactly one SUPPORTED read_content post/unknown row`, () => {
+    it(`${platform}: 10 × UNKNOWN_NOT_VALIDATED / CATALOG_NOT_VALIDATED (scope any/any) on platform r5 + one SUPPORTED read_content and one NOT_AUTHORIZED read_interactions post/unknown row`, () => {
       const profile = evaluateProfile({ catalog: selectCatalog("meta", { NODE_ENV: "production" }), platform, assetClass: "content_bearing", facts: liveFacts, observations: [], evaluatedAt: new Date("2026-10-22T12:47:03.440Z") });
-      expect([profile.catalogId, profile.catalogRevision]).toEqual(["platform", 4]);
+      expect([profile.catalogId, profile.catalogRevision]).toEqual(["platform", 5]);
       const generic = profile.entries.filter((e) => e.contentKind === ANY && e.source === ANY);
       expect(generic).toHaveLength(10);
       expect(generic.map((e) => e.capability).sort()).toEqual([...CAPABILITY_KEYS].sort());
       for (const e of generic) expect(e).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", reasons: ["CATALOG_NOT_VALIDATED"], catalogValidation: "not_validated", evidence: null });
       const exact = profile.entries.filter((e) => !(e.contentKind === ANY && e.source === ANY));
-      expect(exact).toEqual([{ capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", reasons: ["CATALOG_SUPPORTED"], limitation: null, catalogValidation: "validated", evidence: platform === "facebook" ? FIRST_EVIDENCE : INSTAGRAM_EVIDENCE, observationRefs: [] }]);
-      expect(profile.entries.filter((e) => e.state === "UNSUPPORTED" || e.state === "NOT_AUTHORIZED")).toHaveLength(0);
+      expect(exact).toEqual([
+        { capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", reasons: ["CATALOG_SUPPORTED"], limitation: null, catalogValidation: "validated", evidence: platform === "facebook" ? FIRST_EVIDENCE : INSTAGRAM_EVIDENCE, observationRefs: [] },
+        // The P3-era grant set lacks the comment permissions: a missing authorization, never non-support.
+        { capability: "read_interactions", contentKind: "post", source: "unknown", state: "NOT_AUTHORIZED", reasons: ["ACCOUNT_PERMISSION_MISSING"], limitation: null, catalogValidation: "validated", evidence: platform === "facebook" ? FB_INTERACTIONS_EVIDENCE : IG_INTERACTIONS_EVIDENCE, observationRefs: [] },
+      ]);
+      expect(profile.entries.filter((e) => e.state === "UNSUPPORTED")).toHaveLength(0);
     });
   }
 

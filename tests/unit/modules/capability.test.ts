@@ -80,15 +80,16 @@ describe("platform capability catalog", () => {
   it("carries a monotonic integer revision (the only ordering value) and a human label that is never compared", () => {
     // Revision 2 (Step 7G-H5.5): the vocabulary gained read_content, so every revision-1 profile is stale. Platform
     // revision 3 (Step 7G-H5.5-P5-C9-C): its first entry, so every r2 platform profile is stale; revision 4 (Step
-    // 7G-H5.5-P11-E): the first Instagram entry, so every r3 platform profile is stale; the simulator stays r2.
-    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.id, SIMULATOR_CATALOG.revision]).toEqual(["platform", 4, "simulator", 2]);
+    // 7G-H5.5-P11-E): the first Instagram entry, so every r3 platform profile is stale; revision 5 (Step 7G-H5.5-P12-D2b):
+    // the two read_interactions entries, so every r4 platform profile is stale; the simulator stays r2.
+    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.id, SIMULATOR_CATALOG.revision]).toEqual(["platform", 5, "simulator", 2]);
     expect(Number.isInteger(PLATFORM_CATALOG.revision) && Number.isInteger(SIMULATOR_CATALOG.revision)).toBe(true);
-    expect([PLATFORM_CATALOG.label, SIMULATOR_CATALOG.label]).toEqual(["platform-catalog-r4", "simulator-catalog-r2"]);
+    expect([PLATFORM_CATALOG.label, SIMULATOR_CATALOG.label]).toEqual(["platform-catalog-r5", "simulator-catalog-r2"]);
     for (const file of ["modules/capability/application/ports.ts", "modules/capability/persistence/store.ts"]) expect(codeOf(file)).not.toMatch(/\.label\b/);
     expect(Object.isFrozen(PLATFORM_CATALOG.entries) && Object.isFrozen(SIMULATOR_CATALOG.entries)).toBe(true);
   });
 
-  it("resolves EVERY real-platform scope to UNKNOWN_NOT_VALIDATED except the two validated scopes (facebook and instagram · content_bearing · read_content · post · unknown)", () => {
+  it("resolves EVERY real-platform scope to UNKNOWN_NOT_VALIDATED except the four validated scopes (facebook and instagram · content_bearing · read_content | read_interactions · post · unknown)", () => {
     let checked = 0;
     let supported = 0;
     for (const platform of PLATFORM_KEYS)
@@ -97,12 +98,19 @@ describe("platform capability catalog", () => {
           for (const contentKind of [...CAPABILITY_CONTENT_KINDS, ANY] as const)
             for (const source of [...CAPABILITY_SOURCES, ANY] as const) {
               const result = lookupCatalog(PLATFORM_CATALOG, { platform, assetClass, capability, contentKind, source });
-              const validated = platform !== "tiktok" && assetClass === "content_bearing" && capability === "read_content" && contentKind === "post" && source === "unknown";
+              const validated = platform !== "tiktok" && assetClass === "content_bearing" && (capability === "read_content" || capability === "read_interactions") && contentKind === "post" && source === "unknown";
               if (validated) {
-                const expected = platform === "facebook"
-                  ? { evidence: "api-validation:meta.facebook.read_content.20261023-01", requiredPermissions: ["pages_read_engagement", "pages_show_list"] }
-                  : { evidence: "api-validation:meta.instagram.read_content.20261023-01", requiredPermissions: ["instagram_basic", "pages_read_engagement"] };
-                expect(result).toMatchObject({ catalogRevision: 4, state: "SUPPORTED", validation: "validated", limitation: null, ...expected });
+                const expected = {
+                  facebook: {
+                    read_content: { state: "SUPPORTED", limitation: null, evidence: "api-validation:meta.facebook.read_content.20261023-01", requiredPermissions: ["pages_read_engagement", "pages_show_list"] },
+                    read_interactions: { state: "SUPPORTED", limitation: null, evidence: "api-validation:meta.facebook.read_interactions.20261027-01", requiredPermissions: ["pages_read_engagement", "pages_read_user_content", "pages_show_list"] },
+                  },
+                  instagram: {
+                    read_content: { state: "SUPPORTED", limitation: null, evidence: "api-validation:meta.instagram.read_content.20261023-01", requiredPermissions: ["instagram_basic", "pages_read_engagement"] },
+                    read_interactions: { state: "AVAILABLE_WITH_LIMITATION", limitation: { code: "REPLIES_NOT_READ", value: null }, evidence: "api-validation:meta.instagram.read_interactions.20261026-01", requiredPermissions: ["instagram_basic", "instagram_manage_comments", "pages_read_engagement"] },
+                  },
+                }[platform][capability];
+                expect(result).toMatchObject({ catalogRevision: 5, validation: "validated", ...expected });
                 supported += 1;
               } else {
                 // Includes post/organic|paid|mixed|any and any/any: a wildcard scope matches only wildcard entries.
@@ -110,7 +118,7 @@ describe("platform capability catalog", () => {
               }
               checked += 1;
             }
-    expect([checked, supported]).toEqual([3 * 2 * 10 * 8 * 5, 2]);
+    expect([checked, supported]).toEqual([3 * 2 * 10 * 8 * 5, 4]);
   });
 
   it("guard: a real-platform entry may exist only as a validated, api-validation-evidenced fact — never a simulator one", () => {
@@ -118,7 +126,7 @@ describe("platform capability catalog", () => {
       expect(e.validation).toBe("validated");
       expect(e.evidence).toMatch(/^api-validation:/);
     }
-    expect(PLATFORM_CATALOG.entries).toHaveLength(2);
+    expect(PLATFORM_CATALOG.entries).toHaveLength(4);
     for (const e of SIMULATOR_CATALOG.entries) {
       expect(e.evidence).toBe("simulator:contract-v1");
       expect(e.platform).toBe(ANY);
@@ -163,9 +171,9 @@ describe("account capability evaluator (pure, conservative)", () => {
 
   it("facts never upgrade the real-platform catalog: without the provider permissions an Instagram account gets no support", () => {
     const profile = evaluateProfile(input({ catalog: PLATFORM_CATALOG, facts: facts({ grantedPermissions: ["pages_manage_engagement", ...ALL_PERMISSIONS] }) }));
-    // r4 (Step 7G-H5.5-P11-E): the one exact Instagram row exists but lacks instagram_basic + pages_read_engagement.
-    expect(profile.entries).toHaveLength(CAPABILITY_KEYS.length + 1);
-    expect(profile.entries.filter((e) => e.state !== "UNKNOWN_NOT_VALIDATED").map((e) => [e.capability, e.contentKind, e.source, e.state])).toEqual([["read_content", "post", "unknown", "NOT_AUTHORIZED"]]);
+    // r5 (Step 7G-H5.5-P12-D2b): the two exact Instagram rows exist but lack their Instagram/Page permissions.
+    expect(profile.entries).toHaveLength(CAPABILITY_KEYS.length + 2);
+    expect(profile.entries.filter((e) => e.state !== "UNKNOWN_NOT_VALIDATED").map((e) => [e.capability, e.contentKind, e.source, e.state])).toEqual([["read_content", "post", "unknown", "NOT_AUTHORIZED"], ["read_interactions", "post", "unknown", "NOT_AUTHORIZED"]]);
     expect(profile.entries.some((e) => e.state === "SUPPORTED")).toBe(false);
   });
 

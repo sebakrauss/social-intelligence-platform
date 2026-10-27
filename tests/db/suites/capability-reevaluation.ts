@@ -167,7 +167,8 @@ export function defineCapabilityReevaluationSuite(getTarget: () => DbTarget): vo
     );
   // Usable facts: the account holds the two permissions platform r3's one entry names (Step 7G-H5.5-P5-C9-C), so a
   // current profile built from them has no NOT_AUTHORIZED row and is genuinely "usable current".
-  const AVAILABLE = (): FactsInput => ({ kind: "available", assetClass: "content_bearing", grantedPermissions: ["pages_read_engagement", "pages_show_list"], linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: clock() });
+  /** A Facebook Page holding every permission the platform catalog requires (r5: read_content + read_interactions, Step 7G-H5.5-P12-D2b). */
+  const AVAILABLE = (): FactsInput => ({ kind: "available", assetClass: "content_bearing", grantedPermissions: ["pages_read_engagement", "pages_read_user_content", "pages_show_list"], linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: clock() });
   const UNAVAILABLE = (): FactsInput => ({ kind: "unavailable", observedAt: clock() });
 
   // ── Oracle reads ─────────────────────────────────────────────────────────────────────────────────────────────

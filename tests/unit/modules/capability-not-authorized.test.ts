@@ -84,10 +84,10 @@ describe("vocabulary: NOT_AUTHORIZED is a profile state, never a catalog state",
     expect([notCatalog, profile]).toEqual(["NOT_AUTHORIZED", "NOT_AUTHORIZED"]);
   });
 
-  it("no catalog in code holds a NOT_AUTHORIZED entry; the real platform catalog is r4 with its two SUPPORTED entries (P5-C9-C, P11-E)", () => {
+  it("no catalog in code holds a NOT_AUTHORIZED entry; the real platform catalog is r5 with its four positive entries (P5-C9-C, P11-E, P12-D2b)", () => {
     for (const catalog of [PLATFORM_CATALOG, SIMULATOR_CATALOG]) for (const entry of catalog.entries) expect(CATALOG_STATES).toContain(entry.state);
-    expect([PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.revision, PLATFORM_CATALOG.entries.length]).toEqual([4, 2, 2]);
-    expect(PLATFORM_CATALOG.entries.map((entry) => entry.state)).toEqual(["SUPPORTED", "SUPPORTED"]);
+    expect([PLATFORM_CATALOG.revision, SIMULATOR_CATALOG.revision, PLATFORM_CATALOG.entries.length]).toEqual([5, 2, 4]);
+    expect(PLATFORM_CATALOG.entries.map((entry) => entry.state)).toEqual(["SUPPORTED", "SUPPORTED", "SUPPORTED", "AVAILABLE_WITH_LIMITATION"]);
   });
 
   it("state ↔ reason coherence: authorization reasons only on NOT_AUTHORIZED, non-support reasons only on UNSUPPORTED", () => {

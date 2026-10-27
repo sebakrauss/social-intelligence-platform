@@ -40,12 +40,16 @@
  * read_interactions (Step 7G-H5.5-P12-B2): its operation set is declared (getInteraction + listInteractions) and the
  * Facebook and Instagram adapters are registered OFFLINE; a record of this capability must state EXACTLY which
  * interaction kinds one controlled LIVE validation demonstrated (`interactionKinds`, closed, canonical, comment
- * required). How those kinds decide an entry's state (SUPPORTED vs a limitation) is a later gate's rule, so until it
- * exists every positive read_interactions entry is refused (INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED).
+ * required). Step 7G-H5.5-P12-D2b (design P12-D1) defines how those kinds decide an entry's state: the pure
+ * `readInteractionsPublication` — every canonical kind → SUPPORTED; every kind but `reply` → AVAILABLE_WITH_LIMITATION
+ * (REPLIES_NOT_READ); anything else has no rule and is refused. Kinds are evidence detail, never a catalog dimension.
+ * An entry's state and limitation must equal that derivation from its record (INTERACTION_KINDS_STATE_MISMATCH); a record
+ * may state only kinds its platform's adapter implements, as declared on the OFFLINE registration
+ * (INTERACTION_KINDS_NOT_IMPLEMENTED); and the LIVE registration states exactly the record's kinds.
  */
 import type { PlatformKey } from "@/domain/platforms";
 import type { CapabilityCatalog, CatalogEntry } from "./catalog";
-import { ANY, CAPABILITY_ASSET_CLASSES, CAPABILITY_KEYS, CATALOG_STATES, type CapabilityAssetClass, type CapabilityKey, type ScopeKind, type ScopeSource } from "./vocabulary";
+import { ANY, CAPABILITY_ASSET_CLASSES, CAPABILITY_KEYS, CATALOG_STATES, type CapabilityAssetClass, type CapabilityKey, type CatalogState, type Limitation, type ScopeKind, type ScopeSource } from "./vocabulary";
 
 /** The P4-B blanket blocker, lifted by Step 7G-H5.5-P4-C (the authorization semantics are resolved). */
 export const FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED = false;
@@ -96,6 +100,40 @@ export interface OperationSetRegistration {
   readonly capability: CapabilityKey;
   /** Provider contract operation names (READ_OPERATIONS / MUTATION_OPERATIONS), checked by the architecture guard. */
   readonly operations: readonly string[];
+  /**
+   * read_interactions ONLY (Step 7G-H5.5-P12-D2b): on an OFFLINE registration, the interaction kinds the platform's
+   * adapter implements; on a LIVE registration, exactly the kinds its record proved. Canonical (isEvidenceInteractionKindSet).
+   * Every other capability: absent.
+   */
+  readonly interactionKinds?: readonly EvidenceInteractionKind[];
+}
+
+/** Facebook Page: comments and their replies, from one stream edge (P12-B1). */
+const FACEBOOK_IMPLEMENTED_INTERACTION_KINDS: readonly EvidenceInteractionKind[] = Object.freeze(["comment", "reply"] as const);
+/** Instagram professional account: top-level comments only; replies are not read (P12-B1). */
+const INSTAGRAM_IMPLEMENTED_INTERACTION_KINDS: readonly EvidenceInteractionKind[] = Object.freeze(["comment"] as const);
+
+/** What a read_interactions entry's state and limitation must be, derived from its record's kinds alone. */
+export interface InteractionKindsPublication {
+  readonly state: Extract<CatalogState, "SUPPORTED" | "AVAILABLE_WITH_LIMITATION">;
+  readonly limitation: Limitation | null;
+}
+
+/**
+ * The kinds → state rule (Step 7G-H5.5-P12-D2b; design P12-D1). Pure and deterministic over a record's kinds:
+ *   every canonical kind (comment, reply)   → SUPPORTED, no limitation
+ *   every canonical kind except `reply`     → AVAILABLE_WITH_LIMITATION, REPLIES_NOT_READ (comments read, replies not)
+ *   anything else                           → null: no rule — refused, never guessed
+ * Malformed sets (empty, reply-only, duplicates, non-canonical order, unknown kinds, `any`) are null too: nothing is
+ * normalized and no kind is inferred. A future canonical kind leaves today's full set short of it, so the rule refuses
+ * until a gate decides its publication.
+ */
+export function readInteractionsPublication(kinds: unknown): InteractionKindsPublication | null {
+  if (!isEvidenceInteractionKindSet(kinds)) return null;
+  const missing = EVIDENCE_INTERACTION_KINDS.filter((kind) => !kinds.includes(kind));
+  if (missing.length === 0) return Object.freeze({ state: "SUPPORTED", limitation: null });
+  if (missing.length === 1 && missing[0] === "reply") return Object.freeze({ state: "AVAILABLE_WITH_LIMITATION", limitation: Object.freeze({ code: "REPLIES_NOT_READ", value: null }) });
+  return null;
 }
 
 /**
@@ -105,13 +143,15 @@ export interface OperationSetRegistration {
  * 7G-H5.5-P11-B: Instagram professional-account read_content (listContent + getContent); validated live and registered
  * below by Step 7G-H5.5-P11-D. Step 7G-H5.5-P12-B1/B2: Facebook Page and Instagram professional-account
  * read_interactions (listInteractions + getInteraction) — offline only; registered here by P12-B2 together with the
- * declared operation set and the `interactionKinds` record rule, never before them.
+ * declared operation set and the `interactionKinds` record rule, never before them. Step 7G-H5.5-P12-D2b: each
+ * read_interactions registration declares the kinds its adapter implements (Facebook comment + reply, Instagram comment
+ * only), which bounds what any record for that platform may state.
  */
 export const OFFLINE_IMPLEMENTED_OPERATIONS: readonly OperationSetRegistration[] = Object.freeze([
   Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS }),
   Object.freeze({ provider: "meta", platform: "instagram", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS }),
-  Object.freeze({ provider: "meta", platform: "facebook", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS }),
-  Object.freeze({ provider: "meta", platform: "instagram", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS }),
+  Object.freeze({ provider: "meta", platform: "facebook", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS, interactionKinds: FACEBOOK_IMPLEMENTED_INTERACTION_KINDS }),
+  Object.freeze({ provider: "meta", platform: "instagram", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS, interactionKinds: INSTAGRAM_IMPLEMENTED_INTERACTION_KINDS }),
 ]);
 
 /**
@@ -119,6 +159,8 @@ export const OFFLINE_IMPLEMENTED_OPERATIONS: readonly OperationSetRegistration[]
  * registered explicitly by the gate that implemented AND validated them live, with the accepted positive record.
  * Step 7G-H5.5-P5-C9-B: Facebook read_content (getContent + listContent), backed by the first accepted record. Step
  * 7G-H5.5-P11-D: Instagram read_content (getContent + listContent), backed by its own accepted record (post · unknown).
+ * Step 7G-H5.5-P12-D2b: Facebook read_interactions (comment + reply, P12-C10) and Instagram read_interactions (comment,
+ * P12-C6), each backed by its own accepted record and stating exactly its record's kinds.
  * Every other platform × capability has none, so its positive entries are refused (IMPLEMENTATION_EVIDENCE_MISSING).
  */
 export interface ImplementedOperation extends OperationSetRegistration {
@@ -128,6 +170,8 @@ export interface ImplementedOperation extends OperationSetRegistration {
 export const IMPLEMENTED_PLATFORM_OPERATIONS: readonly ImplementedOperation[] = Object.freeze([
   Object.freeze({ provider: "meta", platform: "facebook", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS, evidence: "api-validation:meta.facebook.read_content.20261023-01" }),
   Object.freeze({ provider: "meta", platform: "instagram", capability: "read_content", operations: READ_CONTENT_REQUIRED_OPERATIONS, evidence: "api-validation:meta.instagram.read_content.20261023-01" }),
+  Object.freeze({ provider: "meta", platform: "facebook", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS, interactionKinds: Object.freeze(["comment", "reply"] as const), evidence: "api-validation:meta.facebook.read_interactions.20261027-01" }),
+  Object.freeze({ provider: "meta", platform: "instagram", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS, interactionKinds: Object.freeze(["comment"] as const), evidence: "api-validation:meta.instagram.read_interactions.20261026-01" }),
 ]);
 
 /**
@@ -222,7 +266,8 @@ export type EntryViolation =
   | "UNSUPPORTED_NAMES_PERMISSIONS"
   | "LIMITATION_INCONSISTENT"
   | "DUPLICATE_SCOPE"
-  | "INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED";
+  | "INTERACTION_KINDS_STATE_MISMATCH"
+  | "INTERACTION_KINDS_NOT_IMPLEMENTED";
 
 export interface CatalogContractContext {
   readonly records: readonly ApiValidationRecord[];
@@ -329,15 +374,42 @@ export function platformEntryViolations(entry: CatalogEntry, context: CatalogCon
     const named = [...(required ?? []), ...offline.flatMap((op) => op.operations), ...implemented.flatMap((op) => op.operations), ...(record?.operations ?? [])];
     if (named.some((op) => ACCOUNT_INFRASTRUCTURE_OPERATIONS.includes(op))) out.add("INFRASTRUCTURE_OPERATION_IS_NOT_EVIDENCE");
     if ((entry.state === "AVAILABLE_WITH_LIMITATION") !== (entry.limitation !== null)) out.add("LIMITATION_INCONSISTENT");
-    // Step 7G-H5.5-P12-B2: which state a record's interaction kinds justify is not defined yet (a later gate), so no
-    // positive read_interactions entry is admissible — never a SUPPORTED entry implied by offline reply support.
-    if (entry.capability === "read_interactions") out.add("INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED");
+    // Step 7G-H5.5-P12-D2b: a read_interactions entry publishes exactly what its record's kinds justify — never a
+    // SUPPORTED entry implied by offline reply support, never a kind the platform's adapter does not implement.
+    if (entry.capability === "read_interactions") {
+      for (const violation of interactionKindsViolations(entry, record, offline, implemented)) out.add(violation);
+    }
   } else if (entry.state === "UNSUPPORTED") {
     // Never "unsupported because a permission is absent": an authoritative negative names no permission.
     if (entry.requiredPermissions.length > 0) out.add("UNSUPPORTED_NAMES_PERMISSIONS");
     if (entry.limitation !== null) out.add("LIMITATION_INCONSISTENT");
   }
   return [...out];
+}
+
+/**
+ * read_interactions only: the entry's state and limitation equal the derivation from its record's kinds; the record's
+ * kinds are implemented by the platform's adapter (its OFFLINE registration's kinds); the LIVE registration resting on
+ * the record states exactly the record's kinds. No record → nothing to derive (EVIDENCE_* already refuses the entry).
+ */
+function interactionKindsViolations(
+  entry: CatalogEntry,
+  record: ApiValidationRecord | undefined,
+  offline: readonly OperationSetRegistration[],
+  implemented: readonly ImplementedOperation[],
+): readonly EntryViolation[] {
+  if (record === undefined) return [];
+  const out: EntryViolation[] = [];
+  const kinds = record.interactionKinds ?? null;
+  const derived = readInteractionsPublication(kinds);
+  const sameLimitation = (a: Limitation | null, b: Limitation | null): boolean => (a === null || b === null ? a === b : a.code === b.code && a.value === b.value);
+  if (derived === null || derived.state !== entry.state || !sameLimitation(derived.limitation, entry.limitation)) out.push("INTERACTION_KINDS_STATE_MISMATCH");
+  const implementedKinds = offline.map((op) => op.interactionKinds ?? null).filter((declared): declared is readonly EvidenceInteractionKind[] => isEvidenceInteractionKindSet(declared));
+  const recordKinds: readonly string[] = isEvidenceInteractionKindSet(kinds) ? kinds : [];
+  if (recordKinds.length === 0 || !implementedKinds.some((declared) => recordKinds.every((kind) => (declared as readonly string[]).includes(kind)))) out.push("INTERACTION_KINDS_NOT_IMPLEMENTED");
+  const live = implemented.filter((op) => op.evidence === entry.evidence);
+  if (live.length > 0 && !live.some((op) => isEvidenceInteractionKindSet(op.interactionKinds) && sameSet(op.interactionKinds, recordKinds))) out.push("IMPLEMENTATION_EVIDENCE_MISMATCH");
+  return out;
 }
 
 /** Violations of a whole platform catalog, by entry index (empty = admissible). */

@@ -162,34 +162,50 @@ describe("Meta describeAccount · refusals (fail closed; no partial description)
   });
 });
 
-describe("Meta facts through the real capability evaluator (platform catalog r4: one validated entry per Meta platform)", () => {
-  it("only read_content post/unknown is SUPPORTED (both permissions granted); every any/any row stays UNKNOWN_NOT_VALIDATED; deterministic; revision recorded", async () => {
+describe("Meta facts through the real capability evaluator (platform catalog r5: read_content + read_interactions per Meta platform)", () => {
+  it("read_content post/unknown is SUPPORTED (both permissions granted), read_interactions post/unknown NOT_AUTHORIZED (pages_read_user_content not granted); every any/any row stays UNKNOWN_NOT_VALIDATED; deterministic; revision recorded", async () => {
     const { describeAccount } = portWith(META_WORLD);
     const { data } = await describeAccount("facebook", PAGE);
     const catalog = selectCatalog("meta", { NODE_ENV: "production" });
     expect(catalog).toBe(PLATFORM_CATALOG);
     const input = { catalog, platform: "facebook" as const, assetClass: "content_bearing" as const, facts: factsFromDescription(data, NOW), observations: [], evaluatedAt: NOW };
     const profile = evaluateProfile(input);
-    expect(profile).toMatchObject({ catalogId: "platform", catalogRevision: 4 });
+    expect(profile).toMatchObject({ catalogId: "platform", catalogRevision: 5 });
     const generic = profile.entries.filter((entry) => entry.contentKind === "any" && entry.source === "any");
     expect(generic.map((entry) => entry.capability).sort()).toEqual([...CAPABILITY_KEYS].sort());
     for (const entry of generic) expect(entry).toMatchObject({ state: "UNKNOWN_NOT_VALIDATED", reasons: ["CATALOG_NOT_VALIDATED"], catalogValidation: "not_validated", evidence: null });
     expect(profile.entries.filter((entry) => !generic.includes(entry))).toEqual([
       { capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", reasons: ["CATALOG_SUPPORTED"], limitation: null, catalogValidation: "validated", evidence: "api-validation:meta.facebook.read_content.20261023-01", observationRefs: [] },
+      // A missing authorization, never non-support (Step 7G-H5.5-P4-C).
+      { capability: "read_interactions", contentKind: "post", source: "unknown", state: "NOT_AUTHORIZED", reasons: ["ACCOUNT_PERMISSION_MISSING"], limitation: null, catalogValidation: "validated", evidence: "api-validation:meta.facebook.read_interactions.20261027-01", observationRefs: [] },
     ]);
     expect(evaluateProfile(input)).toEqual(profile);
     expect(inputDigest(input)).toBe(inputDigest({ ...input, evaluatedAt: new Date(NOW.getTime() + 60_000) }));
   });
 
-  it("an Instagram account's described facts (instagram_basic + pages_read_engagement granted) → only its own read_content post/unknown row is SUPPORTED", async () => {
+  it("an Instagram account's described facts (instagram_basic + pages_read_engagement granted) → its own read_content post/unknown row is SUPPORTED, read_interactions NOT_AUTHORIZED", async () => {
     const { describeAccount } = portWith(META_WORLD);
     const { data } = await describeAccount("instagram", IG);
     const input = { catalog: selectCatalog("meta", { NODE_ENV: "production" }), platform: "instagram" as const, assetClass: "content_bearing" as const, facts: factsFromDescription(data, NOW), observations: [], evaluatedAt: NOW };
     const profile = evaluateProfile(input);
-    expect(profile).toMatchObject({ catalogId: "platform", catalogRevision: 4 });
-    expect(profile.entries).toHaveLength(CAPABILITY_KEYS.length + 1);
+    expect(profile).toMatchObject({ catalogId: "platform", catalogRevision: 5 });
+    expect(profile.entries).toHaveLength(CAPABILITY_KEYS.length + 2);
     expect(profile.entries.filter((entry) => entry.state !== "UNKNOWN_NOT_VALIDATED")).toEqual([
       { capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", reasons: ["CATALOG_SUPPORTED"], limitation: null, catalogValidation: "validated", evidence: "api-validation:meta.instagram.read_content.20261023-01", observationRefs: [] },
+      { capability: "read_interactions", contentKind: "post", source: "unknown", state: "NOT_AUTHORIZED", reasons: ["ACCOUNT_PERMISSION_MISSING"], limitation: null, catalogValidation: "validated", evidence: "api-validation:meta.instagram.read_interactions.20261026-01", observationRefs: [] },
     ]);
+  });
+
+  it("with the interaction permissions also granted (synthetic grant set): Facebook read_interactions SUPPORTED; Instagram AVAILABLE_WITH_LIMITATION / REPLIES_NOT_READ", async () => {
+    const { describeAccount } = portWith(META_WORLD);
+    const row = async (platform: "facebook" | "instagram", id: string) => {
+      const { data } = await describeAccount(platform, id);
+      const facts = factsFromDescription(data, NOW);
+      const granted = { ...facts, grantedPermissions: [...facts.grantedPermissions, "instagram_manage_comments", "pages_read_user_content"].sort() };
+      const profile = evaluateProfile({ catalog: selectCatalog("meta", { NODE_ENV: "production" }), platform, assetClass: "content_bearing", facts: granted, observations: [], evaluatedAt: NOW });
+      return profile.entries.find((entry) => entry.capability === "read_interactions" && entry.contentKind === "post" && entry.source === "unknown");
+    };
+    expect(await row("facebook", PAGE)).toMatchObject({ state: "SUPPORTED", reasons: ["CATALOG_SUPPORTED"], limitation: null, evidence: "api-validation:meta.facebook.read_interactions.20261027-01" });
+    expect(await row("instagram", IG)).toMatchObject({ state: "AVAILABLE_WITH_LIMITATION", reasons: ["CATALOG_LIMITATION"], limitation: { code: "REPLIES_NOT_READ", value: null }, evidence: "api-validation:meta.instagram.read_interactions.20261026-01" });
   });
 });

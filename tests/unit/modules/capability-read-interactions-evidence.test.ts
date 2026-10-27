@@ -3,8 +3,9 @@
  * design/phase-7g/meta-provider/api-validation/README.md). One record stays the sole authority for one entry; a
  * read_interactions record must state EXACTLY the interaction kinds one controlled LIVE validation proved on both
  * operations — closed, canonical, non-empty, always with `comment`, never a wildcard — and every other capability's
- * record states none. Until a later gate defines how kinds decide an entry's state, no positive read_interactions
- * entry is admissible. Synthetic records only; the accepted P11 files are read as they are on disk.
+ * record states none. Step 7G-H5.5-P12-D2b defines how kinds decide an entry's state (catalog-contract.ts ›
+ * readInteractionsPublication; tests/unit/modules/capability-read-interactions-publication.test.ts). Synthetic records
+ * here; the accepted files are read as they are on disk.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -62,14 +63,14 @@ describe("the declared operation set and the offline registrations", () => {
     expect(CAPABILITY_REQUIRED_OPERATIONS.read_interactions).not.toContain("getContent");
   });
 
-  it("exactly Facebook and Instagram read_interactions are registered OFFLINE, each with exactly the declared set; nothing LIVE", () => {
+  it("exactly Facebook and Instagram read_interactions are registered OFFLINE, each with exactly the declared set and its implemented kinds; and (P12-D2b) LIVE on their own records", () => {
     const offline = OFFLINE_IMPLEMENTED_OPERATIONS.filter((op) => op.capability === "read_interactions");
     expect(offline).toEqual([
-      { provider: "meta", platform: "facebook", capability: "read_interactions", operations: ["getInteraction", "listInteractions"] },
-      { provider: "meta", platform: "instagram", capability: "read_interactions", operations: ["getInteraction", "listInteractions"] },
+      { provider: "meta", platform: "facebook", capability: "read_interactions", operations: ["getInteraction", "listInteractions"], interactionKinds: ["comment", "reply"] },
+      { provider: "meta", platform: "instagram", capability: "read_interactions", operations: ["getInteraction", "listInteractions"], interactionKinds: ["comment"] },
     ]);
     for (const op of offline) expect(op.operations).toEqual(CAPABILITY_REQUIRED_OPERATIONS[op.capability]);
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => [op.platform, op.capability])).toEqual([["facebook", "read_content"], ["instagram", "read_content"]]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => [op.platform, op.capability])).toEqual([["facebook", "read_content"], ["instagram", "read_content"], ["facebook", "read_interactions"], ["instagram", "read_interactions"]]);
   });
 
   it("the evidence kinds mirror the provider contract's closed INTERACTION_KINDS, in the same canonical order", () => {
@@ -148,16 +149,20 @@ describe("an entry resting on a read_interactions record", () => {
   const FUTURE: CatalogContractContext = {
     records: [RECORD],
     offlineImplementations: OFFLINE_IMPLEMENTED_OPERATIONS,
-    implementedOperations: [{ provider: "meta", platform: "facebook", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS, evidence: EVIDENCE }],
+    implementedOperations: [{ provider: "meta", platform: "facebook", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS, interactionKinds: ["comment"], evidence: EVIDENCE }],
     authorizationSemantics: "RESOLVED",
   };
   const check = (entry: Partial<CatalogEntry> = {}, context: Partial<CatalogContractContext> = {}) => platformEntryViolations({ ...ENTRY, ...entry }, { ...FUTURE, ...context });
 
-  it("even fully evidenced, a positive read_interactions entry is refused until the kinds → state rule exists — only that rule is missing", () => {
-    expect(check()).toEqual(["INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED"]);
-    expect(check({ state: "AVAILABLE_WITH_LIMITATION", limitation: { code: "HISTORY_DEPTH_LIMITED", value: 7 } })).toEqual(["INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED"]);
-    // A full comment + reply record does not lift it either: offline reply support never implies a SUPPORTED entry.
-    expect(check({}, { records: [record({ interactionKinds: ["comment", "reply"] })] })).toEqual(["INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED"]);
+  it("fully evidenced, a read_interactions entry is admissible exactly at the state its record's kinds derive (P12-D2b)", () => {
+    // ["comment"] derives AVAILABLE_WITH_LIMITATION / REPLIES_NOT_READ: SUPPORTED is refused, the derived shape admitted.
+    expect(check()).toEqual(["INTERACTION_KINDS_STATE_MISMATCH"]);
+    expect(check({ state: "AVAILABLE_WITH_LIMITATION", limitation: { code: "HISTORY_DEPTH_LIMITED", value: 7 } })).toEqual(["INTERACTION_KINDS_STATE_MISMATCH"]);
+    expect(check({ state: "AVAILABLE_WITH_LIMITATION", limitation: { code: "REPLIES_NOT_READ", value: null } })).toEqual([]);
+    // A comment + reply record derives SUPPORTED — and its LIVE registration must state those kinds too.
+    const full = { records: [record({ interactionKinds: ["comment", "reply"] })] };
+    expect(check({}, full)).toEqual(["IMPLEMENTATION_EVIDENCE_MISMATCH"]);
+    expect(check({}, { ...full, implementedOperations: [{ provider: "meta", platform: "facebook", capability: "read_interactions", operations: READ_INTERACTIONS_REQUIRED_OPERATIONS, interactionKinds: ["comment", "reply"], evidence: EVIDENCE }] })).toEqual([]);
   });
 
   it("11–13. the record's operations must be exactly getInteraction + listInteractions", () => {
@@ -173,11 +178,13 @@ describe("an entry resting on a read_interactions record", () => {
 
   it("the read_content capability is untouched by the new rule", () => {
     const content = { ...ENTRY, capability: "read_content" as const, evidence: "api-validation:meta.facebook.read_content.20261101-01" };
-    expect(platformEntryViolations(content, { ...FUTURE, records: [] })).not.toContain("INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED");
+    const v = platformEntryViolations(content, { ...FUTURE, records: [] });
+    expect(v).not.toContain("INTERACTION_KINDS_STATE_MISMATCH");
+    expect(v).not.toContain("INTERACTION_KINDS_NOT_IMPLEMENTED");
   });
 });
 
-describe("14–15. the accepted P11 records and the r4 catalog are unchanged and still valid", () => {
+describe("14–15. the accepted P11 read_content records are unchanged, and the r5 catalog is admissible against every record on disk", () => {
   it("both accepted read_content records validate as they are on disk: no interactionKinds field, 18 fields each", () => {
     for (const file of ["facebook/read_content/20261023-01.json", "instagram/read_content/20261023-01.json"]) {
       const stored = onDisk(file);
@@ -187,11 +194,12 @@ describe("14–15. the accepted P11 records and the r4 catalog are unchanged and
     }
   });
 
-  it("the platform catalog is still r4 with two read_content entries, and still admissible", () => {
-    expect([PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label, PLATFORM_CATALOG.entries.length]).toEqual([4, "platform-catalog-r4", 2]);
-    expect(PLATFORM_CATALOG.entries.every((entry) => entry.capability === "read_content" && entry.contentKind === "post" && entry.source === "unknown")).toBe(true);
+  it("the platform catalog is r5: the two read_content entries plus the two read_interactions entries, all post / unknown, and admissible", () => {
+    expect([PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label, PLATFORM_CATALOG.entries.length]).toEqual([5, "platform-catalog-r5", 4]);
+    expect(PLATFORM_CATALOG.entries.map((entry) => entry.capability)).toEqual(["read_content", "read_content", "read_interactions", "read_interactions"]);
+    expect(PLATFORM_CATALOG.entries.every((entry) => entry.contentKind === "post" && entry.source === "unknown")).toBe(true);
     expect(PLATFORM_CATALOG.entries.some((entry) => entry.contentKind === ANY || entry.source === ANY)).toBe(false);
-    const records = [onDisk("facebook/read_content/20261023-01.json"), onDisk("instagram/read_content/20261023-01.json")];
+    const records = ["facebook/read_content/20261023-01.json", "instagram/read_content/20261023-01.json", "facebook/read_interactions/20261027-01.json", "instagram/read_interactions/20261026-01.json"].map(onDisk);
     expect(platformCatalogViolations(PLATFORM_CATALOG, { records, offlineImplementations: OFFLINE_IMPLEMENTED_OPERATIONS, implementedOperations: IMPLEMENTED_PLATFORM_OPERATIONS, authorizationSemantics: "RESOLVED" })).toEqual([]);
   });
 });

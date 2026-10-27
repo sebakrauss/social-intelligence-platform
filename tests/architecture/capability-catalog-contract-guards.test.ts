@@ -2,7 +2,9 @@
  * Step 7G-H5.5-P4-B — static guards around the PLATFORM capability catalog before its first validated entry:
  *   - the catalog literal stayed `platform` r2 with zero entries through P4-B…P5-C9-B; Step 7G-H5.5-P5-C9-C publishes r3
  *     with exactly one entry, scoped exactly as the first accepted record (Facebook read_content · post · unknown); Step
- *     7G-H5.5-P11-E publishes r4, adding exactly the accepted Instagram read_content · post · unknown entry;
+ *     7G-H5.5-P11-E publishes r4, adding exactly the accepted Instagram read_content · post · unknown entry; Step
+ *     7G-H5.5-P12-D2b publishes r5, adding exactly the Facebook and Instagram read_interactions · post · unknown entries,
+ *     each with the state and limitation its record's interaction kinds derive;
  *   - the entry contract (modules/capability/domain/catalog-contract.ts) is development/test-time only — no runtime code
  *     imports it, so the evaluator and every deployed plane are unchanged;
  *   - every evidence record on disk passes the schema and the secret scan, and the real catalog is admissible against
@@ -39,6 +41,13 @@ const FIRST_RECORD_ID = "api-validation:meta.facebook.read_content.20261023-01";
 const FIRST_RECORD_FILE = "design/phase-7g/meta-provider/api-validation/records/meta/facebook/read_content/20261023-01.json";
 const INSTAGRAM_RECORD_ID = "api-validation:meta.instagram.read_content.20261023-01";
 const INSTAGRAM_RECORD_FILE = "design/phase-7g/meta-provider/api-validation/records/meta/instagram/read_content/20261023-01.json";
+const FB_INTERACTIONS_RECORD_ID = "api-validation:meta.facebook.read_interactions.20261027-01";
+const FB_INTERACTIONS_RECORD_FILE = "design/phase-7g/meta-provider/api-validation/records/meta/facebook/read_interactions/20261027-01.json";
+const IG_INTERACTIONS_RECORD_ID = "api-validation:meta.instagram.read_interactions.20261026-01";
+const IG_INTERACTIONS_RECORD_FILE = "design/phase-7g/meta-provider/api-validation/records/meta/instagram/read_interactions/20261026-01.json";
+/** Every record on disk, in path order, and every evidence id in catalog / registration order. */
+const ALL_RECORD_FILES = [FIRST_RECORD_FILE, FB_INTERACTIONS_RECORD_FILE, INSTAGRAM_RECORD_FILE, IG_INTERACTIONS_RECORD_FILE];
+const ALL_EVIDENCE = [FIRST_RECORD_ID, INSTAGRAM_RECORD_ID, FB_INTERACTIONS_RECORD_ID, IG_INTERACTIONS_RECORD_ID];
 
 const CONTRACT = "modules/capability/domain/catalog-contract.ts";
 const EVIDENCE_DIR = "design/phase-7g/meta-provider/api-validation";
@@ -73,24 +82,35 @@ function metaOperationImplemented(operation: string, readPortCode: string, metaM
   return false;
 }
 
-describe("the platform catalog is r4 with exactly the two evidenced entries (P5-C9-C Facebook, P11-E Instagram)", () => {
-  it("the catalog literal is r4 with two entries: facebook and instagram · content_bearing · read_content · post · unknown, SUPPORTED, each with its own permissions and accepted record", () => {
-    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label]).toEqual(["platform", 4, "platform-catalog-r4"]);
+describe("the platform catalog is r5 with exactly the four evidenced entries (P5-C9-C, P11-E read_content; P12-D2b read_interactions)", () => {
+  it("the catalog literal is r5: the two r4 read_content entries unchanged + facebook and instagram · read_interactions · post · unknown, each with its own permissions and accepted record", () => {
+    expect([PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label]).toEqual(["platform", 5, "platform-catalog-r5"]);
     expect(PLATFORM_CATALOG.entries).toEqual([
       { platform: "facebook", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
         requiredPermissions: ["pages_read_engagement", "pages_show_list"], validation: "validated", evidence: FIRST_RECORD_ID },
       { platform: "instagram", assetClass: "content_bearing", capability: "read_content", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
         requiredPermissions: ["instagram_basic", "pages_read_engagement"], validation: "validated", evidence: INSTAGRAM_RECORD_ID },
+      { platform: "facebook", assetClass: "content_bearing", capability: "read_interactions", contentKind: "post", source: "unknown", state: "SUPPORTED", limitation: null,
+        requiredPermissions: ["pages_read_engagement", "pages_read_user_content", "pages_show_list"], validation: "validated", evidence: FB_INTERACTIONS_RECORD_ID },
+      { platform: "instagram", assetClass: "content_bearing", capability: "read_interactions", contentKind: "post", source: "unknown", state: "AVAILABLE_WITH_LIMITATION",
+        limitation: { code: "REPLIES_NOT_READ", value: null }, requiredPermissions: ["instagram_basic", "instagram_manage_comments", "pages_read_engagement"], validation: "validated",
+        evidence: IG_INTERACTIONS_RECORD_ID },
     ]);
-    // The literal names exactly the two evidence ids and no source other than "unknown" outside the simulator catalog.
+    // The literal names exactly the four evidence ids and no source other than "unknown" outside the simulator catalog.
     const code = codeOf("modules/capability/domain/catalog.ts");
     const platformLiteral = code.slice(code.indexOf("export const PLATFORM_CATALOG"), code.indexOf("const SIM_EVIDENCE"));
-    expect(platformLiteral.match(/api-validation:[a-z0-9._-]+/g)).toEqual([FIRST_RECORD_ID, INSTAGRAM_RECORD_ID]);
-    expect(platformLiteral).toMatch(/revision: 4,/);
+    expect(platformLiteral.match(/api-validation:[a-z0-9._-]+/g)).toEqual(ALL_EVIDENCE);
+    expect(platformLiteral).toMatch(/revision: 5,/);
     expect(platformLiteral).not.toMatch(/source: "(organic|paid|mixed|any)"|contentKind: "(?!post")|ANY|platform: "(?!facebook"|instagram")/);
-    // The Instagram capability requires its read-path permissions only (never pages_show_list).
+    // The Instagram capabilities require their read-path permissions only (never pages_show_list); the Facebook ones
+    // name it (the Page token derivation); only Facebook read_interactions names the user-content permission.
     expect(platformLiteral).toMatch(/requiredPermissions: Object\.freeze\(\["instagram_basic", "pages_read_engagement"\]\)/);
-    expect(platformLiteral.match(/pages_show_list/g)).toHaveLength(1);
+    expect(platformLiteral).toMatch(/requiredPermissions: Object\.freeze\(\["instagram_basic", "instagram_manage_comments", "pages_read_engagement"\]\)/);
+    expect(platformLiteral.match(/pages_show_list/g)).toHaveLength(2);
+    expect(platformLiteral.match(/pages_read_user_content/g)).toHaveLength(1);
+    expect(platformLiteral).not.toMatch(/business_management|public_profile/);
+    // The only limitation in the platform catalog is Instagram read_interactions' REPLIES_NOT_READ.
+    expect(PLATFORM_CATALOG.entries.filter((entry) => entry.limitation !== null).map((entry) => [entry.platform, entry.capability, entry.limitation?.code])).toEqual([["instagram", "read_interactions", "REPLIES_NOT_READ"]]);
   });
 
   it("the entry contract is development/test-time only: no runtime file imports it, and the module's public API does not export it", () => {
@@ -100,15 +120,15 @@ describe("the platform catalog is r4 with exactly the two evidenced entries (P5-
     expect(codeOf("modules/capability/index.ts")).not.toMatch(/catalog-contract/);
   });
 
-  it("the authorization semantics are RESOLVED (P4-C); TWO accepted records and TWO live registrations exist (Facebook P5-C9-B, Instagram P11-D); r4 publishes exactly one entry resting on each (P5-C9-C, P11-E)", () => {
+  it("the authorization semantics are RESOLVED (P4-C); FOUR accepted records and FOUR live registrations exist; r5 publishes exactly one entry resting on each", () => {
     expect(FIRST_VALIDATED_PLATFORM_ENTRY_BLOCKED_UNTIL_AUTHORIZATION_SEMANTICS_RESOLVED).toBe(false);
     expect(AUTHORIZATION_SEMANTICS).toBe("RESOLVED");
-    expect(recordFiles()).toEqual([FIRST_RECORD_FILE, INSTAGRAM_RECORD_FILE]);
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toHaveLength(2);
-    // Publication was its own gate per platform: r4 has two entries, each resting on its own record and registration.
-    expect(PLATFORM_CATALOG.revision).toBe(4);
-    expect(PLATFORM_CATALOG.entries.map((entry) => entry.evidence)).toEqual([FIRST_RECORD_ID, INSTAGRAM_RECORD_ID]);
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual([FIRST_RECORD_ID, INSTAGRAM_RECORD_ID]);
+    expect(recordFiles()).toEqual(ALL_RECORD_FILES);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS).toHaveLength(4);
+    // Every entry rests on its own record and its own live registration.
+    expect(PLATFORM_CATALOG.revision).toBe(5);
+    expect(PLATFORM_CATALOG.entries.map((entry) => entry.evidence)).toEqual(ALL_EVIDENCE);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual(ALL_EVIDENCE);
   });
 });
 
@@ -160,7 +180,13 @@ describe("evidence records and implementation evidence", () => {
       expect(record?.operations).toEqual(CAPABILITY_REQUIRED_OPERATIONS[op.capability]);
       expect([record?.provider, record?.platform, record?.capability]).toEqual([op.provider, op.platform, op.capability]);
     }
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual([FIRST_RECORD_ID, INSTAGRAM_RECORD_ID]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.map((op) => op.evidence)).toEqual(ALL_EVIDENCE);
+    // Step 7G-H5.5-P12-D2b: a LIVE read_interactions registration states exactly its record's kinds; no other one states any.
+    for (const op of IMPLEMENTED_PLATFORM_OPERATIONS) {
+      const record = records.find((r) => r.id === op.evidence);
+      if (op.capability === "read_interactions") expect(op.interactionKinds, op.evidence).toEqual(record?.interactionKinds);
+      else expect(Object.keys(op), op.evidence).not.toContain("interactionKinds");
+    }
   });
 
   it("P5-B (A, static): every OFFLINE registration names contract operations the adapter actually implements — the exact declared set", () => {
@@ -205,10 +231,10 @@ describe("evidence records and implementation evidence", () => {
       expect(`${record?.scenario ?? ""} ${record?.observedResult ?? ""}`).not.toMatch(/\borganic\b|\bpaid\b|minimal|CloudTrail|arn:|run_/i);
     });
 
-    it("the r4 catalog is admissible, and its Facebook entry IS the matching post / unknown entry (P5-C9-C, unchanged)", () => {
+    it("the r5 catalog is admissible, and its Facebook read_content entry IS the matching post / unknown entry (P5-C9-C, unchanged)", () => {
       expect(platformCatalogViolations(PLATFORM_CATALOG, today)).toEqual([]);
       expect(check()).toEqual([]);
-      expect(PLATFORM_CATALOG.entries.filter((e) => e.platform === "facebook")).toEqual([entry()]);
+      expect(PLATFORM_CATALOG.entries.filter((e) => e.platform === "facebook" && e.capability === "read_content")).toEqual([entry()]);
     });
 
     it("the record supports NO other source: organic, paid, mixed and any are refused (scope mismatch, fail closed)", () => {
@@ -222,8 +248,9 @@ describe("evidence records and implementation evidence", () => {
       expect(check({ platform: "instagram" })).not.toContain("IMPLEMENTATION_INCOMPLETE");
       expect(check({ assetClass: "ad_account" })).toContain("EVIDENCE_SCOPE_MISMATCH");
       for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content" && key !== "read_interactions")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
-      // Step 7G-H5.5-P12-B2: read_interactions now declares its set, so the refusal is the scope, the set and the pending publication rule.
-      expect(check({ capability: "read_interactions" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_OPERATIONS_INCOMPLETE", "IMPLEMENTATION_EVIDENCE_MISSING", "INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED"]));
+      // Step 7G-H5.5-P12-D2b: a read_content record never backs read_interactions — scope, operation set, the live
+      // registration (which rests on its own record) and the kinds rule (the record states no kinds) all refuse it.
+      expect(check({ capability: "read_interactions" })).toEqual(["EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_OPERATIONS_INCOMPLETE", "IMPLEMENTATION_EVIDENCE_MISMATCH", "INTERACTION_KINDS_STATE_MISMATCH", "INTERACTION_KINDS_NOT_IMPLEMENTED"]);
     });
 
     it("the record's permissions are exact: adding the user-content permission or dropping one is refused", () => {
@@ -262,9 +289,9 @@ describe("evidence records and implementation evidence", () => {
       expect(text).toMatch(/no Page token derived/);
     });
 
-    it("the Instagram post / unknown entry is admissible (A + B + record) and IS the r4 Instagram entry (P11-E)", () => {
+    it("the Instagram post / unknown entry is admissible (A + B + record) and IS the Instagram read_content entry (P11-E, unchanged in r5)", () => {
       expect(check()).toEqual([]);
-      expect(PLATFORM_CATALOG.entries.filter((e) => e.platform === "instagram")).toEqual([entry()]);
+      expect(PLATFORM_CATALOG.entries.filter((e) => e.platform === "instagram" && e.capability === "read_content")).toEqual([entry()]);
       expect(platformCatalogViolations(PLATFORM_CATALOG, today)).toEqual([]);
     });
 
@@ -283,8 +310,9 @@ describe("evidence records and implementation evidence", () => {
       expect(check({ evidence: FIRST_RECORD_ID })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "IMPLEMENTATION_EVIDENCE_MISMATCH"]));
       expect(check({ assetClass: "ad_account" })).toContain("EVIDENCE_SCOPE_MISMATCH");
       for (const capability of CAPABILITY_KEYS.filter((key) => key !== "read_content" && key !== "read_interactions")) expect(check({ capability }), capability).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "REQUIRED_OPERATIONS_UNDEFINED"]));
-      // Step 7G-H5.5-P12-B2: read_interactions now declares its set, so the refusal is the scope, the set and the pending publication rule.
-      expect(check({ capability: "read_interactions" })).toEqual(expect.arrayContaining(["EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_OPERATIONS_INCOMPLETE", "IMPLEMENTATION_EVIDENCE_MISSING", "INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED"]));
+      // Step 7G-H5.5-P12-D2b: a read_content record never backs read_interactions — scope, operation set, the live
+      // registration (which rests on its own record) and the kinds rule (the record states no kinds) all refuse it.
+      expect(check({ capability: "read_interactions" })).toEqual(["EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_OPERATIONS_INCOMPLETE", "IMPLEMENTATION_EVIDENCE_MISMATCH", "INTERACTION_KINDS_STATE_MISMATCH", "INTERACTION_KINDS_NOT_IMPLEMENTED"]);
     });
 
     it("the record's permissions are exact: adding pages_show_list or dropping one is refused; it cannot back UNSUPPORTED", () => {
@@ -311,7 +339,8 @@ describe("evidence records and implementation evidence", () => {
       for (const name of op.operations) expect(metaOperationImplemented(name, readPort, false), name).toBe(true);
     }
     expect(OFFLINE_IMPLEMENTED_OPERATIONS.filter((op) => op.capability === "read_interactions").map((op) => op.platform)).toEqual(["facebook", "instagram"]);
-    expect(IMPLEMENTED_PLATFORM_OPERATIONS.some((op) => op.capability === "read_interactions")).toBe(false);
+    // Step 7G-H5.5-P12-D2b: both are now LIVE-registered too, each on its own accepted record.
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.filter((op) => op.capability === "read_interactions").map((op) => [op.platform, op.evidence])).toEqual([["facebook", FB_INTERACTIONS_RECORD_ID], ["instagram", IG_INTERACTIONS_RECORD_ID]]);
     expect(existsSync(path.join(REPOSITORY_ROOT, "integrations/providers/meta/mutation-port.ts"))).toBe(false);
     for (const op of MUTATION_OPERATIONS) expect(metaOperationImplemented(op, readPort, false)).toBe(false);
     expect(metaOperationImplemented("notAnOperation", readPort, true)).toBe(false);
@@ -321,7 +350,7 @@ describe("evidence records and implementation evidence", () => {
 describe("documents state the contract", () => {
   it("P12-B2: both READMEs state the read_interactions contract — kinds field, offline-only registration, the pending publication rule, the separate diagnostic", () => {
     const evidence = raw(`${EVIDENCE_DIR}/README.md`);
-    for (const phrase of ["| `interactionKinds` | `read_interactions` ONLY", "never `any`, never reply-only", "`INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED`", "a list-only observation, an\noffline implementation or a provider feature never adds a kind"]) expect(evidence, phrase).toContain(phrase);
+    for (const phrase of ["| `interactionKinds` | `read_interactions` ONLY", "never `any`, never reply-only", "until Step 7G-H5.5-P12-D2b every positive\n`read_interactions` entry was refused (`INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED`)", "a list-only observation, an\noffline implementation or a provider feature never adds a kind"]) expect(evidence, phrase).toContain(phrase);
     const meta = raw(META_README);
     const section = meta.slice(meta.indexOf("## read_interactions validation contract and diagnostic (Step 7G-H5.5-P12-B2)"));
     expect(section.length).toBeGreaterThan(0);
@@ -390,10 +419,11 @@ describe("P5-B documents: Facebook read_content implemented offline, validated l
     const section = doc.slice(doc.indexOf("## Facebook Page read_content (Step 7G-H5.5-P5-B)"), doc.indexOf("## Facebook read_content LIVE evidence accepted (Step 7G-H5.5-P5-C9-B)"));
     expect(section.length).toBeGreaterThan(0);
     expect(section).not.toMatch(/\d{8,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|proj_|arn:aws|dpl_|run_[a-z0-9]{6,}|https?:\/\//);
-    // The C9-B section: no provider/account/run/AWS identifiers; the only digit run is the evidence date; URLs only Meta-owned.
+    // From the C9-B section to the end: no provider/account/run/AWS identifiers; the only digit runs are accepted evidence
+    // dates (read_content 20261023; read_interactions 20261026 and 20261027, Step 7G-H5.5-P12-D2b); URLs only Meta-owned.
     const accepted = doc.slice(doc.indexOf("## Facebook read_content LIVE evidence accepted (Step 7G-H5.5-P5-C9-B)"));
     expect(accepted).not.toMatch(/\d{9,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|proj_|arn:aws|dpl_|run_[a-z0-9]{6,}|worker_/);
-    expect([...accepted.matchAll(/\d{8,}/g)].map((m) => m[0]).every((d) => d === "20261023")).toBe(true);
+    expect([...accepted.matchAll(/\d{8,}/g)].map((m) => m[0]).every((d) => ["20261023", "20261026", "20261027"].includes(d))).toBe(true);
     for (const url of accepted.match(/https?:\/\/[^\s`)]+/g) ?? []) expect(url, url).toMatch(/^https:\/\/(developers\.facebook\.com|www\.postman\.com\/meta\/)/);
   });
 
@@ -402,7 +432,7 @@ describe("P5-B documents: Facebook read_content implemented offline, validated l
     expect(doc).toContain("## Facebook read_content: first accepted record (Step 7G-H5.5-P5-C9-B)");
     expect(doc).toContain("`api-validation:meta.facebook.read_content.20261023-01`");
     expect(doc).toContain("`source` `unknown`");
-    expect(recordFiles()).toEqual([FIRST_RECORD_FILE, INSTAGRAM_RECORD_FILE]);
+    expect(recordFiles()).toEqual(ALL_RECORD_FILES);
   });
 
   it("the READMEs record the P11-D Instagram acceptance: exact scope, no other kind or source, permissions semantics, no catalog change", () => {
@@ -463,6 +493,51 @@ describe("P5-B documents: Facebook read_content implemented offline, validated l
       "future H6 caller work",
       "The runtime does not use r3 yet",
     ]) expect(section, phrase).toContain(phrase);
+  });
+});
+
+describe("P12-D2b documents and isolation: r5 read_interactions", () => {
+  it("the evidence README states the kinds → state rule, the two new violations, the implemented kinds and both accepted records", () => {
+    const doc = raw(`${EVIDENCE_DIR}/README.md`);
+    const section = doc.slice(doc.indexOf("## read_interactions kinds → state rule (Step 7G-H5.5-P12-D2b)"));
+    expect(section.length).toBeGreaterThan(0);
+    for (const phrase of [
+      "| `[\"comment\", \"reply\"]` (every canonical kind) | `SUPPORTED` | none |",
+      "| `[\"comment\"]` (every kind but `reply`) | `AVAILABLE_WITH_LIMITATION` | `REPLIES_NOT_READ` |",
+      "| anything else | refused: no rule | — |",
+      "`INTERACTION_KINDS_STATE_MISMATCH`", "`INTERACTION_KINDS_NOT_IMPLEMENTED`", "Facebook `comment`, `reply`;\nInstagram `comment`",
+      "never UNKNOWN for the whole capability and never\nUNSUPPORTED", FB_INTERACTIONS_RECORD_ID, IG_INTERACTIONS_RECORD_ID, "accepted by TL decision as authoritative for r5",
+    ]) expect(section, phrase).toContain(phrase);
+  });
+
+  it("the Meta README records r5: both entries, the rule, Instagram replies not unsupported, no broadening, Re-check pending, runtime not on r5", () => {
+    const meta = raw(META_README);
+    const section = meta.slice(meta.indexOf("## Platform catalog r5: read_interactions published (Step 7G-H5.5-P12-D2b)"));
+    expect(section.length).toBeGreaterThan(0);
+    for (const phrase of [
+      "| state · limitation | `SUPPORTED` · none | `AVAILABLE_WITH_LIMITATION` · `REPLIES_NOT_READ` |",
+      "| requiredPermissions | `pages_read_engagement`, `pages_read_user_content`, `pages_show_list` | `instagram_basic`, `instagram_manage_comments`, `pages_read_engagement` |",
+      "**Instagram replies are not unsupported.**", "never a catalog dimension", "there is no explicit UNKNOWN entry",
+      "`PROFILE_STALE`", "The runtime does not use r5 yet", "No migration",
+    ]) expect(section, phrase).toContain(phrase);
+    // Sanitized: no provider, account, run or AWS identifiers; the only digit runs are the two evidence dates.
+    expect(section).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|proj_|arn:aws|dpl_|run_[a-z0-9]{6,}|https?:\/\//);
+    expect([...section.matchAll(/\d{8,}/g)].map((m) => m[0]).every((d) => d === "20261027" || d === "20261026")).toBe(true);
+  });
+
+  it("no runtime code reads the evidence records or names an evidence-only symbol (records and the contract are development/test-time only)", () => {
+    const runtime = sourceFiles(["app", "ui", "server", "domain", "modules", "mutations", "integrations", "ai", "jobs", "platform", "db", "tools"]).filter((file) => file !== CONTRACT);
+    expect(runtime.filter((file) => /api-validation\/records|readInteractionsPublication|INTERACTION_KINDS_STATE_MISMATCH|INTERACTION_KINDS_NOT_IMPLEMENTED|IMPLEMENTED_PLATFORM_OPERATIONS/.test(codeOf(file)))).toEqual([]);
+  });
+
+  it("implemented kinds are platform-bounded in the contract: exactly Facebook comment + reply and Instagram comment, declared once each", () => {
+    const contract = codeOf(CONTRACT);
+    expect(contract).toMatch(/const FACEBOOK_IMPLEMENTED_INTERACTION_KINDS: readonly EvidenceInteractionKind\[\] = Object\.freeze\(\["comment", "reply"\] as const\);/);
+    expect(contract).toMatch(/const INSTAGRAM_IMPLEMENTED_INTERACTION_KINDS: readonly EvidenceInteractionKind\[\] = Object\.freeze\(\["comment"\] as const\);/);
+    expect(contract).not.toMatch(/TIKTOK_IMPLEMENTED_INTERACTION_KINDS|platform: "tiktok"/);
+    expect(OFFLINE_IMPLEMENTED_OPERATIONS.filter((op) => op.interactionKinds !== undefined).map((op) => [op.platform, op.capability, op.interactionKinds])).toEqual([
+      ["facebook", "read_interactions", ["comment", "reply"]], ["instagram", "read_interactions", ["comment"]],
+    ]);
   });
 });
 

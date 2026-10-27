@@ -44,12 +44,12 @@ describe("migration 0015 mirrors the application vocabulary exactly", () => {
 });
 
 describe("NOT_AUTHORIZED is profile-only", () => {
-  it("the catalog vocabulary excludes it; no catalog entry in code carries it; only published entries (P5-C9-C, P11-E) moved the platform revision", () => {
+  it("the catalog vocabulary excludes it; no catalog entry in code carries it; only published entries (P5-C9-C, P11-E, P12-D2b) moved the platform revision", () => {
     expect(CATALOG_STATES).not.toContain("NOT_AUTHORIZED");
     expect(PROFILE_STATES).toContain("NOT_AUTHORIZED");
     expect(codeOf("modules/capability/domain/catalog.ts")).not.toMatch(/NOT_AUTHORIZED/);
     expect([...PLATFORM_CATALOG.entries, ...SIMULATOR_CATALOG.entries].filter((entry) => !(CATALOG_STATES as readonly string[]).includes(entry.state))).toEqual([]);
-    expect([PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label, SIMULATOR_CATALOG.revision, SIMULATOR_CATALOG.label, PLATFORM_CATALOG.entries.length]).toEqual([4, "platform-catalog-r4", 2, "simulator-catalog-r2", 2]);
+    expect([PLATFORM_CATALOG.revision, PLATFORM_CATALOG.label, SIMULATOR_CATALOG.revision, SIMULATOR_CATALOG.label, PLATFORM_CATALOG.entries.length]).toEqual([5, "platform-catalog-r5", 2, "simulator-catalog-r2", 4]);
   });
 
   it("the evaluator writes NOT_AUTHORIZED only for the two authorization reasons, and UNSUPPORTED only for non-support", () => {

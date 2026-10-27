@@ -1,0 +1,21 @@
+{
+  "id": "api-validation:meta.instagram.read_interactions.20261026-01",
+  "provider": "meta",
+  "platform": "instagram",
+  "assetClass": "content_bearing",
+  "accountKind": "instagram_professional_account",
+  "capability": "read_interactions",
+  "contentKind": "post",
+  "source": "unknown",
+  "operations": ["getInteraction", "listInteractions"],
+  "validatedOn": "2026-10-26",
+  "sourceRevision": "6a29b0578b49704063f17eefb3ecd92051a7baa0",
+  "requiredPermissions": ["instagram_basic", "instagram_manage_comments", "pages_read_engagement"],
+  "scenario": "One controlled LIVE execution of the operator-only INTEGRATION read_interactions diagnostic against a connected Instagram professional account carrying a recent Feed publication with one controlled top-level comment, using the deployed source revision, a single task attempt, a 30-day window and the first provider page of each list. The connection held instagram_basic, instagram_manage_comments and pages_read_engagement. listContent was used only to find a target and is not part of this evidence. A bounded scan of at most three in-window content items selected the first candidate with interactions; listInteractions read one page of that media's comments edge with the User access token directly (no Page token derived); getInteraction re-read the comment selected from that same listing. Replies are not read by this slice and were not attempted.",
+  "observedResult": "One candidate inspected and selected, content kind post with reported source unknown, owned by the managed account. listInteractions succeeded: one in-window top-level comment on the selected media, continuation end, author a user, visible. getInteraction succeeded: same interaction ref, same content (its reported media is the selected media), same kind, same author ref, no parent. Three Meta GET requests inferred from the executed stages, within the bound of five. No authorization, credential, rate-limit, provider or correlation failure. No product profile, outbox or catalog change.",
+  "polarity": "positive",
+  "negativeBasis": null,
+  "reviewer": "TL",
+  "status": "accepted",
+  "interactionKinds": ["comment"]
+}

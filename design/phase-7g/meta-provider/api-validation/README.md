@@ -17,7 +17,7 @@ no accepted record and no registered implementation evidence, no platform entry 
 
 | Entry state | Requires |
 |---|---|
-| SUPPORTED / AVAILABLE_WITH_LIMITATION | `validation: "validated"`; `evidence` = the id of an **accepted, positive** record for the exact (provider, platform, asset class, capability, content kind, source); a **non-empty** `requiredPermissions` set, each permission explicitly named, equal to the record's; the capability's **declared exact operation set** (`CAPABILITY_REQUIRED_OPERATIONS`; only `read_content` = `getContent` + `listContent` is declared) — (A) implemented: an `OFFLINE_IMPLEMENTED_OPERATIONS` registration of exactly that set, and (B) validated live: the record's `operations` are exactly that set and an `IMPLEMENTED_PLATFORM_OPERATIONS` registration of exactly that set rests on the same record; a named platform (never `any`); a limitation exactly when the state is AVAILABLE_WITH_LIMITATION |
+| SUPPORTED / AVAILABLE_WITH_LIMITATION | `validation: "validated"`; `evidence` = the id of an **accepted, positive** record for the exact (provider, platform, asset class, capability, content kind, source); a **non-empty** `requiredPermissions` set, each permission explicitly named, equal to the record's; the capability's **declared exact operation set** (`CAPABILITY_REQUIRED_OPERATIONS`; `read_content` = `getContent` + `listContent`, `read_interactions` = `getInteraction` + `listInteractions`); for `read_interactions`, the state and limitation its record's kinds derive (below) — (A) implemented: an `OFFLINE_IMPLEMENTED_OPERATIONS` registration of exactly that set, and (B) validated live: the record's `operations` are exactly that set and an `IMPLEMENTED_PLATFORM_OPERATIONS` registration of exactly that set rests on the same record; a named platform (never `any`); a limitation exactly when the state is AVAILABLE_WITH_LIMITATION |
 | UNSUPPORTED | `validation: "validated"`; `evidence` = the id of an **accepted, authoritative-negative** record of the exact scope, whose basis is `provider_documentation` or `provider_non_eligibility_observation`; **no** required permissions; no limitation |
 | NOT_AUTHORIZED | never an entry: it is a profile-only state (an account's missing authorization) |
 | UNKNOWN_NOT_VALIDATED | never an entry: it is the catalog default |
@@ -110,7 +110,38 @@ content ref, interaction kind, author ref and parent ref; a comment's parent is 
 stable). `["comment"]` and `["comment", "reply"]` are the only admissible values; a list-only observation, an
 offline implementation or a provider feature never adds a kind.
 
-How a record's kinds decide an entry's state (SUPPORTED, or a limitation for kinds not proven) is a LATER gate's rule.
-Until it exists, every positive `read_interactions` entry is refused (`INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED`),
-whatever its record proves.
+How a record's kinds decide an entry's state was a LATER gate's rule; until Step 7G-H5.5-P12-D2b every positive
+`read_interactions` entry was refused (`INTERACTION_KINDS_PUBLICATION_RULE_UNDEFINED`), whatever its record proved.
+
+## read_interactions kinds → state rule (Step 7G-H5.5-P12-D2b)
+
+Pure (`readInteractionsPublication`) over a record's kinds, never normalized and never inferred:
+
+| Record kinds | Entry state | Limitation |
+|---|---|---|
+| `["comment", "reply"]` (every canonical kind) | `SUPPORTED` | none |
+| `["comment"]` (every kind but `reply`) | `AVAILABLE_WITH_LIMITATION` | `REPLIES_NOT_READ` |
+| anything else | refused: no rule | — |
+
+An entry whose state or limitation differs is refused (`INTERACTION_KINDS_STATE_MISMATCH`). A record may state only the
+kinds its platform's adapter implements, as declared on the OFFLINE registration — Facebook `comment`, `reply`;
+Instagram `comment` — (`INTERACTION_KINDS_NOT_IMPLEMENTED`), and the LIVE registration states exactly its record's kinds.
+A kind not validated is a limitation of an available capability, never UNKNOWN for the whole capability and never
+UNSUPPORTED (which still needs authoritative negative evidence).
+
+## Facebook and Instagram read_interactions: accepted records (Step 7G-H5.5-P12-D2b)
+
+- `records/meta/facebook/read_interactions/20261027-01.json` — `api-validation:meta.facebook.read_interactions.20261027-01`,
+  `accepted`, `positive`: `facebook_page`, `post` / `unknown`, `operations` `["getInteraction", "listInteractions"]`,
+  `interactionKinds` `["comment", "reply"]`, `requiredPermissions`
+  `["pages_read_engagement", "pages_read_user_content", "pages_show_list"]`, the P12-C10 run's source revision.
+- `records/meta/instagram/read_interactions/20261026-01.json` — `api-validation:meta.instagram.read_interactions.20261026-01`,
+  `accepted`, `positive`: `instagram_professional_account`, `post` / `unknown`, the same operations, `interactionKinds`
+  `["comment"]`, `requiredPermissions` `["instagram_basic", "instagram_manage_comments", "pages_read_engagement"]`, the
+  P12-C6 run's source revision (accepted by TL decision as authoritative for r5).
+
+Both carry no run, account, comment or provider identifier; `listContent` was only used to find a target and is not
+part of either record. `requiredPermissions` are the known requirements of the validated read path, never the granted
+set and never a minimality claim. Each is registered in `IMPLEMENTED_PLATFORM_OPERATIONS` and backs exactly one r5
+entry of its scope.
 

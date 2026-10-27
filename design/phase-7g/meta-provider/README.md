@@ -1020,7 +1020,8 @@ the 64 KiB body bound (an oversized page fails closed).
 Facebook and Instagram adapters (P12-B1) are registered OFFLINE only; the evidence record gains `interactionKinds`
 (api-validation README › read_interactions evidence semantics). No LIVE registration, record, catalog entry, limitation
 code or migration: the platform catalog stays r4 with its two read_content entries, and every Meta `read_interactions`
-scope stays UNKNOWN_NOT_VALIDATED. A positive `read_interactions` entry is refused until the kinds → state rule exists.
+scope stays UNKNOWN_NOT_VALIDATED. A positive `read_interactions` entry is refused until the kinds → state rule exists
+(defined by Step 7G-H5.5-P12-D2b; see Platform catalog r5 below).
 
 **Diagnostic.** A separate operator-only INTEGRATION task, `integration.read_interactions_validation`
 (jobs/integration-read-interactions-validation.ts; never an extension of `integration.read_content_validation`).
@@ -1065,4 +1066,48 @@ with `["comment"]`, never a reply. Failures are closed classes: `PERMISSION_MISS
 **Output.** Closed values, counts and booleans only — platform, account kind, the selected content's kind and reported
 source, item and kind counts, author-role and visibility histograms, per-pair correlations, stages and the expected
 Meta GETs. Never a text, caption, name, handle, provider id, ref, cursor, raw reference, token or raw response.
+
+## Platform catalog r5: read_interactions published (Step 7G-H5.5-P12-D2b)
+
+**What changed (code only).** Two accepted LIVE records, two LIVE registrations, the kinds → state rule and
+`PLATFORM_CATALOG` **r5** (`platform-catalog-r5`) = r4's two `read_content` entries, unchanged, plus exactly two
+`read_interactions` entries. No migration (0016, applied in Step 7G-H5.5-P12-D2a, already admits `REPLIES_NOT_READ`), no
+provider or evaluator change, no release, no Re-check.
+
+| Field | Facebook entry | Instagram entry |
+|---|---|---|
+| platform · assetClass | `facebook` · `content_bearing` | `instagram` · `content_bearing` |
+| capability · contentKind · source | `read_interactions` · `post` · `unknown` | `read_interactions` · `post` · `unknown` |
+| interaction kinds proven LIVE | `comment`, `reply` (P12-C10) | `comment` (P12-C6) |
+| state · limitation | `SUPPORTED` · none | `AVAILABLE_WITH_LIMITATION` · `REPLIES_NOT_READ` |
+| requiredPermissions | `pages_read_engagement`, `pages_read_user_content`, `pages_show_list` | `instagram_basic`, `instagram_manage_comments`, `pages_read_engagement` |
+| evidence | `api-validation:meta.facebook.read_interactions.20261027-01` | `api-validation:meta.instagram.read_interactions.20261026-01` |
+
+**The kinds → state rule** (`readInteractionsPublication`, catalog-contract.ts; pure). Interaction kinds are evidence
+detail on the record, never a catalog dimension: the scope stays platform · asset class · capability · content kind ·
+source. Over a record's canonical kinds: every canonical kind (`comment`, `reply`) → `SUPPORTED`; every kind except
+`reply` → `AVAILABLE_WITH_LIMITATION` with `REPLIES_NOT_READ` (comments are read, replies are not); anything else (empty,
+reply-only, duplicates, non-canonical order, an unknown kind, `any`) has no rule and is refused — nothing is normalized
+or inferred. An entry's state and limitation must equal that derivation (`INTERACTION_KINDS_STATE_MISMATCH`). Each
+OFFLINE registration declares the kinds its adapter implements — Facebook `comment`, `reply`; Instagram `comment` only —
+and a record may state only those (`INTERACTION_KINDS_NOT_IMPLEMENTED`); the LIVE registration states exactly its
+record's kinds.
+
+**Instagram replies are not unsupported.** UNSUPPORTED still needs an accepted authoritative-negative record of the
+exact scope; none exists. Wrenkind's Instagram slice simply does not read replies, so reply coverage there is "not
+available", never zero. The Instagram record rests on the P12-C6 run at its own source revision (accepted by TL
+decision: the later listed-provenance change only added admission before any provider access and kept the `media.id`
+correlation).
+
+**No broadening.** `reel`, `video`, `carousel`, every other source (organic, paid, mixed, any) and generic `any` / `any`
+read_interactions stay UNKNOWN_NOT_VALIDATED on both platforms; there is no explicit UNKNOWN entry.
+
+**Profiles (expected semantics, nothing executed).** A fresh r5 profile has 12 rows on either platform (10 `any` /
+`any` rows plus the two exact `post` · `unknown` rows). With every required permission: Facebook read_interactions
+SUPPORTED / CATALOG_SUPPORTED (availability AVAILABLE); Instagram AVAILABLE_WITH_LIMITATION / CATALOG_LIMITATION /
+REPLIES_NOT_READ (availability AVAILABLE_WITH_LIMITATION, the limitation also kept while the connection is temporarily
+unavailable). Missing any required permission → NOT_AUTHORIZED / ACCOUNT_PERMISSION_MISSING, never UNSUPPORTED. Once r5
+is deployed, the stored r4 profiles are stale by revision (`PROFILE_STALE`) until an explicit human Re-check.
+
+**Not claimed.** The runtime does not use r5 yet: no deploy, no Trigger release, no profile refreshed, no Re-check run.
 

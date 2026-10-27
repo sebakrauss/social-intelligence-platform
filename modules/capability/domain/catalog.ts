@@ -6,10 +6,12 @@
  *
  * Two catalogs exist and are selected by the CONNECTION PROVIDER, never by platform:
  *
- *   "platform"   Facebook / Instagram / TikTok through real adapters (meta, tiktok). It holds exactly TWO entries (r4):
- *                Facebook and Instagram read_content for content kind `post` and source `unknown`, each backed by its
- *                own accepted LIVE record (api-validation:meta.facebook.read_content.20261023-01,
- *                api-validation:meta.instagram.read_content.20261023-01). Every other scope has passed no real-provider
+ *   "platform"   Facebook / Instagram / TikTok through real adapters (meta, tiktok). It holds exactly FOUR entries (r5):
+ *                Facebook and Instagram read_content, and Facebook and Instagram read_interactions, each for content
+ *                kind `post` and source `unknown` and each backed by its own accepted LIVE record
+ *                (api-validation:meta.{facebook,instagram}.read_content.20261023-01,
+ *                api-validation:meta.facebook.read_interactions.20261027-01,
+ *                api-validation:meta.instagram.read_interactions.20261026-01). Every other scope has passed no real-provider
  *                API validation (PD OQ-18, OQ-19, OQ-27 VALIDATE) and resolves to UNKNOWN_NOT_VALIDATED. An entry may
  *                be added only with validation "validated" and an "api-validation:" evidence reference from the
  *                project's validation process (guard-tested). An adapter exposing a method, or a documented provider
@@ -27,7 +29,8 @@
  * reconciliation requests its re-evaluation. Revision 3 of the platform catalog (Step 7G-H5.5-P5-C9-C) adds its first
  * entry, so every platform profile evaluated at r2 is stale by revision in the same way until an explicit Re-check.
  * Revision 4 (Step 7G-H5.5-P11-E) adds the first Instagram entry; every platform profile evaluated at r3 is stale in
- * the same way until an explicit Re-check.
+ * the same way until an explicit Re-check. Revision 5 (Step 7G-H5.5-P12-D2b) adds the two read_interactions entries;
+ * every platform profile evaluated at r4 is stale in the same way until an explicit Re-check.
  *
  * The PROFILE state vocabulary is not part of a revision's content: Step 7G-H5.5-P4-C added NOT_AUTHORIZED (a missing
  * authorization, previously stored as UNSUPPORTED) without changing any entry, capability key or scope, so neither
@@ -89,11 +92,20 @@ export interface CapabilityCatalog {
  * content_bearing · read_content · `post` · `unknown`, requiring `instagram_basic` and `pages_read_engagement` (the
  * known requirements of the validated read path — `pages_show_list` is not one). Video, reel, carousel, every other
  * source and any generic Instagram scope stay UNKNOWN. The Facebook entry is unchanged.
+ *
+ * r5 (Step 7G-H5.5-P12-D2b; design P12-D1) adds exactly two read_interactions entries, each scoped EXACTLY as its
+ * accepted record (post · unknown) and with the state and limitation the record's interaction kinds derive
+ * (catalog-contract.ts › readInteractionsPublication): Facebook — comment + reply proven (P12-C10) → SUPPORTED, requiring
+ * `pages_read_engagement`, `pages_read_user_content` and `pages_show_list`; Instagram — comment proven (P12-C6), replies
+ * not read by the adapter → AVAILABLE_WITH_LIMITATION / REPLIES_NOT_READ, requiring `instagram_basic`,
+ * `instagram_manage_comments` and `pages_read_engagement`. Instagram replies are NOT unsupported (no negative evidence):
+ * Wrenkind does not read them. Interaction kinds are not a scope dimension; every other content kind, source and the
+ * generic any/any read_interactions scope stay UNKNOWN. The two read_content entries are unchanged.
  */
 export const PLATFORM_CATALOG: CapabilityCatalog = Object.freeze({
   id: "platform",
-  revision: 4,
-  label: "platform-catalog-r4",
+  revision: 5,
+  label: "platform-catalog-r5",
   entries: Object.freeze([
     Object.freeze({
       platform: "facebook",
@@ -118,6 +130,30 @@ export const PLATFORM_CATALOG: CapabilityCatalog = Object.freeze({
       requiredPermissions: Object.freeze(["instagram_basic", "pages_read_engagement"]),
       validation: "validated",
       evidence: "api-validation:meta.instagram.read_content.20261023-01",
+    }),
+    Object.freeze({
+      platform: "facebook",
+      assetClass: "content_bearing",
+      capability: "read_interactions",
+      contentKind: "post",
+      source: "unknown",
+      state: "SUPPORTED",
+      limitation: null,
+      requiredPermissions: Object.freeze(["pages_read_engagement", "pages_read_user_content", "pages_show_list"]),
+      validation: "validated",
+      evidence: "api-validation:meta.facebook.read_interactions.20261027-01",
+    }),
+    Object.freeze({
+      platform: "instagram",
+      assetClass: "content_bearing",
+      capability: "read_interactions",
+      contentKind: "post",
+      source: "unknown",
+      state: "AVAILABLE_WITH_LIMITATION",
+      limitation: Object.freeze({ code: "REPLIES_NOT_READ", value: null }),
+      requiredPermissions: Object.freeze(["instagram_basic", "instagram_manage_comments", "pages_read_engagement"]),
+      validation: "validated",
+      evidence: "api-validation:meta.instagram.read_interactions.20261026-01",
     }),
   ]),
 });

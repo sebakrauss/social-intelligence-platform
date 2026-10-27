@@ -1,0 +1,21 @@
+{
+  "id": "api-validation:meta.facebook.read_interactions.20261027-01",
+  "provider": "meta",
+  "platform": "facebook",
+  "assetClass": "content_bearing",
+  "accountKind": "facebook_page",
+  "capability": "read_interactions",
+  "contentKind": "post",
+  "source": "unknown",
+  "operations": ["getInteraction", "listInteractions"],
+  "validatedOn": "2026-10-27",
+  "sourceRevision": "e972010918aebcb22c552d809b82830084b7bd3b",
+  "requiredPermissions": ["pages_read_engagement", "pages_read_user_content", "pages_show_list"],
+  "scenario": "One controlled LIVE execution of the operator-only INTEGRATION read_interactions diagnostic against a connected Facebook Page carrying a recent Page post with one controlled top-level comment and one Page reply to it, using the deployed source revision, a single task attempt, a 30-day window and the first provider page of each list. The connection held pages_read_engagement, pages_read_user_content and pages_show_list. listContent was used only to find a target and is not part of this evidence. A bounded scan of at most three in-window content items selected the first candidate with interactions; listInteractions derived a Page access token per operation and read one page of that post's comments edge in stream mode; getInteraction re-read the exact listed comment and the exact listed reply through their listed provenance (the listing edge is the content authority; the node's object field is optional corroboration).",
+  "observedResult": "Two candidates inspected, the second selected, content kind post with reported source unknown, owned by the managed Page. listInteractions succeeded: two in-window interactions on the selected post, one comment and one reply whose parent is that comment, continuation end, authors one account identity and one user, both visible. getInteraction succeeded for both: same interaction ref, same content (the listed post), same kind, same author ref and same parent ref; content authority expected content for both re-reads. Ten Meta GET requests inferred from the executed stages, within the bound of twelve. No authorization, credential, rate-limit, provider or correlation failure. No product profile, outbox or catalog change.",
+  "polarity": "positive",
+  "negativeBasis": null,
+  "reviewer": "TL",
+  "status": "accepted",
+  "interactionKinds": ["comment", "reply"]
+}

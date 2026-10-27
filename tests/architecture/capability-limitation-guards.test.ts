@@ -2,8 +2,8 @@
  * Step 7G-H5.5-P12-D2a — static guards around the REPLIES_NOT_READ limitation:
  *   - migration 0016 widens the limitation-code CHECK to exactly the application's LIMITATION_CODES, keeping every code
  *     0009 admitted, and changes nothing else (no data, column, index, policy, grant; no other constraint);
- *   - the vocabulary gains exactly one code and no state; no catalog in code names it yet (catalog r5 is a later gate),
- *     so neither catalog revision moved.
+ *   - the vocabulary gains exactly one code and no state; until Step 7G-H5.5-P12-D2b no catalog named it, and catalog r5
+ *     names it exactly once: Instagram read_interactions · post · unknown (comments read, replies not).
  * Behavior on PostgreSQL is proven in tests/db/suites/capability.ts.
  */
 import { readFileSync } from "node:fs";
@@ -38,16 +38,17 @@ describe("migration 0016 mirrors the limitation vocabulary exactly", () => {
   });
 });
 
-describe("REPLIES_NOT_READ: one code, no state, not yet in any catalog", () => {
+describe("REPLIES_NOT_READ: one code, no state, named once by catalog r5", () => {
   it("the vocabulary gains exactly REPLIES_NOT_READ; the states are unchanged", () => {
     expect(LIMITATION_CODES).toEqual(["HISTORY_DEPTH_LIMITED", "HIDE_VISIBLE_TO_AUTHOR", "REPLIES_NOT_READ"]);
     expect(CATALOG_STATES).toEqual(["SUPPORTED", "AVAILABLE_WITH_LIMITATION", "UNSUPPORTED", "UNKNOWN_NOT_VALIDATED"]);
     expect(PROFILE_STATES).toEqual(["SUPPORTED", "AVAILABLE_WITH_LIMITATION", "UNSUPPORTED", "NOT_AUTHORIZED", "UNKNOWN_NOT_VALIDATED"]);
   });
 
-  it("no catalog names it and neither catalog revision moved (catalog r5 is a later gate)", () => {
-    expect(codeOf("modules/capability/domain/catalog.ts")).not.toMatch(/REPLIES_NOT_READ/);
-    expect([...PLATFORM_CATALOG.entries, ...SIMULATOR_CATALOG.entries].filter((entry) => entry.limitation?.code === "REPLIES_NOT_READ")).toEqual([]);
-    expect([PLATFORM_CATALOG.revision, PLATFORM_CATALOG.entries.length, SIMULATOR_CATALOG.revision]).toEqual([4, 2, 2]);
+  it("only the r5 Instagram read_interactions entry names it; the simulator catalog never does and stays r2", () => {
+    expect(codeOf("modules/capability/domain/catalog.ts").match(/code: "REPLIES_NOT_READ"/g)).toHaveLength(1);
+    expect([...PLATFORM_CATALOG.entries, ...SIMULATOR_CATALOG.entries].filter((entry) => entry.limitation?.code === "REPLIES_NOT_READ").map((entry) => [entry.platform, entry.capability, entry.contentKind, entry.source, entry.state, entry.limitation?.value]))
+      .toEqual([["instagram", "read_interactions", "post", "unknown", "AVAILABLE_WITH_LIMITATION", null]]);
+    expect([PLATFORM_CATALOG.revision, PLATFORM_CATALOG.entries.length, SIMULATOR_CATALOG.revision]).toEqual([5, 4, 2]);
   });
 });

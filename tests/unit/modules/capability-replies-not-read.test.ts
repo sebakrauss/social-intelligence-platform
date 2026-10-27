@@ -1,8 +1,9 @@
 /**
  * Step 7G-H5.5-P12-D2a — the REPLIES_NOT_READ limitation code in the capability domain: it is one more closed
  * limitation of an AVAILABLE_WITH_LIMITATION row, kept through evaluation and the availability overlay exactly like
- * the existing codes, never a state, never non-support. A synthetic catalog exercises it (no real catalog names it yet:
- * catalog r5 is a later gate). The PostgreSQL CHECK (0016) is proven in tests/db/suites/capability.ts.
+ * the existing codes, never a state, never non-support. A synthetic catalog exercises it; the real catalog r5 (Step
+ * 7G-H5.5-P12-D2b) names it once, on Instagram read_interactions. The PostgreSQL CHECK (0016) is proven in
+ * tests/db/suites/capability.ts.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -69,7 +70,8 @@ describe("REPLIES_NOT_READ is a limitation, not a state", () => {
     }
   });
 
-  it("neither real catalog names it yet (catalog r5 is a later gate)", () => {
-    expect([...PLATFORM_CATALOG.entries, ...SIMULATOR_CATALOG.entries].some((entry) => entry.limitation?.code === "REPLIES_NOT_READ")).toBe(false);
+  it("of the real catalogs, only platform r5's Instagram read_interactions entry names it (P12-D2b); the simulator never does", () => {
+    expect(PLATFORM_CATALOG.entries.filter((entry) => entry.limitation?.code === "REPLIES_NOT_READ").map((entry) => [entry.platform, entry.capability])).toEqual([["instagram", "read_interactions"]]);
+    expect(SIMULATOR_CATALOG.entries.some((entry) => entry.limitation?.code === "REPLIES_NOT_READ")).toBe(false);
   });
 });
