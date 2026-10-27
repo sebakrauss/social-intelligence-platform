@@ -1111,3 +1111,32 @@ is deployed, the stored r4 profiles are stale by revision (`PROFILE_STALE`) unti
 
 **Not claimed.** The runtime does not use r5 yet: no deploy, no Trigger release, no profile refreshed, no Re-check run.
 
+## Meta read_interactions released and re-checked (Step 7G-H5.5-P12-D3 — P12 closeout)
+
+**Release (2026-10-27).** One paired Trigger release at the r5 commit (`332046e`): INTEGRATION and MAIN both at version
+20261027.3, task sets unchanged (5 and 6; the read_interactions diagnostic only in INTEGRATION), ALIGNED. One production
+web deployment from the clean worktree at the same commit, aliased on the production hostname, health OK. Migration 0016
+had been applied to the development database beforehand (ledger 16, checksum match), so no migration ran here. Right
+after the release and before any Re-check, both stored profiles (r4) were `PROFILE_STALE` against the deployed r5, and no
+row, grant, outbox entry or run had changed — the expected transitional state.
+
+**Re-check (2026-10-27).** The operator pressed **Re-check capabilities** exactly once per Wrenkind Dev Meta account
+(Facebook Page, then Instagram professional account) in Settings › Connections. Each click produced exactly one
+`REEVALUATION_REQUESTED` (`USER_REQUESTED_REEVALUATION`) event, one `capability.evaluate_account` outbox row dispatched
+by the MAIN sweeper to the integration plane in one attempt, and one INTEGRATION run that COMPLETED; both outbox rows are
+terminal. No MAIN run, no reconnect, no other provider call than the two `describeAccount` reads of the normal path.
+
+**Final product state (both profiles: catalog `platform` r5, profile revision 5, 12 rows, 7 grants preserved).**
+
+| Scope (content_bearing · post · unknown) | Facebook | Instagram |
+|---|---|---|
+| read_interactions | `SUPPORTED` / `CATALOG_SUPPORTED`, no limitation | `AVAILABLE_WITH_LIMITATION` / `CATALOG_LIMITATION` / `REPLIES_NOT_READ` |
+| read_content | `SUPPORTED` / `CATALOG_SUPPORTED` (unchanged) | `SUPPORTED` / `CATALOG_SUPPORTED` (unchanged) |
+| any / any (both capabilities) | `UNKNOWN_NOT_VALIDATED` / `CATALOG_NOT_VALIDATED` | `UNKNOWN_NOT_VALIDATED` / `CATALOG_NOT_VALIDATED` |
+
+No `UNSUPPORTED` and no `NOT_AUTHORIZED` row exists; `REPLIES_NOT_READ` is the only limitation in use (one row). The
+connection and its active credential are unchanged, and no other workspace holds a profile, event or outbox row. Meta
+`read_interactions` is therefore LIVE in the product: Facebook comments and replies; Instagram top-level comments, with
+replies explicitly not read (a limitation of an available capability, never a claim that the platform lacks them).
+P12 is closed. Every other read_interactions scope (other content kinds, organic / paid / mixed) stays unvalidated.
+

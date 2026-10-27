@@ -1,8 +1,10 @@
 # API-validation evidence contract (Step 7G-H5.5-P4-B)
 
-The schema and process for the evidence behind a **future** real-platform capability catalog entry. No record exists
-yet and none may be fabricated: the platform catalog stays `platform` revision 2 with **zero entries**. The enforcing
-code is `modules/capability/domain/catalog-contract.ts` (development/test-time only; guard-tested by
+The schema and process for the evidence behind a real-platform capability catalog entry. Four accepted records exist
+(Facebook and Instagram `read_content`, Steps 7G-H5.5-P5-C9-B / P11-D; Facebook and Instagram `read_interactions`, Step
+7G-H5.5-P12-D2b), and the platform catalog is `platform` **revision 5** with exactly those four entries (Meta README ›
+Platform catalog r5 and the P12 closeout). No record may be fabricated: an entry exists only on an accepted record of its
+exact scope. The enforcing code is `modules/capability/domain/catalog-contract.ts` (development/test-time only; guard-tested by
 `tests/unit/modules/capability-catalog-contract.test.ts` and
 `tests/architecture/capability-catalog-contract-guards.test.ts`).
 

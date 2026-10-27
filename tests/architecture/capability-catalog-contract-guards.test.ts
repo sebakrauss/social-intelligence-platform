@@ -541,6 +541,31 @@ describe("P12-D2b documents and isolation: r5 read_interactions", () => {
   });
 });
 
+describe("P12 closeout documents: read_interactions released, re-checked and LIVE in the product", () => {
+  it("the Meta README records the D3 release and Re-check outcome: r5 runtime, both final rows, no UNSUPPORTED / NOT_AUTHORIZED, replies not read, P12 closed", () => {
+    const meta = raw(META_README);
+    const section = meta.slice(meta.indexOf("## Meta read_interactions released and re-checked (Step 7G-H5.5-P12-D3 — P12 closeout)"));
+    expect(section.length).toBeGreaterThan(0);
+    for (const phrase of [
+      "INTEGRATION and MAIN both at version\n20261027.3", "ALIGNED", "ledger 16, checksum match", "`PROFILE_STALE` against the deployed r5",
+      "exactly once per Wrenkind Dev Meta account", "one INTEGRATION run that COMPLETED", "No MAIN run, no reconnect",
+      "| read_interactions | `SUPPORTED` / `CATALOG_SUPPORTED`, no limitation | `AVAILABLE_WITH_LIMITATION` / `CATALOG_LIMITATION` / `REPLIES_NOT_READ` |",
+      "catalog `platform` r5, profile revision 5, 12 rows, 7 grants preserved", "No `UNSUPPORTED` and no `NOT_AUTHORIZED` row exists",
+      "replies explicitly not read", "P12 is closed", "stays unvalidated",
+    ]) expect(section, phrase).toContain(phrase);
+    // Sanitized: no deployment, run, account, workspace or AWS identifier and no URL; the only 8-digit run is the release version's date.
+    expect(section).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|proj_|arn:aws|dpl_|run_[a-z0-9]{6,}|https?:\/\/|[0-9a-f]{16}/);
+    expect([...section.matchAll(/\d{8,}/g)].map((m) => m[0])).toEqual(["20261027"]);
+  });
+
+  it("the evidence README's header states the current catalog: four accepted records, platform revision 5, nothing fabricated", () => {
+    const header = raw(`${EVIDENCE_DIR}/README.md`).split("\n## ")[0];
+    for (const phrase of ["Four accepted records exist", "the platform catalog is `platform` **revision 5** with exactly those four entries", "No record may be fabricated"]) expect(header, phrase).toContain(phrase);
+    expect(header).not.toMatch(/revision 2|zero entries|\*\*future\*\*/);
+    expect(recordFiles()).toHaveLength(4);
+  });
+});
+
 describe("interface copy never presents a missing permission as platform non-support", () => {
   it("no message about a missing permission says the platform does not support or offer the capability", () => {
     const catalogs = sourceFiles(["platform/i18n/catalogs"]);
