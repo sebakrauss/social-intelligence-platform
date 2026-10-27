@@ -17,7 +17,14 @@
  *     make the repeat harmless).
  *   - The watermark is time-based (the latest provider creation time seen); the next window starts at the watermark
  *     minus the overlap, so late or out-of-order items are seen again (and deduplicated by canonical identity).
- * Cadence is NOT decided here (TA-Q-22, TA-Q-32).
+ * Cadence is NOT decided here (TA-Q-22, TA-Q-32); the first trigger is an explicit Owner/Admin action (TL D-C1).
+ *
+ * Step H6-C1 (TL D-C3, D-C4): the approved runtime DEFAULTS (RECONCILIATION_DEFAULTS) are separate from the hard
+ * CEILINGS above — a run may use less than a ceiling, never more. Defaults are budgets, not claims about how much
+ * history the provider holds. The overlap (24 h) only re-reads recent items for deduplication; it is never coverage.
+ * Each persistent slice row has its own id, and its dispatch key is derived from that id alone
+ * (`ingestion.reconcile_slice:{slice id}`): a continuation is a NEW slice with a new id, so two runs over the same
+ * window can never collide on a key (the H6-A1 window-derived key is superseded; it could also exceed 128 characters).
  */
 import { parseCorrelationId, type CorrelationId } from "@/domain/correlation";
 import { isUuid, type WorkspaceId } from "@/domain/ids";
@@ -32,6 +39,29 @@ export const SLICE_CURSOR_MAX_AGE_MS = 15 * 60 * 1000;
 export const SLICE_CURSOR_MAX_LENGTH = 2048;
 /** Upper bound of the overlap re-read before a watermark. */
 export const SLICE_OVERLAP_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Approved runtime defaults (TL D-C3, D-C4); each stays within its hard ceiling (pinned by test). */
+export const RECONCILIATION_DEFAULTS = Object.freeze({
+  /** Provider pages per content-listing slice. */
+  listingPagesPerSlice: 1,
+  /** Provider pages per content-interactions slice. */
+  interactionPagesPerSlice: 5,
+  /** Continuation slices after the first, per content and run (≤ 15 interaction pages per content and run). */
+  continuationsPerContent: 2,
+  /** Content items whose interactions one run reads. */
+  contentItemsPerRun: 10,
+  /** Open reconciliation runs per connected account. */
+  openRunsPerAccount: 1,
+  /** Re-read margin before the watermark (deduplication only; never a coverage claim). */
+  overlapMs: 24 * 60 * 60 * 1000,
+});
+
+/** Interaction pages one content may consume in one run: the first slice plus its continuations. */
+export const maxInteractionPagesPerContent = (defaults: typeof RECONCILIATION_DEFAULTS = RECONCILIATION_DEFAULTS): number =>
+  defaults.interactionPagesPerSlice * (1 + defaults.continuationsPerContent);
+
+/** Dispatch-key prefix of one persistent slice row. */
+export const RECONCILE_SLICE_TOPIC = "ingestion.reconcile_slice" as const;
 
 export const SLICE_UNITS = ["content_listing", "content_interactions"] as const;
 export type SliceUnit = (typeof SLICE_UNITS)[number];
@@ -49,6 +79,8 @@ export interface ProviderSliceCursor {
 }
 
 export interface ReconciliationSlice {
+  /** The persistent slice row's own id (a continuation gets a new one). */
+  readonly sliceId: string;
   readonly workspaceId: WorkspaceId;
   readonly connectedAccountId: string;
   readonly platform: PlatformKey;
@@ -71,7 +103,7 @@ export type SliceViolation = "IDENTITY_INVALID" | "UNIT_SCOPE_INCOHERENT" | "WIN
 
 export function sliceViolations(slice: ReconciliationSlice): readonly SliceViolation[] {
   const out: SliceViolation[] = [];
-  if (!isUuid(slice.workspaceId) || !isUuid(slice.connectedAccountId) || parseCorrelationId(slice.correlationId) === undefined) out.push("IDENTITY_INVALID");
+  if (!isUuid(slice.sliceId) || !isUuid(slice.workspaceId) || !isUuid(slice.connectedAccountId) || parseCorrelationId(slice.correlationId) === undefined) out.push("IDENTITY_INVALID");
   const listing = slice.unit === "content_listing";
   if ((listing ? slice.scope.capability !== "read_content" || slice.contentRowId !== null : slice.scope.capability !== "read_interactions" || !isUuid(slice.contentRowId))) out.push("UNIT_SCOPE_INCOHERENT");
   if (parseInstant(slice.window.from) === undefined || parseInstant(slice.window.to) === undefined || compareInstants(slice.window.from, slice.window.to) >= 0
@@ -106,10 +138,12 @@ const later = (a: Instant | null, b: Instant | null): Instant | null => (a === n
 
 /**
  * Account for one provider page. Ends only on the provider's end of pages (complete) or on the budget (a new bounded
- * continuation slice with the cursor). Items outside the window never end a slice.
+ * continuation slice with the cursor, under `nextSliceId` — the new persistent row's id). Items outside the window
+ * never end a slice.
  */
-export function advanceSlice(slice: ReconciliationSlice, page: SlicePage): SliceStep {
+export function advanceSlice(slice: ReconciliationSlice, page: SlicePage, nextSliceId: string): SliceStep {
   if (sliceViolations(slice).length > 0) throw new TypeError("slice_invalid");
+  if (!isUuid(nextSliceId) || nextSliceId === slice.sliceId) throw new TypeError("slice_next_id_invalid");
   if (slice.budget.pagesRead >= slice.budget.maxPages) throw new TypeError("slice_budget_exhausted");
   const watermark = later(slice.watermark, page.latestCreatedAt);
   const pagesRead = slice.budget.pagesRead + 1;
@@ -117,7 +151,7 @@ export function advanceSlice(slice: ReconciliationSlice, page: SlicePage): Slice
   if (page.next.cursor.length === 0 || page.next.cursor.length > SLICE_CURSOR_MAX_LENGTH) throw new TypeError("slice_cursor_invalid");
   const cursor = Object.freeze({ value: page.next.cursor, issuedAt: page.readAt });
   if (pagesRead < slice.budget.maxPages) return { kind: "continue", slice: Object.freeze({ ...slice, watermark, cursor, budget: Object.freeze({ ...slice.budget, pagesRead }) }) };
-  return { kind: "continuation", next: Object.freeze({ ...slice, watermark, cursor, budget: Object.freeze({ maxPages: slice.budget.maxPages, pagesRead: 0 }), sequence: slice.sequence + 1, attempt: 1 }) };
+  return { kind: "continuation", next: Object.freeze({ ...slice, sliceId: nextSliceId, watermark, cursor, budget: Object.freeze({ maxPages: slice.budget.maxPages, pagesRead: 0 }), sequence: slice.sequence + 1, attempt: 1 }) };
 }
 
 /** The next window's start: the watermark minus the overlap, never before the previous window's start. */
@@ -127,8 +161,8 @@ export function nextWindowStart(previous: { readonly from: Instant }, watermark:
   return start as Instant;
 }
 
-/** The slice's domain dispatch key (outbox dispatch_key format), deterministic per window and sequence. */
-export function sliceDispatchKey(slice: ReconciliationSlice): string {
-  const unit = slice.unit === "content_listing" ? "content" : `interactions.${String(slice.contentRowId)}`;
-  return `ingestion.reconcile:${slice.connectedAccountId}:${unit}:${String(Date.parse(slice.window.from))}:${String(slice.sequence)}`;
+/** The slice's domain dispatch key (outbox dispatch_key format): its persistent row id alone, ≤ 128 characters. */
+export function sliceDispatchKey(slice: Pick<ReconciliationSlice, "sliceId">): string {
+  if (!isUuid(slice.sliceId)) throw new TypeError("slice_id_invalid");
+  return `${RECONCILE_SLICE_TOPIC}:${slice.sliceId}`;
 }

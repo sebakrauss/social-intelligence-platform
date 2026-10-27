@@ -17,6 +17,12 @@
  * (Outcome names never reuse profile-state literals: coverage consumes availability reasons, it never reinterprets a
  * profile state — guard-tested.)
  *
+ * Traversal exhausted (Step H6-C1, TL D-C5): a read that stopped because its authorized page/continuation budget ran
+ * out — the provider still had pages — covers NOTHING for the interval: UNKNOWN / TRAVERSAL_INCOMPLETE (provider
+ * ordering is not validated, so the pages read do not delimit any sub-interval), with the slice outcome
+ * TEMPORARILY_FAILED (a later traversal may complete it). Never COMPLETE, never a count of zero. The database CHECK
+ * admits this reason from migration 0018 on (H6-C2); until then no runtime path writes it.
+ *
  * Historical depth (TL decision 6): `read_history` is not validated for Meta, so nothing before the earliest interval
  * ingestion actually read is covered — it is UNAVAILABLE / HISTORY_DEPTH_NOT_VALIDATED, never an implied 30-day import.
  *
@@ -40,6 +46,7 @@ export const COVERAGE_REASONS = [
   "PROVIDER_FAILURE",
   "HISTORY_DEPTH_NOT_VALIDATED",
   "IN_PROGRESS",
+  "TRAVERSAL_INCOMPLETE",
 ] as const;
 export type CoverageReason = (typeof COVERAGE_REASONS)[number];
 
@@ -113,7 +120,7 @@ export interface CoverageInterval {
   readonly asOf: Instant;
 }
 
-export type SliceReadResult = "completed" | "in_progress" | "failed_transient" | "not_attempted";
+export type SliceReadResult = "completed" | "in_progress" | "failed_transient" | "not_attempted" | "budget_exhausted";
 
 export interface SliceCoverage {
   readonly outcome: SliceCoverageOutcome | "IN_PROGRESS";
@@ -159,6 +166,7 @@ export function coverageForSlice(input: {
   const notCovered = excluded.map((kind) => interval(kind, "UNAVAILABLE", "CAPABILITY_LIMITATION"));
   if (input.result === "failed_transient") return { outcome: "TEMPORARILY_FAILED", intervals: [...covered.map((kind) => interval(kind, "FAILED", "PROVIDER_FAILURE")), ...notCovered] };
   if (input.result === "not_attempted") return { outcome: "TEMPORARILY_FAILED", intervals: [...covered.map((kind) => interval(kind, "UNKNOWN", "PROVIDER_FAILURE")), ...notCovered] };
+  if (input.result === "budget_exhausted") return { outcome: "TEMPORARILY_FAILED", intervals: [...covered.map((kind) => interval(kind, "UNKNOWN", "TRAVERSAL_INCOMPLETE")), ...notCovered] };
   if (input.result === "in_progress") return { outcome: "IN_PROGRESS", intervals: [...covered.map((kind) => interval(kind, "IMPORTING", "IN_PROGRESS")), ...notCovered] };
   if (covered.length === 0) return { outcome: "LIMITED", intervals: notCovered };
   return { outcome: excluded.length === 0 ? "COMPLETE" : "LIMITED", intervals: [...covered.map((kind) => interval(kind, "COMPLETE", "VALIDATED_SCOPE_READ")), ...notCovered] };

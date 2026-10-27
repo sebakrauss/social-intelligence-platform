@@ -8,6 +8,8 @@
  *   - the source fact names no transport field; the event module carries no text, author or label;
  *   - the event topic and subject format match the outbox's own CHECKs (read from migration 0004);
  *   - this gate adds no migration (the ledger's last is still 0016) and the design document records the six TL decisions.
+ *   - H6-C1: still no migration after 0017; the provisional-conversation model is gone from production code; the
+ *     TRAVERSAL_INCOMPLETE reason waits for 0018's CHECK.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -104,6 +106,31 @@ describe("scope of this gate", () => {
     expect(names.slice(-2)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql"]);
   });
 
+  it("H6-C1 adds no migration: 0017 stays the latest (0018 is H6-C2's)", () => {
+    const names = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
+    expect(names.at(-1)).toBe("0017_canonical_source_model.sql");
+    expect(names.some((name) => name.startsWith("0018"))).toBe(false);
+  });
+
+  it("H6-C1 supersedes the provisional conversation: no placeholder anchor, no re-anchoring conflict, no anchor-observed path", () => {
+    for (const file of sourceFiles(PRODUCTION)) {
+      const code = codeOf(file);
+      expect(code, file).not.toMatch(/THREAD_ANCHOR_CONFLICT|markAnchorObserved|parentObserved|existingThreadConversation/);
+      expect(code, file).not.toMatch(/anchorObserved:\s*false/);
+    }
+    // A reply never creates a conversation: the only `create` plan is for a top-level comment.
+    const plan = codeOf("modules/conversations/domain/conversation.ts");
+    expect(plan.match(/kind: "create"/g)?.length).toBe(2); // the type member and the top-level branch
+    expect(plan).toMatch(/if \(input\.parentConversation !== null\) return \{ kind: "join"/);
+  });
+
+  it("TRAVERSAL_INCOMPLETE is in the coverage domain but not yet in 0017's CHECK (it lands with 0018, TL D-C5)", () => {
+    expect(codeOf("modules/coverage/domain/coverage.ts")).toMatch(/"TRAVERSAL_INCOMPLETE"/);
+    const reasonCheck = /reason\s+text not null check \(reason in \(([^)]*)\)\)/.exec(raw("db/migrations/0017_canonical_source_model.sql"))?.[1] ?? "";
+    expect(reasonCheck).toContain("'HISTORY_DEPTH_NOT_VALIDATED'");
+    expect(reasonCheck).not.toContain("TRAVERSAL_INCOMPLETE");
+  });
+
   it("the H6 design document records the six TL decisions and the ingestion principle", () => {
     const doc = raw("design/h6-ingestion/README.md");
     for (const phrase of [
@@ -116,6 +143,9 @@ describe("scope of this gate", () => {
       "| 6 | Initial historical import |",
       "Social interaction text is untrusted data",
       "No migration in H6-A1",
+      "## H6-C1 — deferred conversations (supersedes the H6-B provisional conversation)",
+      "A placeholder never anchors a Conversation",
+      "`ingestion.reconcile_slice:{slice id}`",
     ]) expect(doc, phrase).toContain(phrase);
   });
 });

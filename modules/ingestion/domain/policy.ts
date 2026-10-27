@@ -9,7 +9,14 @@
  * Initial historical import (TL decision 6): initial ingestion covers only what `read_interactions` truthfully reads
  * in the windows it actually reads. No 30-day historical import (PD D-09) is claimed until `read_history` is validated
  * on its own; coverage before the first read interval is HISTORY_DEPTH_NOT_VALIDATED.
+ *
+ * Arrival (Step H6-C1, frozen from H6-C0): a reconciliation fact is `backfill` when it is observed during the FIRST
+ * authoritative traversal of its content (no epoch yet), or when the provider created it before that content's
+ * reconciliation epoch (the start of the first traversal) — history, even if first seen later; otherwise it is
+ * `reconciliation`. Backfill never feeds forward-only automation (PD D-51). This decides arrival only; it claims no
+ * historical depth.
  */
+import { compareInstants, type Instant } from "@/domain/instant";
 
 export const PROVIDER_EVENT_INBOX_POLICY = Object.freeze({
   rawBodyRetentionDays: 7,
@@ -39,3 +46,9 @@ export const INITIAL_IMPORT_POLICY = Object.freeze({
   /** Imported (backfilled) interactions arrive as `backfill`: never eligible for forward-only automation. */
   arrival: "backfill" as const,
 });
+
+/** The arrival of one reconciliation fact (see the rule above). `epoch` null = this is the content's first traversal. */
+export function reconciliationArrival(input: { readonly epoch: Instant | null; readonly providerCreatedAt: Instant }): "backfill" | "reconciliation" {
+  if (input.epoch === null) return "backfill";
+  return compareInstants(input.providerCreatedAt, input.epoch) < 0 ? "backfill" : "reconciliation";
+}

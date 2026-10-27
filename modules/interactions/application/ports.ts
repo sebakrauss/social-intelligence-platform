@@ -114,6 +114,11 @@ export interface NewStateObservation {
   readonly provenance: string;
 }
 
+export interface SubtreeSnapshot {
+  readonly members: readonly { readonly id: string; readonly conversationId: string | null; readonly depth: number }[];
+  readonly depthExceeded: boolean;
+}
+
 export interface InteractionStore {
   /** The author row for (platform, provider author id), created if absent; the label follows the latest observation. */
   ensureAuthor(author: NewAuthor): Promise<string>;
@@ -124,7 +129,17 @@ export interface InteractionStore {
   /** A placeholder becomes the observed interaction (once; the scope guard forbids the reverse). */
   completePlaceholder(id: string, fields: ObservedFields): Promise<void>;
   updateCurrent(id: string, update: CurrentStateUpdate, now: Date): Promise<void>;
-  setConversation(id: string, conversationId: string, now: Date): Promise<void>;
+  /**
+   * The node and every canonical descendant (parent links, same workspace) down to ANCESTRY_MAX_DEPTH, locked FOR UPDATE,
+   * with their conversations. `depthExceeded` when a member lies deeper (a deeper chain, or a cycle): nothing is assumed.
+   */
+  subtree(rootId: string): Promise<SubtreeSnapshot>;
+  /**
+   * Gives `conversationId` to the node and every descendant down to ANCESTRY_MAX_DEPTH that has NO conversation (null →
+   * value only; a member already assigned is left untouched). Returns how many rows changed. The caller has checked
+   * the snapshot first (decideSubtreeAttachment, depth).
+   */
+  attachSubtree(rootId: string, conversationId: string, now: Date): Promise<number>;
   textVersion(id: string): Promise<TextVersionPointerRow | undefined>;
   textVersionByHash(interactionId: string, textHash: string): Promise<TextVersionPointerRow | undefined>;
   appendTextVersion(version: NewTextVersion): Promise<void>;

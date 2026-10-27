@@ -55,7 +55,7 @@ export {
 } from "./domain/identity";
 export { decideTextVersion, isStaleAgainst, type IncomingText, type TextVersionDecision, type TextVersionPointer } from "./domain/text-version";
 export { classifyListingAbsence, decideStateObservation, removalBasisFrom, type InteractionStateObservation, type RemovalEvidence, type StateChange, type StateDecision } from "./domain/state";
-export { admitInteractionKind, decideRelation, type KindAdmission, type ParentPlaceholder, type RelationDecision } from "./domain/relation";
+export { ANCESTRY_MAX_DEPTH, admitInteractionKind, decideRelation, type KindAdmission, type ParentPlaceholder, type RelationDecision } from "./domain/relation";
 export {
   STORED_REREAD_MISMATCHES,
   isStoredInteractionAuthority,
@@ -75,5 +75,6 @@ export type {
   NewStateObservation,
   NewTextVersion,
   ObservedFields,
+  SubtreeSnapshot,
   TextVersionPointerRow,
 } from "./application/ports";

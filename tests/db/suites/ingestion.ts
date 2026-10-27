@@ -8,8 +8,11 @@
  *   acceptance    FB post: comments, a brand reply, a nested reply; hidden; content row; authors; conversations OPEN
  *   idempotency   duplicate · text edit (append-only versions) · text revert · stale text · state change · stale
  *                 state (history only, once) · removal (explicit signal) · absence ≠ deletion
- *   conflicts     content / account / parent / kind / placeholder / parent-scope / thread-anchor → rollback, no write
- *   threads       reply before parent (placeholder, provisional anchor, completion) · IG comment · IG reply refused
+ *   conflicts     content / account / parent / kind / placeholder / parent-scope → rollback, no write
+ *   threads       reply before parent (placeholder, NO provisional conversation) · late audience root creates and attaches
+ *                 (H6-C1) · nested replies across batches · brand-rooted threads without conversation · ANCESTRY_CYCLE ·
+ *                 DESCENDANT_CONVERSATION_CONFLICT · null → conversation only · depth cap 64 · cross-workspace subtree ·
+ *                 IG comment · IG reply refused
  *   events        one append-only event + one IDs-only outbox row per change, atomic with the state (injected failure)
  *   coverage      the nine slice outcomes, idempotent re-record, no record = UNKNOWN, cross-workspace FK refused
  *   security      RLS by workspace and role (guest denied) · append-only grants · column grants · scope guard ·
@@ -462,22 +465,34 @@ export function defineIngestionSuite(getTarget: () => DbTarget): void {
   });
 
   // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  describe("reply before parent", () => {
-    it("creates a minimal placeholder parent and a provisional OPEN conversation; the parent's arrival completes both", async () => {
+  describe("reply before parent and deferred conversations (H6-C1)", () => {
+    /** A synthetic sighting on fb_post_organic_01 built from a listed fact: its own id, parent and author. */
+    const synthetic = (base: InteractionSourceFact, id: string, parentId: string | null, author: "user" | "brand"): InteractionSourceFact =>
+      patched(base, {
+        identity: { ...base.identity, interactionId: id, parentId, kind: parentId === null ? "comment" : "reply" },
+        author: author === "brand" ? { ref: "fb_author_aurora", role: "account_identity", label: null } : { ref: "fb_user_01", role: "user", label: null },
+      });
+    const setup = async () => {
       const t = await tenant();
       const sim = createBaselineSimulator();
       const content = await contentDto(sim, "fb_page_aurora", "fb_post_organic_01");
       const dtos = await listedDtos(sim, "fb_page_aurora", content);
       const fact = (id: string) => factOf(t, sim, "fb_page_aurora", must(dtos.find((d) => d.ref.id === id), id));
+      return { t, sim, content, fact };
+    };
+    const conversations = (t: Tenant) => oracle<{ id: string; anchor_interaction_id: string; anchor_observed: boolean; workflow_state: string; created_by: string }>(
+      "select id, anchor_interaction_id, anchor_observed, workflow_state, created_by from conversations.conversations where workspace_id = $1 order by created_at, id", [t.workspaceId]);
+
+    it("5. a reply before its parent creates a minimal placeholder and NO conversation; 6. the late audience root creates one OPEN conversation and attaches it", async () => {
+      const { t, sim, content, fact } = await setup();
       sim.world.advanceClock(60);
       expect(kinds([await ingest(t, fact("fb_c_002"), content, FB)])).toEqual(["created"]);
       const placeholder = await row(t, "fb_c_001");
-      expect(placeholder).toMatchObject({ observed: false, kind: null, parent_interaction_id: null, current_source_text_version_id: null, current_visibility: null, author_role: null });
+      expect(placeholder).toMatchObject({ observed: false, kind: null, parent_interaction_id: null, current_source_text_version_id: null, current_visibility: null, author_role: null, conversation_id: null });
       const reply = await row(t, "fb_c_002");
       expect(reply.parent_interaction_id).toBe(placeholder.id);
-      expect(reply.conversation_id).toBe(placeholder.conversation_id);
-      const provisional = await oracle<{ id: string; anchor_interaction_id: string; anchor_observed: boolean; workflow_state: string }>("select id, anchor_interaction_id, anchor_observed, workflow_state from conversations.conversations where workspace_id = $1", [t.workspaceId]);
-      expect(provisional).toEqual([{ id: reply.conversation_id, anchor_interaction_id: placeholder.id, anchor_observed: false, workflow_state: "OPEN" }]);
+      expect(reply.conversation_id).toBeNull();
+      expect(await conversations(t)).toEqual([]);
       // A placeholder is not observed: no stored authority for it.
       expect(await withWorkspaceJobScope(worker, t.workspaceId, (tx) => loadStoredInteractionAuthority(tx, t.workspaceId, "facebook", "fb_c_001"))).toBeUndefined();
       // A sighting of the placeholder on another content is refused.
@@ -485,29 +500,145 @@ export function defineIngestionSuite(getTarget: () => DbTarget): void {
       const before = await snapshot(t.workspaceId);
       expect(await conflictOf(ingest(t, patched(f1, { identity: { ...f1.identity, contentId: "fb_post_boosted_02" } }), await contentDto(sim, "fb_page_aurora", "fb_post_boosted_02"), FB))).toEqual(["PLACEHOLDER_SCOPE_CONFLICT"]);
       expect(await snapshot(t.workspaceId)).toEqual(before);
-      // The parent arrives: the SAME row becomes observed, the conversation's anchor is observed, no second conversation.
-      expect(kinds([await ingest(t, f1, content, FB)])).toEqual(["created"]);
+      // The audience root arrives: the SAME row becomes observed and anchors exactly one OPEN conversation, which the
+      // already-known reply takes at once (null → conversation).
+      const eventsBefore = await countIn("ingestion.ingestion_events", t.workspaceId);
+      const outcome = await ingest(t, f1, content, FB);
+      expect(kinds([outcome])).toEqual(["created"]);
       const completed = await row(t, "fb_c_001");
-      expect(completed).toMatchObject({ id: placeholder.id, observed: true, kind: "comment", conversation_id: reply.conversation_id });
-      expect(completed.current_source_text_version_id).not.toBeNull();
-      expect(await oracle("select anchor_observed from conversations.conversations where workspace_id = $1", [t.workspaceId])).toEqual([{ anchor_observed: true }]);
-      // The nested reply joins the same thread.
+      expect(completed).toMatchObject({ id: placeholder.id, observed: true, kind: "comment" });
+      const created = await conversations(t);
+      expect(created).toEqual([{ id: completed.conversation_id, anchor_interaction_id: placeholder.id, anchor_observed: true, workflow_state: "OPEN", created_by: "system_ingestion" }]);
+      expect((await row(t, "fb_c_002")).conversation_id).toBe(completed.conversation_id);
+      expect(outcome.kind === "applied" ? outcome.conversationId : null).toBe(completed.conversation_id);
+      // 12. Attaching the reply is structural: exactly ONE new event (the root's created), none for the attachment.
+      expect(await countIn("ingestion.ingestion_events", t.workspaceId)).toBe(eventsBefore + 1);
+      expect(await countIn("ingestion.ingestion_events", t.workspaceId, "interaction_id = $2", [reply.id])).toBe(1);
+      expect(await countIn("ingestion.ingestion_events", t.workspaceId, "interaction_id = $2 and conversation_id is null", [reply.id])).toBe(1);
+      // 3. A reply to the audience-rooted thread inherits its conversation.
       expect(kinds([await ingest(t, fact("fb_c_003"), content, FB)])).toEqual(["created"]);
-      expect((await row(t, "fb_c_003")).conversation_id).toBe(reply.conversation_id);
-      expect(await countIn("ingestion.ingestion_events", t.workspaceId)).toBe(3);
+      expect((await row(t, "fb_c_003")).conversation_id).toBe(completed.conversation_id);
+      expect(await conversations(t)).toHaveLength(1);
     });
 
-    it("a placeholder anchor that turns out to be a reply is refused (no re-threading in H6-B): nothing is applied", async () => {
-      const t = await tenant();
-      const sim = createBaselineSimulator();
-      const content = await contentDto(sim, "fb_page_aurora", "fb_post_organic_01");
-      const dtos = await listedDtos(sim, "fb_page_aurora", content);
-      const fact = (id: string) => factOf(t, sim, "fb_page_aurora", must(dtos.find((d) => d.ref.id === id), id));
-      // Raw listing order without the batch ordering: the nested reply first.
+    it("8. nested replies spread over separate ingestion batches resolve deterministically; 9. ordering alone is never a conflict", async () => {
+      const { t, content, fact } = await setup();
+      // Raw listing order, one transaction (batch) each: the nested reply, then its parent reply, then the root.
       expect(kinds([await ingest(t, fact("fb_c_003"), content, FB)])).toEqual(["created"]);
+      expect((await row(t, "fb_c_002")).observed).toBe(false);
+      expect(kinds([await ingest(t, fact("fb_c_002"), content, FB)])).toEqual(["created"]);
+      const middle = await row(t, "fb_c_002");
+      expect(middle.observed).toBe(true);
+      expect(middle.parent_interaction_id).toBe((await row(t, "fb_c_001")).id);
+      expect([middle.conversation_id, (await row(t, "fb_c_003")).conversation_id, (await row(t, "fb_c_001")).conversation_id]).toEqual([null, null, null]);
+      expect(await conversations(t)).toEqual([]);
+      expect(kinds([await ingest(t, fact("fb_c_001"), content, FB)])).toEqual(["created"]);
+      const root = await row(t, "fb_c_001");
+      expect(root.conversation_id).not.toBeNull();
+      for (const id of ["fb_c_002", "fb_c_003"]) expect((await row(t, id)).conversation_id).toBe(root.conversation_id);
+      expect((await conversations(t)).map((c) => c.anchor_interaction_id)).toEqual([root.id]);
+      // The same thread in the opposite (parents-first) order ends identical.
+      const other = await setup();
+      for (const id of ["fb_c_001", "fb_c_002", "fb_c_003"]) await ingest(other.t, other.fact(id), other.content, FB);
+      const otherRoot = await row(other.t, "fb_c_001");
+      for (const id of ["fb_c_002", "fb_c_003"]) expect((await row(other.t, id)).conversation_id).toBe(otherRoot.conversation_id);
+      expect(await conversations(other.t)).toHaveLength(1);
+    });
+
+    it("2. a brand top-level comment creates no conversation; 4. replies under it stay without one; 7. a late brand root attaches nothing", async () => {
+      const { t, content, fact } = await setup();
+      const base = fact("fb_c_005");
+      // Root first: brand top-level, then an audience reply and a nested reply.
+      expect(kinds([await ingest(t, synthetic(base, "fb_b_root", null, "brand"), content, FB)])).toEqual(["created"]);
+      expect(kinds([await ingest(t, synthetic(base, "fb_b_reply", "fb_b_root", "user"), content, FB)])).toEqual(["created"]);
+      expect(kinds([await ingest(t, synthetic(base, "fb_b_nested", "fb_b_reply", "user"), content, FB)])).toEqual(["created"]);
+      for (const id of ["fb_b_root", "fb_b_reply", "fb_b_nested"]) expect((await row(t, id)).conversation_id).toBeNull();
+      expect((await row(t, "fb_b_root")).author_role).toBe("account_identity");
+      // Root last: replies wait without a conversation, and the brand root's arrival gives them none.
+      expect(kinds([await ingest(t, synthetic(base, "fb_l_nested", "fb_l_reply", "user"), content, FB)])).toEqual(["created"]);
+      expect(kinds([await ingest(t, synthetic(base, "fb_l_reply", "fb_l_root", "user"), content, FB)])).toEqual(["created"]);
+      expect(kinds([await ingest(t, synthetic(base, "fb_l_root", null, "brand"), content, FB)])).toEqual(["created"]);
+      for (const id of ["fb_l_root", "fb_l_reply", "fb_l_nested"]) expect((await row(t, id)).conversation_id).toBeNull();
+      expect(await conversations(t)).toEqual([]);
+      // 1. An audience top-level comment on the same content does open its own conversation.
+      expect(kinds([await ingest(t, synthetic(base, "fb_a_root", null, "user"), content, FB)])).toEqual(["created"]);
+      expect((await conversations(t)).map((c) => [c.anchor_interaction_id, c.workflow_state])).toEqual([[(await row(t, "fb_a_root")).id, "OPEN"]]);
+    });
+
+    it("10. completing a placeholder whose parent lies in its own subtree is ANCESTRY_CYCLE: rolled back, rows kept", async () => {
+      const { t, content, fact } = await setup();
+      const base = fact("fb_c_005");
+      expect(kinds([await ingest(t, synthetic(base, "fb_y_child", "fb_y_x", "user"), content, FB)])).toEqual(["created"]);
       const before = await snapshot(t.workspaceId);
-      expect(await conflictOf(ingest(t, fact("fb_c_002"), content, FB))).toEqual(["THREAD_ANCHOR_CONFLICT"]);
+      const placeholder = await row(t, "fb_y_x");
+      // The placeholder's sighting names its own child as its parent.
+      expect(await conflictOf(ingest(t, synthetic(base, "fb_y_x", "fb_y_child", "user"), content, FB))).toEqual(["ANCESTRY_CYCLE"]);
       expect(await snapshot(t.workspaceId)).toEqual(before);
+      expect(await row(t, "fb_y_x")).toEqual(placeholder);
+    });
+
+    it("11. a descendant already in another conversation is DESCENDANT_CONVERSATION_CONFLICT: nothing is reassigned", async () => {
+      const { t, content, fact } = await setup();
+      const base = fact("fb_c_005");
+      expect(kinds([await ingest(t, fact("fb_c_004"), content, FB)])).toEqual(["created"]);
+      const other = must((await row(t, "fb_c_004")).conversation_id ?? undefined, "conversation");
+      expect(kinds([await ingest(t, synthetic(base, "fb_z_reply", "fb_z_root", "user"), content, FB)])).toEqual(["created"]);
+      // Adversarial legacy shape (the superseded H6-B provisional model): the placeholder and its reply already carry
+      // another thread's conversation. Written privileged; the service must refuse to resolve over it.
+      await privileged.query("update interactions.interactions set conversation_id = $2 where workspace_id = $1 and provider_interaction_id in ('fb_z_root', 'fb_z_reply')", [t.workspaceId, other]);
+      const before = await snapshot(t.workspaceId);
+      expect(await conflictOf(ingest(t, synthetic(base, "fb_z_root", null, "user"), content, FB))).toEqual(["DESCENDANT_CONVERSATION_CONFLICT"]);
+      expect(await snapshot(t.workspaceId)).toEqual(before);
+      expect((await row(t, "fb_z_reply")).conversation_id).toBe(other);
+      expect((await row(t, "fb_z_root")).observed).toBe(false);
+    });
+
+    it("13–14. a row's conversation moves only from null to a value; a different value is refused by the database", async () => {
+      const { t, content, fact } = await setup();
+      for (const id of ["fb_c_004", "fb_c_005"]) await ingest(t, fact(id), content, FB);
+      const r4 = await row(t, "fb_c_004");
+      const r5 = await row(t, "fb_c_005");
+      expect(r4.conversation_id).not.toBeNull();
+      expect(await sqlState(withWorkspaceJobScope(worker, t.workspaceId, (tx) => tx.execute(sql`update interactions.interactions set conversation_id = ${r5.conversation_id} where id = ${r4.id}`)))).toMatchObject({ code: "23514" });
+      // The store's attachment never touches an assigned row (null → value only): 0 rows changed.
+      expect(await withWorkspaceJobScope(worker, t.workspaceId, (tx) => storesFor(tx).interactions.attachSubtree(r4.id, must(r5.conversation_id ?? undefined, "c"), new Date()))).toBe(0);
+      expect((await row(t, "fb_c_004")).conversation_id).toBe(r4.conversation_id);
+    });
+
+    it("15. ancestry is bounded at depth 64: a 64-deep thread resolves, a 65-deep one is ANCESTRY_DEPTH_EXCEEDED", async () => {
+      /** Root + `depth` nested replies, ingested deepest first (every parent arrives after its child). */
+      const chain = async (depth: number) => {
+        const { t, content, fact } = await setup();
+        const base = fact("fb_c_005");
+        const id = (k: number) => `fb_d_${String(k).padStart(3, "0")}`;
+        for (let k = depth; k >= 1; k -= 1) expect(kinds([await ingest(t, synthetic(base, id(k), id(k - 1), "user"), content, FB)])).toEqual(["created"]);
+        return { t, root: synthetic(base, id(0), null, "user"), content, id };
+      };
+      const ok = await chain(64);
+      expect(kinds([await ingest(ok.t, ok.root, ok.content, FB)])).toEqual(["created"]);
+      const conversation = (await row(ok.t, ok.id(0))).conversation_id;
+      expect(conversation).not.toBeNull();
+      expect(await countIn("interactions.interactions", ok.t.workspaceId, "conversation_id = $2", [conversation])).toBe(65);
+      const deep = await chain(65);
+      const before = await snapshot(deep.t.workspaceId);
+      expect(await conflictOf(ingest(deep.t, deep.root, deep.content, FB))).toEqual(["ANCESTRY_DEPTH_EXCEEDED"]);
+      expect(await snapshot(deep.t.workspaceId)).toEqual(before);
+      expect(await countIn("interactions.interactions", deep.t.workspaceId, "conversation_id is not null")).toBe(0);
+    });
+
+    it("16. another workspace's subtree is invisible and cannot be attached", async () => {
+      const a = await setup();
+      await ingest(a.t, a.fact("fb_c_003"), a.content, FB);
+      const b = await setup();
+      await ingest(b.t, b.fact("fb_c_004"), b.content, FB);
+      const foreignRoot = (await row(a.t, "fb_c_002")).id;
+      const ownConversation = must((await row(b.t, "fb_c_004")).conversation_id ?? undefined, "conversation");
+      await withWorkspaceJobScope(worker, b.t.workspaceId, async (tx) => {
+        const stores = storesFor(tx);
+        expect(await stores.interactions.subtree(foreignRoot)).toEqual({ members: [], depthExceeded: false });
+        expect(await stores.interactions.attachSubtree(foreignRoot, ownConversation, new Date())).toBe(0);
+      });
+      for (const id of ["fb_c_002", "fb_c_003"]) expect((await row(a.t, id)).conversation_id).toBeNull();
     });
   });
 

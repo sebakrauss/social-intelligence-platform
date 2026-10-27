@@ -58,3 +58,46 @@ never travels in an outbox row or job payload. Future AI use goes through the AI
 No migration in H6-A1, no persistence, no jobs, no provider call. Next: H6-B (canonical source model migration 0017,
 coverage persistence, simulator ingestion service), then H6-C (pull sync job on the simulator), H6-D (LIVE pull
 acceptance), H6-E (`stored` target + lifecycle), H6-F (webhook receiver offline), H6-G (Meta webhook validation).
+
+## H6-C1 — deferred conversations (supersedes the H6-B provisional conversation)
+
+TL decisions frozen for the reconciliation runtime (H6-C0 design): D-C1 the first reconciliation is triggered only by an
+explicit Owner/Admin action (no cadence, no automatic fan-out yet); D-C2 a brand-rooted thread has no Conversation;
+D-C3 default budgets; D-C4 a 24-hour overlap; D-C5 migration 0018 (H6-C2) adds `TRAVERSAL_INCOMPLETE` to the coverage
+reason CHECK and `connected_account.reconciliation_requested` to the audit action CHECK. H6-C1 itself adds no
+migration: 0017 already allows `conversation_id` to be null and to move only from null to a value.
+
+**Invariant.** An interaction has a `conversation_id` only if its ancestry has resolved to an observed top-level
+**audience** comment. A placeholder never anchors a Conversation; no Conversation is provisional; none is re-anchored.
+
+| Sighting | Conversation |
+|---|---|
+| Top-level comment, author user or unknown | Created OPEN (or found), anchored on it permanently |
+| Top-level comment by the managed account (brand) | None; its thread's replies stay without one |
+| Reply whose parent has a conversation | Joins it |
+| Reply whose parent has none (placeholder, unresolved, or brand-rooted) | None — a reply never creates one |
+
+**Late root.** When a placeholder is observed as a top-level audience comment, its Conversation is created then and
+the root plus every canonical descendant without a conversation take it in one statement (`attachSubtree`, bounded at
+depth 64, workspace-scoped). A placeholder observed as a reply takes its parent's conversation (if any) the same way.
+Before any write, the completion is checked: a parent inside the placeholder's own subtree is `ANCESTRY_CYCLE`; a
+subtree deeper than 64 (or looping) is `ANCESTRY_DEPTH_EXCEEDED`; a member already in another conversation (or in any,
+under a brand root) is `DESCENDANT_CONVERSATION_CONFLICT`. Each fails closed — the fact is rolled back, rows are kept,
+nothing is repaired. `THREAD_ANCHOR_CONFLICT` no longer exists: arrival order alone is never a conflict.
+
+**Events.** The `interactions.observed` vocabulary is unchanged (created · text_changed · state_changed ·
+removed_at_source). Attaching existing descendants to a late root's conversation emits no event of its own: the root's
+`created` event names the conversation. A `conversation_attached` event, if needed, belongs to H7.
+
+**Runtime contract changes (pure; no job yet).**
+
+- Slice dispatch key: `ingestion.reconcile_slice:{slice id}` — the persistent slice row's id alone (≤ 128 characters);
+  a continuation is a new row with a new id. The H6-A1 window-derived key is superseded (two runs over one window could
+  collide, and it could exceed the outbox's 128-character key).
+- Coverage: a traversal stopped by its page/continuation budget covers nothing — UNKNOWN / `TRAVERSAL_INCOMPLETE`,
+  slice outcome TEMPORARILY_FAILED; never COMPLETE, never zero. Persisted from 0018 on.
+- Arrival: `backfill` for facts of a content's first traversal and for items the provider created before that
+  content's reconciliation epoch; `reconciliation` otherwise. No historical depth is claimed.
+- Defaults (`RECONCILIATION_DEFAULTS`, separate from the hard ceilings of 10 pages per slice and a 7-day overlap):
+  1 listing page per slice, 5 interaction pages per slice, 2 continuations per content and run (≤ 15 pages), 10
+  content items per run, 1 open run per account, 24-hour overlap. Budgets, not claims about provider history.

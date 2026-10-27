@@ -5,15 +5,19 @@
  * append-only (INSERT only; no UPDATE/DELETE grant). Identity and scope columns are never updated (no grant; scope guard
  * trigger for the rest).
  *
+ * Ancestry (Step H6-C1): `subtree` and `attachSubtree` walk parent links within the bound workspace with a recursive
+ * query capped at ANCESTRY_MAX_DEPTH (cycle-safe: the depth bound ends any loop; a cycle reads as depth exceeded).
+ *
  * `loadStoredInteractionAuthority` is the persistence-side issuer of stored provenance (H6-A1, TL decision 1): it reads
  * the canonical OBSERVED row in this transaction's workspace and issues an authority from it. Nothing else may.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkspaceId } from "@/domain/ids";
 import { parseInstant } from "@/domain/instant";
 import { isPlatformKey } from "@/domain/platforms";
 import { parseProviderId } from "@/domain/provider-identity";
 import type { DatabaseTransaction } from "@/platform/db";
+import { ANCESTRY_MAX_DEPTH } from "../domain/relation";
 import { issueStoredInteractionAuthority, type StoredInteractionAuthority } from "../domain/stored-authority";
 import { isInteractionKind } from "../domain/vocabulary";
 import type { InteractionStore, NewInteractionRow, ObservedFields } from "../application/ports";
@@ -72,8 +76,46 @@ export function createPostgresInteractionStore(tx: DatabaseTransaction): Interac
       if (update.latestObservedAt !== undefined) set.latestObservedAt = update.latestObservedAt;
       await tx.update(interactionRows).set(set).where(eq(interactionRows.id, id));
     },
-    async setConversation(id, conversationId, now) {
-      await tx.update(interactionRows).set({ conversationId, updatedAt: now }).where(eq(interactionRows.id, id));
+    async subtree(rootId) {
+      const result = await tx.execute<{ id: string; conversation_id: string | null; depth: number; deepest: number }>(sql`
+        with recursive descendants (id, workspace_id, depth) as (
+          select i.id, i.workspace_id, 0 from interactions.interactions i where i.id = ${rootId}
+          union all
+          select c.id, c.workspace_id, d.depth + 1
+            from interactions.interactions c
+            join descendants d on c.workspace_id = d.workspace_id and c.parent_interaction_id = d.id
+           where d.depth <= ${ANCESTRY_MAX_DEPTH}
+        )
+        select i.id, i.conversation_id, min(d.depth)::int as depth, max(d.depth)::int as deepest
+          from descendants d join interactions.interactions i on i.workspace_id = d.workspace_id and i.id = d.id
+         group by i.id, i.conversation_id
+         order by 3, 1`);
+      // Lock what was found (a recursive CTE cannot carry FOR UPDATE itself); serial per account, but never assumed.
+      const ids = result.rows.map((row) => row.id);
+      if (ids.length > 0) await tx.select({ id: interactionRows.id }).from(interactionRows).where(inArray(interactionRows.id, ids)).for("update");
+      return {
+        members: result.rows.filter((row) => row.depth <= ANCESTRY_MAX_DEPTH).map((row) => ({ id: row.id, conversationId: row.conversation_id, depth: row.depth })),
+        // A member reached again below the cap (a cycle) or a chain deeper than the cap: never assumed resolved.
+        depthExceeded: result.rows.some((row) => row.deepest > ANCESTRY_MAX_DEPTH),
+      };
+    },
+    async attachSubtree(rootId, conversationId, now) {
+      // One statement: the composite (parent, conversation) foreign key is checked at its end, so a whole thread moves
+      // from no conversation to `conversationId` at once; rows that already have a conversation are never touched.
+      const result = await tx.execute(sql`
+        with recursive descendants (id, workspace_id, depth) as (
+          select i.id, i.workspace_id, 0 from interactions.interactions i where i.id = ${rootId}
+          union all
+          select c.id, c.workspace_id, d.depth + 1
+            from interactions.interactions c
+            join descendants d on c.workspace_id = d.workspace_id and c.parent_interaction_id = d.id
+           where d.depth < ${ANCESTRY_MAX_DEPTH}
+        )
+        update interactions.interactions i
+           set conversation_id = ${conversationId}, updated_at = ${now}
+          from (select distinct id, workspace_id from descendants) d
+         where i.workspace_id = d.workspace_id and i.id = d.id and i.conversation_id is null`);
+      return result.rowCount ?? 0;
     },
     async textVersion(id) {
       return (await tx.select(pointerColumns).from(sourceTextVersions).where(eq(sourceTextVersions.id, id)).limit(1))[0];

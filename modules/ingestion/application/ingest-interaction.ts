@@ -9,18 +9,25 @@
  *   3. create the content and the privacy-minimal author if needed;
  *   4. create the interaction (or complete its placeholder), or apply the text-version and state rules to it;
  *   5. a reply before its parent creates a minimal placeholder parent (identity + content only);
- *   6. a top-level audience comment anchors a new Conversation, OPEN; a reply joins its thread's conversation (or, if
- *      the thread has none yet, creates it anchored on the parent);
+ *   6. conversations (H6-C1, deferred): a top-level AUDIENCE comment anchors its Conversation, OPEN, and the thread
+ *      it roots — descendants that arrived before it — is attached to it at once (null → conversation only); a reply
+ *      joins its parent's conversation, or stays without one while its ancestry is unresolved or brand-rooted; a
+ *      placeholder never anchors a conversation and none is ever re-anchored. Completing a placeholder checks its
+ *      ancestry first: a parent inside its own subtree is ANCESTRY_CYCLE, a subtree deeper than ANCESTRY_MAX_DEPTH (or
+ *      looping) is ANCESTRY_DEPTH_EXCEEDED, a member already in another conversation is
+ *      DESCENDANT_CONVERSATION_CONFLICT — each refused before any write;
  *   7. one append-only ingestion event per canonical change (created · text_changed · state_changed ·
  *      removed_at_source) and its IDs-only `interactions.observed` outbox row.
- * No semantic change → no row, no event: `unchanged`.
+ * No semantic change → no row, no event: `unchanged`. Attaching existing descendants to a late root's conversation is
+ * structural, not a source change: it emits no event of its own (the root's `created` event names the conversation;
+ * a later `conversation_attached` event is for the workflow/intelligence steps to introduce if they need one).
  *
  * Text is untrusted data: it is stored, hashed and pointed at — never read for meaning, routing or tools.
  */
 import type { CorrelationId } from "@/domain/correlation";
 import { isPlatformKey } from "@/domain/platforms";
 import { parseProviderId, type ProviderId } from "@/domain/provider-identity";
-import { planConversation } from "@/modules/conversations";
+import { decideSubtreeAttachment, planConversation } from "@/modules/conversations";
 import { coveredInteractionKinds, type AvailabilityInput } from "@/modules/coverage";
 import {
   admitInteractionKind,
@@ -54,7 +61,14 @@ export type IngestOutcome =
   | { readonly kind: "unchanged"; readonly interactionId: string }
   | { readonly kind: "applied"; readonly interactionId: string; readonly conversationId: string | null; readonly changes: readonly ObservedChange[] };
 
-export type IngestionConflict = AuthorityConflict | "CONTENT_SCOPE_CONFLICT" | "PLACEHOLDER_SCOPE_CONFLICT" | "PARENT_SCOPE_CONFLICT" | "THREAD_ANCHOR_CONFLICT";
+export type IngestionConflict =
+  | AuthorityConflict
+  | "CONTENT_SCOPE_CONFLICT"
+  | "PLACEHOLDER_SCOPE_CONFLICT"
+  | "PARENT_SCOPE_CONFLICT"
+  | "ANCESTRY_CYCLE"
+  | "ANCESTRY_DEPTH_EXCEEDED"
+  | "DESCENDANT_CONVERSATION_CONFLICT";
 
 /** Thrown before any write; the caller's transaction must roll back (no canonical mutation, no event). */
 export class IngestionAuthorityConflict extends Error {
@@ -105,11 +119,6 @@ export async function ingestInteractionFact(stores: IngestionStores, clock: Inge
       if (conflicts.length > 0) throw new IngestionAuthorityConflict(conflicts);
     } else if (existing.connectedAccountId !== fact.scope.connectedAccountId || existing.providerAssetId !== fact.scope.providerAssetId || existing.providerContentId !== fact.identity.contentId) {
       throw new IngestionAuthorityConflict(["PLACEHOLDER_SCOPE_CONFLICT"]);
-    } else if (existing.conversationId !== null && fact.identity.parentId !== null) {
-      // A placeholder holds a conversation only as its anchor (a reply arrived before it), and an anchor is a top-level
-      // comment (Model §10). The sighting says it is itself a reply: the thread cannot be re-anchored here (no
-      // re-threading in H6-B), so nothing is applied.
-      throw new IngestionAuthorityConflict(["THREAD_ANCHOR_CONFLICT"]);
     }
   }
   const creating = existing === undefined || !existing.observed;
@@ -124,6 +133,18 @@ export async function ingestInteractionFact(stores: IngestionStores, clock: Inge
       } else if (parent.connectedAccountId !== fact.scope.connectedAccountId || parent.providerContentId !== fact.identity.contentId) {
         throw new IngestionAuthorityConflict(["PARENT_SCOPE_CONFLICT"]);
       }
+    }
+  }
+  // Completing a placeholder resolves the ancestry of everything that arrived beneath it: check it all now.
+  if (existing !== undefined && !existing.observed) {
+    const subtree = await stores.interactions.subtree(existing.id);
+    if (subtree.depthExceeded) throw new IngestionAuthorityConflict(["ANCESTRY_DEPTH_EXCEEDED"]);
+    if (parent !== undefined && subtree.members.some((member) => member.id === parent?.id)) throw new IngestionAuthorityConflict(["ANCESTRY_CYCLE"]);
+    // The subtree's resolved conversation: the parent's for a reply, none yet for a root (a new one, or none for a brand
+    // root). Any member already elsewhere contradicts that resolution.
+    const target = fact.identity.parentId === null ? null : (parent?.conversationId ?? null);
+    if (decideSubtreeAttachment({ target, memberConversations: subtree.members.map((member) => member.conversationId) }) !== "attach") {
+      throw new IngestionAuthorityConflict(["DESCENDANT_CONVERSATION_CONFLICT"]);
     }
   }
 
@@ -174,28 +195,20 @@ export async function ingestInteractionFact(stores: IngestionStores, clock: Inge
       interactionId = existing.id;
       await stores.interactions.completePlaceholder(existing.id, fields);
     }
-    conversationId = existing?.conversationId ?? null;
-    if (conversationId !== null) {
-      await stores.conversations.markAnchorObserved(conversationId, now);
-    } else {
-      const plan = planConversation({
-        interactionId: fact.identity.interactionId,
-        parentId: fact.identity.parentId,
-        authorRole: fact.author.role,
-        existingThreadConversation: parent?.conversationId === null || parent?.conversationId === undefined ? null : { conversationId: parent.conversationId },
-        parentObserved: parent?.observed ?? false,
-      });
-      if (plan.kind === "join") {
-        conversationId = plan.conversationId;
-        await stores.interactions.setConversation(interactionId, conversationId, now);
-      } else if (plan.kind === "create") {
-        conversationId = clock.newId();
-        const anchorRowId = fact.identity.parentId === null ? interactionId : (parent?.id ?? interactionId);
-        await stores.conversations.create({ id: conversationId, organizationId, workspaceId, anchorInteractionId: anchorRowId, initialization: plan.initialization, now });
-        await stores.interactions.setConversation(anchorRowId, conversationId, now);
-        if (anchorRowId !== interactionId) await stores.interactions.setConversation(interactionId, conversationId, now);
-      }
+    const plan = planConversation({
+      interactionId: fact.identity.interactionId,
+      parentId: fact.identity.parentId,
+      authorRole: fact.author.role,
+      parentConversation: parent?.conversationId === null || parent?.conversationId === undefined ? null : { conversationId: parent.conversationId },
+    });
+    conversationId = null;
+    if (plan.kind === "create") {
+      conversationId = (await stores.conversations.ensureForAnchor({ id: clock.newId(), organizationId, workspaceId, anchorInteractionId: interactionId, initialization: plan.initialization, now })).id;
+    } else if (plan.kind === "join") {
+      conversationId = plan.conversationId;
     }
+    // The node and its already-known descendants (a completed placeholder's subtree) take the conversation together.
+    if (conversationId !== null) await stores.interactions.attachSubtree(interactionId, conversationId, now);
     if (fact.text.sourceText !== null && fact.text.textHash !== null) {
       textVersionId = clock.newId();
       await stores.interactions.appendTextVersion({ id: textVersionId, organizationId, workspaceId, interactionId, textHash: fact.text.textHash, sourceText: fact.text.sourceText,

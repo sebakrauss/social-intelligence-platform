@@ -1,5 +1,7 @@
 /** ingestion module public API (TA §7.1, L1; H6-A1 pure domain contracts; H6-B canonical ingestion application services). */
 export {
+  RECONCILE_SLICE_TOPIC,
+  RECONCILIATION_DEFAULTS,
   SLICE_CURSOR_MAX_AGE_MS,
   SLICE_CURSOR_MAX_LENGTH,
   SLICE_MAX_PAGES,
@@ -7,6 +9,7 @@ export {
   SLICE_UNITS,
   advanceSlice,
   cursorResumable,
+  maxInteractionPagesPerContent,
   nextWindowStart,
   sliceDispatchKey,
   sliceViolations,
@@ -29,7 +32,7 @@ export {
   type ObservedArrival,
   type ObservedChange,
 } from "./domain/events";
-export { INITIAL_IMPORT_POLICY, PROVIDER_EVENT_INBOX_POLICY } from "./domain/policy";
+export { INITIAL_IMPORT_POLICY, PROVIDER_EVENT_INBOX_POLICY, reconciliationArrival } from "./domain/policy";
 export { IngestionAuthorityConflict, ingestInteractionFact, type IngestInteractionInput, type IngestOutcome, type IngestionConflict } from "./application/ingest-interaction";
 export { orderParentsFirst } from "./application/ordering";
 export { recordIngestionCoverage, type RecordCoverageInput } from "./application/record-coverage";

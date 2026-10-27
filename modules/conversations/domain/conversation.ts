@@ -1,18 +1,26 @@
 /**
- * Conversation identity and the ingestion-time initialization (Step H6-A1, TL decision 5; Model §10). Pure.
+ * Conversation identity and the ingestion-time initialization (Step H6-A1, TL decision 5; Model §10; corrected in
+ * Step H6-C1 by TL decisions 1 and D-C2). Pure.
  *
  * A Conversation is the Inbox work item: one top-level AUDIENCE comment and every reply beneath it. Ingestion creates
- * it, atomically with the canonical interaction that anchors it, in its initial workflow state OPEN. That is all
+ * it in its initial workflow state OPEN, anchored permanently on that observed top-level audience comment. That is all
  * ingestion decides: Done, reopen, assignment, SLA outcomes, automation and protocol execution belong to the workflow
  * layer (L3) and later steps. The initialization type admits only OPEN, so ingestion cannot express anything else.
  *
- *   top-level comment, author user or unknown      → create, anchored on it (anchorObserved = true), OPEN
- *   top-level comment by the account itself         → no conversation (a brand post-level comment is not an
- *                                                     audience work item; it is kept as an interaction)
- *   reply whose thread already has a conversation   → join it
- *   reply whose parent was never observed           → create, anchored on the parent's PLACEHOLDER identity
- *                                                     (anchorObserved = false), OPEN; when the parent is observed it
- *                                                     fills the same anchor (identity unchanged)
+ * Invariant (H6-C1): an interaction has a conversation only if its ancestry has resolved to an observed top-level
+ * audience comment. A placeholder never anchors a conversation; no conversation is provisional or ever re-anchored.
+ *
+ *   top-level comment, author user or unknown      → create, anchored on it, OPEN
+ *   top-level comment by the account itself         → none (BRAND_TOP_LEVEL_COMMENT, TL D-C2: a brand-rooted thread is
+ *                                                     not an audience work item; its replies stay without conversation)
+ *   reply whose parent belongs to a conversation    → join it
+ *   reply whose parent has none                     → none (PARENT_WITHOUT_CONVERSATION: the ancestry is unresolved —
+ *                                                     the parent is a placeholder or its own parent is — or the thread
+ *                                                     is brand-rooted). A reply NEVER creates a conversation.
+ *
+ * Superseded (H6-B): a reply before its parent used to create a provisional conversation anchored on the parent's
+ * placeholder. When the root arrives later, ingestion now creates the conversation then and attaches the root's already
+ * known descendants (decideSubtreeAttachment; the interactions persistence does the bounded attachment).
  */
 import type { ProviderId } from "@/domain/provider-identity";
 
@@ -24,9 +32,8 @@ export type ConversationWorkflowState = (typeof CONVERSATION_WORKFLOW_STATES)[nu
 export const INGESTION_INITIAL_WORKFLOW_STATE = "OPEN" as const satisfies ConversationWorkflowState;
 
 export interface ConversationInitialization {
-  /** The provider id of the anchoring top-level interaction (observed, or a never-observed placeholder). */
+  /** The provider id of the anchoring top-level audience interaction (always observed). */
   readonly anchorInteractionId: ProviderId;
-  readonly anchorObserved: boolean;
   readonly workflowState: typeof INGESTION_INITIAL_WORKFLOW_STATE;
   /** Attributable automatic transition (Model §10.1): the system, on ingestion. */
   readonly initiator: "system_ingestion";
@@ -36,24 +43,30 @@ export interface ConversationPlanningInput {
   readonly interactionId: ProviderId;
   readonly parentId: ProviderId | null;
   readonly authorRole: "account_identity" | "user" | "unknown";
-  /** The conversation of the reply's thread, when one exists already. */
-  readonly existingThreadConversation: { readonly conversationId: string } | null;
-  /** Whether the reply's parent has been observed (false = it is, or becomes, a placeholder). */
-  readonly parentObserved: boolean;
+  /** For a reply: the conversation its parent belongs to (null: none, or the parent is not known yet). */
+  readonly parentConversation: { readonly conversationId: string } | null;
 }
 
 export type ConversationPlan =
   | { readonly kind: "create"; readonly initialization: ConversationInitialization }
   | { readonly kind: "join"; readonly conversationId: string }
-  | { readonly kind: "none"; readonly reason: "BRAND_TOP_LEVEL_COMMENT" };
-
-const initialize = (anchorInteractionId: ProviderId, anchorObserved: boolean): ConversationInitialization =>
-  Object.freeze({ anchorInteractionId, anchorObserved, workflowState: INGESTION_INITIAL_WORKFLOW_STATE, initiator: "system_ingestion" as const });
+  | { readonly kind: "none"; readonly reason: "BRAND_TOP_LEVEL_COMMENT" | "PARENT_WITHOUT_CONVERSATION" };
 
 export function planConversation(input: ConversationPlanningInput): ConversationPlan {
   if (input.parentId === null) {
-    return input.authorRole === "account_identity" ? { kind: "none", reason: "BRAND_TOP_LEVEL_COMMENT" } : { kind: "create", initialization: initialize(input.interactionId, true) };
+    if (input.authorRole === "account_identity") return { kind: "none", reason: "BRAND_TOP_LEVEL_COMMENT" };
+    return { kind: "create", initialization: Object.freeze({ anchorInteractionId: input.interactionId, workflowState: INGESTION_INITIAL_WORKFLOW_STATE, initiator: "system_ingestion" as const }) };
   }
-  if (input.existingThreadConversation !== null) return { kind: "join", conversationId: input.existingThreadConversation.conversationId };
-  return { kind: "create", initialization: initialize(input.parentId, input.parentObserved) };
+  if (input.parentConversation !== null) return { kind: "join", conversationId: input.parentConversation.conversationId };
+  return { kind: "none", reason: "PARENT_WITHOUT_CONVERSATION" };
+}
+
+/**
+ * Whether a resolved subtree (a node and every canonical descendant) may take `target` as its conversation (null: the
+ * ancestry resolved to no conversation, e.g. a brand root). A member already in `target` stays unchanged; a member in
+ * any OTHER conversation — or in any conversation when the target is none — contradicts the resolved ancestry: the
+ * caller fails closed and reassigns nothing.
+ */
+export function decideSubtreeAttachment(input: { readonly target: string | null; readonly memberConversations: readonly (string | null)[] }): "attach" | "DESCENDANT_CONVERSATION_CONFLICT" {
+  return input.memberConversations.every((current) => current === null || current === input.target) ? "attach" : "DESCENDANT_CONVERSATION_CONFLICT";
 }

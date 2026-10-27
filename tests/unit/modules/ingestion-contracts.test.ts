@@ -11,10 +11,11 @@ import { parseProviderId } from "@/domain/provider-identity";
 import { parseCorrelationId } from "@/domain/correlation";
 import { AUTHOR_ROLES as CONTRACT_AUTHOR_ROLES, INTERACTION_AVAILABILITY as CONTRACT_AVAILABILITY, INTERACTION_KINDS as CONTRACT_KINDS, INTERACTION_VISIBILITY as CONTRACT_VISIBILITY, PAGE_CURSOR_MAX_LENGTH, parseIsoInstant, parseProviderObjectId } from "@/integrations/providers/contract";
 import { AVAILABILITY_REASONS, AVAILABILITY_STATES, LIMITATION_CODES } from "@/modules/capability";
-import { INGESTION_INITIAL_WORKFLOW_STATE, planConversation } from "@/modules/conversations";
-import { COVERAGE_INTERACTION_KINDS, LIMITATION_EXCLUDED_KINDS, MIRRORED_AVAILABILITY_REASONS, MIRRORED_AVAILABILITY_STATES, coverageForSlice, coveredInteractionKinds, historyBeforeFirstRead, measuredInteractionCount, type AvailabilityInput } from "@/modules/coverage";
+import { INGESTION_INITIAL_WORKFLOW_STATE, decideSubtreeAttachment, planConversation } from "@/modules/conversations";
+import { COVERAGE_INTERACTION_KINDS, COVERAGE_REASONS, LIMITATION_EXCLUDED_KINDS, MIRRORED_AVAILABILITY_REASONS, MIRRORED_AVAILABILITY_STATES, coverageForSlice, coveredInteractionKinds, historyBeforeFirstRead, measuredInteractionCount, type AvailabilityInput, type SliceReadResult } from "@/modules/coverage";
 import { INITIAL_IMPORT_POLICY, INTERACTIONS_OBSERVED_TOPIC, PROVIDER_EVENT_INBOX_POLICY, SLICE_CURSOR_MAX_LENGTH, SLICE_MAX_PAGES, advanceSlice, cursorResumable, interactionsObservedOutboxRow, nextWindowStart, sliceDispatchKey, sliceViolations, type IngestionEventRecord, type ReconciliationSlice } from "@/modules/ingestion";
 import {
+  ANCESTRY_MAX_DEPTH,
   AUTHOR_ROLES,
   INTERACTION_AVAILABILITY,
   INTERACTION_KINDS,
@@ -256,23 +257,38 @@ describe("comment / reply relation and kind admission", () => {
 
 describe("conversation initialization", () => {
   it("12. a top-level audience comment creates its Conversation in OPEN — the only state ingestion can express", () => {
-    const plan = planConversation({ interactionId: pid(COMMENT), parentId: null, authorRole: "user", existingThreadConversation: null, parentObserved: true });
-    expect(plan).toEqual({ kind: "create", initialization: { anchorInteractionId: COMMENT, anchorObserved: true, workflowState: "OPEN", initiator: "system_ingestion" } });
+    const plan = planConversation({ interactionId: pid(COMMENT), parentId: null, authorRole: "user", parentConversation: null });
+    expect(plan).toEqual({ kind: "create", initialization: { anchorInteractionId: COMMENT, workflowState: "OPEN", initiator: "system_ingestion" } });
     expect(INGESTION_INITIAL_WORKFLOW_STATE).toBe("OPEN");
   });
 
-  it("a reply joins its thread; a reply before its parent creates an OPEN conversation on the placeholder anchor; a brand top-level comment is no work item", () => {
-    expect(planConversation({ interactionId: pid(REPLY), parentId: pid(COMMENT), authorRole: "user", existingThreadConversation: { conversationId: "e5e5e5e5-0000-4000-8000-000000000005" }, parentObserved: true }))
+  it("(H6-C1) a reply joins its parent's conversation and NEVER creates one; a brand top-level comment is no work item (D-C2)", () => {
+    expect(planConversation({ interactionId: pid(REPLY), parentId: pid(COMMENT), authorRole: "user", parentConversation: { conversationId: "e5e5e5e5-0000-4000-8000-000000000005" } }))
       .toEqual({ kind: "join", conversationId: "e5e5e5e5-0000-4000-8000-000000000005" });
-    expect(planConversation({ interactionId: pid(REPLY), parentId: pid(COMMENT), authorRole: "user", existingThreadConversation: null, parentObserved: false }))
-      .toEqual({ kind: "create", initialization: { anchorInteractionId: COMMENT, anchorObserved: false, workflowState: "OPEN", initiator: "system_ingestion" } });
-    expect(planConversation({ interactionId: pid(COMMENT), parentId: null, authorRole: "account_identity", existingThreadConversation: null, parentObserved: true })).toEqual({ kind: "none", reason: "BRAND_TOP_LEVEL_COMMENT" });
+    // Reply before its parent, or under a brand-rooted thread: no provisional conversation (superseded H6-B behavior).
+    for (const authorRole of ["user", "account_identity", "unknown"] as const) {
+      expect(planConversation({ interactionId: pid(REPLY), parentId: pid(COMMENT), authorRole, parentConversation: null })).toEqual({ kind: "none", reason: "PARENT_WITHOUT_CONVERSATION" });
+    }
+    expect(planConversation({ interactionId: pid(COMMENT), parentId: null, authorRole: "account_identity", parentConversation: null })).toEqual({ kind: "none", reason: "BRAND_TOP_LEVEL_COMMENT" });
+    // A brand top-level comment stays no work item even if a caller passed a conversation (top-level has no parent's).
+    expect(planConversation({ interactionId: pid(COMMENT), parentId: null, authorRole: "account_identity", parentConversation: { conversationId: "e5e5e5e5-0000-4000-8000-000000000005" } }).kind).toBe("none");
+  });
+
+  it("(H6-C1) subtree attachment: null members attach, members already in the target stay, any other conversation is a conflict", () => {
+    const C = "e5e5e5e5-0000-4000-8000-000000000005";
+    const D = "e5e5e5e5-0000-4000-8000-000000000006";
+    expect(decideSubtreeAttachment({ target: C, memberConversations: [null, null, C] })).toBe("attach");
+    expect(decideSubtreeAttachment({ target: C, memberConversations: [null, D] })).toBe("DESCENDANT_CONVERSATION_CONFLICT");
+    // A brand root (target none): no member may already hold a conversation.
+    expect(decideSubtreeAttachment({ target: null, memberConversations: [null, null] })).toBe("attach");
+    expect(decideSubtreeAttachment({ target: null, memberConversations: [null, C] })).toBe("DESCENDANT_CONVERSATION_CONFLICT");
+    expect(ANCESTRY_MAX_DEPTH).toBe(64);
   });
 });
 
 describe("coverage", () => {
   const scope = { connectedAccountId: ACCOUNT, capability: "read_interactions" as const, contentId: null };
-  const slice = (availability: AvailabilityInput, result: "completed" | "failed_transient" | "not_attempted" | "in_progress" = "completed") =>
+  const slice = (availability: AvailabilityInput, result: SliceReadResult = "completed") =>
     coverageForSlice({ scope, from: at("2026-10-20T00:00:00.000Z"), to: at("2026-10-27T00:00:00.000Z"), asOf: at("2026-10-27T00:05:00.000Z"), availability, result });
 
   it("13. coverage distinguishes zero data from no coverage", () => {
@@ -302,6 +318,17 @@ describe("coverage", () => {
     expect(slice({ state: "AVAILABLE", reason: "CAPABILITY_SUPPORTED", limitationCode: null }, "in_progress").outcome).toBe("IN_PROGRESS");
   });
 
+  it("(H6-C1) an exhausted traversal budget covers nothing: UNKNOWN / TRAVERSAL_INCOMPLETE, never COMPLETE, never zero", () => {
+    const fb = slice({ state: "AVAILABLE", reason: "CAPABILITY_SUPPORTED", limitationCode: null }, "budget_exhausted");
+    expect(fb.outcome).toBe("TEMPORARILY_FAILED");
+    expect(fb.intervals.map((i) => [i.interactionKind, i.state, i.reason])).toEqual([["comment", "UNKNOWN", "TRAVERSAL_INCOMPLETE"], ["reply", "UNKNOWN", "TRAVERSAL_INCOMPLETE"]]);
+    for (const interval of fb.intervals) expect(measuredInteractionCount(interval, 0)).toEqual({ state: "NOT_AVAILABLE", reason: "TRAVERSAL_INCOMPLETE" });
+    // Instagram: the limitation still says why replies are not covered; comments are incomplete, not complete.
+    const ig = slice({ state: "AVAILABLE_WITH_LIMITATION", reason: "CAPABILITY_LIMITATION", limitationCode: "REPLIES_NOT_READ" }, "budget_exhausted");
+    expect(ig.intervals.map((i) => [i.interactionKind, i.state, i.reason])).toEqual([["comment", "UNKNOWN", "TRAVERSAL_INCOMPLETE"], ["reply", "UNAVAILABLE", "CAPABILITY_LIMITATION"]]);
+    expect(COVERAGE_REASONS).toContain("TRAVERSAL_INCOMPLETE");
+  });
+
   it("history before the first read interval is HISTORY_DEPTH_NOT_VALIDATED (no implied 30-day import)", () => {
     const before = historyBeforeFirstRead({ scope, from: at("2026-09-27T00:00:00.000Z"), firstReadFrom: at("2026-10-20T00:00:00.000Z"), asOf: at("2026-10-27T00:00:00.000Z") });
     expect(before.map((i) => [i.interactionKind, i.state, i.reason])).toEqual([["comment", "UNAVAILABLE", "HISTORY_DEPTH_NOT_VALIDATED"], ["reply", "UNAVAILABLE", "HISTORY_DEPTH_NOT_VALIDATED"]]);
@@ -312,8 +339,10 @@ describe("coverage", () => {
 describe("reconciliation slices", () => {
   const correlationId = parseCorrelationId("corr-h6a1-slice-0001");
   if (correlationId === undefined) throw new Error("correlation");
+  const SLICE = "a1a1a1a1-0000-4000-8000-0000000000c1";
+  const NEXT = "a1a1a1a1-0000-4000-8000-0000000000c2";
   const base: ReconciliationSlice = {
-    workspaceId: WS_A as ReconciliationSlice["workspaceId"], connectedAccountId: ACCOUNT, platform: "facebook", unit: "content_interactions",
+    sliceId: SLICE, workspaceId: WS_A as ReconciliationSlice["workspaceId"], connectedAccountId: ACCOUNT, platform: "facebook", unit: "content_interactions",
     scope: { capability: "read_interactions", contentKind: "post", source: "unknown" }, contentRowId: "f6f6f6f6-0000-4000-8000-000000000006",
     window: { from: at("2026-10-20T00:00:00.000Z"), to: at("2026-10-27T00:00:00.000Z") }, watermark: null, overlapMs: 3_600_000, cursor: null,
     budget: { maxPages: 2, pagesRead: 0 }, sequence: 0, attempt: 1, correlationId,
@@ -322,17 +351,21 @@ describe("reconciliation slices", () => {
 
   it("15. pagination is bounded: the budget ends the slice and plans a fresh bounded continuation; out-of-window items never stop it", () => {
     expect(sliceViolations(base)).toEqual([]);
-    const first = advanceSlice(base, page("more", "2026-10-01T00:00:00.000Z"));
+    const first = advanceSlice(base, page("more", "2026-10-01T00:00:00.000Z"), NEXT);
     expect(first.kind).toBe("continue");
     if (first.kind !== "continue") return;
     expect(first.slice.budget.pagesRead).toBe(1);
-    const second = advanceSlice(first.slice, page("more", "2026-10-25T00:00:00.000Z"));
+    const second = advanceSlice(first.slice, page("more", "2026-10-25T00:00:00.000Z"), NEXT);
     expect(second.kind).toBe("continuation");
     if (second.kind !== "continuation") return;
     expect([second.next.sequence, second.next.budget, second.next.cursor?.value, second.next.watermark]).toEqual([1, { maxPages: 2, pagesRead: 0 }, "meta1.c3ludGhldGlj", "2026-10-25T00:00:00.000Z"]);
+    expect(second.next.sliceId).toBe(NEXT);
     expect(sliceDispatchKey(second.next)).not.toBe(sliceDispatchKey(base));
-    expect(advanceSlice(second.next, page("end", null))).toEqual({ kind: "complete", watermark: "2026-10-25T00:00:00.000Z" });
-    expect(() => advanceSlice({ ...base, budget: { maxPages: 2, pagesRead: 2 } }, page("more", null))).toThrow("slice_budget_exhausted");
+    expect(advanceSlice(second.next, page("end", null), SLICE)).toEqual({ kind: "complete", watermark: "2026-10-25T00:00:00.000Z" });
+    expect(() => advanceSlice({ ...base, budget: { maxPages: 2, pagesRead: 2 } }, page("more", null), NEXT)).toThrow("slice_budget_exhausted");
+    // A continuation needs a new persistent row id.
+    expect(() => advanceSlice(first.slice, page("more", null), SLICE)).toThrow("slice_next_id_invalid");
+    expect(() => advanceSlice(first.slice, page("more", null), "not-a-uuid")).toThrow("slice_next_id_invalid");
     expect(sliceViolations({ ...base, budget: { maxPages: SLICE_MAX_PAGES + 1, pagesRead: 0 } })).toContain("BUDGET_INVALID");
   });
 

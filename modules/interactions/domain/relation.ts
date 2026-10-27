@@ -8,6 +8,10 @@
  *                       and the reply's content scope, marked never-observed — and nothing else (no text, author, state,
  *                       times). The real parent fills it in when it is observed.
  *
+ * Ancestry (Step H6-C1): a placeholder may later be observed as a reply, so a thread's root can resolve late and across
+ * ingestion batches. Ancestry walks are bounded by ANCESTRY_MAX_DEPTH (depth 0 = the node itself): a deeper chain, or a
+ * cycle, is never assumed resolved — the caller fails closed (ANCESTRY_DEPTH_EXCEEDED / ANCESTRY_CYCLE).
+ *
  * Kind admission: a fact is admitted only for a kind its capability coverage includes (coverage module →
  * `coveredInteractionKinds`). Under Instagram r5 (AVAILABLE_WITH_LIMITATION / REPLIES_NOT_READ) only `comment` is
  * covered, so an Instagram reply is refused — never stored as a canonical interaction.
@@ -62,6 +66,9 @@ export function decideRelation(fact: InteractionSourceFact, knownParent: KnownIn
   if (knownParent.interactionId !== parentId) throw new TypeError("known_parent_is_not_the_referenced_parent");
   return reasons.length === 0 ? { kind: "reply_to_known_parent", parentId } : { kind: "reply_scope_conflict", reasons };
 }
+
+/** Hard cap on the descendants' depth below a resolved node (depth 0 = the node itself). */
+export const ANCESTRY_MAX_DEPTH = 64;
 
 export type KindAdmission = { readonly admitted: true } | { readonly admitted: false; readonly reason: "KIND_NOT_COVERED" };
 
