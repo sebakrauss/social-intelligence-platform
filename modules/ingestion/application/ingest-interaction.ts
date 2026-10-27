@@ -37,13 +37,13 @@ import {
   decideTextVersion,
   INTERACTION_KINDS,
   parseTextHash,
-  type AuthorityConflict,
   type InteractionRecord,
   type InteractionSourceFact,
   type KnownInteractionScope,
 } from "@/modules/interactions";
 import { parseInstant, type Instant } from "@/domain/instant";
 import type { ObservedArrival, ObservedChange } from "../domain/events";
+import type { IngestionConflictClass } from "../domain/reconciliation-state";
 import type { IngestionClock, IngestionStores } from "./ports";
 
 export interface IngestInteractionInput {
@@ -61,14 +61,8 @@ export type IngestOutcome =
   | { readonly kind: "unchanged"; readonly interactionId: string }
   | { readonly kind: "applied"; readonly interactionId: string; readonly conversationId: string | null; readonly changes: readonly ObservedChange[] };
 
-export type IngestionConflict =
-  | AuthorityConflict
-  | "CONTENT_SCOPE_CONFLICT"
-  | "PLACEHOLDER_SCOPE_CONFLICT"
-  | "PARENT_SCOPE_CONFLICT"
-  | "ANCESTRY_CYCLE"
-  | "ANCESTRY_DEPTH_EXCEEDED"
-  | "DESCENDANT_CONVERSATION_CONFLICT";
+/** The closed refusal classes (migration 0018's authority_conflicts CHECK); identity conflicts are among them. */
+export type IngestionConflict = IngestionConflictClass;
 
 /** Thrown before any write; the caller's transaction must roll back (no canonical mutation, no event). */
 export class IngestionAuthorityConflict extends Error {

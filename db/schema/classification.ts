@@ -347,6 +347,36 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     policies: ["member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
     privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT"] },
   },
+  // Step H6-C2 (0018): reconciliation runtime. Runs are status information members may read; slices (provider cursors),
+  // watermarks and conflicts are internal operational state of the job runtime only.
+  "ingestion.reconciliation_runs": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: {
+      authenticated: ["SELECT"],
+      app_worker: ["INSERT", "SELECT", "UPDATE(completed_at)", "UPDATE(content_items_used)", "UPDATE(failure_class)", "UPDATE(operations_used)", "UPDATE(pages_used)", "UPDATE(started_at)", "UPDATE(state)", "UPDATE(updated_at)"],
+    },
+  },
+  "ingestion.reconciliation_slices": {
+    class: "workspace_tenant",
+    policies: ["worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: {
+      app_worker: ["INSERT", "SELECT", "UPDATE(attempt)", "UPDATE(completed_at)", "UPDATE(conflict_count)", "UPDATE(cursor)", "UPDATE(cursor_issued_at)", "UPDATE(failure_class)",
+        "UPDATE(leased_until)", "UPDATE(operations_used)", "UPDATE(pages_read)", "UPDATE(retry_not_before)", "UPDATE(state)", "UPDATE(updated_at)"],
+    },
+  },
+  "ingestion.reconciliation_watermarks": {
+    class: "workspace_tenant",
+    policies: ["worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: {
+      app_worker: ["INSERT", "SELECT", "UPDATE(consecutive_failures)", "UPDATE(last_reconciliation_run_id)", "UPDATE(latest_created_at)", "UPDATE(retry_not_before)", "UPDATE(synced_through)", "UPDATE(updated_at)"],
+    },
+  },
+  "ingestion.authority_conflicts": {
+    class: "append_only_history",
+    policies: ["worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { app_worker: ["INSERT", "SELECT"] },
+  },
   "capability.profile_entries": {
     class: "workspace_tenant",
     policies: [
@@ -425,4 +455,8 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "connections.invalidate_open_fresh_meta_attempts(timestamp with time zone)": ["authenticated"],
   // Step H6-B (0017): canonical interaction scope is immutable (trigger only; no runtime EXECUTE).
   "interactions.interactions_scope_guard()": [],
+  // Step H6-C2 (0018): trigger guards only (SECURITY INVOKER, read OLD/NEW); nobody executes them directly.
+  "ingestion.reconciliation_run_guard()": [],
+  "ingestion.reconciliation_slice_guard()": [],
+  "ingestion.reconciliation_watermark_guard()": [],
 };

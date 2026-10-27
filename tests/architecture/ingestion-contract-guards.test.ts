@@ -14,7 +14,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { INTERACTIONS_OBSERVED_TOPIC } from "@/modules/ingestion";
+import { COVERAGE_REASONS } from "@/modules/coverage";
+import { INGESTION_CONFLICT_CLASSES, INTERACTIONS_OBSERVED_TOPIC } from "@/modules/ingestion";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 
 const MODULES = ["interactions", "conversations", "coverage", "ingestion"] as const;
@@ -101,15 +102,18 @@ describe("no transport in the fact, no text in the event", () => {
 });
 
 describe("scope of this gate", () => {
-  it("H6-A1 added no migration; H6-B adds exactly 0017 (the canonical source model)", () => {
+  it("H6-A1 and H6-C1 added no migration; H6-B adds exactly 0017; 22. H6-C2 adds exactly 0018 right after it", () => {
     const names = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    expect(names.slice(-2)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql"]);
+    expect(names.slice(-3)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql", "0018_reconciliation_runtime.sql"]);
   });
 
-  it("H6-C1 adds no migration: 0017 stays the latest (0018 is H6-C2's)", () => {
-    const names = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    expect(names.at(-1)).toBe("0017_canonical_source_model.sql");
-    expect(names.some((name) => name.startsWith("0018"))).toBe(false);
+  it("21. 0018 is reconciliation persistence only: no provider-event inbox, raw webhook body, subscription or receipt", () => {
+    const sql = raw("db/migrations/0018_reconciliation_runtime.sql").replace(/--[^\n]*/g, " ").toLowerCase();
+    expect(sql).not.toMatch(/webhook|inbox|subscription|receipt|raw_body|payload/);
+    const created = [...sql.matchAll(/create table ([a-z_]+\.[a-z_]+)/g)].map((match) => match[1]);
+    expect(created).toEqual(["ingestion.reconciliation_runs", "ingestion.reconciliation_slices", "ingestion.reconciliation_watermarks", "ingestion.authority_conflicts"]);
+    // 0017's canonical model is untouched: no ALTER of a content, interactions or conversations table.
+    expect(sql).not.toMatch(/alter table (content|interactions|conversations)\./);
   });
 
   it("H6-C1 supersedes the provisional conversation: no placeholder anchor, no re-anchoring conflict, no anchor-observed path", () => {
@@ -124,11 +128,18 @@ describe("scope of this gate", () => {
     expect(plan).toMatch(/if \(input\.parentConversation !== null\) return \{ kind: "join"/);
   });
 
-  it("TRAVERSAL_INCOMPLETE is in the coverage domain but not yet in 0017's CHECK (it lands with 0018, TL D-C5)", () => {
-    expect(codeOf("modules/coverage/domain/coverage.ts")).toMatch(/"TRAVERSAL_INCOMPLETE"/);
-    const reasonCheck = /reason\s+text not null check \(reason in \(([^)]*)\)\)/.exec(raw("db/migrations/0017_canonical_source_model.sql"))?.[1] ?? "";
-    expect(reasonCheck).toContain("'HISTORY_DEPTH_NOT_VALIDATED'");
-    expect(reasonCheck).not.toContain("TRAVERSAL_INCOMPLETE");
+  it("17. 0018's coverage reason CHECK is 0017's plus exactly TRAVERSAL_INCOMPLETE — the domain vocabulary, in order", () => {
+    const values = (sql: string, pattern: RegExp): string[] => [...(pattern.exec(sql)?.[1] ?? "").matchAll(/'([^']*)'/g)].map((match) => match[1] ?? "");
+    const before = values(raw("db/migrations/0017_canonical_source_model.sql"), /reason\s+text not null check \(reason in \(([^)]*)\)\)/);
+    const after = values(raw("db/migrations/0018_reconciliation_runtime.sql"), /add constraint coverage_records_reason_check check \(reason in \(([^)]*)\)\)/);
+    expect(after).toEqual([...before, "TRAVERSAL_INCOMPLETE"]);
+    expect(after).toEqual([...COVERAGE_REASONS]);
+  });
+
+  it("16. the conflict vocabulary is the canonical one (identity conflicts + ingestion conflicts), with no THREAD_ANCHOR_CONFLICT", () => {
+    const listed = [...(/conflict_class\s+text not null check \(conflict_class in \(([^)]*)\)\)/.exec(raw("db/migrations/0018_reconciliation_runtime.sql"))?.[1] ?? "").matchAll(/'([^']*)'/g)].map((match) => match[1]);
+    expect(listed).toEqual([...INGESTION_CONFLICT_CLASSES]);
+    expect(listed).not.toContain("THREAD_ANCHOR_CONFLICT");
   });
 
   it("the H6 design document records the six TL decisions and the ingestion principle", () => {

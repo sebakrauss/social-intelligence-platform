@@ -61,6 +61,8 @@ export const AUDIT_ACTIONS = [
   "connected_account.move_rejected",
   // Step 7G-H5.5-P2-B1 (migration 0014): an explicit capability re-evaluation request
   "connected_account.capability_reevaluation_requested",
+  // Step H6-C2 (migration 0018; TL D-C1): the explicit Owner/Admin request that starts a reconciliation (written by H6-C4)
+  "connected_account.reconciliation_requested",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

@@ -446,7 +446,10 @@ describe("vocabulary alignment with migration 0014", () => {
     };
     expect(listed("connected_account_events_event_type_check")).toEqual([...ACCOUNT_EVENT_TYPES].sort());
     expect(listed("connected_account_events_reason_code_check")).toEqual([...ACCOUNT_EVENT_REASONS].sort());
-    expect(listed("audit_events_action_check")).toEqual([...AUDIT_ACTIONS].sort());
+    // 0014's list is the vocabulary as of 0014: everything but what later migrations added (0018, Step H6-C2). The live
+    // CHECK's equality with AUDIT_ACTIONS is the DB suites' (connections, reconciliation-persistence).
+    const addedLater = ["connected_account.reconciliation_requested"];
+    expect(listed("audit_events_action_check")).toEqual([...AUDIT_ACTIONS].filter((action) => !addedLater.includes(action)).sort());
   });
 });
 

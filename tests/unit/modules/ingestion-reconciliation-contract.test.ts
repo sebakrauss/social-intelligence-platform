@@ -6,8 +6,15 @@
  */
 import { describe, expect, it } from "vitest";
 import { parseInstant, type Instant } from "@/domain/instant";
+import { AUTHORITY_CONFLICTS } from "@/modules/interactions";
 import {
+  INGESTION_CONFLICT_CLASSES,
   INITIAL_IMPORT_POLICY,
+  OPEN_RUN_STATES,
+  OPEN_SLICE_STATES,
+  RECONCILIATION_RUN_STATES,
+  RECONCILIATION_SLICE_STATES,
+  defaultBudgetSnapshot,
   RECONCILE_SLICE_TOPIC,
   RECONCILIATION_DEFAULTS,
   SLICE_MAX_PAGES,
@@ -74,5 +81,29 @@ describe("arrival (frozen from H6-C0)", () => {
     expect(reconciliationArrival({ epoch, providerCreatedAt: at("2026-10-28T00:00:00.000Z") })).toBe("reconciliation");
     // Arrival claims no historical depth.
     expect(INITIAL_IMPORT_POLICY).toMatchObject({ claimsHistoricalDepth: false, arrival: "backfill" });
+  });
+});
+
+describe("reconciliation runtime vocabularies (H6-C2, migration 0018)", () => {
+  it("run and slice states are closed; only REQUESTED/RUNNING runs and PENDING/RUNNING slices are open", () => {
+    expect(RECONCILIATION_RUN_STATES).toEqual(["REQUESTED", "RUNNING", "COMPLETED", "PARTIAL", "SKIPPED_UNAVAILABLE", "FAILED"]);
+    expect(OPEN_RUN_STATES).toEqual(["REQUESTED", "RUNNING"]);
+    expect(RECONCILIATION_SLICE_STATES).toEqual(["PENDING", "RUNNING", "COMPLETED", "CONTINUED", "FAILED_TRANSIENT", "FAILED_RATE_LIMITED", "FAILED_PERMANENT", "ABANDONED_BUDGET"]);
+    expect(OPEN_SLICE_STATES).toEqual(["PENDING", "RUNNING"]);
+  });
+
+  it("the conflict classes are the identity conflicts plus the ingestion scope and ancestry conflicts, without THREAD_ANCHOR_CONFLICT", () => {
+    expect(INGESTION_CONFLICT_CLASSES.slice(0, AUTHORITY_CONFLICTS.length)).toEqual([...AUTHORITY_CONFLICTS]);
+    expect(INGESTION_CONFLICT_CLASSES.slice(AUTHORITY_CONFLICTS.length)).toEqual([
+      "CONTENT_SCOPE_CONFLICT", "PLACEHOLDER_SCOPE_CONFLICT", "PARENT_SCOPE_CONFLICT", "ANCESTRY_CYCLE", "ANCESTRY_DEPTH_EXCEEDED", "DESCENDANT_CONVERSATION_CONFLICT",
+    ]);
+    expect(INGESTION_CONFLICT_CLASSES).not.toContain("THREAD_ANCHOR_CONFLICT");
+  });
+
+  it("the budget snapshot a run persists is the approved defaults, with the effective 15 pages per content", () => {
+    expect(defaultBudgetSnapshot()).toEqual({
+      listingPagesPerSlice: 1, interactionPagesPerSlice: 5, continuationsPerContent: 2, interactionPagesPerContent: 15, contentItems: 10, overlapSeconds: 86_400,
+    });
+    expect(defaultBudgetSnapshot().interactionPagesPerContent).toBe(maxInteractionPagesPerContent());
   });
 });

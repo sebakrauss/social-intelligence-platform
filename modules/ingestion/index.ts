@@ -33,6 +33,18 @@ export {
   type ObservedChange,
 } from "./domain/events";
 export { INITIAL_IMPORT_POLICY, PROVIDER_EVENT_INBOX_POLICY, reconciliationArrival } from "./domain/policy";
+export {
+  INGESTION_CONFLICT_CLASSES,
+  OPEN_RUN_STATES,
+  OPEN_SLICE_STATES,
+  RECONCILIATION_RUN_STATES,
+  RECONCILIATION_SLICE_STATES,
+  defaultBudgetSnapshot,
+  type IngestionConflictClass,
+  type ReconciliationBudgetSnapshot,
+  type ReconciliationRunState,
+  type ReconciliationSliceState,
+} from "./domain/reconciliation-state";
 export { IngestionAuthorityConflict, ingestInteractionFact, type IngestInteractionInput, type IngestOutcome, type IngestionConflict } from "./application/ingest-interaction";
 export { orderParentsFirst } from "./application/ordering";
 export { recordIngestionCoverage, type RecordCoverageInput } from "./application/record-coverage";

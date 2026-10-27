@@ -101,3 +101,19 @@ removed_at_source). Attaching existing descendants to a late root's conversation
 - Defaults (`RECONCILIATION_DEFAULTS`, separate from the hard ceilings of 10 pages per slice and a 7-day overlap):
   1 listing page per slice, 5 interaction pages per slice, 2 continuations per content and run (≤ 15 pages), 10
   content items per run, 1 open run per account, 24-hour overlap. Budgets, not claims about provider history.
+
+## H6-C2 — reconciliation runtime persistence (migration 0018)
+
+0018 adds the reconciliation tables only (no webhook inbox — that is H6-F) and two closed-vocabulary widenings:
+
+| Table | Purpose | Who reads / writes |
+|---|---|---|
+| `ingestion.reconciliation_runs` | One request per connected account, with its budget snapshot; at most one REQUESTED/RUNNING run per account | Non-guest members read (status); job runtime writes |
+| `ingestion.reconciliation_slices` | One bounded unit of provider work; the only home of a short-lived provider cursor (≤ 2048, only while PENDING/RUNNING); at most one RUNNING slice per account | Job runtime only |
+| `ingestion.reconciliation_watermarks` | Per account × `read_interactions` scope × content: fixed epoch, `synced_through` that never regresses | Job runtime only |
+| `ingestion.authority_conflicts` | Append-only refusals: ids and the 12 canonical conflict classes (no `THREAD_ANCHOR_CONFLICT`) | Job runtime only |
+
+Widenings: `coverage_records.reason` gains `TRAVERSAL_INCOMPLETE`; `audit_events.action` gains
+`connected_account.reconciliation_requested`. Triggers refuse only authority-breaking transitions (a finished run or
+slice never changes again, a slice is claimed only by incrementing its attempt, counters never decrease, the epoch is
+fixed). Every other transition is the application's (H6-C3). Applying 0018 to dev-v2 is its own gate (H6-C2b).

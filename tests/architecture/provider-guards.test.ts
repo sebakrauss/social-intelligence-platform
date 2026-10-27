@@ -527,7 +527,18 @@ describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cu
   it("no cursor is persisted or exposed: PageCursor lives only in provider adapters and the contract", () => {
     const users = findReferences(sourceFiles(PRODUCTION), [/\bPageCursor\b|\bparsePageCursor\b|META_PAGE_CURSOR_PREFIX|MetaGraphCursor/]).map(([file]) => file);
     expect(users.filter((file) => !file.startsWith("integrations/providers/"))).toEqual([]);
-    expect(findReferences(sourceFiles(["db"]), [/cursor/i])).toEqual([]);
+    // Step H6-C2 (0018, TL-approved): the ONLY persisted cursor is ingestion.reconciliation_slices.cursor — short-lived
+    // slice state for the job runtime, never a watermark, never readable by members. No other db code names one.
+    expect(findReferences(sourceFiles(["db"]), [/cursor/i])).toEqual([["db/schema/classification.ts", "cursor"]]);
+    const classification = codeOf("db/schema/classification.ts");
+    const slices = /"ingestion\.reconciliation_slices": \{[\s\S]*?\n {2}\},/.exec(classification)?.[0] ?? "";
+    expect(slices).toMatch(/"UPDATE\(cursor\)", "UPDATE\(cursor_issued_at\)"/);
+    expect(slices).not.toMatch(/authenticated/);
+    expect(classification.replace(slices, "")).not.toMatch(/cursor/i);
+    const migrations = readdirSync(path.join(root, "db/migrations")).filter((f) => f.endsWith(".sql"));
+    for (const file of migrations.filter((f) => f !== "0018_reconciliation_runtime.sql")) {
+      expect(readFileSync(path.join(root, "db/migrations", file), "utf8").replace(/--[^\n]*/g, ""), file).not.toMatch(/cursor/i);
+    }
     // The diagnostic reports only the pagination kind, never a cursor.
     const diagnostic = codeOf("jobs/integration-read-content-validation.ts");
     expect(diagnostic).toMatch(/readonly pagination: "more" \| "end" \| null;/);

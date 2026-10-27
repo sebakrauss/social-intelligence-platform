@@ -10,6 +10,7 @@ import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { APPLICATION_SCHEMAS, FUNCTION_EXECUTE, RESTRICTIVE_POLICIES, SCHEMA_USAGE, TABLE_CLASSIFICATION } from "@/db/schema/classification";
 import { auditEvents } from "@/modules/audit/persistence";
+import { authorityConflicts, reconciliationRuns, reconciliationSlices, reconciliationWatermarks } from "@/modules/ingestion/persistence";
 import { invitations, organizationMemberships, organizations, workspaceMemberships, workspaces } from "@/modules/tenancy/persistence";
 import { outbox } from "@/platform/db";
 import { privilegedPool, type DbTarget } from "../support/target";
@@ -145,7 +146,9 @@ export function defineIntrospectionSuite(getTarget: () => DbTarget): void {
   });
 
   describe("Drizzle mappings match the migrated tables", () => {
-    const mapped: readonly PgTable[] = [organizations, workspaces, organizationMemberships, workspaceMemberships, invitations, auditEvents, outbox];
+    const mapped: readonly PgTable[] = [organizations, workspaces, organizationMemberships, workspaceMemberships, invitations, auditEvents, outbox,
+      // Step H6-C2 (0018): the reconciliation runtime tables.
+      reconciliationRuns, reconciliationSlices, reconciliationWatermarks, authorityConflicts];
     for (const table of mapped) {
       const config = getTableConfig(table);
       it(`${config.schema ?? "public"}.${config.name}`, async () => {
