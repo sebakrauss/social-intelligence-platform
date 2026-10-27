@@ -45,7 +45,8 @@ const sqlSources = (): { name: string; sql: string }[] => [
  * Closed-vocabulary CHECK constraints that may only ever be WIDENED: the audit vocabulary (TA §41), the
  * connect-attempt state machine (Step 5D, 0008), the product capability keys (Step 7G-H5.5, 0013: read_content), the
  * Connected Account history vocabulary (Step 7G-H5.5-P2-B1, 0014: REEVALUATION_REQUESTED / USER_REQUESTED_REEVALUATION)
- * and the capability profile states (Step 7G-H5.5-P4-C, 0015: NOT_AUTHORIZED).
+ * the capability profile states (Step 7G-H5.5-P4-C, 0015: NOT_AUTHORIZED) and the capability profile limitation codes
+ * (Step 7G-H5.5-P12-D2a, 0016: REPLIES_NOT_READ).
  * PostgreSQL can't alter a CHECK expression in place, so widening
  * is, in ONE migration and as top-level statements in this order:
  *   alter table <table> drop constraint <name>;
@@ -65,6 +66,7 @@ const WIDENABLE_CHECKS: Readonly<Record<string, { readonly table: string; readon
   connected_account_events_reason_code_check: { table: "connections.connected_account_events", column: "reason_code" },
   profile_entries_capability_check: { table: "capability.profile_entries", column: "capability" },
   profile_entries_state_check: { table: "capability.profile_entries", column: "state" },
+  profile_entries_limitation_code_check: { table: "capability.profile_entries", column: "limitation_code" },
 };
 
 const LITERAL_LIST = /^\s*'[^']*'(\s*,\s*'[^']*')*\s*$/;
@@ -94,7 +96,8 @@ function withVerifiedWideningsRemoved(sources: readonly { name: string; sql: str
     for (const [name, { table, column }] of Object.entries(WIDENABLE_CHECKS)) {
       const t = escapeRegExp(table);
       const body = createTableBody(top, table);
-      const inline = body === undefined ? null : new RegExp(`(?:\\(|,) ${column} text not null check \\(${column} in \\(([^)]*)\\)\\)`).exec(body);
+      // A nullable column's inline CHECK (0009 limitation_code) counts too: widening keeps NULL admitted either way.
+      const inline = body === undefined ? null : new RegExp(`(?:\\(|,) ${column} text(?: not null)? check \\(${column} in \\(([^)]*)\\)\\)`).exec(body);
       if (inline && !allowed.has(name)) allowed.set(name, new Set(quotedValues(inline[1] ?? "")));
       const drops = statements(top, new RegExp(`alter table ${t} drop constraint ${name};`));
       if (drops.length === 0) continue;
@@ -328,6 +331,7 @@ describe("migration lint", () => {
         "connected_account_events_event_type_check",
         "connected_account_events_reason_code_check",
         "profile_entries_capability_check",
+        "profile_entries_limitation_code_check",
         "profile_entries_state_check",
       ]);
     });

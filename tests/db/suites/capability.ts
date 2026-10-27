@@ -19,7 +19,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { parseUserId, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
 import { SimulatorWorld, simulateConsent, type SimulatedConsent } from "@/integrations/providers/simulator";
 import type { CallbackQuery } from "@/integrations/providers/contract";
-import { PROFILE_STATES, SIMULATOR_CATALOG, evaluateProfile, inputDigest, type CapabilityProfileStore } from "@/modules/capability";
+import { LIMITATION_CODES, PROFILE_STATES, SIMULATOR_CATALOG, evaluateProfile, inputDigest, type CapabilityProfileStore } from "@/modules/capability";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
 import { refreshAccountCapabilities, type CapabilityRefreshDependencies } from "@/modules/connections";
 import { createLocalKeyring, type LocalKeyring } from "@/platform/crypto/credentials/local-keyring";
@@ -291,6 +291,67 @@ export function defineCapabilitySuite(getTarget: () => DbTarget): void {
       expect(await attempt("NOT_AUTHORIZED", ["ACCOUNT_PERMISSION_MISSING"], "HISTORY_DEPTH_LIMITED")).toBe("23514:profile_entries_limitation_shape");
       expect(await attempt("NOT_AUTHORIZED", [])).toBe("23514:profile_entries_reason_codes_check");
       expect(await attempt("AUTHORIZATION_REQUIRED", ["ACCOUNT_PERMISSION_MISSING"])).toBe("23514:profile_entries_state_check");
+    });
+  });
+
+  describe("migration 0016: the REPLIES_NOT_READ limitation code (Step 7G-H5.5-P12-D2a)", () => {
+    class Rollback extends Error {}
+    /** One raw limited row in the worker's own scope, always rolled back: "accepted" or the refusing SQLSTATE:constraint. */
+    const attempt = async (state: string, reasons: readonly string[], code: string | null, value: number | null = null): Promise<string> => {
+      try {
+        await asWorker(world.A1, async (tx) => {
+          await tx.execute(sql`insert into capability.profile_entries
+            (organization_id, workspace_id, connected_account_id, capability, content_kind, source, state, reason_codes, limitation_code, limitation_value,
+             catalog_validation, evidence_ref, observation_refs, revision, evaluated_at)
+            values (${world.orgA}, ${world.A1}, ${A1.page}, 'detect_native_replies', 'video', 'mixed', ${state}, ${`{${reasons.join(",")}}`}::text[], ${code}, ${value},
+                    'validated', null, '{}', 1, now())`);
+          throw new Rollback();
+        });
+      } catch (error) {
+        if (error instanceof Rollback) return "accepted";
+        const pg = postgresError(error);
+        if (pg === undefined) throw error;
+        return `${pg.code}:${pg.constraint ?? ""}`;
+      }
+      return "unreachable";
+    };
+
+    it("the widened CHECK is validated and admits exactly the application's LIMITATION_CODES (NULL still allowed)", async () => {
+      const rows = await oracle<{ name: string; validated: boolean; definition: string }>(
+        `select conname as name, convalidated as validated, pg_get_constraintdef(oid) as definition from pg_constraint
+          where conrelid = 'capability.profile_entries'::regclass and conname = 'profile_entries_limitation_code_check'`,
+      );
+      expect(rows.map((row) => [row.name, row.validated])).toEqual([["profile_entries_limitation_code_check", true]]);
+      expect([...(rows[0]?.definition ?? "").matchAll(/'([A-Z_]+)'::text/g)].map((match) => match[1]).sort()).toEqual([...LIMITATION_CODES].sort());
+      const column = await oracle<{ is_nullable: string }>(
+        "select is_nullable from information_schema.columns where table_schema = 'capability' and table_name = 'profile_entries' and column_name = 'limitation_code'",
+      );
+      expect(column).toEqual([{ is_nullable: "YES" }]);
+    });
+
+    it("REPLIES_NOT_READ is accepted exactly where a limitation is valid; existing codes stay valid; unknown codes and incoherent shapes stay refused", async () => {
+      await refresh(world.A1, A1.page); // the account's profile header exists (composite FK)
+      const limited = ["AVAILABLE_WITH_LIMITATION", ["CATALOG_LIMITATION"]] as const;
+      expect(await attempt(...limited, "REPLIES_NOT_READ")).toBe("accepted");
+      expect(await attempt(...limited, "HISTORY_DEPTH_LIMITED", 90)).toBe("accepted");
+      expect(await attempt(...limited, "HIDE_VISIBLE_TO_AUTHOR")).toBe("accepted");
+      expect(await attempt("SUPPORTED", ["CATALOG_SUPPORTED"], null)).toBe("accepted");
+      for (const unknown of ["REPLIES_NOT_SUPPORTED", "replies_not_read", "COMMENTS_NOT_READ", "REPLIES_NOT_READ "]) {
+        expect(await attempt(...limited, unknown), unknown).toBe("23514:profile_entries_limitation_code_check");
+      }
+      // The 0009 shape and the 0015 coherence still hold for the new code.
+      expect(await attempt("SUPPORTED", ["CATALOG_SUPPORTED"], "REPLIES_NOT_READ")).toBe("23514:profile_entries_limitation_shape");
+      expect(await attempt("NOT_AUTHORIZED", ["ACCOUNT_PERMISSION_MISSING"], "REPLIES_NOT_READ")).toBe("23514:profile_entries_limitation_shape");
+      expect(await attempt("UNKNOWN_NOT_VALIDATED", ["CATALOG_NOT_VALIDATED"], "REPLIES_NOT_READ")).toBe("23514:profile_entries_limitation_shape");
+      expect(await attempt("AVAILABLE_WITH_LIMITATION", ["CATALOG_LIMITATION"], null)).toBe("23514:profile_entries_limitation_shape");
+      expect(await attempt("AVAILABLE_WITH_LIMITATION", ["CATALOG_SUPPORTED"], "REPLIES_NOT_READ")).toBe("23514:profile_entries_state_reasons");
+      expect(await attempt("SUPPORTED", ["CATALOG_SUPPORTED"], null, 3)).toBe("23514:profile_entries_limitation_value");
+    });
+
+    it("no evaluation writes it: no catalog names it yet, so stored profiles never carry it", async () => {
+      await refresh(world.A1, A1.page);
+      const carrying = await oracle<{ n: number }>("select count(*)::int as n from capability.profile_entries where limitation_code = 'REPLIES_NOT_READ'");
+      expect(carrying).toEqual([{ n: 0 }]);
     });
   });
 

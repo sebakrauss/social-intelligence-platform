@@ -39,7 +39,7 @@ describe("the continuation is created only by a successful re-authorization", ()
   it("no database function produces a discovery authority (the web completion is the only producer)", () => {
     const migrations = readdirSync(path.join(root, "db/migrations")).filter((f) => f.endsWith(".sql"));
     for (const file of migrations) expect(readFileSync(path.join(root, "db/migrations", file), "utf8"), file).not.toMatch(/connections\.discover_assets|capability_refresh_credential_id/);
-    expect(migrations.at(-1)).toBe("0015_capability_not_authorized.sql");
+    expect(migrations.at(-1)).toBe("0016_capability_replies_not_read.sql");
   });
 
   it("the continuation is read only from the run's subjects, by the discovery handler — never inferred from status, version or history", () => {

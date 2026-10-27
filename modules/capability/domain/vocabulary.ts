@@ -64,8 +64,16 @@ export type ProfileState = (typeof PROFILE_STATES)[number];
 export const VALIDATION_STATUSES = ["validated", "not_validated"] as const;
 export type ValidationStatus = (typeof VALIDATION_STATUSES)[number];
 
-/** Known restrictions of an otherwise available capability (closed; an optional integer parameter, e.g. days). */
-export const LIMITATION_CODES = ["HISTORY_DEPTH_LIMITED", "HIDE_VISIBLE_TO_AUTHOR"] as const;
+/**
+ * Known restrictions of an otherwise available capability (closed; an optional integer parameter, e.g. days). One per
+ * profile row. Mirrored by the database CHECK (0009, widened by 0016).
+ *   HISTORY_DEPTH_LIMITED   history/backfill reaches back at most `value` days
+ *   HIDE_VISIBLE_TO_AUTHOR  a hidden interaction stays visible to its author
+ *   REPLIES_NOT_READ        (Step 7G-H5.5-P12-D2a) Wrenkind reads the top-level comments of this capability and scope,
+ *                           but does not read their replies — never a claim that the platform lacks replies; reply
+ *                           coverage is "not available", never zero. No value.
+ */
+export const LIMITATION_CODES = ["HISTORY_DEPTH_LIMITED", "HIDE_VISIBLE_TO_AUTHOR", "REPLIES_NOT_READ"] as const;
 export type LimitationCode = (typeof LIMITATION_CODES)[number];
 
 export interface Limitation {
