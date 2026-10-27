@@ -249,3 +249,8 @@ release FIRST: both planes from the same source, with MAIN's task inventory incl
 the paired task counts verified. Only then deploy the web from that source — never the web producer first. Source
 guards keep the topic registered on MAIN and the release-pair task counts equal to the registry; the deployment order
 itself is the H6-C5 runbook.
+
+## H6 closeout
+
+H6 is closed. The authoritative final record (capability matrix, rules, topology, budgets, coverage and watermark
+models, the security boundary, evidence by class, limitations and deferred scope) is [CLOSEOUT.md](CLOSEOUT.md).
