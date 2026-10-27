@@ -1,5 +1,5 @@
 /**
- * interactions module public API (TA §7.1, L1; Step H6-A1: pure domain contracts only — no persistence yet).
+ * interactions module public API (TA §7.1, L1; H6-A1 pure domain contracts; H6-B persistence port).
  * `issueStoredInteractionAuthority` is deliberately NOT exported: only the module's persistence layer may issue a
  * stored authority (architecture guard).
  */
@@ -66,3 +66,14 @@ export {
   type StoredRereadMismatch,
   type StoredRereadObservation,
 } from "./domain/stored-authority";
+export type {
+  CurrentStateUpdate,
+  InteractionRecord,
+  InteractionStore,
+  NewAuthor,
+  NewInteractionRow,
+  NewStateObservation,
+  NewTextVersion,
+  ObservedFields,
+  TextVersionPointerRow,
+} from "./application/ports";

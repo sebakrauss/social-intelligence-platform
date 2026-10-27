@@ -41,6 +41,8 @@ const ALL_DML = ["SELECT", "INSERT", "UPDATE", "DELETE"] as const;
 /** Schemas owned by this application. Any other schema owned by app_owner fails the classification test. */
 export const APPLICATION_SCHEMAS = [
   "app", "app_private", "tenancy", "audit", "system", "idempotency", "connections", "credentials", "capability", "app_migrations", "t26_fixture",
+  // Step H6-B (0017): the canonical source model, one schema per owning module.
+  "content", "interactions", "conversations", "coverage", "ingestion",
 ] as const;
 
 /** Schema USAGE per runtime role (no other role may hold USAGE or CREATE). */
@@ -57,6 +59,11 @@ export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number],
   capability: ["authenticated", "app_worker"],
   app_migrations: [],
   t26_fixture: ["authenticated", "app_worker"],
+  content: ["authenticated", "app_worker"],
+  interactions: ["authenticated", "app_worker"],
+  conversations: ["authenticated", "app_worker"],
+  coverage: ["authenticated", "app_worker"],
+  ingestion: ["authenticated", "app_worker"],
 };
 
 export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>> = {
@@ -299,6 +306,47 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       ],
     },
   },
+  // Step H6-B (0017): canonical source model. Written by ingestion (worker, bound workspace); read by non-guest members.
+  "content.content_items": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT", "UPDATE(latest_observed_at)", "UPDATE(source_state)", "UPDATE(updated_at)"] },
+  },
+  "interactions.authors": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT", "UPDATE(label)", "UPDATE(updated_at)"] },
+  },
+  "interactions.interactions": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT", "UPDATE(author_id)", "UPDATE(author_role)", "UPDATE(conversation_id)", "UPDATE(current_availability)", "UPDATE(current_removal_basis)", "UPDATE(current_source_text_version_id)", "UPDATE(current_visibility)", "UPDATE(first_observed_at)", "UPDATE(kind)", "UPDATE(latest_observed_at)", "UPDATE(observed)", "UPDATE(parent_interaction_id)", "UPDATE(provider_created_at)", "UPDATE(provider_edited_at)", "UPDATE(state_observed_at)", "UPDATE(text_observed_at)", "UPDATE(updated_at)"] },
+  },
+  "interactions.source_text_versions": {
+    class: "append_only_history",
+    policies: ["member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
+  "interactions.state_observations": {
+    class: "append_only_history",
+    policies: ["member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
+  "conversations.conversations": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT", "UPDATE(anchor_observed)", "UPDATE(updated_at)"] },
+  },
+  "coverage.coverage_records": {
+    class: "append_only_history",
+    policies: ["member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
+  "ingestion.ingestion_events": {
+    class: "append_only_history",
+    policies: ["member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
   "capability.profile_entries": {
     class: "workspace_tenant",
     policies: [
@@ -375,4 +423,6 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "connections.record_move_audit(uuid,text,text)": ["app_worker"],
   // Step 7G-F4C (0012): Meta removal closes every open fresh Meta attempt of the bound workspace (write-only, web only).
   "connections.invalidate_open_fresh_meta_attempts(timestamp with time zone)": ["authenticated"],
+  // Step H6-B (0017): canonical interaction scope is immutable (trigger only; no runtime EXECUTE).
+  "interactions.interactions_scope_guard()": [],
 };

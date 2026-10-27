@@ -16,16 +16,17 @@ import { INTERACTIONS_OBSERVED_TOPIC } from "@/modules/ingestion";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 
 const MODULES = ["interactions", "conversations", "coverage", "ingestion"] as const;
-const DOMAIN_FILES = MODULES.flatMap((m) => sourceFiles([`modules/${m}`]));
+/** The pure parts: each module's domain folder and its public index (persistence/application are governed by depcruise). */
+const DOMAIN_FILES = MODULES.flatMap((m) => sourceFiles([`modules/${m}/domain`, `modules/${m}/index.ts`]));
 const raw = (relative: string): string => readFileSync(path.join(REPOSITORY_ROOT, relative), "utf8");
 const PRODUCTION = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "ai", "mutations", "jobs", "db", "tools"];
 
 describe("the new module domains are pure and inert", () => {
-  it("exist with a public index and a domain folder only (no persistence, application or jobs yet)", () => {
+  it("exist with a public index, a pure domain, and (H6-B) only persistence / application layers besides it", () => {
     for (const m of MODULES) {
       const files = sourceFiles([`modules/${m}`]);
       expect(files, m).toContain(`modules/${m}/index.ts`);
-      expect(files.filter((f) => f !== `modules/${m}/index.ts` && !f.startsWith(`modules/${m}/domain/`)), m).toEqual([]);
+      expect(files.filter((f) => f !== `modules/${m}/index.ts` && !/^modules\/[a-z]+\/(domain|persistence|application)\//.test(f)), m).toEqual([]);
     }
   });
 
@@ -98,9 +99,9 @@ describe("no transport in the fact, no text in the event", () => {
 });
 
 describe("scope of this gate", () => {
-  it("adds no migration: the last migration is still 0016", () => {
+  it("H6-A1 added no migration; H6-B adds exactly 0017 (the canonical source model)", () => {
     const names = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    expect(names.at(-1)).toBe("0016_capability_replies_not_read.sql");
+    expect(names.slice(-2)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql"]);
   });
 
   it("the H6 design document records the six TL decisions and the ingestion principle", () => {

@@ -1,4 +1,4 @@
-/** coverage module public API (TA §7.1, L0; Step H6-A1: pure domain contracts only — no persistence yet). */
+/** coverage module public API (TA §7.1, L0; H6-A1 pure domain contracts; H6-B persistence port). */
 export {
   COVERAGE_INTERACTION_KINDS,
   COVERAGE_REASONS,
@@ -22,3 +22,4 @@ export {
   type SliceCoverageOutcome,
   type SliceReadResult,
 } from "./domain/coverage";
+export type { CoverageRecordRow, CoverageStore } from "./application/ports";
