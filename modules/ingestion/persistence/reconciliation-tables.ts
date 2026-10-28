@@ -28,6 +28,8 @@ export const reconciliationRuns = ingestion.table("reconciliation_runs", {
   budgetOverlapSeconds: integer("budget_overlap_seconds").notNull(),
   /** 0019: the run's immutable provider-operation budget. */
   maxOperations: integer("max_operations").notNull(),
+  // Step H6-F2 (0022): 'account' (every manual run) | 'relist' (webhook-signal runs); immutable, chosen at request.
+  plan: text("plan").notNull().default("account"),
   operationsUsed: integer("operations_used").notNull(),
   pagesUsed: integer("pages_used").notNull(),
   contentItemsUsed: integer("content_items_used").notNull(),

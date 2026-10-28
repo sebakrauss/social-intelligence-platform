@@ -150,6 +150,10 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "no_direct_reconciliation_routing INSERT authenticated",
       // 0021 (H6-E1): RESTRICTIVE — the complete inventory of internal (definer- and job-runtime-only) topics.
       "no_direct_internal_topics INSERT authenticated",
+      // 0022 (H6-F2): the system webhook definers' IDs-only ingestion.process_signals rows (routed hint or due mark).
+      "owner_signal_dispatch INSERT app_owner",
+      // 0022 (H6-F2): RESTRICTIVE — neither members nor workers append ingestion.process_signals themselves.
+      "no_direct_signal_routing INSERT app_worker,authenticated",
     ],
     privileges: {
       authenticated: ["INSERT"],
@@ -270,6 +274,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "member_read SELECT authenticated",
       // 0010: ACTIVE rows of the bound workspace's organization, for the M-01 definer lookups only (never web/worker).
       "owner_organization_active_read SELECT app_owner",
+      // 0022: ACTIVE content-bearing rows for the webhook-routing definers — a system login with no workspace only.
+      "owner_signal_route_read SELECT app_owner",
       "worker_insert INSERT app_worker",
       "worker_read SELECT app_worker",
       "worker_update UPDATE app_worker",
@@ -387,6 +393,30 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     policies: ["worker_append INSERT app_worker", "worker_read SELECT app_worker"],
     privileges: { app_worker: ["INSERT", "SELECT"] },
   },
+  // Step H6-F2 (0022): tenant webhook-signal coalescing marks; the bound workspace's worker, and the due-mark definer.
+  "ingestion.signal_marks": {
+    class: "workspace_tenant",
+    policies: [
+      "owner_due_read SELECT app_owner", "owner_due_update UPDATE app_owner",
+      "worker_delete DELETE app_worker", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker",
+    ],
+    privileges: {
+      // dispatch_generation, kind, content and the first signal are never rewritten by the worker.
+      app_worker: ["DELETE", "INSERT", "SELECT", "UPDATE(deferred_until)", "UPDATE(expires_at)", "UPDATE(last_signal_at)", "UPDATE(requested_run_id)", "UPDATE(signal_count)", "UPDATE(updated_at)"],
+    },
+  },
+  // Step H6-F2 (0022): the durable provider receipt queue (D-F1). The raw body is reachable by the definers only.
+  "system.provider_event_inbox": {
+    class: "system",
+    policies: ["owner_receipt_insert INSERT app_owner", "owner_receipt_purge DELETE app_owner", "owner_receipt_read SELECT app_owner", "owner_receipt_update UPDATE app_owner"],
+    privileges: {},
+  },
+  // Step H6-F2 (0022): identifier-only routing hints; the system router lists due ones directly.
+  "system.provider_event_hints": {
+    class: "system",
+    policies: ["owner_hint_insert INSERT app_owner", "owner_hint_purge DELETE app_owner", "owner_hint_read SELECT app_owner", "owner_hint_update UPDATE app_owner", "system_read SELECT app_system"],
+    privileges: { app_system: ["SELECT"] },
+  },
   "capability.profile_entries": {
     class: "workspace_tenant",
     policies: [
@@ -427,7 +457,7 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
  * The only RESTRICTIVE policies (every other policy is permissive). A restrictive policy narrows what the listed roles'
  * permissive policies allow; flipping one either way changes isolation, so the set is pinned exactly.
  */
-export const RESTRICTIVE_POLICIES: readonly string[] = ["system.outbox no_direct_move_routing", "system.outbox no_direct_reconciliation_routing", "system.outbox no_direct_internal_topics"];
+export const RESTRICTIVE_POLICIES: readonly string[] = ["system.outbox no_direct_move_routing", "system.outbox no_direct_reconciliation_routing", "system.outbox no_direct_internal_topics", "system.outbox no_direct_signal_routing"];
 
 /** EXECUTE grants per function (non-owner grantees). Every function in an application schema is listed. */
 export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]>> = {
@@ -473,4 +503,11 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "ingestion.request_reconciliation(uuid,text,timestamp with time zone,jsonb)": ["app_worker", "authenticated"],
   // Step H6-C3d (0020): the bound workspace's organization, for its own members only (the narrowed append_own).
   "audit.bound_workspace_organization()": ["authenticated"],
+  // Step H6-F2 (0022): the webhook-signal boundaries. Receipt: the web login with NO claims and NO workspace (the
+  // provider-signal scope). Routing, due-mark dispatch and purge: the system login. Hint read: the bound worker.
+  "system.record_provider_webhook(text,text,text,bytea,integer,boolean,integer,integer,integer,integer,integer,jsonb)": ["authenticated"],
+  "system.route_provider_hint(uuid)": ["app_system"],
+  "system.dispatch_due_signal_marks(integer)": ["app_system"],
+  "system.purge_provider_events(integer)": ["app_system"],
+  "ingestion.provider_event_hint(uuid,uuid)": ["app_worker"],
 };

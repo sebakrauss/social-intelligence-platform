@@ -164,6 +164,8 @@ export function defineOutboxMemberTopicsSuite(getTarget: () => DbTarget): void {
         ["no_direct_internal_topics", ["authenticated"]],
         ["no_direct_move_routing", ["app_worker", "authenticated"]],
         ["no_direct_reconciliation_routing", ["authenticated"]],
+        // 0022 (H6-F2): the reserved webhook-signal topic, for members and workers.
+        ["no_direct_signal_routing", ["app_worker", "authenticated"]],
       ]);
       // Union closure on the live catalog: every internal topic is removed from the member by at least one policy.
       const union = new Set(restrictive.flatMap((p) => [...p.with_check.matchAll(/'([a-z_]+(?:\.[a-z_]+)+)'::text/g)].map((m) => m[1])));

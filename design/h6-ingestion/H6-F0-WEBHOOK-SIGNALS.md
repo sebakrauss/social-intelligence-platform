@@ -66,7 +66,7 @@ Meta ──HTTPS──▶ WEB  POST /api/webhooks/meta
                  6 200 ── post-commit best-effort nudge ─▶ MAIN ingestion.route_provider_events
                                                               (also cron every minute: the durable fallback)
 MAIN  ingestion.route_provider_events   (system scope; drains PENDING hints in bounded batches)
-        definer ingestion.route_provider_hint(hint) → ACTIVE account(s) for (platform, provider asset)
+        definer system.route_provider_hint(hint) → ACTIVE account(s) for (platform, provider asset)
         → per (hint, account): IDs-only outbox row  ingestion.process_signals {connected_account_id, provider_event_hint_id}
 MAIN  ingestion.process_signals          (workspace scope; per account serial; DB only, no provider)
         re-derives the hint for the BOUND account · gates · upserts a signal mark · requests at most one run/confirmation
@@ -144,7 +144,7 @@ user or role is ever read from the query or body — they are derived server-sid
   runs/slices/coverage/watermarks of webhook-triggered runs (attributed by `plan` + system initiator), and aggregate
   metrics. 7 days exceeds Meta's retry window (VALIDATE: documented as ~36 h), so dedupe stays effective.
 - Cleanup: MAIN system cron `ingestion.purge_provider_events` (every 15 min, bounded batches, definer
-  `system.purge_provider_events(before, limit)`); marks expire through `ingestion.process_signals` (tenant side).
+  `system.purge_provider_events(limit)`, cutoff = DB time − 7 days, §16.1); marks expire through `ingestion.process_signals` (tenant side).
   TA-Q-11 stays VALIDATE for production; the 7-day value is the policy constant, configurable per environment.
 
 ---
@@ -177,7 +177,7 @@ plus an entry-age bound (entries with `time` outside `[now − 7 d, now + 5 min]
 `asset_class = 'content_bearing'`, same platform and `provider_asset_id`. Facebook: the Page id. Instagram: the
 professional account id (`instagram_business_account`, as discovery stores it; VALIDATE that webhooks carry the same).
 
-- Done by the system router through definer `ingestion.route_provider_hint(hint_id)` (EXECUTE `app_system` only): it
+- Done by the system router through definer `system.route_provider_hint(hint_id)` (EXECUTE `app_system` only): it
   reads accounts by asset identity, writes only IDs-only outbox rows, and returns counts — never tenant data.
 - Zero matches → `RETRYABLE` with backoff (1, 5, 15 min; activation races) → `UNMAPPED` (terminal) after 3 attempts.
 - **D-F2 = A with no partial fan-out above the cap (frozen).** Several matches can only be different organizations
@@ -360,6 +360,42 @@ forward-only; its guard becomes "the union of restrictive member policies covers
   health UI reads a derived, authorized query). Outbox — owner policy for the router definer's `ingestion.process_signals`
   rows; new RESTRICTIVE member policy for that topic.
 - Classification, introspection and grant tests; T-26 unchanged.
+
+### 16.1 As authored in H6-F2 (authoritative; supersedes the proposal above where they differ)
+
+`db/migrations/0022_provider_webhook_signals.sql`, SHA-256
+`556b4b2a052cf842b9add89690a03a11789654c54c8b5cae8793612e4aef6b1f` — **source only, not applied** (dev-v2 stays at
+ledger 21 until H6-F2b).
+
+- **Tables.** `system.provider_event_inbox` (unique `body_sha256`; `body` bytea ≤ 1 MiB, only when
+  `raw_body_retainable`, and verified against its hash; counts; `state` RECEIVED · ROUTED · NO_HINTS; `received_at` is
+  DB time). `system.provider_event_hints` (unique `hint_key`; the H6-F1 hint identifiers — `platform`,
+  `provider_asset_id`, `target_kind`, `provider_target_id`, `provider_content_id`, `provider_parent_id`, `change`,
+  `occurred_at`; the F0 `field`/`item` columns are not persisted because the F1 hint does not carry them — they are
+  inside the hint key; `state` PENDING · RETRYABLE · ROUTED · UNMAPPED · MULTI_ORG_LIMIT; `route_attempts` ≤ 4,
+  `routed_count` 1..5). `ingestion.signal_marks` (tenant; `kind` relist · account; relist ⇔ content; ownership by the
+  composite FK to `content.content_items (workspace_id, id, connected_account_id)`; one row per (account, kind,
+  content-or-null) — a row exists only while pending; `deferred_until` + `dispatch_generation` for the D-F5 cap).
+  `ingestion.reconciliation_runs.plan` ('account' default, 'relist'; closed CHECK; no UPDATE grant).
+- **Definers (five, unchanged in number).** The system-run ones live in the `system` schema — the only schema
+  `app_system` holds USAGE on — so F0's `ingestion.route_provider_hint` / `ingestion.due_signal_accounts` became
+  `system.route_provider_hint` / `system.dispatch_due_signal_marks` (the latter WRITES the account-only outbox rows
+  itself: app_system has no outbox INSERT, so "returning IDs only" could not dispatch). `system.record_provider_webhook`
+  (web login, no claims, no workspace), `ingestion.provider_event_hint` (bound worker), `system.purge_provider_events`
+  (system; cutoff = DB time − 7 days; batch ≤ 5000).
+- **Request boundary (TL decision H6-F2).** `ingestion.request_reconciliation` is replaced with the SAME signature: the
+  worker's budget JSON may carry `plan` (account | relist); the web branch is unchanged (no budget → account, 40). Still
+  the one creation path of a run; a guard pins that the body equals 0019's except for the plan handling.
+- **Routing rows.** `ingestion.process_signals` subjects: `{connected_account_id, provider_event_hint_id}` for a routed
+  hint (dispatch key `ingestion.process_signals:{hint}:{account}`), `{connected_account_id}` for a due mark
+  (`ingestion.process_signals:mark:{mark}:{generation}`). Admitted only by the owner policy `owner_signal_dispatch`
+  (a system login, no workspace, an ACTIVE matching account); blocked for members and workers by the RESTRICTIVE
+  `no_direct_signal_routing` (0021 untouched; the union of restrictive policies is the inventory). No `ON CONFLICT` on
+  the outbox: under RLS it would require a SELECT policy app_owner deliberately lacks; uniqueness comes from the locked
+  hint / mark instead.
+- **Cross-workspace owner reads** (`owner_signal_route_read` on accounts, `owner_due_read`/`owner_due_update` on marks)
+  require a session login that is a member of `app_system` and no bound workspace: no web or worker transaction can
+  satisfy them.
 
 ---
 

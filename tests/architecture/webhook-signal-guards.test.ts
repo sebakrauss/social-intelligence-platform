@@ -106,7 +106,8 @@ describe("H6-F1: scope of this gate", () => {
     expect(exists("app/api/webhooks")).toBe(false);
     for (const file of sourceFiles(["app", "server"])) expect(codeOf(file), file).not.toMatch(/webhooks\/|parseWebhook|x-hub-signature|hub\.challenge/);
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    expect(migrations.at(-1)).toBe("0021_outbox_internal_topics.sql");
+    // H6-F2 adds exactly 0022 (persistence only); still no route and no task (H6-F3/F4).
+    expect(migrations.at(-1)).toBe("0022_provider_webhook_signals.sql");
     expect(PRODUCTION_TASKS.tasks.map((t) => t.name).filter((n) => /webhook|provider_event|process_signal|purge/.test(n))).toEqual([]);
     expect(RELEASE_PLANES.map((p) => [p.plane, p.expectedTasks])).toEqual([["integration", 7], ["main", 8]]);
     for (const file of sourceFiles(PRODUCTION)) expect(codeOf(file), file).not.toMatch(/PROVIDER_META_WEBHOOK_VERIFY_TOKEN/);

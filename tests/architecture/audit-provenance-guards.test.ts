@@ -94,9 +94,14 @@ describe("H6-C3d: the members' audit append is the pipeline's, exactly", () => {
 });
 
 describe("H6-C3d: command-bound actions keep their authoritative producers", () => {
-  it("reconciliation_requested is written only by 0019's definer; no TypeScript emits it", () => {
+  it("reconciliation_requested is written only by the request boundary (0019, replaced same-signature by 0022); no TypeScript emits it", () => {
     const writers = migrationNames().filter((n) => /insert into audit\.audit_events[\s\S]*?'connected_account\.reconciliation_requested'/.test(code(n)));
-    expect(writers).toEqual(["0019_reconciliation_request.sql"]);
+    expect(writers).toEqual(["0019_reconciliation_request.sql", "0022_provider_webhook_signals.sql"]);
+    // In 0022 that insert lives inside the replaced ingestion.request_reconciliation, and nowhere else.
+    const replaced = code("0022_provider_webhook_signals.sql");
+    const boundary = replaced.slice(replaced.indexOf("create or replace function ingestion.request_reconciliation("), replaced.indexOf("end $$;", replaced.indexOf("create or replace function ingestion.request_reconciliation(")));
+    expect([...replaced.matchAll(/insert into audit\.audit_events/g)]).toHaveLength(1);
+    expect(boundary).toMatch(/insert into audit\.audit_events/);
     // Step H6-C4: the only TypeScript mention is the web command's DECLARATION that its boundary writes it (auditedBy).
     const mentions = producers().filter((file) => /"connected_account\.reconciliation_requested"/.test(codeOf(file)));
     expect(mentions).toEqual(["server/commands/reconciliation.ts"]);
@@ -138,9 +143,13 @@ describe("H6-C3d: 0020's scope", () => {
     expect(sql.toLowerCase()).not.toMatch(/\b(insert into|update|delete from|truncate|alter table|create table|drop|audit_events_action_check)\b/);
   });
 
-  it("no later migration touches audit: 0021 (H6-E1) is the ledger's last and is an outbox policy only", () => {
+  it("no later migration changes audit policy or vocabulary: 0021 is outbox-only; 0022 only re-creates the request boundary's one insert", () => {
     const later = migrationNames().filter((name) => name > M0020);
-    expect(later).toEqual(["0021_outbox_internal_topics.sql"]);
-    for (const name of later) expect(code(name).toLowerCase(), name).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
+    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql"]);
+    expect(code("0021_outbox_internal_topics.sql").toLowerCase()).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
+    const replaced = code("0022_provider_webhook_signals.sql").toLowerCase();
+    // No audit policy, grant, constraint or vocabulary change; every audit mention is the boundary's single INSERT.
+    expect(replaced).not.toMatch(/policy [a-z_]+ on audit|on audit\.audit_events|audit_events_action_check|policy append_own|alter table audit/);
+    expect([...replaced.matchAll(/audit\.audit_events/g)]).toHaveLength(1);
   });
 });
