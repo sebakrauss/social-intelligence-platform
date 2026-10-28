@@ -37,7 +37,7 @@ export interface PlaneDefinition {
 /** The closed release table, in deploy order. INTEGRATION first, then MAIN — never reordered, never one alone. */
 export const RELEASE_PLANES: readonly PlaneDefinition[] = Object.freeze([
   Object.freeze({ plane: "integration", config: "trigger.integration.config.ts", projectRefFlag: "--integration-project-ref", expectedTasks: 7 }),
-  Object.freeze({ plane: "main", config: "trigger.config.ts", projectRefFlag: "--main-project-ref", expectedTasks: 10 }),
+  Object.freeze({ plane: "main", config: "trigger.config.ts", projectRefFlag: "--main-project-ref", expectedTasks: 11 }),
 ] as const);
 
 /** The only environment a paired release targets. Preview (TA-Q-31) is a separate, documented exception. */

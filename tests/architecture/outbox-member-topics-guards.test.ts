@@ -13,12 +13,10 @@ import { describe, expect, it } from "vitest";
 import { RESTRICTIVE_POLICIES, TABLE_CLASSIFICATION } from "@/db/schema/classification";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { readMigrations } from "@/tools/db/migrations";
-import { INTERNAL_TOPICS, INTERNAL_TOPICS_POLICY, MEMBER_TOPICS } from "../db/suites/outbox-member-topics";
+import { INTERNAL_TOPICS, INTERNAL_TOPICS_POLICY, MEMBER_TOPICS, SIGNAL_INTERNAL_TOPICS } from "../db/suites/outbox-member-topics";
 import { codeOf, sourceFiles } from "../support/source-scan";
 
 const MIGRATION = "0021_outbox_internal_topics.sql";
-/** Internal topics blocked before their task exists (H6-F2 0022); each must move into INTERNAL_TOPICS once registered. */
-const RESERVED_INTERNAL_TOPICS = ["ingestion.process_signals"] as const;
 const CONFIRM = "ingestion.confirm_interaction";
 const PRODUCTION = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "jobs", "db", "tools"];
 /** SQL without comments, lowercased, whitespace collapsed. */
@@ -64,7 +62,8 @@ describe("H6-E1: the member-topic inventory is derived from the web producers", 
 describe("H6-E1: the internal inventory is closed over the registry", () => {
   it("every tenant task that is not a member topic is an internal topic, and vice versa; the confirmation is one of them", () => {
     const tenantTasks = PRODUCTION_TASKS.tasks.filter((task) => task.scope === "workspace").map((task) => task.name);
-    expect(sorted(tenantTasks.filter((name) => !(MEMBER_TOPICS as readonly string[]).includes(name)))).toEqual(sorted(INTERNAL_TOPICS));
+    // 0021's inventory plus the topics blocked by their own later restrictive policy (0022, registered in H6-F4).
+    expect(sorted(tenantTasks.filter((name) => !(MEMBER_TOPICS as readonly string[]).includes(name)))).toEqual(sorted([...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS]));
     expect(INTERNAL_TOPICS).toContain(CONFIRM);
     expect(new Set([...MEMBER_TOPICS, ...INTERNAL_TOPICS]).size).toBe(MEMBER_TOPICS.length + INTERNAL_TOPICS.length);
   });
@@ -98,7 +97,7 @@ describe("H6-E1: migration 0021", () => {
     for (const m of migrations) for (const topic of MEMBER_TOPICS) expect(m.sql, `${m.name} names ${topic}`).not.toContain(topic);
   });
 
-  it("every internal topic is removed from the member's direct append by at least one restrictive policy; 0021 alone is the whole inventory", () => {
+  it("every internal topic is removed from the member's direct append by at least one restrictive policy; 0021 plus 0022's own policy is the whole inventory", () => {
     const policies = new Map<string, { migration: string; roles: string[]; topics: string[] }>();
     for (const m of migrations) {
       for (const match of normalize(m.sql).matchAll(RESTRICTIVE_MEMBER_POLICY)) {
@@ -107,15 +106,15 @@ describe("H6-E1: migration 0021", () => {
       }
     }
     expect([...policies.keys()].sort()).toEqual(["no_direct_internal_topics", "no_direct_move_routing", "no_direct_reconciliation_routing", "no_direct_signal_routing"]);
-    // H6-F2 (0022): the internal topic reserved BEFORE its task is registered (ingestion.process_signals, H6-F3/F4)
-    // gets its own restrictive policy — 0021 stays forward-only; the union is the inventory.
-    expect(policies.get("no_direct_signal_routing")).toEqual({ migration: "0022_provider_webhook_signals.sql", roles: ["app_worker", "authenticated"], topics: [...RESERVED_INTERNAL_TOPICS] });
-    for (const topic of RESERVED_INTERNAL_TOPICS) expect(PRODUCTION_TASKS.tenant(topic), `${topic} is reserved, not yet registered`).toBeUndefined();
+    // H6-F2 (0022): the webhook-signal topic has its own restrictive policy (members AND workers) — 0021 stays
+    // forward-only; the union is the inventory. H6-F4 registered its task without touching either policy.
+    expect(policies.get("no_direct_signal_routing")).toEqual({ migration: "0022_provider_webhook_signals.sql", roles: ["app_worker", "authenticated"], topics: [...SIGNAL_INTERNAL_TOPICS] });
+    for (const topic of SIGNAL_INTERNAL_TOPICS) expect(PRODUCTION_TASKS.tenant(topic)?.executionPlane, `${topic} is a registered MAIN tenant task`).toBe("main");
     expect(policies.get("no_direct_move_routing")?.migration).toBe("0010_connected_account_moves.sql");
     expect(policies.get("no_direct_reconciliation_routing")?.migration).toBe("0019_reconciliation_request.sql");
     expect(policies.get(INTERNAL_TOPICS_POLICY)).toEqual({ migration: MIGRATION, roles: ["authenticated"], topics: sorted(INTERNAL_TOPICS) });
     const union = new Set([...policies.values()].flatMap((p) => p.topics));
-    for (const topic of [...INTERNAL_TOPICS, ...RESERVED_INTERNAL_TOPICS]) expect(union.has(topic), topic).toBe(true);
+    for (const topic of [...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS]) expect(union.has(topic), topic).toBe(true);
     for (const topic of MEMBER_TOPICS) expect(union.has(topic), topic).toBe(false);
     // Only 0021 may ever carry this policy name (forward-only: no later ALTER/DROP of it).
     for (const m of migrations) if (m.name !== MIGRATION) expect(m.sql, m.name).not.toContain(INTERNAL_TOPICS_POLICY);

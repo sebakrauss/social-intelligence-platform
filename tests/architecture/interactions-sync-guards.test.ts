@@ -119,8 +119,8 @@ describe("H6-C4: release order (Trigger before web)", () => {
     expect(task?.scope).toBe("workspace");
     // The deployed MAIN (@332046e) has 6 tasks and no consumer for it; this source's paired release expects 8
     // (registry parity is execution-plane-guards' job): MAIN must report them before this web producer ships.
-    // Step H6-F3 adds the two provider-event system tasks to MAIN (10).
-    expect(RELEASE_PLANES.find((plane) => plane.plane === "main")?.expectedTasks).toBe(10);
+    // Step H6-F3 adds the two provider-event system tasks to MAIN (10); H6-F4 the signal consumer (11).
+    expect(RELEASE_PLANES.find((plane) => plane.plane === "main")?.expectedTasks).toBe(11);
   });
 
   it("the design records the H6-C5 order: the paired Trigger release first, verified, then the web deployment of this source", () => {

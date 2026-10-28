@@ -34,6 +34,11 @@ export const INTERNAL_TOPICS = [
   "interactions.observed",
 ] as const;
 export const INTERNAL_TOPICS_POLICY = "no_direct_internal_topics";
+/**
+ * Internal topics blocked by their OWN restrictive policy instead of 0021 (forward-only, untouched): 0022's
+ * `no_direct_signal_routing` (members AND workers), registered as a tenant task since H6-F4.
+ */
+export const SIGNAL_INTERNAL_TOPICS = ["ingestion.process_signals"] as const;
 const CONFIRM = "ingestion.confirm_interaction";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CONFIG: DeliveryConfig = {
@@ -149,7 +154,7 @@ export function defineOutboxMemberTopicsSuite(getTarget: () => DbTarget): void {
     it("the inventory is closed over the registry: every tenant task that is not a member topic, and nothing else", () => {
       const tenantTasks = PRODUCTION_TASKS.tasks.filter((task) => task.scope === "workspace").map((task) => task.name);
       const internal = tenantTasks.filter((name) => !(MEMBER_TOPICS as readonly string[]).includes(name));
-      expect(internal.sort()).toEqual([...INTERNAL_TOPICS].sort());
+      expect(internal.sort()).toEqual([...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS].sort());
       expect(INTERNAL_TOPICS).toContain(CONFIRM);
       for (const topic of MEMBER_TOPICS) expect(PRODUCTION_TASKS.tenant(topic), topic).toBeDefined();
     });
@@ -169,7 +174,7 @@ export function defineOutboxMemberTopicsSuite(getTarget: () => DbTarget): void {
       ]);
       // Union closure on the live catalog: every internal topic is removed from the member by at least one policy.
       const union = new Set(restrictive.flatMap((p) => [...p.with_check.matchAll(/'([a-z_]+(?:\.[a-z_]+)+)'::text/g)].map((m) => m[1])));
-      for (const topic of INTERNAL_TOPICS) expect(union.has(topic), topic).toBe(true);
+      for (const topic of [...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS]) expect(union.has(topic), topic).toBe(true);
       for (const topic of MEMBER_TOPICS) expect(union.has(topic), topic).toBe(false);
     });
   });

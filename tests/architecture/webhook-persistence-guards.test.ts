@@ -147,10 +147,10 @@ describe("H6-F2: a webhook is a signal", () => {
     expect(sql0022).not.toMatch(/check \([^)]*now\(\)|check \([^)]*statement_timestamp/);
   });
 
-  it("the internal processing topic is blocked for members and workers, and is not yet a registered task", () => {
+  it("the internal processing topic is blocked for members and workers, and (H6-F4) a registered MAIN tenant task", () => {
     expect(sql0022).toMatch(/create policy no_direct_signal_routing on system\.outbox as restrictive for insert to authenticated, app_worker\s+with check \(topic not in \('ingestion\.process_signals'\)\);/);
     expect(RESTRICTIVE_POLICIES).toContain("system.outbox no_direct_signal_routing");
-    expect(PRODUCTION_TASKS.tenant("ingestion.process_signals")).toBeUndefined();
+    expect(PRODUCTION_TASKS.tenant("ingestion.process_signals")).toMatchObject({ executionPlane: "main", lane: 2, subjects: ["connected_account_id", "provider_event_hint_id"] });
     // Only the two system definers write it; the cross-workspace owner reads are gated on a system login with no workspace.
     expect([...sql0022.matchAll(/'ingestion\.process_signals'/g)].length).toBeGreaterThanOrEqual(3);
     for (const policy of ["owner_signal_route_read", "owner_due_read", "owner_due_update", "owner_signal_dispatch"]) {
@@ -160,9 +160,9 @@ describe("H6-F2: a webhook is a signal", () => {
     }
   });
 
-  it("H6-F3: exactly one TypeScript adapter calls the receipt, routing and purge definers; marks and the hint reader wait for H6-F4", () => {
+  it("H6-F3/F4: one TypeScript adapter per definer family — the system inbox store, and the tenant signal-mark store", () => {
     const callers = (pattern: RegExp) => sourceFiles(["app", "ui", "server", "modules", "platform", "integrations", "jobs"]).filter((file) => pattern.test(codeOf(file)));
-    expect(callers(/system\.(record_provider_webhook|route_provider_hint|purge_provider_events)\(/)).toEqual(["modules/ingestion/persistence/provider-events-store.ts"]);
-    expect(callers(/dispatch_due_signal_marks|provider_event_hint\(|signal_marks/)).toEqual([]);
+    expect(callers(/system\.(record_provider_webhook|route_provider_hint|purge_provider_events|dispatch_due_signal_marks)\(/)).toEqual(["modules/ingestion/persistence/provider-events-store.ts"]);
+    expect(callers(/ingestion\.provider_event_hint\(|ingestion\.signal_marks/)).toEqual(["modules/ingestion/persistence/signal-store.ts"]);
   });
 });

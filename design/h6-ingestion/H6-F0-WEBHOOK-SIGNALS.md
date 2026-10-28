@@ -566,3 +566,153 @@ together (MAIN 11).
 - Triggering a `schedules.task` by id from the SDK (the nudge) must be confirmed on the deployed Trigger version.
 - Edge or WAF rate limiting on the public route stays VALIDATE (§19).
 - The H6-F1 VALIDATE items are untouched.
+
+## 26. H6-F4 as implemented (authoritative; source only, not released)
+
+**Task.** `ingestion.process_signals` is a MAIN tenant task (workspace scope, lane 2, serial per connected account,
+transient retry). It runs in ONE workspace-scoped transaction and does database planning only. It never opens a
+credential, calls a provider, reads a raw body or appends its own topic. Its producers stay the two 0022 system
+definers. `no_direct_signal_routing` is unchanged, and members and workers are still refused (DB suite).
+
+Accepted payload subjects, exactly one shape:
+
+| Shape | Subjects |
+|---|---|
+| Routed hint | `connected_account_id`, `provider_event_hint_id` |
+| Due mark | `connected_account_id` |
+
+Anything else is a non-retryable `invalid_payload`. The workspace is the outbox row's, never a subject.
+
+**Source topology.** MAIN 11, INTEGRATION 7. The release tool expects MAIN 11.
+
+**Outcome vocabulary (closed).**
+- Planned: `PLANNED_RELIST`, `PLANNED_ACCOUNT`, `PLANNED_CONFIRMATION`.
+- Waiting: `ABSORBED`, `DEFERRED`.
+- Skipped: `SKIPPED_ACCOUNT_INACTIVE`, `SKIPPED_HINT_UNAVAILABLE` (the hint is not routed, purged, or the account's
+  asset changed), `SKIPPED_PAUSED`, `SKIPPED_CAPABILITY`, `SKIPPED_CONTENT_NOT_CANONICAL`,
+  `SKIPPED_NON_CANONICAL_REMOVAL`, `SKIPPED_UNSUPPORTED`.
+- Housekeeping: `EXPIRED`, `NO_PENDING_MARKS`.
+
+`PLANNED_*` also covers a run scheduled for the skew boundary (see the review rule below). Logs carry
+`signal.<outcome>`, `signal.mark_expired`, `signal.content_not_canonical` and `signal.due_marks_dispatched`, as counts
+only.
+
+**Routed-hint path.**
+1. `ingestion.provider_event_hint` returns the hint's identifiers only if it is ROUTED and its (platform, asset) is the
+   bound workspace's ACTIVE account.
+2. Expired marks are deleted.
+3. Canonical lookups use the workspace, platform and provider id. Ownership must be THIS account's; a content or
+   interaction of another account fails closed.
+4. The gate is re-checked for the exact scope: the canonical content's kind and source, else post/unknown; for a
+   content target, `read_content` plus `read_interactions`. This uses `ignorePause`, because a pause must retain the
+   signal, not drop it.
+5. The §12 matrix is applied over canonical state (`classifySignal`):
+   - an Instagram reply (`REPLIES_NOT_READ`) gives `SKIPPED_CAPABILITY`;
+   - a created interaction on canonical content gives a relist mark; on unknown content, an account mark plus
+     `signal.content_not_canonical`;
+   - an edit, hide, unhide or update of a canonical interaction gives a confirmation; of a non-canonical interaction on
+     canonical content, a relist mark; otherwise `SKIPPED_CONTENT_NOT_CANONICAL`;
+   - a removal of a canonical interaction gives an urgent confirmation, never a tombstone; of a non-canonical one,
+     `SKIPPED_NON_CANONICAL_REMOVAL`;
+   - a created content gives an account mark; any other content change gives `SKIPPED_UNSUPPORTED`.
+6. Pause: the mark is upserted and revisited in 15 minutes (`SKIPPED_PAUSED`). A paused confirmation becomes a relist
+   mark of its canonical content, because marks are the only durable deferral.
+
+**Confirmation key (deviation from §10).** A signal confirmation uses the H6-E producer with dispatch key
+`ingestion.confirm_interaction:{interaction}:h{routed hint id}`. That is one confirmation per verified change hint,
+canonical ids only, and idempotent under redelivery. The §10 bucket key was not adopted:
+- A worker cannot see whether the bucket's confirmation already ran, because it has no outbox read.
+- A change arriving after that read would therefore be coalesced into a finished read and lost.
+- A relist cannot backstop it: relist windows are by creation time and never re-read an older comment.
+
+Bound: one direct read per distinct verified change hint. Provider retries already collapse on `hint_key`.
+
+**Mark persistence** (`modules/ingestion/persistence/signal-store.ts`, worker grants only):
+- The upsert is `on conflict on constraint signal_marks_one_pending`. It adds 1 to the count, takes the greatest last
+  signal, and keeps the first signal and the expiry (first signal + 7 days).
+- The other operations are: summary; relist candidates (last signal ≤ boundary, oldest first, bounded); defer-all;
+  link-run; satisfy-relist; satisfy-account; delete-expired; drop; signal-run count.
+- The signal time is the processing time (always ≥ receipt ≥ event), which errs toward later satisfaction.
+- `created_at` and `updated_at` are database time, like the 0022 dispatcher's own update. With application time, an
+  app clock ahead of the database would trip `updated_at >= created_at` and fail the whole dispatch batch.
+- Revisit, signal and expiry times are application time. The 0022 dispatcher compares the revisit with database time,
+  so clock skew only shifts a revisit.
+
+**Shared review** (`reviewSignalMarks`), used by the routed-hint path, the due-mark path and the close hook:
+1. Delete expired marks (`signal.mark_expired`; coverage, watermarks and canonical rows untouched). If none are left,
+   the outcome is `EXPIRED` or `NO_PENDING_MARKS`.
+2. An open run gives `ABSORBED` with a 15-minute revisit. The close hook is the primary revisit.
+3. The account gate at post/unknown (`read_interactions`, plus `read_content` when an account mark is pending):
+   - paused: 15-minute revisit, `SKIPPED_PAUSED`;
+   - account inactive, missing or connection removed: drop the marks, `SKIPPED_ACCOUNT_INACTIVE`;
+   - any other refusal: hourly revisit, `SKIPPED_CAPABILITY`.
+4. Hourly cap: six signal runs in the rolling hour defer every mark until the oldest leaves the window, plus 1 s
+   (`DEFERRED`).
+5. Priority: a pending account mark gives an `account` run; otherwise a `relist` run.
+6. Skew: if the lead mark's last signal + 120 s is later than now, every mark is deferred to that instant + 1 s. This is
+   scheduled, not requested, so no run is spent that could not satisfy anything.
+7. Otherwise, exactly one run is requested through `ingestion.request_reconciliation` (worker branch):
+   - plan account or relist, `max_operations` 10;
+   - content items 10 for relist and 9 for account (one listing page plus one page for each of 9 contents fits 10
+     operations, so an account mark can be satisfied);
+   - correlation `sig.{lead mark id}`.
+
+   `already_running` gives `ABSORBED`. `not_found` drops the marks (`SKIPPED_ACCOUNT_INACTIVE`).
+8. `requested_run_id` is set on the lead account mark, or on the relist candidates. It is traceability only.
+
+Invariant: every pending mark is either covered by an open run or carries a revisit time.
+
+**Signal-run attribution and the cap.** A signal run is `initiator_type = 'system'` with `correlation_id LIKE 'sig.%'`,
+counted by `requested_at` in the rolling hour per connected account. Manual and operator Sync never match:
+- web Sync is `user`-initiated;
+- the job runtime's own requests use other correlations.
+
+Exactness comes from the one-open-run index: two concurrent reviews cannot both create a run. A guard pins that
+`sig.` is produced only by `signalRunCorrelation` in the review.
+
+**Relist planner** (`planReconciliation`, `run.plan = relist`):
+- It creates no listing slice.
+- It selects the pending relist marks the run can satisfy (last signal ≤ start − 120 s), oldest first, at most
+  `min(contentItems, 10)`.
+- Each mark is re-validated: the content exists, belongs to the run's account (beside the composite FK), and its exact
+  scope is readable now. A content-level failure drops the mark; an account-level failure stops planning.
+- Each kept mark gets one `content_interactions` slice. Its window runs from the watermark's synced-through minus the
+  overlap (else the floor) to the run start, exactly like an account run. Pages, continuations, cursors, budget,
+  coverage and conversation semantics are unchanged.
+- No slice means the run closes COMPLETED at once (`completed_empty`).
+- The account plan is unchanged.
+
+**Provenance and arrival.** Facts from a relist run carry mechanism `webhook_relist` (`listInteractions` · `listed`).
+Arrival is `relistArrival`: `backfill` on the content's first traversal or when created before the epoch, otherwise
+`realtime`, decided by provider creation time and never by webhook time. Account runs keep `reconciliation`. Coverage
+and watermarks are written only by traversal, through the existing code.
+
+**Satisfaction and the close hook.** Every run closes through `closeRun` (a guard pins exactly one `finishRun` call).
+The close hook runs in the same transaction, right after a successful finish:
+- **Relist marks.** Delete the marks of every content with a COMPLETED `content_interactions` slice in this run (the
+  provider's end of pages was reached) whose last signal ≤ `started_at` − 120 s.
+- **Account mark.** Delete it only when an account-plan run finished COMPLETED (listing and every content slice) under
+  the same boundary. A relist run never satisfies discovery. A run that never started satisfies nothing.
+- **Then the shared review.** At most one follow-up run, or a revisit time.
+
+Budget exhaustion (`ABANDONED_BUDGET`, run PARTIAL) satisfies nothing. Coverage stays `UNKNOWN / TRAVERSAL_INCOMPLETE`,
+and follow-ups continue under the cap.
+
+**Due marks.** The MAIN router task now also calls `system.dispatch_due_signal_marks(100)` on every run (cron every
+minute). Each due mark gets an account-only `ingestion.process_signals` row (generation + 1). The tenant task re-reads
+the account's marks; it does not need a hint. Duplicate dispatches converge: the first requests, the rest are ABSORBED.
+
+**Crash safety.** Each process_signals run is one transaction (mark upsert, review, request, link), so a crash leaves
+nothing. The close hook shares the run's closing transaction. Uniqueness is database authority: the
+pending-mark constraint, the one-open-run index and the outbox dispatch keys.
+
+**Known bounded behaviors (not resolved here).**
+- A content whose overlap window needs more than 10 operations cannot complete within a signal run, because the window
+  restarts from synced-through − 24 h each run. Its mark is retried up to six times an hour until a manual Sync (40
+  operations) completes it or the mark expires. This is D-F5 = B as frozen; revisit only from LIVE evidence.
+- When an account turns inactive, the 0022 dispatcher clears its due marks without dispatching them. Those marks stay
+  inert: no work, no coverage, no canonical change. They are deleted only by a later review of that account (for
+  example after reactivation); their 7-day expiry is enforced on review, not by a sweep. No persistence primitive
+  sweeps another workspace's marks (worker-only DELETE).
+
+**Release.** F3 and F4 ship together (H6-F5): the router's rows now have their consumer (MAIN 11 / INTEGRATION 7).

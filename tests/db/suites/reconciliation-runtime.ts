@@ -52,7 +52,7 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const SLICE = "ingestion.reconcile_slice";
 
 /** The baseline scenario moved to the present (its clock starts 10 min ahead), with the validated content scope. */
-function presentScenario() {
+export function presentScenario() {
   const raw = rawScenario("baseline");
   const delta = Date.now() + 10 * 60_000 - Date.parse(String(raw["clockStart"]));
   const shift = (value: unknown): unknown => {

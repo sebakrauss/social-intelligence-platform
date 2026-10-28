@@ -12,6 +12,8 @@
  *   ingestion.reconcile_account (H6-C3)    MAIN planner of one reconciliation run, lane 3 (never a credential)
  *   ingestion.reconcile_slice (H6-C3)      INTEGRATION: one bounded slice of provider reads, lane 3
  *   interactions.observed (H6-C3)          MAIN: the H6 terminal consumer of the canonical event, lane 2 (ids only)
+ *   ingestion.process_signals (H6-F4)     MAIN: one routed webhook hint or one due signal-mark account → marks, a run or
+ *                                          a confirmation request (DB only), lane 2; internal topic (0022 definers only)
  *   ingestion.confirm_interaction (H6-E)   INTEGRATION: ONE direct re-read of one canonical interaction from its STORED
  *                                          provenance (the only removal authority besides a verified signal), lane 3
  *
@@ -114,6 +116,17 @@ export const PRODUCTION_TASKS = defineTaskRegistry([
     retry: RETRY_POLICIES.transient,
     concurrency: { by: "subject", subject: "connected_account_id" },
     subjects: ["connected_account_id", "interaction_id"],
+  },
+  // Step H6-F4 (design H6-F0 §15): one routed hint or one due account → marks, run or confirmation requests. MAIN, DB
+  // only; serial per account. Its topic is internal: produced only by the 0022 system definers (never a member/worker).
+  {
+    name: "ingestion.process_signals",
+    scope: "workspace",
+    executionPlane: "main",
+    lane: 2,
+    retry: RETRY_POLICIES.transient,
+    concurrency: { by: "subject", subject: "connected_account_id" },
+    subjects: ["connected_account_id", "provider_event_hint_id"],
   },
   {
     name: "interactions.observed",

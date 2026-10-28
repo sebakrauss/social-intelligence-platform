@@ -97,6 +97,7 @@ export {
   type RouteOutcome,
 } from "./domain/provider-events";
 export {
+  dispatchDueSignalMarks,
   purgeExpiredProviderEvents,
   routeDueProviderEvents,
   type ProviderEventDependencies,
@@ -104,3 +105,30 @@ export {
   type PurgeSummary,
   type RouteSummary,
 } from "./application/provider-events";
+export {
+  HINT_CHANGES,
+  PROCESS_SIGNALS_TASK,
+  SIGNAL_MARK_KINDS,
+  SIGNAL_OUTCOMES,
+  SIGNAL_RUNTIME,
+  SIGNAL_RUN_CORRELATION_PREFIX,
+  classifySignal,
+  decideFollowUp,
+  satisfactionBoundary,
+  satisfiesMark,
+  signalConfirmationDispatchKey,
+  signalRunBudget,
+  signalRunCorrelation,
+  type FollowUpDecision,
+  type HintChange,
+  type PendingMarksSummary,
+  type SignalAction,
+  type SignalFacts,
+  type SignalMarkKind,
+  type SignalOutcome,
+  type SignalRunPlan,
+} from "./domain/signals";
+export { relistArrival } from "./domain/policy";
+export { processProviderSignal, type SignalInvocation, type SignalResult } from "./application/process-signals";
+export { closeRunSignals, planRelistSlices, reviewSignalMarks, type MarkReview, type RunCloseResult } from "./application/signal-marks";
+export type { NewSignalMark, RoutedHintRead, SignalMarkStore } from "./application/reconciliation-ports";

@@ -60,7 +60,7 @@ function harness(overrides: Partial<FakeState> = {}) {
     fetches: 0,
     calls: [],
     spawns: [],
-    results: [deployed("20261022.1", 7), deployed("20261022.1", 10)],
+    results: [deployed("20261022.1", 7), deployed("20261022.1", 11)],
     interrupted: false,
     evidence: new Map(),
     logs: [],
@@ -255,7 +255,7 @@ describe("execute: INTEGRATION first, then MAIN, one SHA", () => {
   });
 
   it("INTEGRATION non-zero exit → STOP_INTEGRATION_FAILED, MAIN never runs", async () => {
-    const h = ready({ results: [{ exitCode: 1, output: "error", timedOut: false, interrupted: false }, deployed("20261022.1", 10)] });
+    const h = ready({ results: [{ exitCode: 1, output: "error", timedOut: false, interrupted: false }, deployed("20261022.1", 11)] });
     const result = await run(h);
     expect(result).toMatchObject({ finalState: "STOP_INTEGRATION_FAILED" });
     expect(exitCodeFor(result)).toBe(1);
@@ -268,7 +268,7 @@ describe("execute: INTEGRATION first, then MAIN, one SHA", () => {
     ["wrong task count", deployed("20261022.1", 2)],
     ["timeout", { exitCode: null, output: "building…", timedOut: true, interrupted: false }],
   ])("INTEGRATION %s → STOP_VERIFICATION_UNKNOWN, MAIN never runs", async (_label, integration) => {
-    const h = ready({ results: [integration, deployed("20261022.1", 10)] });
+    const h = ready({ results: [integration, deployed("20261022.1", 11)] });
     expect(await run(h)).toMatchObject({ finalState: "STOP_VERIFICATION_UNKNOWN" });
     expect(h.state.spawns).toHaveLength(1);
     expect(evidenceOf(h)["planesNotStarted"]).toEqual(["main"]);

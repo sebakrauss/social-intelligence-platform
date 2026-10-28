@@ -4,7 +4,7 @@
  *   - the webhook configuration (App Secret + verify token) is opened in ONE web composition file;
  *   - the provider-signal scope is used by that composition only; no other scope helper appears in the webhook path;
  *   - the MAIN task file uses literal ids equal to the module constants, builds its own system payload, and reaches no
- *     provider, credential or raw body; process_signals stays unregistered (H6-F4).
+ *     provider, credential or raw body; process_signals (H6-F4) is a TENANT task, never a system one.
  */
 import { describe, expect, it } from "vitest";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
@@ -67,13 +67,13 @@ describe("H6-F3: the HTTP receiver", () => {
 });
 
 describe("H6-F3: the MAIN inbox tasks", () => {
-  it("are exactly two named system tasks with the frozen crons, batches and MAIN plane; process_signals is not registered", () => {
+  it("are exactly two named system tasks with the frozen crons, batches and MAIN plane; process_signals is a tenant task", () => {
     expect(SYSTEM_TASKS).toContain(ROUTE_PROVIDER_EVENTS_TASK);
     expect(SYSTEM_TASKS).toContain(PURGE_PROVIDER_EVENTS_TASK);
     expect(SYSTEM_TASKS).not.toContain("ingestion.process_signals");
     expect(PRODUCTION_TASKS.get(ROUTE_PROVIDER_EVENTS_TASK)).toMatchObject({ scope: "system", executionPlane: "main", schedule: { cron: "* * * * *" } });
     expect(PRODUCTION_TASKS.get(PURGE_PROVIDER_EVENTS_TASK)).toMatchObject({ scope: "system", executionPlane: "main", schedule: { cron: "*/15 * * * *" } });
-    expect(PRODUCTION_TASKS.get("ingestion.process_signals")).toBeUndefined();
+    expect(PRODUCTION_TASKS.tenant("ingestion.process_signals")?.scope).toBe("workspace");
     expect(PROVIDER_EVENT_RUNTIME).toEqual({ routerBatchLimit: 500, purgeBatchSize: 1000, purgeMaxBatches: 5 });
     expect(PROVIDER_EVENT_RUNTIME.purgeBatchSize * PROVIDER_EVENT_RUNTIME.purgeMaxBatches).toBeLessThanOrEqual(5000);
   });

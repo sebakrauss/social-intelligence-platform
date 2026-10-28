@@ -45,25 +45,36 @@ import { availabilityInput, classify, gate, type Gate, type ReconciliationClock,
 import { SourceFactRejectedError, interactionSourceFactFromDto } from "./source-fact-mapping";
 
 // ── request (job scope, internal) ──────────────────────────────────────────────────────────────────────────────
-export type ConfirmationRequestOutcome = { readonly kind: "requested"; readonly requestId: string } | { readonly kind: "not_found" } | { readonly kind: "not_eligible" };
+export type ConfirmationRequestOutcome =
+  | { readonly kind: "requested"; readonly requestId: string }
+  /** Step H6-F4: a confirmation already holds this request's deterministic key (a redelivery; nothing appended). */
+  | { readonly kind: "coalesced" }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "not_eligible" };
 
 export async function requestInteractionConfirmation(
   scope: ReconciliationScope,
   clock: ReconciliationClock,
-  input: { readonly interactionId: string; readonly correlationId: CorrelationId },
+  input: {
+    readonly interactionId: string;
+    readonly correlationId: CorrelationId;
+    /** Step H6-F4: signal callers pass a key derived from the routed hint (idempotent redelivery); others keep one key per request. */
+    readonly dispatchKey?: string;
+  },
 ): Promise<ConfirmationRequestOutcome> {
   // The bound workspace's row only (RLS): another workspace's id is the same not_found as an unknown one.
   const record = await scope.ingestion.interactions.findById(input.interactionId);
   if (record === undefined) return { kind: "not_found" };
   if (!record.observed || record.kind === null) return { kind: "not_eligible" };
   const requestId = clock.newId();
-  await scope.reconciliation.enqueueConfirmation(
+  const appended = await scope.reconciliation.enqueueConfirmation(
     { organizationId: record.organizationId, workspaceId: record.workspaceId, connectedAccountId: record.connectedAccountId, interactionId: record.id },
     input.correlationId,
     requestId,
     clock.now(),
+    input.dispatchKey,
   );
-  return { kind: "requested", requestId };
+  return appended === "appended" ? { kind: "requested", requestId } : { kind: "coalesced" };
 }
 
 // ── confirmation (INTEGRATION) ─────────────────────────────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import type {
 import { RECONCILE_SLICE_TOPIC, SLICE_UNITS, sliceDispatchKey, type SliceUnit } from "../domain/reconciliation-slice";
 import { CONFIRM_INTERACTION_TOPIC, confirmationDispatchKey } from "../domain/confirmation";
 import { RECONCILIATION_RUN_STATES, RECONCILIATION_SLICE_STATES, type ReconciliationRunState, type ReconciliationSliceState } from "../domain/reconciliation-state";
+import type { SignalRunPlan } from "../domain/signals";
 import { authorityConflicts, reconciliationRuns, reconciliationSlices, reconciliationWatermarks } from "./reconciliation-tables";
 
 const runState = (value: string): ReconciliationRunState => {
@@ -39,6 +40,11 @@ const unitOf = (value: string): SliceUnit => {
   return unit;
 };
 
+const planOf = (value: string): SignalRunPlan => {
+  if (value === "account" || value === "relist") return value;
+  throw new Error("reconciliation_run_incoherent");
+};
+
 type RunRow = typeof reconciliationRuns.$inferSelect;
 type SliceRow = typeof reconciliationSlices.$inferSelect;
 
@@ -51,6 +57,7 @@ const runRecord = (row: RunRow): ReconciliationRunRecord => ({
   initiatorType: row.initiatorType === "user" ? "user" : "system",
   initiatorUserId: row.initiatorUserId,
   correlationId: row.correlationId,
+  plan: planOf(row.plan),
   requestedAt: row.requestedAt,
   startedAt: row.startedAt,
   completedAt: row.completedAt,
@@ -118,6 +125,8 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
         content_items: input.budget.contentItems,
         overlap_seconds: input.budget.overlapSeconds,
         max_operations: input.budget.maxOperations,
+        // Step H6-F4 (0022): the worker branch accepts `plan`; an account run sends none (the boundary's default).
+        ...(input.plan === undefined || input.plan === "account" ? {} : { plan: input.plan }),
       });
       const result = await tx.execute<{ outcome: string; reconciliation_run_id: string | null; outbox_id: string | null }>(sql`
         select outcome, reconciliation_run_id, outbox_id
@@ -266,6 +275,11 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
         .where(eq(reconciliationSlices.reconciliationRunId, runId));
       return rows.map((row) => ({ unit: unitOf(row.unit), state: sliceState(row.state) }));
     },
+    async completedContentItems(runId) {
+      const rows = await tx.selectDistinct({ contentItemId: reconciliationSlices.contentItemId }).from(reconciliationSlices)
+        .where(and(eq(reconciliationSlices.reconciliationRunId, runId), eq(reconciliationSlices.unit, "content_interactions"), eq(reconciliationSlices.state, "COMPLETED")));
+      return rows.map((row) => row.contentItemId).filter((id): id is string => id !== null).sort();
+    },
     async activeBackoff(connectedAccountId, now) {
       const rows = await tx.select({ retryNotBefore: reconciliationSlices.retryNotBefore }).from(reconciliationSlices)
         .where(and(eq(reconciliationSlices.connectedAccountId, connectedAccountId), gt(reconciliationSlices.retryNotBefore, now)))
@@ -353,8 +367,8 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
         createdAt: now,
       });
     },
-    async enqueueConfirmation(target, correlationId, outboxId, now) {
-      await append({
+    async enqueueConfirmation(target, correlationId, outboxId, now, dispatchKey) {
+      const message = {
         id: outboxId,
         topic: CONFIRM_INTERACTION_TOPIC,
         organizationId: target.organizationId,
@@ -362,9 +376,13 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
         subjectIds: { connected_account_id: target.connectedAccountId, interaction_id: target.interactionId },
         correlationId,
         initiator: { type: "system" },
-        dispatchKey: confirmationDispatchKey(outboxId),
+        dispatchKey: dispatchKey ?? confirmationDispatchKey(outboxId),
         createdAt: now,
-      });
+      } satisfies Parameters<typeof appendOutboxOnce>[1];
+      // A coalescing key already taken (a confirmation of this interaction in this bucket) appends nothing.
+      const appended = await appendOutboxOnce(tx, message);
+      if (appended === "appended") noteAppended(message);
+      return appended;
     },
   };
 }

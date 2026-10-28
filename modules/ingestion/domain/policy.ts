@@ -52,3 +52,13 @@ export function reconciliationArrival(input: { readonly epoch: Instant | null; r
   if (input.epoch === null) return "backfill";
   return compareInstants(input.providerCreatedAt, input.epoch) < 0 ? "backfill" : "reconciliation";
 }
+
+/**
+ * The arrival of one fact a `relist` (webhook-signal) run observes (Step H6-F4; design H6-F0 §9): the same history rule
+ * — `backfill` on the content's first traversal or when the provider created it before the epoch — and otherwise
+ * `realtime`, because the read was triggered by a fresh provider signal. Decided by the provider's creation time
+ * against the epoch, never by when the webhook arrived.
+ */
+export function relistArrival(input: { readonly epoch: Instant | null; readonly providerCreatedAt: Instant }): "backfill" | "realtime" {
+  return reconciliationArrival(input) === "backfill" ? "backfill" : "realtime";
+}

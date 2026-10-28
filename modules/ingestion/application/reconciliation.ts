@@ -45,29 +45,22 @@ import {
   type ProviderReadPort,
   type TimeWindow,
 } from "@/integrations/providers/contract";
-import { capabilityAvailability, type CapabilityAvailability, type CapabilityKey } from "@/modules/capability";
-import { CredentialUnreadableError, type ConnectedAccount, type Connection, type DiscoveryProviders, type ProviderCredentialAccess } from "@/modules/connections";
+import { CredentialUnreadableError, type DiscoveryProviders, type ProviderCredentialAccess } from "@/modules/connections";
 import { coverageForSlice, historyBeforeFirstRead, type AvailabilityInput, type SliceReadResult } from "@/modules/coverage";
 import type { InteractionSourceFact } from "@/modules/interactions";
-import { resolveSwitch } from "@/platform/flags";
-import { reconciliationArrival } from "../domain/policy";
+import { reconciliationArrival, relistArrival } from "../domain/policy";
+import { availabilityInput, gate, type Gate } from "./authority-gate";
+import { closeRunSignals, planRelistSlices } from "./signal-marks";
 import { SLICE_CURSOR_MAX_AGE_MS, advanceSlice, type ReconciliationSlice, type SliceStep } from "../domain/reconciliation-slice";
 import { RECONCILIATION_RUNTIME, defaultBudgetSnapshot, type ReconciliationBudgetSnapshot } from "../domain/reconciliation-state";
 import { IngestionAuthorityConflict, ingestInteractionFact } from "./ingest-interaction";
 import { orderParentsFirst } from "./ordering";
-import type { IngestionClock, IngestionStores } from "./ports";
-import type { ReconciliationAuthorityStore, ReconciliationRunRecord, ReconciliationSliceRecord, ReconciliationStore, SliceFinish } from "./reconciliation-ports";
+import type { IngestionStores } from "./ports";
+import type { ReconciliationRunRecord, ReconciliationSliceRecord, SliceFinish } from "./reconciliation-ports";
 import { SourceFactRejectedError, interactionSourceFactFromDto } from "./source-fact-mapping";
 
-/** One workspace-scoped transaction's stores. `isolated` runs work in a savepoint whose failure rolls back alone. */
-export interface ReconciliationScope {
-  readonly reconciliation: ReconciliationStore;
-  readonly authority: ReconciliationAuthorityStore;
-  readonly ingestion: IngestionStores;
-  isolated<T>(work: (ingestion: IngestionStores) => Promise<T>): Promise<T>;
-}
-
-export type ReconciliationClock = IngestionClock;
+import type { ReconciliationClock, ReconciliationScope } from "./reconciliation-scope";
+export type { ReconciliationClock, ReconciliationScope } from "./reconciliation-scope";
 
 /** The validated read scope of the listing and of an interactions slice's eligibility (H6-A1: post · unknown). */
 const VALIDATED_SCOPE = { contentKind: "post", source: "unknown" } as const;
@@ -82,56 +75,8 @@ const iso = (date: Date) => {
   if (parsed === undefined) throw new Error("reconciliation_instant_invalid");
   return parsed;
 };
-const readable = (availability: CapabilityAvailability): boolean => availability.state === "AVAILABLE" || availability.state === "AVAILABLE_WITH_LIMITATION";
-export const availabilityInput = (availability: CapabilityAvailability): AvailabilityInput => ({ state: availability.state, reason: availability.reason, limitationCode: availability.limitation?.code ?? null });
-const failureClassOf = (reason: string): string => reason.toLowerCase();
-/** Availability reasons that concern the whole account (the run stops) rather than one content scope. */
-const ACCOUNT_LEVEL_REASONS: readonly string[] = [
-  "ACCOUNT_PERMISSION_MISSING", "PROFILE_NOT_EVALUATED", "PROFILE_STALE", "ACCOUNT_INACTIVE",
-  "CONNECTION_VALIDATING", "CONNECTION_DEGRADED", "CONNECTION_FAILED", "CONNECTION_DISCONNECTED", "CONNECTION_REMOVED",
-];
-
-// ── authority gate ──────────────────────────────────────────────────────────────────────────────────────────
-export type Gate =
-  | {
-    readonly kind: "readable";
-    readonly account: ConnectedAccount;
-    readonly connection: Connection;
-    readonly availability: CapabilityAvailability;
-    readonly profile: { readonly catalogRevision: number; readonly revision: number };
-  }
-  | { readonly kind: "blocked"; readonly failureClass: string; readonly accountLevel: boolean; readonly availability: AvailabilityInput | null };
-
-/** Re-evaluates everything one provider operation rests on, from persistence, now (never from an earlier step). */
-/** Internal to the ingestion module (Step H6-E's confirmation reuses it); not part of the public API. */
-export async function gate(scope: ReconciliationScope, connectedAccountId: string, capability: CapabilityKey, contentKind: string, source: string, options: { readonly shareLock?: boolean } = {}): Promise<Gate> {
-  const account = await scope.authority.account(connectedAccountId);
-  if (account === undefined) return { kind: "blocked", failureClass: "account_not_found", accountLevel: true, availability: null };
-  if (account.status !== "ACTIVE") return { kind: "blocked", failureClass: "account_inactive", accountLevel: true, availability: { state: "UNAVAILABLE", reason: "ACCOUNT_INACTIVE", limitationCode: null } };
-  const connection = options.shareLock === true ? await scope.authority.connectionForShare(account.connectionId) : await scope.authority.connection(account.connectionId);
-  if (connection === undefined || connection.status === "REMOVED") {
-    return { kind: "blocked", failureClass: "connection_removed", accountLevel: true, availability: { state: "UNAVAILABLE", reason: "CONNECTION_REMOVED", limitationCode: null } };
-  }
-  const paused = resolveSwitch(await scope.authority.switches(), "ingestion.provider_pause", { qualifier: account.platform });
-  // A paused provider reads nothing; its gap is not described as a provider failure (no coverage record = UNKNOWN).
-  if (paused.value.paused) return { kind: "blocked", failureClass: "provider_paused", accountLevel: true, availability: null };
-  const availability = await capabilityAvailability(scope.authority.capability, {
-    connectedAccountId: account.id,
-    accountStatus: account.status,
-    provider: connection.provider,
-    capability,
-    contentKind: contentKind as Parameters<typeof capabilityAvailability>[1]["contentKind"],
-    source: source as Parameters<typeof capabilityAvailability>[1]["source"],
-    connection: connection.status,
-  });
-  if (!readable(availability)) {
-    return { kind: "blocked", failureClass: failureClassOf(availability.reason), accountLevel: ACCOUNT_LEVEL_REASONS.includes(availability.reason), availability: availabilityInput(availability) };
-  }
-  const header = await scope.authority.capability.header(account.id);
-  if (header === undefined) return { kind: "blocked", failureClass: "profile_not_evaluated", accountLevel: true, availability: { state: "UNAVAILABLE", reason: "PROFILE_NOT_EVALUATED", limitationCode: null } };
-  if (connection.activeCredentialId === null) return { kind: "blocked", failureClass: "no_credential", accountLevel: true, availability: { state: "TEMPORARILY_UNAVAILABLE", reason: "CONNECTION_FAILED", limitationCode: null } };
-  return { kind: "readable", account, connection, availability, profile: { catalogRevision: header.catalogRevision, revision: header.revision } };
-}
+/** Re-exported for the H6-E confirmation (its import path predates the lift). */
+export { availabilityInput, gate, type Gate } from "./authority-gate";
 
 // ── request ─────────────────────────────────────────────────────────────────────────────────────────────────
 export type RequestReconciliationOutcome =
@@ -167,7 +112,9 @@ export type PlanOutcome =
   | { readonly kind: "not_found" }
   | { readonly kind: "already_planned"; readonly state: string }
   | { readonly kind: "skipped"; readonly failureClass: string }
-  | { readonly kind: "started"; readonly sliceId: string };
+  | { readonly kind: "started"; readonly sliceId: string }
+  /** Step H6-F4: a relist run with no satisfiable, readable mark left closes COMPLETED at once (nothing was read). */
+  | { readonly kind: "completed_empty" };
 
 export async function planReconciliation(scope: ReconciliationScope, clock: ReconciliationClock, input: { readonly runId: string; readonly connectedAccountId: string }): Promise<PlanOutcome> {
   const run = await scope.reconciliation.lockRun(input.runId);
@@ -194,10 +141,23 @@ export async function planReconciliation(scope: ReconciliationScope, clock: Reco
         await recordCoverage(scope, run, watermark.contentItemId, watermark.syncedThrough, now, blocked.availability, "not_attempted", correlationId, clock);
       }
     }
-    await scope.reconciliation.finishRun(run.id, "SKIPPED_UNAVAILABLE", blocked.failureClass, now);
+    await closeRun(scope, clock, run, "SKIPPED_UNAVAILABLE", blocked.failureClass, now);
     return { kind: "skipped", failureClass: blocked.failureClass };
   }
   if (!(await scope.reconciliation.startRun(run.id, now))) return { kind: "already_planned", state: "RUNNING" };
+  if (run.plan === "relist") {
+    // Step H6-F4 (design H6-F0 §9): no listing — one content_interactions slice per satisfiable pending relist mark.
+    const started = { ...run, state: "RUNNING" as const, startedAt: now };
+    const { created } = await planRelistSlices(scope, clock, started, now);
+    await scope.reconciliation.addRunUsage(run.id, { pages: 0, contentItems: created }, now);
+    const first = await scope.reconciliation.nextPendingSlice(run.id);
+    if (first === undefined) {
+      await closeRun(scope, clock, started, "COMPLETED", null, now);
+      return { kind: "completed_empty" };
+    }
+    await scope.reconciliation.enqueueSlice(first, run.correlationId, clock.newId(), now);
+    return { kind: "started", sliceId: first.id };
+  }
   const slice = { id: clock.newId(), organizationId: run.organizationId, workspaceId: run.workspaceId, connectedAccountId: run.connectedAccountId };
   await scope.reconciliation.insertSlice({
     ...slice,
@@ -601,7 +561,8 @@ async function ingestPages(scope: ReconciliationScope, clock: ReconciliationCloc
           workspaceId: run.workspaceId as InteractionSourceFact["scope"]["workspaceId"],
           connectedAccountId: authority.account.id,
           providerAssetId: authority.account.providerAssetId,
-          mechanism: "reconciliation",
+          // Step H6-F4: a relist (webhook-signal) run's facts carry their own admissible provenance; nothing else differs.
+          mechanism: run.plan === "relist" ? "webhook_relist" : "reconciliation",
           operation: "listInteractions",
           provenance: "listed",
           observedAt: instant(page.readAt),
@@ -624,7 +585,7 @@ async function ingestPages(scope: ReconciliationScope, clock: ReconciliationCloc
         fact,
         content: { contentKind: content.contentKind, reportedSource: content.reportedSource },
         availability,
-        arrival: reconciliationArrival({ epoch: epochInstant, providerCreatedAt: fact.time.providerCreatedAt }),
+        arrival: (run.plan === "relist" ? relistArrival : reconciliationArrival)({ epoch: epochInstant, providerCreatedAt: fact.time.providerCreatedAt }),
         correlationId,
       }));
     } catch (error) {
@@ -741,11 +702,21 @@ async function advanceChain(scope: ReconciliationScope, clock: ReconciliationClo
   if (states.some((slice) => slice.state === "PENDING" || slice.state === "RUNNING")) return;
   const listing = states.find((slice) => slice.unit === "content_listing");
   if (listing !== undefined && listing.state !== "COMPLETED") {
-    await scope.reconciliation.finishRun(run.id, listing.state === "ABANDONED_BUDGET" ? "PARTIAL" : "FAILED", listing.state === "ABANDONED_BUDGET" ? null : "listing_failed", now);
+    await closeRun(scope, clock, run, listing.state === "ABANDONED_BUDGET" ? "PARTIAL" : "FAILED", listing.state === "ABANDONED_BUDGET" ? null : "listing_failed", now);
     return;
   }
   const complete = states.every((slice) => slice.state === "COMPLETED" || slice.state === "CONTINUED");
-  await scope.reconciliation.finishRun(run.id, complete ? "COMPLETED" : "PARTIAL", null, now);
+  await closeRun(scope, clock, run, complete ? "COMPLETED" : "PARTIAL", null, now);
+}
+
+/**
+ * The ONE way a run closes: its terminal state, then — in the same transaction — the signal close hook (Step H6-F4,
+ * design H6-F0 §13.4): satisfied marks are deleted and what is left gets at most one follow-up run or a revisit time.
+ */
+async function closeRun(scope: ReconciliationScope, clock: ReconciliationClock, run: ReconciliationRunRecord,
+  state: "COMPLETED" | "PARTIAL" | "SKIPPED_UNAVAILABLE" | "FAILED", failureClass: string | null, now: Date): Promise<void> {
+  if (!(await scope.reconciliation.finishRun(run.id, state, failureClass, now))) return;
+  await closeRunSignals(scope, clock, run, state, now);
 }
 
 // ── terminal consumer (MAIN) ────────────────────────────────────────────────────────────────────────────────

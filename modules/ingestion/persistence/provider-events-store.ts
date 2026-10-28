@@ -5,7 +5,8 @@
  *   recordProviderWebhook   WEB provider-signal scope only: system.record_provider_webhook. The ONLY place raw body bytes
  *                           travel, and only when the adapter's own `rawBodyRetainable` says so (D-F4; never re-decided).
  *   ProviderEventStore      SYSTEM scope only (the MAIN router and purge): due hint ids, system.route_provider_hint,
- *                           system.purge_provider_events. Identifiers, outcomes and counts — never a body.
+ *                           system.purge_provider_events and (H6-F4) system.dispatch_due_signal_marks. Identifiers,
+ *                           outcomes and counts — never a body.
  * Every definer result is validated against its closed vocabulary; anything else fails closed.
  */
 import { sql } from "drizzle-orm";
@@ -80,6 +81,12 @@ export function createPostgresProviderEventStore(tx: DatabaseTransaction): Provi
       const row = result.rows[0];
       if (row === undefined || typeof row.inbox_deleted !== "number" || typeof row.hints_deleted !== "number") throw new Error("provider_event_purge_unrecognized");
       return Object.freeze({ inboxDeleted: row.inbox_deleted, hintsDeleted: row.hints_deleted });
+    },
+    async dispatchDueMarks(limit) {
+      const result = await tx.execute<{ dispatched: unknown }>(sql`select dispatched from system.dispatch_due_signal_marks(${limit})`);
+      const dispatched = result.rows[0]?.dispatched;
+      if (typeof dispatched !== "number") throw new Error("signal_mark_dispatch_unrecognized");
+      return dispatched;
     },
   } satisfies ProviderEventStore);
 }
