@@ -538,11 +538,20 @@ describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cu
     const slices = /"ingestion\.reconciliation_slices": \{[\s\S]*?\n {2}\},/.exec(classification)?.[0] ?? "";
     expect(slices).toMatch(/"UPDATE\(cursor\)", "UPDATE\(cursor_issued_at\)"/);
     expect(slices).not.toMatch(/authenticated/);
-    expect(classification.replace(slices, "")).not.toMatch(/cursor/i);
+    // Step H6-F4b (0023): plus exactly the parking trigger's name in the EXECUTE manifest (no runtime grantee).
+    expect(classification).toMatch(/"ingestion\.reconciliation_slice_park_cursor\(\)": \[\],/);
+    expect(classification.replace(slices, "").replace('"ingestion.reconciliation_slice_park_cursor()": [],', "")).not.toMatch(/cursor/i);
     const migrations = readdirSync(path.join(root, "db/migrations")).filter((f) => f.endsWith(".sql"));
-    for (const file of migrations.filter((f) => f !== "0018_reconciliation_runtime.sql")) {
+    for (const file of migrations.filter((f) => f !== "0018_reconciliation_runtime.sql" && f !== "0023_resumable_signal_progress.sql")) {
       expect(readFileSync(path.join(root, "db/migrations", file), "utf8").replace(/--[^\n]*/g, ""), file).not.toMatch(/cursor/i);
     }
+    // Step H6-F4b (0023, TL D-F4B-1/2): the parked cursor stays ON its reconciliation slice — part A names only that
+    // table (its CHECKs, its lookup index, its parking trigger); parts B and C (marks, expiry) never name a cursor.
+    const parked = readFileSync(path.join(root, "db/migrations/0023_resumable_signal_progress.sql"), "utf8");
+    const [partA = "", rest = ""] = parked.split("-- ── B. confirmation marks");
+    expect(rest.replace(/--[^\n]*/g, "")).not.toMatch(/cursor/i);
+    const statementsA = partA.replace(/--[^\n]*/g, "").split(";").filter((statement) => /cursor/i.test(statement));
+    for (const statement of statementsA) expect(statement, statement.slice(0, 120)).toMatch(/ingestion\.reconciliation_slices|ingestion\.reconciliation_slice_park_cursor|new\.cursor|old\.cursor/);
     // The diagnostic reports only the pagination kind, never a cursor.
     const diagnostic = codeOf("jobs/integration-read-content-validation.ts");
     expect(diagnostic).toMatch(/readonly pagination: "more" \| "end" \| null;/);

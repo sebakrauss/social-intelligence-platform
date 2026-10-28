@@ -52,6 +52,8 @@ export const reconciliationSlices = ingestion.table("reconciliation_slices", {
   leasedUntil: at("leased_until"),
   cursor: text("cursor"),
   cursorIssuedAt: at("cursor_issued_at"),
+  // Step H6-F4b (0023): DB time at which a budget-abandoned slice parked its cursor (trigger-stamped; never written here).
+  cursorParkedAt: at("cursor_parked_at"),
   windowStart: at("window_start").notNull(),
   windowEnd: at("window_end").notNull(),
   maxPages: integer("max_pages").notNull(),

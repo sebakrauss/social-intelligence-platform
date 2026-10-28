@@ -396,12 +396,16 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   // Step H6-F2 (0022): tenant webhook-signal coalescing marks; the bound workspace's worker, and the due-mark definer.
   "ingestion.signal_marks": {
     class: "workspace_tenant",
+    // Step H6-F4b (0023): owner_confirm_* admit only the bound worker's confirmation definers (confirm marks);
+    // owner_expiry_delete admits only system.expire_signal_marks (system login, no workspace, an expired row).
     policies: [
-      "owner_due_read SELECT app_owner", "owner_due_update UPDATE app_owner",
+      "owner_confirm_read SELECT app_owner", "owner_confirm_update UPDATE app_owner",
+      "owner_due_read SELECT app_owner", "owner_due_update UPDATE app_owner", "owner_expiry_delete DELETE app_owner",
       "worker_delete DELETE app_worker", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker",
     ],
     privileges: {
-      // dispatch_generation, kind, content and the first signal are never rewritten by the worker.
+      // dispatch_generation, kind, content, interaction, the first signal and (0023) the confirmation times are never
+      // rewritten by the worker: only the 0022/0023 definers move them.
       app_worker: ["DELETE", "INSERT", "SELECT", "UPDATE(deferred_until)", "UPDATE(expires_at)", "UPDATE(last_signal_at)", "UPDATE(requested_run_id)", "UPDATE(signal_count)", "UPDATE(updated_at)"],
     },
   },
@@ -510,4 +514,12 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "system.dispatch_due_signal_marks(integer)": ["app_system"],
   "system.purge_provider_events(integer)": ["app_system"],
   "ingestion.provider_event_hint(uuid,uuid)": ["app_worker"],
+  // Step H6-F4b (0023): trigger guards (no runtime EXECUTE); the bound worker's confirmation claim / read start / read
+  // success; the system-wide expiry of signal marks.
+  "ingestion.reconciliation_slice_park_cursor()": [],
+  "ingestion.signal_mark_confirmation_guard()": [],
+  "ingestion.claim_signal_confirmation(uuid,uuid)": ["app_worker"],
+  "ingestion.begin_signal_confirmation_read(uuid,uuid)": ["app_worker"],
+  "ingestion.complete_signal_confirmation_read(uuid,uuid,timestamp with time zone)": ["app_worker"],
+  "system.expire_signal_marks(integer)": ["app_system"],
 };

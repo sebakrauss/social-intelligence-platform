@@ -69,6 +69,8 @@ const WIDENABLE_CHECKS: Readonly<Record<string, { readonly table: string; readon
   profile_entries_state_check: { table: "capability.profile_entries", column: "state" },
   profile_entries_limitation_code_check: { table: "capability.profile_entries", column: "limitation_code" },
   coverage_records_reason_check: { table: "coverage.coverage_records", column: "reason" },
+  // Step H6-F4b (0023): the signal-mark kinds gain `confirm` (relist and account unchanged).
+  signal_marks_kind_check: { table: "ingestion.signal_marks", column: "kind" },
 };
 
 const LITERAL_LIST = /^\s*'[^']*'(\s*,\s*'[^']*')*\s*$/;
@@ -144,6 +146,10 @@ function withVerifiedWideningsRemoved(sources: readonly { name: string; sql: str
  *   the entry names its `column`: the original is read from exactly that
  *   column definition in the table's own CREATE TABLE (balanced parentheses), never from another column or table.
  *   This is not the vocabulary-widening mechanism above: the exact expression is pinned, value order included.
+ *   reconciliation_slices_cursor_open (0023, Step H6-F4b, TL D-F4B-1/2): a budget-abandoned slice may keep (park) the
+ *   cursor of its next unread page; every other terminal state still holds none.
+ *   signal_marks_target (0023, Step H6-F4b, TL D-F4B-3): the closed target shape per kind, adding `confirm`
+ *   (content + interaction) while account (none) and relist (content only) keep exactly their 0022 shape.
  */
 const PINNED_CHECK_REWRITES: Readonly<Record<string, { readonly table: string; readonly column?: string; readonly from: string; readonly to: string }>> = {
   connect_attempts_closed_recorded: {
@@ -162,6 +168,18 @@ const PINNED_CHECK_REWRITES: Readonly<Record<string, { readonly table: string; r
       " 'asset_not_discovered', 'activation_retries_exhausted', 'ad_account_single_workspace_pending_validation'," +
       " 'source_release_rejected'))",
   },
+  reconciliation_slices_cursor_open: {
+    table: "ingestion.reconciliation_slices",
+    from: "(cursor is null or state in ('pending', 'running'))",
+    to: "(cursor is null or state in ('pending', 'running', 'abandoned_budget'))",
+  },
+  signal_marks_target: {
+    table: "ingestion.signal_marks",
+    from: "((kind = 'relist') = (content_item_id is not null))",
+    to:
+      "(((kind = 'account' and content_item_id is null and interaction_id is null) or (kind = 'relist' and content_item_id is not null" +
+      " and interaction_id is null) or (kind = 'confirm' and content_item_id is not null and interaction_id is not null)))",
+  },
 };
 
 /** The parenthesized expression starting at `open` (which must be "("), with balanced parentheses; undefined if unbalanced. */
@@ -179,8 +197,9 @@ function balanced(text: string, open: number): string | undefined {
 /** A pinned constraint's definition inside its table's CREATE TABLE body: named constraint, or a nullable column's inline check. */
 function pinnedDefinition(body: string, name: string, table: string, column: string | undefined): string | undefined {
   if (column === undefined) {
-    const defined = new RegExp(`(?:\\(|,) constraint ${name} check (.*?)(?=,|\\) ?$)`).exec(body);
-    return defined ? (defined[1] ?? "").trim() : undefined;
+    // Balanced parentheses: a named CHECK may contain commas (an IN list), so it never ends at the first comma.
+    const defined = new RegExp(`(?:\\(|,) constraint ${name} check `).exec(body);
+    return defined === null ? undefined : balanced(body, defined.index + defined[0].length);
   }
   // PostgreSQL's deterministic name for the inline check; any other pairing is a misconfigured entry.
   if (name !== `${table.slice(table.indexOf(".") + 1)}_${column}_check`) throw new Error(`${name}: not the inline check name of ${table}.${column}`);
@@ -225,6 +244,56 @@ function withPinnedRewritesRemoved(sources: readonly { name: string; sql: string
   });
 }
 
+/**
+ * Exactly PINNED UNIQUE rewrites (Step H6-F4b, 0023): a named UNIQUE constraint whose reviewed key changes in one exact
+ * way. The original key is read from the table's own CREATE TABLE; the re-add must be the pinned key, same name, in the
+ * same migration, right as top-level statements in this order (a UNIQUE constraint has no NOT VALID form):
+ *   alter table <table> drop constraint <name>;
+ *   alter table <table> add constraint <name> <to>;
+ *   signal_marks_one_pending: one pending mark per (workspace, account, kind, content) becomes per (…, interaction) for
+ *   the new confirm kind; account and relist marks (interaction NULL, NULLs not distinct) keep exactly their uniqueness.
+ */
+const PINNED_UNIQUE_REWRITES: Readonly<Record<string, { readonly table: string; readonly from: string; readonly to: string }>> = {
+  signal_marks_one_pending: {
+    table: "ingestion.signal_marks",
+    from: "unique nulls not distinct (workspace_id, connected_account_id, kind, content_item_id)",
+    to: "unique nulls not distinct (workspace_id, connected_account_id, kind, content_item_id, interaction_id)",
+  },
+};
+
+/** Migrations with each verified pinned UNIQUE rewrite's DROP removed; throws if a rewrite isn't exactly the pinned one. */
+function withPinnedUniqueRewritesRemoved(sources: readonly { name: string; sql: string }[]): { name: string; sql: string }[] {
+  const current = new Map<string, string>();
+  return sources.map((source) => {
+    let sql = source.sql;
+    const top = topLevel(source.sql);
+    for (const [name, { table, from, to }] of Object.entries(PINNED_UNIQUE_REWRITES)) {
+      const t = escapeRegExp(table);
+      const body = createTableBody(top, table);
+      if (body !== undefined && !current.has(name)) {
+        const defined = new RegExp(`(?:\\(|,) constraint ${name} (unique(?: nulls not distinct)? )`).exec(body);
+        const key = defined === null ? undefined : balanced(body, defined.index + defined[0].length);
+        if (defined !== null && key !== undefined) current.set(name, `${defined[1] ?? ""}${key}`);
+      }
+      const drops = statements(top, new RegExp(`alter table ${t} drop constraint ${name};`));
+      if (drops.length === 0) continue;
+      const fail = (reason: string): never => {
+        throw new Error(`${source.name}: ${name} ${reason}`);
+      };
+      if (drops.length > 1) fail("is dropped more than once");
+      const dropAt = drops[0]?.index ?? -1;
+      const readds = statements(top, new RegExp(`alter table ${t} add constraint ${name} ([^;]*);`));
+      const readd = readds.find((match) => match.index > dropAt);
+      if (readds.length !== 1 || readd === undefined) fail("is dropped without exactly one later same-name re-add in the same migration");
+      if (current.get(name) !== from) fail("rewrites a definition other than the pinned original");
+      if ((readd?.[2] ?? "").trim() !== to) fail("is re-added with a key other than the pinned rewrite");
+      current.set(name, to);
+      sql = sql.replace(`alter table ${table} drop constraint ${name};`, " ");
+    }
+    return { name: source.name, sql };
+  });
+}
+
 const FORBIDDEN: readonly [RegExp, string][] = [
   [/\bdrop\s+(table|column|schema|role|user|owned|database|function|policy|trigger|index|view|type)\b/, "DROP"],
   [/\btruncate\b/, "TRUNCATE"],
@@ -245,7 +314,7 @@ const FORBIDDEN: readonly [RegExp, string][] = [
 function lintMigrations(sources: readonly { name: string; sql: string }[]): string[] {
   let checked: { name: string; sql: string }[];
   try {
-    checked = withPinnedRewritesRemoved(withVerifiedWideningsRemoved(sources));
+    checked = withPinnedUniqueRewritesRemoved(withPinnedRewritesRemoved(withVerifiedWideningsRemoved(sources)));
   } catch (error) {
     return [(error as Error).message];
   }
@@ -336,6 +405,7 @@ describe("migration lint", () => {
         "profile_entries_capability_check",
         "profile_entries_limitation_code_check",
         "profile_entries_state_check",
+        "signal_marks_kind_check",
       ]);
     });
   });
@@ -379,7 +449,7 @@ describe("migration lint", () => {
     });
 
     it("pins exactly the reviewed rewrites", () => {
-      expect(Object.keys(PINNED_CHECK_REWRITES)).toEqual(["connect_attempts_closed_recorded", "asset_moves_reason_code_check"]);
+      expect(Object.keys(PINNED_CHECK_REWRITES)).toEqual(["connect_attempts_closed_recorded", "asset_moves_reason_code_check", "reconciliation_slices_cursor_open", "signal_marks_target"]);
     });
   });
 
@@ -476,6 +546,48 @@ describe("migration lint", () => {
     it("has no earlier definition to widen when the table was never created with an inline status CHECK", () => {
       const findings = lintMigrations([{ name: "0001_base.sql", sql: normalize("create table connections.connect_attempts ( id uuid );") }, { name: "0002_m.sql", sql: normalize(widen()) }]);
       expect(findings[0]).toMatch(/no earlier definition/);
+    });
+  });
+
+  describe("the pinned signal-mark UNIQUE rewrite (0023) allows exactly one transformation (adversarial)", () => {
+    const BASE = {
+      name: "0001_base.sql",
+      sql: normalize(
+        "create table ingestion.signal_marks ( id uuid, workspace_id uuid, connected_account_id uuid, kind text not null check (kind in ('relist', 'account')), content_item_id uuid," +
+          " constraint signal_marks_one_pending unique nulls not distinct (workspace_id, connected_account_id, kind, content_item_id), x int );",
+      ),
+    };
+    const TO = "unique nulls not distinct (workspace_id, connected_account_id, kind, content_item_id, interaction_id)";
+    const rewrite = (key = TO, table = "ingestion.signal_marks", name = "signal_marks_one_pending"): string =>
+      `alter table ${table} drop constraint ${name}; alter table ${table} add constraint ${name} ${key};`;
+    const lint = (...later: string[]): string[] => lintMigrations([BASE, ...later.map((sql, i) => ({ name: `000${String(i + 2)}_m.sql`, sql: normalize(sql) }))]);
+
+    it("accepts exactly the pinned rewrite (case and whitespace normalized)", () => {
+      expect(lint(rewrite())).toEqual([]);
+      expect(lint(rewrite().replace(/ /g, "\n  ").toUpperCase())).toEqual([]);
+    });
+
+    it.each([
+      ["a narrower key", "unique nulls not distinct (workspace_id, connected_account_id, kind)"],
+      ["a different extra column", "unique nulls not distinct (workspace_id, connected_account_id, kind, content_item_id, id)"],
+      ["distinct NULLs", "unique (workspace_id, connected_account_id, kind, content_item_id, interaction_id)"],
+      ["a reordered key", "unique nulls not distinct (connected_account_id, workspace_id, kind, content_item_id, interaction_id)"],
+      ["a check instead", "check (true)"],
+    ])("rejects %s", (_label, key) => {
+      expect(lint(rewrite(key))[0]).toMatch(/other than the pinned rewrite/);
+    });
+
+    it("rejects another table or constraint, a drop without re-add, a double drop and a rewrite of an altered original", () => {
+      expect(lint(rewrite(TO, "ingestion.reconciliation_runs")).length).toBeGreaterThan(0);
+      expect(lint(rewrite(TO, "ingestion.signal_marks", "signal_marks_pkey")).length).toBeGreaterThan(0);
+      expect(lint("alter table ingestion.signal_marks drop constraint signal_marks_one_pending;")[0]).toMatch(/without exactly one later/);
+      expect(lint(`${rewrite()} alter table ingestion.signal_marks drop constraint signal_marks_one_pending;`)[0]).toMatch(/more than once/);
+      const altered = { ...BASE, sql: BASE.sql.replace("kind, content_item_id)", "kind)") };
+      expect(lintMigrations([altered, { name: "0002_m.sql", sql: normalize(rewrite()) }])[0]).toMatch(/other than the pinned original/);
+    });
+
+    it("pins exactly the reviewed UNIQUE rewrites", () => {
+      expect(Object.keys(PINNED_UNIQUE_REWRITES)).toEqual(["signal_marks_one_pending"]);
     });
   });
 

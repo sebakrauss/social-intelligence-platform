@@ -716,3 +716,106 @@ pending-mark constraint, the one-open-run index and the outbox dispatch keys.
   sweeps another workspace's marks (worker-only DELETE).
 
 **Release.** F3 and F4 ship together (H6-F5): the router's rows now have their consumer (MAIN 11 / INTEGRATION 7).
+
+## 27. H6-F4b — migration 0023 (persistence only; authored, NOT applied; no runtime uses it yet)
+
+`db/migrations/0023_resumable_signal_progress.sql` supplies the persistence that H6-F4a proved missing. TL decisions:
+D-F4B-1 … D-F4B-6. Runtime behavior is unchanged until H6-F4d.
+
+**A. Parked reconciliation cursor (one mechanism for every plan: account / manual Sync and relist).**
+- Adds `reconciliation_slices.cursor_parked_at` (timestamptz).
+- `reconciliation_slices_cursor_open` gets a pinned rewrite: a cursor is allowed in PENDING, RUNNING and ABANDONED_BUDGET
+  only. COMPLETED, CONTINUED and every FAILED_* state still hold none.
+- `reconciliation_slices_parked`: parked ⇔ ABANDONED_BUDGET with a cursor, `content_interactions` units only.
+- Partial unique index `reconciliation_slices_one_parked (workspace_id, connected_account_id, content_item_id)
+  WHERE state = 'ABANDONED_BUDGET' AND cursor IS NOT NULL`. It is the single continuation authority and also the
+  bounded lookup.
+- Trigger `reconciliation_slice_park_cursor` stamps `cursor_parked_at` from database time at the abandonment, so the
+  application never supplies it. A parked cursor can only be retired (set to NULL), never replaced or parked afresh.
+- A continuation adopts the parked slice's own window (`window_start`, `window_end`), never a later run's start.
+- The cursor never leaves its slice row; a guard pins that marks, the outbox and payloads never name one.
+- `cursor_issued_at` (application time of the last page read) is kept as is. The DB-authoritative parking time is
+  the new column.
+
+`PARKED_CURSOR_LOCAL_TTL = 90 minutes` from `cursor_parked_at` is Wrenkind's local maximum willingness to reuse a
+cursor. It is not `META_CURSOR_TTL`: Meta's cursor lifetime stays VALIDATE (H6-G). The planner enforces it; there is
+no wall-clock CHECK. On `invalid_cursor` the cursor is retired and the existing single safe restart applies, with no
+coverage or watermark claim.
+
+**B. Confirmation marks.** `signal_marks.kind` widens to relist, account and confirm. A confirm mark names a canonical
+`interaction_id` together with its `content_item_id`:
+- FK `signal_marks_confirm_interaction (workspace_id, interaction_id, content_item_id)` → `interactions.interactions`
+  unique `(workspace_id, id, content_item_id)`;
+- plus the existing content FK `(workspace_id, content_item_id, connected_account_id)`.
+
+Together they prove workspace, account, content and interaction, and they refuse a cross-account or cross-workspace
+target. Pinned rewrites:
+- `signal_marks_target`, the closed shape: account has no target, relist has content only, confirm has content and
+  interaction;
+- `signal_marks_one_pending`, unique NULLS NOT DISTINCT over `(workspace_id, connected_account_id, kind,
+  content_item_id, interaction_id)`. Account and relist marks keep exactly their 0022 uniqueness.
+
+The migration lint gained a narrow pinned-UNIQUE-rewrite mechanism for that last one, with adversarial tests.
+
+**Confirmation columns:**
+- `read_started_at`: the database time at which the latest direct reread began.
+- `confirmed_through_at`: the `read_started_at` of the latest successfully completed authoritative reread. A failed or
+  ambiguous read never advances it; the caller decides success, and the database encodes no provider semantics.
+  Meta 100/33 stays ambiguous.
+- Both are monotonic, confirm marks only, with `confirmed_through_at <= read_started_at`.
+- Trigger `signal_mark_confirmation_guard` makes a new mark start unclaimed and unconfirmed, and keeps the claim
+  counter and both times from ever regressing.
+- `dispatch_generation` is reused as the claim counter. It stays worker-immutable; only the claim definer and the
+  0022 dispatcher move it.
+
+**Definers (bound worker; owner policies `owner_confirm_read` and `owner_confirm_update`, confirm marks only):**
+
+| Definer | Behavior |
+|---|---|
+| `ingestion.claim_signal_confirmation(account, interaction)` | Under the row lock: `not_found`; `expired`; `cooling_down` (with `due_at`); `caught_up` when `last_signal_at <= confirmed_through_at`, which needs no provider call and the caller deletes the mark; or `claimed`, which moves to generation + 1 and sets `deferred_until = DB now + 5 min`. Concurrent claims have one winner. |
+| `ingestion.begin_signal_confirmation_read(account, interaction)` | Stamps `read_started_at` from DB time, in the confirmation's prepare transaction, before the provider read. |
+| `ingestion.complete_signal_confirmation_read(account, interaction, read_started_at)` | Called only after an authoritative success. It sets `confirmed_through_at` to that read start; a value later than the recorded read start is `invalid`. |
+
+**Confirmation cooldown (`CONFIRMATION_COOLDOWN = 5 minutes`, fixed in the claim):**
+1. The first signal upserts the mark and gets an immediate claim and read.
+2. Later signals only advance `last_signal_at`, which F4d writes from DB time.
+3. At the next due review after the cooldown, the 0022 dispatcher emits the account-only `ingestion.process_signals`
+   and the tenant task claims again:
+   - caught up: delete the mark, no provider call;
+   - otherwise: exactly one trailing read.
+
+A burst therefore converges on about one immediate read plus one trailing read. Sustained changes cost at most one
+read per 5 minutes per interaction. A mark is deleted only when a successful read began after its latest signal. Until
+then the claim repeats every 5 minutes, so a failed read retries at most every 5 minutes, until the mark expires.
+
+**C. System-wide expiry.** `system.expire_signal_marks(limit)`:
+- system login, no workspace, DB clock, batch 1..5000 with `for update skip locked`;
+- deletes every mark whose `expires_at` has passed, of any kind and whatever the account's status;
+- returns counts per kind only, and touches no canonical row, coverage, watermark or provider.
+
+Its owner DELETE policy `owner_expiry_delete` admits exactly that: a system login, no workspace, an expired row. It is
+the only cross-workspace DELETE of marks; app_system holds no table grant. The new index
+`signal_marks_by_expiry (expires_at, workspace_id, id)` serves the range scan. The MAIN purge task will call it
+(H6-F4d). The 0022 due-mark dispatcher is unchanged and already dispatches every kind, as an account-only tenant row
+with no direct confirmation.
+
+**Clock authority (frozen):**
+- **DB time** for persisted operational scheduling: `cursor_parked_at`, `read_started_at`, `confirmed_through_at`, the
+  claim cooldown and the expiry cutoff. From F4d also the anchoring of `expires_at`, `deferred_until` and a confirm
+  mark's `last_signal_at`.
+- **Provider time** is metadata only.
+- **The reconciliation run clock** (`requested_at`, `started_at`) keeps governing the hourly signal-run cap and the
+  relist/account satisfaction boundary.
+
+**Unchanged:** every restrictive outbox policy, the worker's outbox access (append only, no read), the request
+boundary (account and relist plans; web Sync is account/40; signal runs 10), the existing rows (all constraints
+validated), and canonical state, coverage and watermarks (0023 writes none).
+
+**H6-F4d must still:**
+- park cursors at budget abandonment in `commitSlice`/`stopRun`, adopt them in both planners (within the TTL, same
+  window), retire them on `invalid_cursor` or at completion, and satisfy marks by the slice's `window_end`;
+- create confirm marks from change and removal signals (DB-time `last_signal_at`) and use claim, begin and complete in
+  process_signals and confirm_interaction, with dispatch key `ingestion.confirm_interaction:{interaction}:g{generation}`;
+- exclude confirm marks from the account/relist review and `deferAll`;
+- anchor `expires_at` and `deferred_until` to DB time;
+- call `system.expire_signal_marks` from the MAIN purge task.
