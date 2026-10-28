@@ -1,0 +1,43 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "100000000000001",
+      "time": 1760000000,
+      "changes": [
+        {
+          "field": "feed",
+          "value": {
+            "from": {
+              "id": "200000000000001",
+              "name": "Synthetic Person"
+            },
+            "item": "comment",
+            "comment_id": "300000000000001_400000000000001",
+            "post_id": "100000000000001_300000000000001",
+            "parent_id": "100000000000001_300000000000001",
+            "verb": "add",
+            "created_time": 1759999990,
+            "message": "Synthetic comment text that must never travel"
+          }
+        },
+        {
+          "field": "feed",
+          "value": {
+            "from": {
+              "id": "200000000000001",
+              "name": "Synthetic Person"
+            },
+            "item": "comment",
+            "comment_id": "300000000000001_400000000000001",
+            "post_id": "100000000000001_300000000000001",
+            "parent_id": "100000000000001_300000000000001",
+            "verb": "add",
+            "created_time": 1759999990,
+            "message": "Synthetic comment text that must never travel"
+          }
+        }
+      ]
+    }
+  ]
+}

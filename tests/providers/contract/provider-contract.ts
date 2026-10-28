@@ -229,7 +229,7 @@ export function defineProviderContractSuite(makeHarness: () => ProviderContractH
         const result = await parse(h.webhooks.valid());
         expect(result.hints.length).toBeGreaterThan(0);
         for (const hint of result.hints) {
-          expect(Object.keys(hint).sort()).toEqual(["account", "change", "content", "deliveryId", "eventId", "occurredAt", "sequence", "target"]);
+          expect(Object.keys(hint).sort()).toEqual(["account", "change", "content", "deliveryId", "eventId", "occurredAt", "parent", "sequence", "target"]);
           expectRef(hint.account, "asset");
           expect(["content", "interaction"]).toContain(hint.target.kind);
         }

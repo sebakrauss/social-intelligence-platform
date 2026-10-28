@@ -1,0 +1,36 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "100000000000001",
+      "time": 1760000000,
+      "changes": [
+        {
+          "field": "feed",
+          "value": {
+            "from": {
+              "id": "200000000000001",
+              "name": "Synthetic Person"
+            },
+            "item": "status",
+            "post_id": "100000000000001_300000000000001",
+            "verb": "edited",
+            "message": "x"
+          }
+        },
+        {
+          "field": "feed",
+          "value": {
+            "from": {
+              "id": "200000000000001",
+              "name": "Synthetic Person"
+            },
+            "item": "post",
+            "post_id": "100000000000001_300000000000001",
+            "verb": "remove"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -92,7 +92,9 @@ import type { AccountDescriptionDto, ContentDto, ContentKind, InteractionDto, Pr
 import { isoInstant, parseIsoInstant, parseProviderObjectId, providerObjectRef, rawReference, type ProviderObjectId, type ProviderObjectRef } from "../contract/identity";
 import { BUDGET_NOT_REPORTED, parsePageCursor, type Page, type PageCursor, type TimeWindow } from "../contract/pagination";
 import type { InteractionScope, ProviderReadPort } from "../contract/read-port";
+import type { SecretValue } from "../contract/credential";
 import { WebhookRejectedError } from "../contract/webhooks";
+import { parseMetaWebhookWith } from "./webhooks";
 import { META_GRAPH_VERSION } from "./endpoints";
 import { metaGraphReadError } from "./errors";
 import {
@@ -115,6 +117,11 @@ export interface MetaReadPortOptions {
   readonly transport?: MetaGraphTransport;
   /** describeAccount's `describedAt` (the local clock by default). */
   readonly clock?: () => Date;
+  /**
+   * The Meta App Secret for `parseWebhook` (Step H6-F1). Only the hosted web may hold it (D13: the integration worker
+   * never needs it), so the job-runtime composition leaves it unset and the port's `parseWebhook` fails closed.
+   */
+  readonly webhookSecret?: SecretValue;
 }
 
 const OPERATION = "discoverAssets";
@@ -643,7 +650,12 @@ export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderR
     },
     getCurrentState: () => refuse("getCurrentState"),
     retrievePaidContext: () => refuse("retrievePaidContext"),
-    parseWebhook: () => Promise.reject(new WebhookRejectedError("invalid_signature")),
+    // With the App Secret (web composition only) the pure parser runs; without it every delivery fails closed.
+    parseWebhook: (request) => {
+      const secret = options.webhookSecret;
+      if (secret === undefined) return Promise.reject(new WebhookRejectedError("invalid_signature"));
+      return parseMetaWebhookWith(secret, request);
+    },
     subscribe: () => refuse("subscribe"),
     unsubscribe: () => refuse("unsubscribe"),
     refreshCredential: () => refuse("refreshCredential"),

@@ -107,7 +107,7 @@ export function simulatorContractHarness(): ProviderContractHarness {
       valid: () => signedFixture("single_created"),
       tampered: () => {
         const request = signedFixture("single_created");
-        return { ...request, rawBody: request.rawBody.replace("fb_c_001", "fb_c_005") };
+        return { ...request, rawBody: String(request.rawBody).replace("fb_c_001", "fb_c_005") };
       },
       unsigned: () => {
         const request = signedFixture("single_created");

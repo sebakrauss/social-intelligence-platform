@@ -116,12 +116,22 @@ export {
   type TransientReason,
 } from "./errors";
 export {
+  WEBHOOK_HANDSHAKE_FAILURES,
   WEBHOOK_HINT_CHANGES,
+  WEBHOOK_HINT_CLASSES,
   WEBHOOK_REJECTION_REASONS,
   WebhookRejectedError,
+  classifyWebhookHint,
+  webhookRawBytes,
+  type ProviderWebhookPort,
   type WebhookEventHint,
+  type WebhookHandshakeFailure,
+  type WebhookHandshakeQuery,
+  type WebhookHandshakeResult,
   type WebhookHintChange,
+  type WebhookHintClass,
   type WebhookParseResult,
+  type WebhookQueryValue,
   type WebhookRejectionReason,
   type WebhookRequest,
 } from "./webhooks";

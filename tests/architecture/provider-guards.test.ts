@@ -158,8 +158,8 @@ describe("Meta authorization adapter (Step 7G-D): offline, authorization only", 
 
   const AUTHORIZATION_SIDE = [`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/oauth-transport.ts`];
 
-  it("the Meta tree is the authorization adapter and its token transport, the read port and its Graph transport, error normalization and the fixed endpoints", () => {
-    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/graph-transport.ts`, `${META}/oauth-transport.ts`, `${META}/read-port.ts`]);
+  it("the Meta tree is the authorization adapter and its token transport, the read port and its Graph transport, error normalization, the fixed endpoints and the pure webhook boundary (H6-F1)", () => {
+    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/graph-transport.ts`, `${META}/oauth-transport.ts`, `${META}/read-port.ts`, `${META}/webhooks.ts`]);
     // The authorization side knows nothing of reads; nothing anywhere in the tree mutates, refreshes or proves.
     for (const file of AUTHORIZATION_SIDE) expect(codeOf(file), file).not.toMatch(/discoverAssets|\/me\/accounts|instagram_business_account|ProviderReadPort/);
     for (const file of files()) expect(codeOf(file), file).not.toMatch(/ProviderMutationPort|fb_exchange_token|appsecret_proof/);

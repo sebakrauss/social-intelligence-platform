@@ -11,7 +11,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { PLATFORM_KEYS, type PlatformKey } from "../../../domain/platforms";
 import { isoInstant, parseIsoInstant, parseProviderObjectId, providerObjectRef, type IsoInstant } from "../contract/identity";
-import { WebhookRejectedError, type WebhookEventHint, type WebhookHintChange, type WebhookParseResult, type WebhookRequest } from "../contract/webhooks";
+import { WebhookRejectedError, webhookRawBytes, type WebhookEventHint, type WebhookHintChange, type WebhookParseResult, type WebhookRequest } from "../contract/webhooks";
 import type { SimulatedEvent, SimulatedEventType } from "./world";
 
 export const SIM_SIGNATURE_HEADER = "x-sim-signature";
@@ -29,8 +29,9 @@ const CHANGE_BY_TYPE: Readonly<Record<SimulatedEventType, WebhookHintChange>> = 
   "content.removed": "removed",
 };
 
-function mac(signingKey: string, timestamp: string, rawBody: string): string {
-  return `v1=${createHmac("sha256", signingKey).update(`${timestamp}.${rawBody}`, "utf8").digest("hex")}`;
+/** HMAC over `<timestamp>.<exact body bytes>`: a string body is its UTF-8 encoding (the same bytes a receiver would hand over). */
+function mac(signingKey: string, timestamp: string, rawBody: string | Uint8Array): string {
+  return `v1=${createHmac("sha256", signingKey).update(`${timestamp}.`, "utf8").update(webhookRawBytes({ rawBody })).digest("hex")}`;
 }
 
 /** Signs a raw body the way the simulated provider would deliver it. */
@@ -103,6 +104,8 @@ function parseEvent(value: unknown, deliveryId: string): WebhookEventHint | "ign
     account: providerObjectRef(p, "asset", account),
     target: providerObjectRef(p, targetKind, targetId),
     content: content === null ? null : providerObjectRef(p, "content", content),
+    // The simulated provider announces no parent (replies are learned by re-reading, as with every hint).
+    parent: null,
     change,
     occurredAt,
     sequence,
@@ -121,7 +124,8 @@ export function parseSimulatorWebhook(signingKey: string, toleranceSeconds: numb
 
   let body: unknown;
   try {
-    body = JSON.parse(request.rawBody) as unknown;
+    // Decoded only AFTER the signature over the exact bytes verified; invalid UTF-8 is malformed, never repaired.
+    body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(webhookRawBytes(request))) as unknown;
   } catch {
     return rejected("malformed_payload");
   }
