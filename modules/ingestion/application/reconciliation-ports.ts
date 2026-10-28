@@ -6,6 +6,8 @@
  */
 import type { CapabilityReadStore } from "@/modules/capability";
 import type { ConnectedAccount, Connection } from "@/modules/connections";
+import type { WorkspaceId } from "@/domain/ids";
+import type { StoredInteractionAuthority } from "@/modules/interactions";
 import type { SliceUnit } from "../domain/reconciliation-slice";
 import type { IngestionConflictClass, ReconciliationRunState, ReconciliationSliceState } from "../domain/reconciliation-state";
 
@@ -181,6 +183,8 @@ export interface ReconciliationStore {
   }): Promise<void>;
   // ── dispatch (IDs-only outbox rows, in this transaction) ─────────────────────────────────────────────
   enqueueSlice(slice: Pick<ReconciliationSliceRecord, "id" | "organizationId" | "workspaceId" | "connectedAccountId">, correlationId: string, outboxId: string, now: Date): Promise<void>;
+  /** Step H6-E: the IDs-only `ingestion.confirm_interaction` row of one confirmation request (system initiator). */
+  enqueueConfirmation(target: { readonly organizationId: string; readonly workspaceId: string; readonly connectedAccountId: string; readonly interactionId: string }, correlationId: string, outboxId: string, now: Date): Promise<void>;
 }
 
 /** The account, connection, credential, capability and switch reads reconciliation re-checks before every operation. */
@@ -193,6 +197,12 @@ export interface ReconciliationAuthorityStore {
   readonly capability: CapabilityReadStore;
   /** Every operational switch row visible to the job scope. */
   switches(): Promise<readonly { readonly switchKey: string; readonly qualifier: string; readonly scope: string; readonly organizationId: string | null; readonly workspaceId: string | null; readonly value: unknown }[]>;
+  /**
+   * Step H6-E: the STORED provenance of a canonical observed interaction of the bound workspace, issued by the
+   * interactions persistence layer (the only issuer, H6-A1 TL decision 1) — or undefined (unknown, placeholder, or
+   * another workspace's: RLS hides it).
+   */
+  storedInteraction(workspaceId: WorkspaceId, platform: string, providerInteractionId: string): Promise<StoredInteractionAuthority | undefined>;
 }
 
 /** The ingestion-owned event reads the terminal consumer needs: identifiers only, never text. */

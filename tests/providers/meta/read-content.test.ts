@@ -509,7 +509,7 @@ describe("getContent · GET {post-id}", () => {
   it("code 100 / subcode 33 on the post read → TargetNotFound — never not-eligible, never an unsupported observation", async () => {
     const { get } = portWith(graphOf({ posts: {} }));
     const error = await failure(get());
-    expect(error.toJSON()).toEqual({ kind: "target_not_found", operation: "getContent", retry: "never", details: {} });
+    expect(error.toJSON()).toEqual({ kind: "target_not_found", operation: "getContent", retry: "never", details: { authority: "unconfirmed" } });
     expect(error.kind).not.toBe("target_not_eligible");
   });
 

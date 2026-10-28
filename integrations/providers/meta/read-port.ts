@@ -87,7 +87,7 @@
  */
 import type { ProviderCredential } from "../contract/credential";
 import { PermanentRejectedError, TargetNotEligibleError, TargetNotFoundError, TransientError, type PermanentRejectionDiagnostic, type PermissionCapability, type ReadOperation } from "../contract/errors";
-import { createListedInteractionRegistry, type ListedInteractionProvenance } from "../contract/interaction-target";
+import { createListedInteractionRegistry, resolveInteractionTarget, type ListedInteractionProvenance } from "../contract/interaction-target";
 import type { AccountDescriptionDto, ContentDto, ContentKind, InteractionDto, ProviderAccess, SocialAssetDto } from "../contract/dto";
 import { isoInstant, parseIsoInstant, parseProviderObjectId, providerObjectRef, rawReference, type ProviderObjectId, type ProviderObjectRef } from "../contract/identity";
 import { BUDGET_NOT_REPORTED, parsePageCursor, type Page, type PageCursor, type TimeWindow } from "../contract/pagination";
@@ -571,7 +571,7 @@ async function listMediaComments(transport: MetaGraphTransport, access: Provider
   return interactionPage(createdWithin(items, bounds), list.after, cursor);
 }
 
-async function getMediaComment(transport: MetaGraphTransport, access: ProviderAccess, provenance: ListedInteractionProvenance): Promise<InteractionDto> {
+async function getMediaComment(transport: MetaGraphTransport, access: ProviderAccess, provenance: ListedInteractionProvenance, stored = false): Promise<InteractionDto> {
   const account = managedInstagramAccount(access, "getInteraction");
   // Instagram semantics unchanged: the provenance only names the listed comment; `media.id` stays its content authority.
   const commentId = requestedInteraction(provenance, "instagram");
@@ -580,6 +580,8 @@ async function getMediaComment(transport: MetaGraphTransport, access: ProviderAc
   const comment = outcomeValue(outcome, "getInteraction", "read_interactions");
   // `media.id` is the node's only content authority: without it the comment cannot be placed.
   if (comment.mediaId === null) throw new PermanentRejectedError("getInteraction", "unknown", "interaction_content_missing");
+  // A stored provenance names its content: the node must sit on it (Step H6-E; a listed re-read keeps P12 semantics).
+  if (stored && comment.mediaId !== provenance.content.id) throw new PermanentRejectedError("getInteraction", "unknown", "interaction_content_conflicts");
   return interactionOfInstagramComment(comment, comment.mediaId, account, "getInteraction");
 }
 
@@ -631,8 +633,12 @@ export function createMetaReadPort(options: MetaReadPortOptions = {}): ProviderR
     // A re-read of an interaction this port listed — never a bare id: an unrecorded, copied or foreign target is
     // invalid_request before any request.
     async getInteraction(access, target) {
-      const provenance = listed.resolve(access, target);
-      const interaction = access.account.platform === "instagram" ? await getMediaComment(transport, access, provenance) : await getPageComment(transport, access, provenance);
+      // A listed target through this instance's registry, a stored one (Step H6-E) after its coherence check.
+      const provenance = resolveInteractionTarget(listed, access, target);
+      const stored = target.kind === "stored";
+      // Instagram replies are not read (catalog r5: REPLIES_NOT_READ): no direct reply re-read is invented for them.
+      if (stored && access.account.platform === "instagram" && provenance.interactionKind !== "comment") throw new TargetNotEligibleError("getInteraction", "unsupported_for_target");
+      const interaction = access.account.platform === "instagram" ? await getMediaComment(transport, access, provenance, stored) : await getPageComment(transport, access, provenance);
       return Object.freeze({ data: interaction, budget: BUDGET_NOT_REPORTED });
     },
     getCurrentState: () => refuse("getCurrentState"),

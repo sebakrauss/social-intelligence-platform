@@ -12,6 +12,8 @@
  *   ingestion.reconcile_account (H6-C3)    MAIN planner of one reconciliation run, lane 3 (never a credential)
  *   ingestion.reconcile_slice (H6-C3)      INTEGRATION: one bounded slice of provider reads, lane 3
  *   interactions.observed (H6-C3)          MAIN: the H6 terminal consumer of the canonical event, lane 2 (ids only)
+ *   ingestion.confirm_interaction (H6-E)   INTEGRATION: ONE direct re-read of one canonical interaction from its STORED
+ *                                          provenance (the only removal authority besides a verified signal), lane 3
  *
  * Execution planes (Step 7E.4B.3), declared explicitly per task — drawn by credential-opening capability, never by
  * name, directory or scope: the two tasks that open a provider credential run in the integration plane; the relay, the
@@ -94,6 +96,16 @@ export const PRODUCTION_TASKS = defineTaskRegistry([
     retry: RETRY_POLICIES.transient,
     concurrency: { by: "subject", subject: "connected_account_id" },
     subjects: ["connected_account_id", "reconciliation_slice_id"],
+  },
+  // Step H6-E: one stored-interaction confirmation — exactly one provider read per attempt, bounded by this policy.
+  {
+    name: "ingestion.confirm_interaction",
+    scope: "workspace",
+    executionPlane: "integration",
+    lane: 3,
+    retry: RETRY_POLICIES.transient,
+    concurrency: { by: "subject", subject: "connected_account_id" },
+    subjects: ["connected_account_id", "interaction_id"],
   },
   {
     name: "interactions.observed",

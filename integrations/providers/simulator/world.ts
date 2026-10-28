@@ -308,6 +308,13 @@ export class SimulatorWorld {
     if (options.signaled) this.#emit("interaction.removed", state);
   }
 
+  /** A removed interaction becomes visible again on the platform (Step H6-E: reappearance is the provider's to say). */
+  restoreAtSource(id: string): void {
+    const state = this.#interactions.get(id) ?? this.#missing();
+    state.presence = "present";
+    state.updatedAt = this.now();
+  }
+
   revokeCredential(id: string): void {
     (this.#credentials.get(id) ?? this.#missing()).status = "revoked";
   }

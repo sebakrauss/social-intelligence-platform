@@ -19,6 +19,7 @@ import type {
   ReconciliationWatermarkRecord,
 } from "../application/reconciliation-ports";
 import { RECONCILE_SLICE_TOPIC, SLICE_UNITS, sliceDispatchKey, type SliceUnit } from "../domain/reconciliation-slice";
+import { CONFIRM_INTERACTION_TOPIC, confirmationDispatchKey } from "../domain/confirmation";
 import { RECONCILIATION_RUN_STATES, RECONCILIATION_SLICE_STATES, type ReconciliationRunState, type ReconciliationSliceState } from "../domain/reconciliation-state";
 import { authorityConflicts, reconciliationRuns, reconciliationSlices, reconciliationWatermarks } from "./reconciliation-tables";
 
@@ -349,6 +350,19 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
         correlationId,
         initiator: { type: "system" },
         dispatchKey: sliceDispatchKey({ sliceId: slice.id }),
+        createdAt: now,
+      });
+    },
+    async enqueueConfirmation(target, correlationId, outboxId, now) {
+      await append({
+        id: outboxId,
+        topic: CONFIRM_INTERACTION_TOPIC,
+        organizationId: target.organizationId,
+        workspaceId: target.workspaceId,
+        subjectIds: { connected_account_id: target.connectedAccountId, interaction_id: target.interactionId },
+        correlationId,
+        initiator: { type: "system" },
+        dispatchKey: confirmationDispatchKey(outboxId),
         createdAt: now,
       });
     },

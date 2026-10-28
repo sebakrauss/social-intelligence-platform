@@ -96,6 +96,8 @@ export {
   TargetNotEligibleError,
   TargetNotFoundError,
   TransientError,
+  NOT_FOUND_AUTHORITIES,
+  type NotFoundAuthority,
   isDefiniteFailure,
   isProviderError,
   type AuthorizationOperation,
@@ -124,7 +126,14 @@ export {
   type WebhookRequest,
 } from "./webhooks";
 export type { InteractionScope, ProviderReadPort } from "./read-port";
-export { createListedInteractionRegistry, type InteractionTarget, type ListedInteractionProvenance, type ListedInteractionRegistry } from "./interaction-target";
+export {
+  createListedInteractionRegistry,
+  resolveInteractionTarget,
+  type InteractionTarget,
+  type ListedInteractionProvenance,
+  type ListedInteractionRegistry,
+  type StoredInteractionProvenance,
+} from "./interaction-target";
 export {
   CALLBACK_DENIAL_REASONS,
   CALLBACK_MALFORMED_REASONS,

@@ -46,7 +46,8 @@ describe("the closed release table", () => {
   it("is exactly INTEGRATION then MAIN, with their configs and exact task counts", () => {
     expect(RELEASE_PLANES.map((definition) => [definition.plane, definition.config, definition.expectedTasks])).toEqual([
       // Step H6-C3: + ingestion.reconcile_slice (INTEGRATION); + ingestion.reconcile_account, interactions.observed (MAIN).
-      ["integration", "trigger.integration.config.ts", 6],
+      // Step H6-E: + ingestion.confirm_interaction (INTEGRATION).
+      ["integration", "trigger.integration.config.ts", 7],
       ["main", "trigger.config.ts", 8],
     ]);
     expect(Object.isFrozen(RELEASE_PLANES)).toBe(true);

@@ -473,7 +473,7 @@ describe("Facebook · getInteraction: the listing edge is the content authority,
   });
 
   it("code 100 / subcode 33 on the node read → TargetNotFound (ambiguous, never deletion or non-support); on the edge it stays a permanent rejection", async () => {
-    expect((await failure(facebook(facebookGraph({ nodes: {} })).get())).toJSON()).toEqual({ kind: "target_not_found", operation: "getInteraction", retry: "never", details: {} });
+    expect((await failure(facebook(facebookGraph({ nodes: {} })).get())).toJSON()).toEqual({ kind: "target_not_found", operation: "getInteraction", retry: "never", details: { authority: "unconfirmed" } });
     const edge = facebook((url) => (url.searchParams.get("fields") === "access_token" ? TOKEN_REPLY() : json(400, graphError({ code: 100, error_subcode: 33 }))));
     expect((await failure(edge.list())).toJSON()).toEqual(rejected("listInteractions", "unknown"));
   });
@@ -802,7 +802,7 @@ describe("Instagram · getInteraction: media.id is the only content authority", 
 
   it("an answer echoing another comment id is unreadable; 100/33 is TargetNotFound", async () => {
     expect((await failure(instagram(instagramGraph({ nodes: { [IG_COMMENT]: igComment(IG_COMMENT_B) } })).get())).toJSON()).toEqual(rejected("getInteraction", "unknown"));
-    expect((await failure(instagram(instagramGraph({ nodes: {} })).get())).toJSON()).toEqual({ kind: "target_not_found", operation: "getInteraction", retry: "never", details: {} });
+    expect((await failure(instagram(instagramGraph({ nodes: {} })).get())).toJSON()).toEqual({ kind: "target_not_found", operation: "getInteraction", retry: "never", details: { authority: "unconfirmed" } });
   });
 });
 
@@ -970,5 +970,56 @@ describe("privacy: the adapter logs nothing and its errors carry no comment data
       expectNoneOf(error, secrets);
       expect(Object.keys(error.toJSON()).sort()).toEqual(["details", "kind", "operation", "retry"]);
     }
+  });
+});
+
+describe("H6-E: stored targets (persisted provenance) — the same checks, never removal authority on Meta", () => {
+  const storedFb = (id: string, parent: string | null = null) => ({
+    kind: "stored" as const,
+    stored: { account: FB_ACCESS.account, content: FB_POST_REF, ref: providerObjectRef("facebook", "interaction", id), parent: parent === null ? null : providerObjectRef("facebook", "interaction", parent), interactionKind: parent === null ? ("comment" as const) : ("reply" as const) },
+  });
+  const storedIg = (id: string, kind: "comment" | "reply" = "comment") => ({
+    kind: "stored" as const,
+    stored: { account: IG_ACCESS.account, content: IG_MEDIA_REF, ref: providerObjectRef("instagram", "interaction", id), parent: kind === "reply" ? providerObjectRef("instagram", "interaction", "17950000000000009") : null, interactionKind: kind },
+  });
+
+  it("a stored Facebook comment is re-read against its stored content and parent, like a listed one", async () => {
+    const h = facebook(facebookGraph({ nodes: { [FB_COMMENT]: fbNode(FB_COMMENT) } }));
+    const result = await h.port.getInteraction(FB_ACCESS, storedFb(FB_COMMENT));
+    expect([result.data.ref.id, result.data.content.id, result.data.parent, result.data.interactionKind]).toEqual([FB_COMMENT, POST, null, "comment"]);
+  });
+
+  it("Meta's 100/33 on a stored re-read is an UNCONFIRMED not-found: never removal authority", async () => {
+    const h = facebook(facebookGraph({ nodes: {} }));
+    const error = await failure(h.port.getInteraction(FB_ACCESS, storedFb(FB_COMMENT)));
+    expect(error.toJSON()).toEqual({ kind: "target_not_found", operation: "getInteraction", retry: "never", details: { authority: "unconfirmed" } });
+    const ig = instagram(instagramGraph({ nodes: {} }));
+    expect((await failure(ig.port.getInteraction(IG_ACCESS, storedIg(IG_COMMENT)))).toJSON()).toEqual({ kind: "target_not_found", operation: "getInteraction", retry: "never", details: { authority: "unconfirmed" } });
+  });
+
+  it("a stored Instagram REPLY is refused before any request (REPLIES_NOT_READ: no direct reply re-read is invented)", async () => {
+    const h = instagram(instagramGraph({ nodes: {} }));
+    const error = await failure(h.port.getInteraction(IG_ACCESS, storedIg(IG_COMMENT, "reply")));
+    expect(error.toJSON()).toMatchObject({ kind: "target_not_eligible", operation: "getInteraction" });
+    expect(h.calls).toEqual([]);
+  });
+
+  it("a stored Instagram comment whose node sits on another media is a conflict, never applied", async () => {
+    const h = instagram(instagramGraph({ nodes: { [IG_COMMENT]: igComment(IG_COMMENT, { media: { id: "17900000000000099" } }) } }));
+    expect((await failure(h.port.getInteraction(IG_ACCESS, storedIg(IG_COMMENT)))).toJSON()).toEqual(rejectedAs("getInteraction", "unknown", "interaction_content_conflicts"));
+  });
+
+  it("a stored provenance for another account, mixing platforms or contradicting its kind is invalid_request, before any request", async () => {
+    const h = facebook(facebookGraph({ nodes: { [FB_COMMENT]: fbNode(FB_COMMENT) } }));
+    const base = storedFb(FB_COMMENT).stored;
+    for (const stored of [
+      { ...base, account: providerObjectRef("facebook", "asset", "1009") },
+      { ...base, content: providerObjectRef("instagram", "content", MEDIA) },
+      { ...base, interactionKind: "reply" as const },
+      { ...base, parent: providerObjectRef("facebook", "interaction", "2001_3009") },
+    ]) {
+      expect((await failure(h.port.getInteraction(FB_ACCESS, { kind: "stored", stored }))).toJSON()).toMatchObject({ kind: "permanent_rejected", operation: "getInteraction", details: { reasonCode: "invalid_request" } });
+    }
+    expect(h.calls).toEqual([]);
   });
 });

@@ -431,8 +431,8 @@ module.exports = {
     {
       name: "plane-opener-integration-only",
       severity: "error",
-      comment: "Only the integration plane's task directory reaches the CredentialOpener composition (jobs/connections.ts): the main plane — outbox relay and sweepers, the Move saga, the reconciliation planner and consumer (jobs/reconciliation.ts), every shared jobs module — never does. Step H6-C3: jobs/reconciliation-slice.ts is the integration plane's reconciliation slice.",
-      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|integration-kms-diagnostic\\.ts$|integration-read-content-validation\\.ts$|integration-read-interactions-validation\\.ts$|reconciliation-slice\\.ts$|trigger/integration/)" },
+      comment: "Only the integration plane's task directory reaches the CredentialOpener composition (jobs/connections.ts): the main plane — outbox relay and sweepers, the Move saga, the reconciliation planner and consumer (jobs/reconciliation.ts), every shared jobs module — never does. Step H6-C3: jobs/reconciliation-slice.ts is the integration plane's reconciliation slice. Step H6-E: jobs/confirm-interaction.ts is its stored-interaction confirmation.",
+      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|integration-kms-diagnostic\\.ts$|integration-read-content-validation\\.ts$|integration-read-interactions-validation\\.ts$|reconciliation-slice\\.ts$|confirm-interaction\\.ts$|trigger/integration/)" },
       to: { path: "^jobs/connections\\.ts$" },
     },
     {

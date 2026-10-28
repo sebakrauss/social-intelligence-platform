@@ -428,7 +428,7 @@ describe("Facebook: listContent → listInteractions → getInteraction per obse
                 relabelled.set(copy, item);
                 return copy;
               }) } };
-            }, getInteraction: (access, target) => offContent.getInteraction(access, { kind: "listed", listed: relabelled.get(target.listed) ?? target.listed }) } satisfies ProviderReadPort;
+            }, getInteraction: (access, target) => offContent.getInteraction(access, target.kind === "listed" ? { kind: "listed", listed: relabelled.get(target.listed) ?? target.listed } : target) } satisfies ProviderReadPort;
           })(),
         }),
       },

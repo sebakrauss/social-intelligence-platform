@@ -69,6 +69,14 @@ export {
   type SliceOutcome,
 } from "./application/reconciliation";
 export { requestMemberReconciliation, type MemberReconciliationRequest } from "./application/member-request";
+export {
+  confirmStoredInteraction,
+  requestInteractionConfirmation,
+  type ConfirmationDependencies,
+  type ConfirmationRequestOutcome,
+  type ConfirmationResult,
+} from "./application/confirm-interaction";
+export { CONFIRMATION_OUTCOMES, CONFIRMATION_RUNTIME, CONFIRM_INTERACTION_TOPIC, confirmationDispatchKey, type ConfirmationOutcome } from "./domain/confirmation";
 export type {
   ObservedEventAuthority,
   ReconciliationAuthorityStore,

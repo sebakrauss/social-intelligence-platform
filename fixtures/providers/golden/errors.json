@@ -35,7 +35,9 @@
   {
     "case": "re-fetch of an object the provider doesn't return",
     "error": {
-      "details": {},
+      "details": {
+        "authority": "authoritative"
+      },
       "kind": "target_not_found",
       "operation": "getInteraction",
       "retry": "never"

@@ -254,3 +254,48 @@ itself is the H6-C5 runbook.
 
 H6 is closed. The authoritative final record (capability matrix, rules, topology, budgets, coverage and watermark
 models, the security boundary, evidence by class, limitations and deferred scope) is [CLOSEOUT.md](CLOSEOUT.md).
+
+## H6-E — stored-interaction confirmation (source and simulator only)
+
+H6-E adds the one mechanism that may mark a canonical interaction `removed_at_source` from a re-read: a direct provider
+read of that interaction, derived from stored provenance. Absence from a listing is still never removal authority.
+
+**Provenance.** This follows the H6-A1 freeze (TL decision 1):
+- The interactions persistence layer issues the stored authority (`loadStoredInteractionAuthority`) from the canonical
+  observed row.
+- The provider contract's `InteractionTarget` gains the `stored` kind, carrying the same five facts as a listed
+  provenance (account, content, identity, parent, kind). Adapters check them for coherence: one platform, the access's
+  own account, reply ⇔ parent.
+- A FOUND node must pass `verifyStoredReread` against its authority, or nothing is applied.
+- No caller, browser or payload supplies a provider id.
+
+**Topology.** `ingestion.confirm_interaction` runs on INTEGRATION (INTEGRATION now has 7 tasks; MAIN stays at 8), with
+subjects `interaction_id` and `connected_account_id`, IDs only.
+- It makes exactly one `getInteraction(stored)` per attempt; retries follow the task's transient policy.
+- The only producer is the internal job-scope `requestInteractionConfirmation`. There is no web surface, scheduler or
+  fan-out.
+- Reusing `reconcile_slice` was rejected: confirmation is object-level, with no run budget, coverage or cursor.
+
+**Outcomes** (closed): `FOUND`, `AUTHORITATIVE_NOT_FOUND`, `TEMPORARY_FAILURE`, `AUTHORIZATION_FAILURE`,
+`CAPABILITY_UNAVAILABLE`, `PROVIDER_CONTRACT_AMBIGUOUS`, `INTERACTION_NOT_FOUND`, `NOT_ELIGIBLE`.
+- Only `AUTHORITATIVE_NOT_FOUND`, with an ACTIVE connection and a readable capability for the content scope and the
+  interaction's kind, removes. It goes through `removalBasisFrom` → `direct_fetch_confirmed`.
+- A FOUND interaction is an ordinary observation through the one canonical path: unchanged adds nothing; a removed one
+  that reappears becomes available again in the same row (`state_changed`).
+- Rows, text history, parent links and conversations stay. Coverage and watermarks are never touched.
+
+**Not-found authority.** `TargetNotFoundError.authority` is `authoritative` or `unconfirmed`, and the default is
+unconfirmed.
+- Meta's 100/33 ("does not exist, cannot be loaded due to missing permissions, or does not support this operation") is
+  ambiguous by Meta's own definition, so on Meta every not-found stays unconfirmed. **H6-E cannot remove anything on
+  Facebook or Instagram** until a LIVE validation gate establishes an authoritative not-found.
+- Only the simulator's direct re-read of a vanished interaction is authoritative.
+- A stored Instagram reply is refused before any request (`REPLIES_NOT_READ`).
+
+**No migration.** 0017 already has `stored_reread`, `getInteraction`, `stored`, `direct_fetch_confirmed`,
+`removed_at_source` and `state_changed`.
+
+**Release recommendation.** The members' outbox `append_own` (0004) admits any topic not blocked by a RESTRICTIVE
+policy, so a member could append `ingestion.confirm_interaction` directly. The impact is bounded: own workspace only,
+everything re-derived server-side, and no removal possible on Meta. Still, a migration gate adding the topic to a
+restrictive member policy should precede the H6-E release.

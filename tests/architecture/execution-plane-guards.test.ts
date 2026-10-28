@@ -28,7 +28,7 @@ const depcruise = require(path.join(root, ".dependency-cruiser.cjs")) as { optio
 const MAIN_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_sweep", "connections.move.release_source", "connections.move.activate_destination", "connections.move.reject_destination",
   // Step H6-C3: the reconciliation planner and the H6 terminal consumer open nothing.
   "ingestion.reconcile_account", "interactions.observed"];
-const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account", "ingestion.reconcile_slice"];
+const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account", "ingestion.reconcile_slice", "ingestion.confirm_interaction"];
 /** Step 7E.7-B / 7G-H5.5-P5-B / 7G-H5.5-P12-B2: integration-only, operator-triggered diagnostics — discovered by the integration config, never registered. */
 const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic", "integration.read_content_validation", "integration.read_interactions_validation"];
 const PLANE_DIRS = { main: "jobs/trigger/main", integration: "jobs/trigger/integration" } as const;
@@ -53,7 +53,7 @@ async function reachable(dir: string): Promise<string[]> {
 }
 
 describe("registry: every task declares its plane explicitly", () => {
-  it("exactly the eight main and the three integration tasks, by explicit declaration", () => {
+  it("exactly the eight main and the four integration tasks, by explicit declaration", () => {
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...MAIN_TASKS, ...INTEGRATION_TASKS].sort());
     for (const task of PRODUCTION_TASKS.tasks) expect(task.executionPlane, task.name).toBe(INTEGRATION_TASKS.includes(task.name) ? "integration" : "main");
     expect(Object.entries(PRODUCTION_TASKS.unboundRoutes).filter(([, plane]) => plane === "integration").map(([name]) => name).sort()).toEqual([...INTEGRATION_TASKS].sort());
@@ -82,8 +82,8 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     const integration = discoveredTasks(PLANE_DIRS.integration);
     expect(main).toEqual([...MAIN_TASKS].sort());
     expect(integration).toEqual([...INTEGRATION_TASKS, ...INTEGRATION_DIAGNOSTIC_TASKS].sort());
-    // The paired release expects exactly the discovered counts: INTEGRATION 6, MAIN 8 (Step H6-C3 adds 1 + 2).
-    expect(integration).toHaveLength(6);
+    // The paired release expects exactly the discovered counts: INTEGRATION 7, MAIN 8 (H6-C3 adds 1 + 2; H6-E adds 1 + 0).
+    expect(integration).toHaveLength(7);
     expect(main).toHaveLength(8);
     expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", integration.length], ["main", main.length]]);
     expect(main.filter((task) => integration.includes(task))).toEqual([]);

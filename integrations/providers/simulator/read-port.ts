@@ -8,7 +8,7 @@
  */
 import type { CredentialRefreshResult, ProviderAccess, StateObservationDto, StateTarget } from "../contract/dto";
 import { PermanentRejectedError, TargetNotEligibleError, TargetNotFoundError, type ProviderOperation } from "../contract/errors";
-import { createListedInteractionRegistry } from "../contract/interaction-target";
+import { createListedInteractionRegistry, resolveInteractionTarget } from "../contract/interaction-target";
 import { isoInstant, type IsoInstant, type ProviderObjectRef } from "../contract/identity";
 import { parsePageCursor, type Page, type PageCursor, type TimeWindow } from "../contract/pagination";
 import { providerCredential, type ProviderCredential } from "../contract/credential";
@@ -165,8 +165,12 @@ export function createSimulatorReadPort(world: SimulatorWorld, options: Simulato
     getInteraction(access, target) {
       return asPromise(() => {
         // Refused before the simulated provider is reached, exactly like a real adapter: no bare-id path, no bypass.
-        const provenance = listed.resolve(access, target);
+        const provenance = resolveInteractionTarget(listed, access, target);
         return world.execute("getInteraction", auth(access), [provenance.ref.id], () => {
+          // The simulator's world is the truth: a vanished interaction of this account IS gone (an authoritative
+          // not-found, Step H6-E). Unknown or foreign ids stay unconfirmed, as an ambiguous provider answer would.
+          const state = world.interaction(provenance.ref.id);
+          if (state?.presence === "vanished" && world.content(state.content)?.account === access.account.id) throw new TargetNotFoundError("getInteraction", "authoritative");
           const dto = interactionDto(world, ownedInteraction("getInteraction", access, provenance.ref.id));
           // The simulated node must still be the listed one: same content and parent (so the same kind).
           if (dto.content.id !== provenance.content.id) throw new PermanentRejectedError("getInteraction", "unknown", "interaction_content_conflicts");

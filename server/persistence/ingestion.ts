@@ -8,6 +8,8 @@
  * credential envelope (opened only by the integration plane's credential access, never here), the capability profile
  * and the operational switches. Its connections store refuses every write: reconciliation never changes a connection,
  * an account or a capability profile. `isolated` runs one fact in a savepoint so a refused fact rolls back alone.
+ * Step H6-E: the authority reads also issue a canonical interaction's STORED provenance (the interactions persistence
+ * layer's issuer) for the stored-interaction confirmation.
  */
 import { createPostgresContentItemStore } from "@/modules/content/persistence";
 import { createPostgresConversationStore } from "@/modules/conversations/persistence";
@@ -16,7 +18,7 @@ import { createPostgresCapabilityStore } from "@/modules/capability/persistence"
 import { createPostgresConnectionWorkerStore } from "@/modules/connections/persistence";
 import type { IngestionStores, ReconciliationAuthorityStore, ReconciliationScope } from "@/modules/ingestion";
 import { createPostgresIngestionEventStore, createPostgresReconciliationStore } from "@/modules/ingestion/persistence";
-import { createPostgresInteractionStore } from "@/modules/interactions/persistence";
+import { createPostgresInteractionStore, loadStoredInteractionAuthority } from "@/modules/interactions/persistence";
 import { boundWorkspaceOrganization } from "@/modules/tenancy/persistence";
 import { readSwitchRows, type DatabaseTransaction } from "@/platform/db";
 import type { TenantJobScope } from "@/platform/jobs";
@@ -60,6 +62,8 @@ function reconciliationAuthority(tx: DatabaseTransaction): ReconciliationAuthori
     credential: (id) => connections.credentials.load(id),
     capability: createPostgresCapabilityStore(tx),
     switches: () => readSwitchRows(tx),
+    // Step H6-E: stored provenance, issued only by the interactions persistence layer from the canonical row.
+    storedInteraction: (workspaceId, platform, providerInteractionId) => loadStoredInteractionAuthority(tx, workspaceId, platform, providerInteractionId),
   };
 }
 

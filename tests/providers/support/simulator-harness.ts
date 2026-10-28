@@ -50,7 +50,7 @@ const LISTING_WINDOW: TimeWindow = {
  * The only way to re-read an interaction (Step 7G-H5.5-P12-C9): list the account on `read` and return the exact listed
  * DTO for `id` as a target. An interaction that is not listed (removed or vanished at source) has no target.
  */
-export async function listedTarget(read: ProviderReadPort, access: ProviderAccess, id: string): Promise<InteractionTarget> {
+export async function listedTarget(read: ProviderReadPort, access: ProviderAccess, id: string): Promise<Extract<InteractionTarget, { readonly kind: "listed" }>> {
   let cursor: PageCursor | null = null;
   for (;;) {
     const page: Page<InteractionDto> = (await read.listInteractions(access, { kind: "account" }, LISTING_WINDOW, cursor)).data;
@@ -149,7 +149,8 @@ export function simulatorContractHarness(): ProviderContractHarness {
         name: "re-fetch of an object the provider doesn't return",
         kind: "target_not_found",
         invoke: async () => {
-          // Listed, then gone without a signal: the re-read observes absence, never deletion.
+          // Listed, then gone without a signal: the simulator's direct re-read answers an AUTHORITATIVE not-found
+          // (Step H6-E). The adapter never deletes anything: removal is the application's decision on that answer.
           const target = await listedTarget(read, tiktok, "tt_c_008");
           world.removeAtSource("tt_c_008", { signaled: false });
           return read.getInteraction(tiktok, target);

@@ -83,7 +83,7 @@ const iso = (date: Date) => {
   return parsed;
 };
 const readable = (availability: CapabilityAvailability): boolean => availability.state === "AVAILABLE" || availability.state === "AVAILABLE_WITH_LIMITATION";
-const availabilityInput = (availability: CapabilityAvailability): AvailabilityInput => ({ state: availability.state, reason: availability.reason, limitationCode: availability.limitation?.code ?? null });
+export const availabilityInput = (availability: CapabilityAvailability): AvailabilityInput => ({ state: availability.state, reason: availability.reason, limitationCode: availability.limitation?.code ?? null });
 const failureClassOf = (reason: string): string => reason.toLowerCase();
 /** Availability reasons that concern the whole account (the run stops) rather than one content scope. */
 const ACCOUNT_LEVEL_REASONS: readonly string[] = [
@@ -92,7 +92,7 @@ const ACCOUNT_LEVEL_REASONS: readonly string[] = [
 ];
 
 // ── authority gate ──────────────────────────────────────────────────────────────────────────────────────────
-type Gate =
+export type Gate =
   | {
     readonly kind: "readable";
     readonly account: ConnectedAccount;
@@ -103,7 +103,8 @@ type Gate =
   | { readonly kind: "blocked"; readonly failureClass: string; readonly accountLevel: boolean; readonly availability: AvailabilityInput | null };
 
 /** Re-evaluates everything one provider operation rests on, from persistence, now (never from an earlier step). */
-async function gate(scope: ReconciliationScope, connectedAccountId: string, capability: CapabilityKey, contentKind: string, source: string, options: { readonly shareLock?: boolean } = {}): Promise<Gate> {
+/** Internal to the ingestion module (Step H6-E's confirmation reuses it); not part of the public API. */
+export async function gate(scope: ReconciliationScope, connectedAccountId: string, capability: CapabilityKey, contentKind: string, source: string, options: { readonly shareLock?: boolean } = {}): Promise<Gate> {
   const account = await scope.authority.account(connectedAccountId);
   if (account === undefined) return { kind: "blocked", failureClass: "account_not_found", accountLevel: true, availability: null };
   if (account.status !== "ACTIVE") return { kind: "blocked", failureClass: "account_inactive", accountLevel: true, availability: { state: "UNAVAILABLE", reason: "ACCOUNT_INACTIVE", limitationCode: null } };
@@ -256,13 +257,13 @@ interface ReadPage {
   readonly readAt: Date;
 }
 
-type ProviderFailure =
+export type ProviderFailure =
   | { readonly kind: "rate_limited"; readonly retryAfterSeconds: number | null }
   | { readonly kind: "transient"; readonly error: unknown }
   | { readonly kind: "permanent"; readonly failureClass: string; readonly accountLevel: boolean; readonly availability: AvailabilityInput | null };
 
 /** Closed classification of a provider failure; anything unrecognized propagates (the job runtime retries it). */
-function classify(error: unknown): ProviderFailure | undefined {
+export function classify(error: unknown): ProviderFailure | undefined {
   if (error instanceof RateLimitedError) return { kind: "rate_limited", retryAfterSeconds: error.retryAfterSeconds };
   if (error instanceof TransientError || error instanceof OutcomeUnknownError) return { kind: "transient", error };
   if (error instanceof PermissionMissingError) return { kind: "permanent", failureClass: "permission_missing", accountLevel: true, availability: { state: "UNAVAILABLE", reason: "ACCOUNT_PERMISSION_MISSING", limitationCode: null } };

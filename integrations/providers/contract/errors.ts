@@ -209,17 +209,28 @@ export class PermissionMissingError extends ProviderError {
   }
 }
 
+/**
+ * How much a "not found" says (Step H6-E). `authoritative`: the provider's answer for THIS object, on a platform whose
+ * not-found is VALIDATED to mean "gone" — a removal may rest on it. `unconfirmed`: anything else (the default) — e.g.
+ * Meta's code 100 / subcode 33 ("does not exist, cannot be loaded due to missing permissions, or does not support this
+ * operation") is ambiguous by Meta's own definition, so it never confirms a removal until a LIVE validation says so.
+ */
+export const NOT_FOUND_AUTHORITIES = ["authoritative", "unconfirmed"] as const;
+export type NotFoundAuthority = (typeof NOT_FOUND_AUTHORITIES)[number];
+
 export class TargetNotFoundError extends ProviderError {
   override readonly name = "TargetNotFoundError";
   readonly kind = "target_not_found";
   readonly retry = "never";
+  readonly authority: NotFoundAuthority;
 
-  constructor(operation: ProviderOperation) {
+  constructor(operation: ProviderOperation, authority: NotFoundAuthority = "unconfirmed") {
     super("target_not_found", operation);
+    this.authority = authority;
   }
 
   protected details() {
-    return {};
+    return { authority: this.authority };
   }
 }
 

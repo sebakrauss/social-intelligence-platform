@@ -70,8 +70,10 @@ describe("stored provenance is issued by persistence only", () => {
     expect(importers.filter((file) => !file.startsWith("modules/interactions/persistence/"))).toEqual(["modules/interactions/domain/stored-authority.ts"]);
   });
 
-  it("the provider contract's InteractionTarget is unchanged: `listed` only (the `stored` kind is H6-E's)", () => {
-    expect(codeOf("integrations/providers/contract/interaction-target.ts")).toMatch(/export type InteractionTarget = \{ readonly kind: "listed"; readonly listed: InteractionDto \};/);
+  it("H6-E: the provider contract's InteractionTarget is exactly `listed` | `stored` (the stored kind carries the five stored facts)", () => {
+    const target = codeOf("integrations/providers/contract/interaction-target.ts");
+    expect(target).toMatch(/export type InteractionTarget =\s+\| \{ readonly kind: "listed"; readonly listed: InteractionDto \}\s+\| \{ readonly kind: "stored"; readonly stored: StoredInteractionProvenance \};/);
+    expect(target).toMatch(/export type StoredInteractionProvenance = ListedInteractionProvenance;/);
   });
 });
 
@@ -129,7 +131,8 @@ describe("H6-C3: the reconciliation runtime boundaries", () => {
   it("no provider cursor in an outbox row or job payload: the reconciliation subjects are UUIDs only", () => {
     const store = codeOf("modules/ingestion/persistence/reconciliation-store.ts");
     const subjects = [...store.matchAll(/subjectIds: \{([^}]*)\}/g)].map((match) => match[1] ?? "");
-    expect(subjects).toEqual([" connected_account_id: slice.connectedAccountId, reconciliation_slice_id: slice.id "]);
+    // H6-E: the confirmation request's row names the account and the canonical interaction (UUIDs) — nothing else.
+    expect(subjects).toEqual([" connected_account_id: slice.connectedAccountId, reconciliation_slice_id: slice.id ", " connected_account_id: target.connectedAccountId, interaction_id: target.interactionId "]);
     // H6-C3b: the planner row is the request boundary's (0019), with exactly the two UUID subjects and a hard-coded topic.
     const request = raw("db/migrations/0019_reconciliation_request.sql");
     expect([...request.matchAll(/jsonb_build_object\(([^)]*)\)/g)].map((match) => match[1])).toEqual(["'connected_account_id', v_account::text, 'reconciliation_run_id', v_run::text"]);

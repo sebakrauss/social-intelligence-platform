@@ -121,6 +121,8 @@ describe("task registry", () => {
       "ingestion.reconcile_account",
       "ingestion.reconcile_slice",
       "interactions.observed",
+      // Step H6-E: the stored-interaction confirmation (INTEGRATION).
+      "ingestion.confirm_interaction",
     ];
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS, ...tenantTasks].sort());
     expect(PRODUCTION_TASKS.tasks.filter((task) => task.scope === "system").map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS].sort());

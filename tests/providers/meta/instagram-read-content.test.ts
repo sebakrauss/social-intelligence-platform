@@ -419,7 +419,7 @@ describe("errors: the shared Graph read mapping, unchanged", () => {
   });
 
   it("code 100 / subcode 33 on the media read → TargetNotFound; on /media it stays a permanent rejection", async () => {
-    expect((await failure(portWith(graphOf({ nodes: {} })).get())).toJSON()).toEqual({ kind: "target_not_found", operation: "getContent", retry: "never", details: {} });
+    expect((await failure(portWith(graphOf({ nodes: {} })).get())).toJSON()).toEqual({ kind: "target_not_found", operation: "getContent", retry: "never", details: { authority: "unconfirmed" } });
     const listing = portWith(() => json(400, graphError({ code: 100, error_subcode: 33 })));
     expect((await failure(listing.list())).toJSON()).toEqual({ kind: "permanent_rejected", operation: "listContent", retry: "never", details: { reasonCode: "unknown" } });
   });

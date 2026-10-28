@@ -445,7 +445,7 @@ describe("Meta read_interactions (Step 7G-H5.5-P12-B1): Facebook comments + repl
     expect(readPort()).toMatch(/if \(outcome\.kind === "unreadable"\) throw new PermanentRejectedError\("getInteraction", "unknown", "interaction_node_unreadable"\);/);
     expect(readPort()).toMatch(/if \(comment\.mediaId === null\) throw new PermanentRejectedError\("getInteraction", "unknown", "interaction_content_missing"\);/);
     // The diagnostic never carries a value: every argument passed is a closed vocabulary member or the closed result.
-    expect([...readPort().matchAll(/PermanentRejectedError\("getInteraction", "unknown", ([^)]+)\)/g)].map((m) => m[1])).toEqual(['"interaction_node_unreadable"', '"interaction_node_unreadable"', "problem", '"interaction_content_missing"']);
+    expect([...readPort().matchAll(/PermanentRejectedError\("getInteraction", "unknown", ([^)]+)\)/g)].map((m) => m[1])).toEqual(['"interaction_node_unreadable"', '"interaction_node_unreadable"', "problem", '"interaction_content_missing"', '"interaction_content_conflicts"']);
     // No account-wide comment feed, on any platform.
     expect(readPort()).toMatch(/if \(scope\.kind === "account"\) throw new TargetNotEligibleError\("listInteractions", "unsupported_for_target"\);/);
   });
@@ -578,12 +578,12 @@ describe("provider fixtures", () => {
 describe("interaction re-reads require listed provenance (Step 7G-H5.5-P12-C9): never a bare id, no fallback, no persistence", () => {
   const CONTRACT = "integrations/providers/contract";
 
-  it("the contract takes an InteractionTarget — a closed union whose only kind is the listed DTO", () => {
+  it("the contract takes an InteractionTarget — a closed union of the listed DTO and (H6-E) the stored provenance", () => {
     const port = codeOf(`${CONTRACT}/read-port.ts`);
     expect(port).toMatch(/getInteraction\(access: ProviderAccess, target: InteractionTarget\): Promise<ProviderResult<InteractionDto>>;/);
     expect(port).not.toMatch(/getInteraction\([^)]*ProviderObjectRef/);
     const target = codeOf(`${CONTRACT}/interaction-target.ts`);
-    expect(target).toMatch(/export type InteractionTarget = \{ readonly kind: "listed"; readonly listed: InteractionDto \};/);
+    expect(target).toMatch(/export type InteractionTarget =\s+\| \{ readonly kind: "listed"; readonly listed: InteractionDto \}\s+\| \{ readonly kind: "stored"; readonly stored: StoredInteractionProvenance \};/);
   });
 
   it("the registry is weak, identity-keyed, per instance and in memory only: no persistence, no I/O, no bare-id lookup", () => {
@@ -602,16 +602,23 @@ describe("interaction re-reads require listed provenance (Step 7G-H5.5-P12-C9): 
     const code = codeOf(file);
     expect(code.match(/createListedInteractionRegistry\(\)/g)).toHaveLength(1);
     expect(code).toMatch(/listed\.record\(access, /);
-    expect(code.match(/listed\.resolve\(access, target\)/g)).toHaveLength(1);
+    // H6-E: one resolution of listed OR stored targets (the stored kind after its coherence check), nothing else.
+    expect(code.match(/resolveInteractionTarget\(listed, access, target\)/g)).toHaveLength(1);
+    expect(code).not.toMatch(/listed\.resolve\(/);
     const reread = code.slice(code.indexOf("getInteraction(access, target)"));
     // resolve comes first: before any transport call or simulated execution.
-    expect(reread.indexOf("listed.resolve(access, target)")).toBeLessThan(Math.min(...["transport", "world.execute"].map((m) => (reread.indexOf(m) < 0 ? Number.MAX_SAFE_INTEGER : reread.indexOf(m)))));
+    expect(reread.indexOf("resolveInteractionTarget(listed, access, target)")).toBeLessThan(Math.min(...["transport", "world.execute"].map((m) => (reread.indexOf(m) < 0 ? Number.MAX_SAFE_INTEGER : reread.indexOf(m)))));
   });
 
-  it("no production caller passes a bare ref: every getInteraction call names a listed target", () => {
+  it("no production caller passes a bare ref: every getInteraction call names a listed target, or (H6-E) the stored one of the confirmation", () => {
     const files = sourceFiles(["app", "ui", "server", "domain", "modules", "mutations", "integrations", "ai", "jobs", "platform", "db"]);
     const calls = files.flatMap((file) => [...codeOf(file).matchAll(/\.getInteraction\(([^,]+), ([^)]*)\)/g)].map((m) => [file, m[2] ?? ""] as const));
-    for (const [file, argument] of calls) expect(argument, file).toMatch(/^\{ kind: "listed", listed: /);
+    for (const [file, argument] of calls) {
+      if (argument.startsWith('{ kind: "stored"')) {
+        expect(file).toBe("modules/ingestion/application/confirm-interaction.ts");
+        expect(argument).toBe('{ kind: "stored", stored: prepared.stored }');
+      } else expect(argument, file).toMatch(/^\{ kind: "listed", listed: /);
+    }
     expect(calls.length).toBeGreaterThan(0);
   });
 });
