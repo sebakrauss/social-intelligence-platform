@@ -234,7 +234,9 @@ export function defineReconciliationRuntimeSuite(getTarget: () => DbTarget): voi
   const assertQuiescent = async (h: Harness) => {
     const t = h.t;
     expect(await count("select count(*)::int as n from ingestion.reconciliation_slices where workspace_id = $1 and state in ('PENDING', 'RUNNING')", [t.workspaceId]), "no open slice").toBe(0);
-    expect(await count("select count(*)::int as n from ingestion.reconciliation_slices where workspace_id = $1 and cursor is not null", [t.workspaceId]), "no retained cursor").toBe(0);
+    // H6-F4d (0023): the only cursor that outlives its slice's execution is a PARKED one (a budget-abandoned interactions
+    // slice, DB-stamped) — never on an open, completed or failed slice.
+    expect(await count("select count(*)::int as n from ingestion.reconciliation_slices where workspace_id = $1 and cursor is not null and not (state = 'ABANDONED_BUDGET' and unit = 'content_interactions' and cursor_parked_at is not null)", [t.workspaceId]), "no retained cursor except a parked one").toBe(0);
     expect(await count("select count(*)::int as n from ingestion.reconciliation_runs where workspace_id = $1 and state in ('REQUESTED', 'RUNNING')", [t.workspaceId]), "no open run").toBe(0);
     const outbox = await oracle<{ topic: string; status: string; run_outcome: string | null; last_failure_class: string | null }>(
       "select topic, status, run_outcome, last_failure_class from system.outbox where workspace_id = $1", [t.workspaceId]);

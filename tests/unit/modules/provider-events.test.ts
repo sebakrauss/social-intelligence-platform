@@ -1,15 +1,21 @@
 /** Step H6-F3 — the provider-event router and purge orchestration over a fake system store (no database). */
 import { describe, expect, it } from "vitest";
-import { PROVIDER_EVENT_RUNTIME, ROUTE_OUTCOMES, SIGNAL_RUNTIME, dispatchDueSignalMarks, purgeExpiredProviderEvents, routeDueProviderEvents, type ProviderEventStore, type RouteOutcome } from "@/modules/ingestion";
+import { PROVIDER_EVENT_RUNTIME, ROUTE_OUTCOMES, SIGNAL_RUNTIME, dispatchDueSignalMarks, expireSignalMarksSweep, purgeExpiredProviderEvents, routeDueProviderEvents, type ProviderEventStore, type RouteOutcome } from "@/modules/ingestion";
 
-function fake(options: { due?: string[]; outcome?: (id: string) => RouteOutcome; purge?: number[] } = {}) {
-  const calls = { transactions: 0, routed: [] as string[], listLimits: [] as number[], purgeLimits: [] as number[], dueLimits: [] as number[] };
+function fake(options: { due?: string[]; outcome?: (id: string) => RouteOutcome; purge?: number[]; expire?: number[] } = {}) {
+  const calls = { transactions: 0, routed: [] as string[], listLimits: [] as number[], purgeLimits: [] as number[], dueLimits: [] as number[], expiryLimits: [] as number[] };
+  const expiries = [...(options.expire ?? [0])];
   const purges = [...(options.purge ?? [0])];
   const store: ProviderEventStore = {
     listDueHints: (limit) => { calls.listLimits.push(limit); return Promise.resolve((options.due ?? []).slice(0, limit)); },
     routeHint: (id) => { calls.routed.push(id); return Promise.resolve(options.outcome?.(id) ?? "routed"); },
     purgeExpired: (limit) => { calls.purgeLimits.push(limit); const n = purges.shift() ?? 0; return Promise.resolve({ inboxDeleted: n, hintsDeleted: n * 2 }); },
     dispatchDueMarks: (limit) => { calls.dueLimits.push(limit); return Promise.resolve(3); },
+    expireSignalMarks: (limit) => {
+      calls.expiryLimits.push(limit);
+      const n = expiries.shift() ?? 0;
+      return Promise.resolve({ expired: n, accountMarks: n > 0 ? 1 : 0, relistMarks: n > 1 ? 1 : 0, confirmMarks: Math.max(0, n - 2) });
+    },
   };
   return { calls, deps: { inSystem: <T>(work: (s: ProviderEventStore) => Promise<T>) => { calls.transactions += 1; return work(store); } } };
 }
@@ -59,5 +65,16 @@ describe("dispatchDueSignalMarks (H6-F4)", () => {
     expect(calls.dueLimits).toEqual([SIGNAL_RUNTIME.dueMarkDispatchLimit]);
     expect(SIGNAL_RUNTIME.dueMarkDispatchLimit).toBe(100);
     expect(calls.transactions).toBe(1);
+  });
+});
+
+describe("expireSignalMarksSweep (H6-F4d)", () => {
+  it("bounded like the purge: batches of 1000, at most 5 per run, counts per kind only", async () => {
+    const short = fake({ expire: [1000, 7] });
+    expect(await expireSignalMarksSweep(short.deps)).toEqual({ expired: 1007, accountMarks: 2, relistMarks: 2, confirmMarks: 1003, batches: 2, remainderPossible: false });
+    expect(short.calls.expiryLimits).toEqual([1000, 1000]);
+    const full = fake({ expire: [1000, 1000, 1000, 1000, 1000, 1000] });
+    expect(await expireSignalMarksSweep(full.deps)).toMatchObject({ batches: 5, expired: 5000, remainderPossible: true });
+    expect(full.calls.transactions).toBe(5);
   });
 });

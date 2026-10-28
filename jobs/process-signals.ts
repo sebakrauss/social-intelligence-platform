@@ -35,5 +35,6 @@ export async function runProcessSignals(context: TenantJobContext, logger: Logge
   if (result.expired > 0) log.info("signal.mark_expired", { count: result.expired });
   if (result.contentNotCanonical) log.info("signal.content_not_canonical", { count: 1 });
   if (result.coalesced) log.info("signal.confirmation_coalesced", { count: 1 });
+  if (result.confirmationsRequested > 0) log.info("signal.confirmation_requested", { count: result.confirmationsRequested });
   return result;
 }

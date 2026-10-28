@@ -95,4 +95,11 @@ export const RECONCILIATION_RUNTIME = Object.freeze({
    * content's epoch, coverage is HISTORY_DEPTH_NOT_VALIDATED.
    */
   windowFloor: "2000-01-01T00:00:00.000Z",
+  /**
+   * Step H6-F4d (TL D-F4B-1, 0023): a budget-abandoned interactions slice parks the cursor of its next unread page; a
+   * later traversal of the same content may adopt it for at most 90 minutes after its DB parking time. This is
+   * Wrenkind's LOCAL willingness to try — never a provider guarantee (Meta's cursor lifetime stays VALIDATE). An adopted
+   * cursor the provider refuses restarts its window once (the existing safe restart); nothing is claimed for it.
+   */
+  parkedCursorLocalTtlMs: 90 * 60 * 1000,
 });

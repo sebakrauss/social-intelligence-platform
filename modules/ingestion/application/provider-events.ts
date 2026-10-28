@@ -6,6 +6,8 @@
  *                               a crash or a transient failure keeps what was routed (idempotent: a routed hint answers
  *                               not_pending), and overlapping runs serialize on the hint's row lock — never a second route.
  *   purgeExpiredProviderEvents  at most `purgeMaxBatches` bounded purge calls; a short batch means nothing older is left.
+ *   expireSignalMarksSweep      Step H6-F4d (D-F4B-6): the purge task's system-wide mark expiry — at most
+ *                               `purgeMaxBatches` bounded calls of system.expire_signal_marks (DB clock, any account status).
  *   dispatchDueSignalMarks      Step H6-F4 (design H6-F0 §13.5): the router's due-mark sweep — one bounded call of
  *                               system.dispatch_due_signal_marks, which re-dispatches every signal mark whose revisit
  *                               time passed as an account-only `ingestion.process_signals` row (the cron is its clock).
@@ -21,6 +23,15 @@ export interface ProviderEventStore {
   purgeExpired(limit: number): Promise<{ readonly inboxDeleted: number; readonly hintsDeleted: number }>;
   /** Step H6-F4: system.dispatch_due_signal_marks — the marks re-dispatched (IDs-only rows written by the definer). */
   dispatchDueMarks(limit: number): Promise<number>;
+  /** Step H6-F4d (0023): system.expire_signal_marks — expired marks of every kind and account status, counts only. */
+  expireSignalMarks(limit: number): Promise<SignalMarkExpiry>;
+}
+
+export interface SignalMarkExpiry {
+  readonly expired: number;
+  readonly accountMarks: number;
+  readonly relistMarks: number;
+  readonly confirmMarks: number;
 }
 
 export interface ProviderEventDependencies {
@@ -71,4 +82,28 @@ export async function purgeExpiredProviderEvents(deps: ProviderEventDependencies
 /** Step H6-F4: one bounded due-mark sweep (the remainder waits for the next router run). */
 export async function dispatchDueSignalMarks(deps: ProviderEventDependencies): Promise<number> {
   return deps.inSystem((store) => store.dispatchDueMarks(SIGNAL_RUNTIME.dueMarkDispatchLimit));
+}
+
+export interface MarkExpirySummary extends SignalMarkExpiry {
+  readonly batches: number;
+  /** True when the last batch was full: more expired marks may remain for the next run. */
+  readonly remainderPossible: boolean;
+}
+
+/** Step H6-F4d: the system-wide expiry of signal marks, bounded like the inbox purge (the next run continues). */
+export async function expireSignalMarksSweep(deps: ProviderEventDependencies): Promise<MarkExpirySummary> {
+  const { purgeBatchSize, purgeMaxBatches } = PROVIDER_EVENT_RUNTIME;
+  const totals = { expired: 0, accountMarks: 0, relistMarks: 0, confirmMarks: 0 };
+  let batches = 0;
+  let full = false;
+  do {
+    const result = await deps.inSystem((store) => store.expireSignalMarks(purgeBatchSize));
+    batches += 1;
+    totals.expired += result.expired;
+    totals.accountMarks += result.accountMarks;
+    totals.relistMarks += result.relistMarks;
+    totals.confirmMarks += result.confirmMarks;
+    full = result.expired >= purgeBatchSize;
+  } while (full && batches < purgeMaxBatches);
+  return Object.freeze({ ...totals, batches, remainderPossible: full });
 }

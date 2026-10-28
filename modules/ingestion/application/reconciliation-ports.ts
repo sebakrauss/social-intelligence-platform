@@ -100,6 +100,24 @@ export interface NewReconciliationSlice {
   readonly createdAt: Date;
 }
 
+/** Step H6-F4d (0023): the provider cursor of a budget-abandoned slice's next unread page, kept on that slice. */
+export interface ParkedCursor {
+  readonly cursor: string;
+  readonly cursorIssuedAt: Date;
+}
+
+/** Step H6-F4d (0023): the parked continuation of one content's traversal (row-locked), and whether it may be reused. */
+export interface ParkedContinuation {
+  readonly sliceId: string;
+  readonly cursor: string;
+  readonly cursorIssuedAt: Date;
+  /** The ORIGINAL traversal window: a continuation never adopts a later run's start. */
+  readonly windowStart: Date;
+  readonly windowEnd: Date;
+  /** cursor_parked_at (DB time) within the 90-minute local TTL, against DB now. */
+  readonly locallyEligible: boolean;
+}
+
 /** A slice's terminal (or CONTINUED) state, written once with what it consumed. */
 export interface SliceFinish {
   readonly state: Exclude<ReconciliationSliceState, "PENDING" | "RUNNING">;
@@ -147,16 +165,27 @@ export interface ReconciliationStore {
   recordSliceOperation(id: string, attempt: number, pages: number, now: Date): Promise<boolean>;
   /** Clears a RUNNING slice's cursor (restart its window). */
   dropSliceCursor(id: string, now: Date): Promise<void>;
-  /** RUNNING → terminal/CONTINUED (cursor cleared, lease released); false when not RUNNING at `attempt`. */
-  finishSlice(id: string, attempt: number, finish: SliceFinish, conflicts: number, now: Date): Promise<boolean>;
-  /** PENDING → terminal without running (the run stopped before it). */
-  finishPendingSlice(id: string, finish: SliceFinish, now: Date): Promise<boolean>;
+  /**
+   * RUNNING → terminal/CONTINUED (lease released); false when not RUNNING at `attempt`. The cursor is cleared — except
+   * (Step H6-F4d, 0023) an ABANDONED_BUDGET interactions slice given `park`: it keeps that cursor (the trigger stamps
+   * cursor_parked_at from DB time), after any older parked cursor of the same content is retired.
+   */
+  finishSlice(id: string, attempt: number, finish: SliceFinish, conflicts: number, now: Date, park?: ParkedCursor): Promise<boolean>;
+  /** PENDING → terminal without running (the run stopped before it); `keepCursor` re-parks an unread continuation. */
+  finishPendingSlice(id: string, finish: SliceFinish, now: Date, keepCursor?: boolean): Promise<boolean>;
+  /** Step H6-F4d: the parked continuation of (account, content), row-locked, if any. */
+  parkedContinuation(connectedAccountId: string, contentItemId: string): Promise<ParkedContinuation | undefined>;
+  /** Step H6-F4d: retires a parked cursor (adopted, stale or superseded); a no-op when already retired. */
+  retireParkedCursor(sliceId: string): Promise<void>;
   /** The run's next PENDING slice in chain order (creation time, then id). */
   nextPendingSlice(runId: string): Promise<ReconciliationSliceRecord | undefined>;
   pendingSlices(runId: string): Promise<readonly ReconciliationSliceRecord[]>;
   sliceStates(runId: string): Promise<readonly { readonly unit: SliceUnit; readonly state: ReconciliationSliceState }[]>;
-  /** Step H6-F4: the contents whose interactions this run traversed to the provider's end (a COMPLETED content slice). */
-  completedContentItems(runId: string): Promise<readonly string[]>;
+  /**
+   * Step H6-F4 (H6-F4d: with each traversal's own window end): the contents whose interactions this run traversed to the
+   * provider's end (a COMPLETED content slice). A continued traversal's window end is its ORIGINAL start.
+   */
+  completedContentTraversals(runId: string): Promise<readonly { readonly contentItemId: string; readonly windowEnd: Date }[]>;
   /** The latest rate-limit back-off still in force for the account (`retry_not_before` > now), if any. */
   activeBackoff(connectedAccountId: string, now: Date): Promise<Date | undefined>;
   // ── watermarks ───────────────────────────────────────────────────────────────────────────────────────
@@ -256,8 +285,8 @@ export interface NewSignalMark {
   readonly connectedAccountId: string;
   readonly kind: SignalMarkKind;
   readonly contentItemId: string | null;
+  /** The run clock (compared with traversal window ends); the expiry is anchored to DB time by the store. */
   readonly signalAt: Date;
-  readonly expiresAt: Date;
 }
 
 /**
@@ -267,18 +296,44 @@ export interface NewSignalMark {
 export interface SignalMarkStore {
   /** ingestion.provider_event_hint: the hint only if ROUTED and its (platform, asset) is this workspace's ACTIVE account. */
   routedHint(hintId: string, connectedAccountId: string): Promise<RoutedHintRead>;
-  /** Coalescing upsert: one pending row per (account, kind, content); count + 1, last signal = greatest, first and expiry kept. */
+  /**
+   * Coalescing upsert of an account or relist mark: one pending row per (account, kind, content); count + 1, last
+   * signal = greatest (run clock), first kept; expiry anchored to DB time (H6-F4d).
+   */
   upsert(mark: NewSignalMark, now: Date): Promise<void>;
+  /** Account and relist marks only (confirm marks have their own lifecycle). */
   summary(connectedAccountId: string): Promise<PendingMarksSummary>;
   /** Pending relist marks a traversal starting now satisfies (last signal ≤ boundary), oldest first, bounded. */
   relistCandidates(connectedAccountId: string, boundary: Date, limit: number): Promise<readonly { readonly id: string; readonly contentItemId: string }[]>;
-  /** Sets every pending mark's next revisit (the due-mark sweep re-dispatches it then). */
-  deferAll(connectedAccountId: string, until: Date, now: Date): Promise<number>;
+  /** Sets every pending ACCOUNT/RELIST mark's next revisit, DB-anchored: DB now + `delayMs` (H6-F4d). */
+  deferAll(connectedAccountId: string, delayMs: number): Promise<number>;
   linkRun(markIds: readonly string[], runId: string, now: Date): Promise<void>;
-  satisfyRelist(connectedAccountId: string, contentItemIds: readonly string[], boundary: Date): Promise<number>;
+  /** Deletes the relist mark of each traversed content whose last signal ≤ that traversal's own boundary. */
+  satisfyRelist(connectedAccountId: string, traversals: readonly { readonly contentItemId: string; readonly boundary: Date }[]): Promise<number>;
   satisfyAccount(connectedAccountId: string, boundary: Date): Promise<number>;
-  deleteExpired(connectedAccountId: string, now: Date): Promise<number>;
+  /** Expired marks of the account (any kind), against DB time (H6-F4d). */
+  deleteExpired(connectedAccountId: string): Promise<number>;
   drop(markIds: readonly string[]): Promise<number>;
   /** Request times of this account's signal-initiated runs (initiator system, correlation `sig.*`) after `since`. */
   signalRunsSince(connectedAccountId: string, since: Date): Promise<readonly Date[]>;
+  // ── Step H6-F4d (0023): confirm marks ──────────────────────────────────────────────────────────────────────
+  /** Coalescing upsert of a confirm mark: first/last signal, created/updated and expiry from DB time. */
+  upsertConfirm(mark: { readonly id: string; readonly organizationId: string; readonly workspaceId: string; readonly connectedAccountId: string; readonly contentItemId: string; readonly interactionId: string }): Promise<void>;
+  /** ingestion.claim_signal_confirmation, verbatim. */
+  claimConfirmation(connectedAccountId: string, interactionId: string): Promise<ConfirmationClaim>;
+  /** ingestion.begin_signal_confirmation_read; `startedAt` is the DB value as LOSSLESS text (microseconds kept). */
+  beginConfirmationRead(connectedAccountId: string, interactionId: string): Promise<{ readonly outcome: "started" | "not_found"; readonly startedAt: string | null }>;
+  /** ingestion.complete_signal_confirmation_read with the exact text begin returned (never a JS Date). */
+  completeConfirmationRead(connectedAccountId: string, interactionId: string, startedAt: string): Promise<"confirmed" | "not_found" | "invalid">;
+  /** A non-authoritative confirmation: the next claim waits longer (DB-anchored back-off by claim generation). */
+  backoffConfirmation(connectedAccountId: string, interactionId: string): Promise<void>;
+  /** Pending confirm marks of the account that are due now (no revisit time, or one already passed: DB time), bounded. */
+  dueConfirmations(connectedAccountId: string, limit: number): Promise<readonly { readonly id: string; readonly interactionId: string }[]>;
+  /** Gives confirm marks a DB-anchored revisit time (the due-mark sweep then reconsiders them). */
+  deferConfirmations(markIds: readonly string[], delayMs: number): Promise<void>;
 }
+
+export type ConfirmationClaim =
+  | { readonly outcome: "claimed"; readonly markId: string; readonly generation: number }
+  | { readonly outcome: "cooling_down" | "caught_up" | "expired"; readonly markId: string }
+  | { readonly outcome: "not_found" };

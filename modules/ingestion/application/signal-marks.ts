@@ -22,16 +22,14 @@
  *                       run start).
  * A mark is never satisfied by a request, a slice's creation, a first page, a receipt or a webhook time.
  */
-import type { SliceUnit } from "../domain/reconciliation-slice";
-import { RECONCILIATION_RUNTIME } from "../domain/reconciliation-state";
 import { SIGNAL_RUNTIME, decideFollowUp, satisfactionBoundary, signalRunBudget, signalRunCorrelation, type SignalOutcome, type SignalRunPlan } from "../domain/signals";
 import { gate } from "./authority-gate";
 import type { ReconciliationRunRecord } from "./reconciliation-ports";
 import type { ReconciliationClock, ReconciliationScope } from "./reconciliation-scope";
+import { insertContentTraversal } from "./traversal";
 
 /** The validated read scope (H6-A1: post · unknown) — the account-level authority of a signal run. */
 const VALIDATED_SCOPE = { contentKind: "post", source: "unknown" } as const;
-const later = (now: Date, ms: number): Date => new Date(now.getTime() + ms);
 
 export type ReviewOutcome = Extract<SignalOutcome,
   "PLANNED_RELIST" | "PLANNED_ACCOUNT" | "ABSORBED" | "DEFERRED" | "SKIPPED_PAUSED" | "SKIPPED_CAPABILITY" | "SKIPPED_ACCOUNT_INACTIVE" | "EXPIRED" | "NO_PENDING_MARKS">;
@@ -49,14 +47,14 @@ export interface MarkReview {
 const planned = (plan: SignalRunPlan): ReviewOutcome => (plan === "account" ? "PLANNED_ACCOUNT" : "PLANNED_RELIST");
 
 export async function reviewSignalMarks(scope: ReconciliationScope, clock: ReconciliationClock, connectedAccountId: string, now: Date = clock.now()): Promise<MarkReview> {
-  const expired = await scope.signals.deleteExpired(connectedAccountId, now);
+  const expired = await scope.signals.deleteExpired(connectedAccountId);
   const result = (outcome: ReviewOutcome, extra: Partial<MarkReview> = {}): MarkReview => ({ outcome, expired, dropped: 0, requestedRunId: null, scheduled: false, ...extra });
   const summary = await scope.signals.summary(connectedAccountId);
   if (summary.count === 0) return result(expired > 0 ? "EXPIRED" : "NO_PENDING_MARKS");
 
   // One open run per account (0018): it absorbs the marks; its close hook revisits them, the sweep is the safety net.
   if ((await scope.reconciliation.openRun(connectedAccountId)) !== undefined) {
-    await scope.signals.deferAll(connectedAccountId, later(now, SIGNAL_RUNTIME.revisitMs), now);
+    await scope.signals.deferAll(connectedAccountId, SIGNAL_RUNTIME.revisitMs);
     return result("ABSORBED");
   }
 
@@ -66,7 +64,7 @@ export async function reviewSignalMarks(scope: ReconciliationScope, clock: Recon
     const checked = await gate(scope, connectedAccountId, capability, VALIDATED_SCOPE.contentKind, VALIDATED_SCOPE.source);
     if (checked.kind === "readable") continue;
     if (checked.failureClass === "provider_paused") {
-      await scope.signals.deferAll(connectedAccountId, later(now, SIGNAL_RUNTIME.revisitMs), now);
+      await scope.signals.deferAll(connectedAccountId, SIGNAL_RUNTIME.revisitMs);
       return result("SKIPPED_PAUSED");
     }
     if (checked.failureClass === "account_not_found" || checked.failureClass === "account_inactive" || checked.failureClass === "connection_removed") {
@@ -74,7 +72,7 @@ export async function reviewSignalMarks(scope: ReconciliationScope, clock: Recon
       const dropped = await dropAll(scope, connectedAccountId);
       return result("SKIPPED_ACCOUNT_INACTIVE", { dropped });
     }
-    await scope.signals.deferAll(connectedAccountId, later(now, SIGNAL_RUNTIME.blockedRevisitMs), now);
+    await scope.signals.deferAll(connectedAccountId, SIGNAL_RUNTIME.blockedRevisitMs);
     return result("SKIPPED_CAPABILITY");
   }
 
@@ -83,7 +81,8 @@ export async function reviewSignalMarks(scope: ReconciliationScope, clock: Recon
   if (decision.kind === "none") return result("NO_PENDING_MARKS");
   if (decision.kind === "absorbed") return result("ABSORBED");
   if (decision.kind === "defer") {
-    await scope.signals.deferAll(connectedAccountId, decision.until, now);
+    // The decision is on the run clock; the revisit is DB-anchored (DB now + the same delay).
+    await scope.signals.deferAll(connectedAccountId, decision.until.getTime() - now.getTime());
     if (decision.reason === "cap") return result("DEFERRED");
     return result(planned(summary.accountMark !== null ? "account" : "relist"), { scheduled: true });
   }
@@ -100,7 +99,7 @@ export async function reviewSignalMarks(scope: ReconciliationScope, clock: Recon
     return result("SKIPPED_ACCOUNT_INACTIVE", { dropped });
   }
   // A concurrent request won the one-open index: the marks wait for that run (exactly one run, never two).
-  await scope.signals.deferAll(connectedAccountId, later(now, SIGNAL_RUNTIME.revisitMs), now);
+  await scope.signals.deferAll(connectedAccountId, SIGNAL_RUNTIME.revisitMs);
   if (requested.outcome === "already_running") return result("ABSORBED");
   // Traceability only: which marks this run was requested for (never satisfaction).
   const linked = decision.plan === "account"
@@ -136,10 +135,17 @@ export async function closeRunSignals(scope: ReconciliationScope, clock: Reconci
   let satisfiedAccount = 0;
   // A run that never started (SKIPPED_UNAVAILABLE) traversed nothing and satisfies nothing.
   if (run.startedAt !== null && finalState !== "SKIPPED_UNAVAILABLE") {
-    const boundary = satisfactionBoundary(run.startedAt);
-    satisfiedRelist = await scope.signals.satisfyRelist(run.connectedAccountId, await scope.reconciliation.completedContentItems(run.id), boundary);
-    // Discovery is satisfied only by an account-plan traversal that completed (listing and every content slice).
-    if (run.plan === "account" && finalState === "COMPLETED") satisfiedAccount = await scope.signals.satisfyAccount(run.connectedAccountId, boundary);
+    // H6-F4d: each traversal satisfies by ITS OWN window end — a continued traversal's is its original start, so it
+    // never satisfies a signal that arrived after that traversal began.
+    const traversals = await scope.reconciliation.completedContentTraversals(run.id);
+    satisfiedRelist = await scope.signals.satisfyRelist(run.connectedAccountId,
+      traversals.map((traversal) => ({ contentItemId: traversal.contentItemId, boundary: satisfactionBoundary(traversal.windowEnd) })));
+    // Discovery is satisfied only by an account-plan traversal that completed (listing and every content slice), as of
+    // the OLDEST traversal start it contains.
+    if (run.plan === "account" && finalState === "COMPLETED") {
+      const asOf = Math.min(run.startedAt.getTime(), ...traversals.map((traversal) => traversal.windowEnd.getTime()));
+      satisfiedAccount = await scope.signals.satisfyAccount(run.connectedAccountId, satisfactionBoundary(new Date(asOf)));
+    }
   }
   const review = await reviewSignalMarks(scope, clock, run.connectedAccountId, now);
   return { satisfiedRelist, satisfiedAccount, review };
@@ -164,30 +170,8 @@ export async function planRelistSlices(scope: ReconciliationScope, clock: Reconc
       unreadable.push(mark.id);
       continue;
     }
-    const watermark = await scope.reconciliation.watermark(run.connectedAccountId, content.id);
-    const overlapMs = run.budget.overlapSeconds * 1000;
-    const floor = new Date(RECONCILIATION_RUNTIME.windowFloor).getTime();
-    const windowStart = watermark?.syncedThrough === null || watermark?.syncedThrough === undefined
-      ? new Date(floor)
-      : new Date(Math.max(floor, watermark.syncedThrough.getTime() - overlapMs));
-    const unit: SliceUnit = "content_interactions";
-    await scope.reconciliation.insertSlice({
-      id: clock.newId(),
-      organizationId: run.organizationId,
-      workspaceId: run.workspaceId,
-      runId: run.id,
-      connectedAccountId: run.connectedAccountId,
-      unit,
-      contentItemId: content.id,
-      sequence: 0,
-      cursor: null,
-      cursorIssuedAt: null,
-      windowStart,
-      // Read as of the run's start, exactly like an account run's content: later interactions belong to the next run.
-      windowEnd: startedAt,
-      maxPages: run.budget.interactionPagesPerSlice,
-      createdAt: new Date(startedAt.getTime() + created + 1),
-    });
+    // H6-F4d: the one traversal helper — a parked continuation of this content is adopted with its ORIGINAL window.
+    await insertContentTraversal(scope, clock, { run, contentItemId: content.id, startedAt, base: startedAt, order: created });
     created += 1;
   }
   const dropped = await scope.signals.drop(unreadable);

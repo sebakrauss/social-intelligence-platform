@@ -819,3 +819,124 @@ validated), and canonical state, coverage and watermarks (0023 writes none).
 - exclude confirm marks from the account/relist review and `deferAll`;
 - anchor `expires_at` and `deferred_until` to DB time;
 - call `system.expire_signal_marks` from the MAIN purge task.
+
+## 28. H6-F4d as implemented (authoritative; source only, not released)
+
+H6-F4d wires migration 0023 into the runtime. It adds no migration (0023 is the latest), makes no provider call and
+changes no topology: MAIN 11, INTEGRATION 7. The release waits for H6-F5.
+
+### 28.1 Cross-run continuation (manual Sync, signal account runs and relist runs alike)
+
+- **Parking.** An interactions slice abandoned for budget (`ABANDONED_BUDGET`: out of pages, continuations or run
+  operations before the provider's end) keeps the provider's next cursor. `finishSlice(…, park)` retires any older
+  parked cursor of the same account/content first (one parked per content, the 0023 unique index). The 0023 trigger
+  stamps `cursor_parked_at` with DB time; TypeScript never writes it. `stopRun` also re-parks a continuation that was
+  created but never read (its cursor is still the next unread page). Listing slices never park.
+- **Adoption.** `application/traversal.ts` (`insertContentTraversal`) is the only creator of a sequence-0
+  interactions slice. Both planners use it: the account plan (`planContentSlices`) and the relist plan
+  (`planRelistSlices`). It reads the content's watermark and its parked continuation (row-locked), and **always
+  retires** the parked cursor in that transaction, so a cursor is consumed at most once. The cursor is adopted only
+  when it is:
+  - locally eligible: `cursor_parked_at ≥ DB now − 90 min`, computed in SQL;
+  - not superseded: no later complete traversal, i.e. the watermark's `synced_through` is before the parked
+    `window_end`.
+
+  The adopted slice carries the cursor **and the original window** (`window_start`, `window_end`). It is created first
+  in the run's serial chain, so the run's first operations go to it.
+- **Retirement.** On adoption; when expired (stale) or superseded, after which a fresh window starts (watermark −
+  overlap → run start); at completion; and when a newer park replaces it.
+- **Local TTL.** `RECONCILIATION_RUNTIME.parkedCursorLocalTtlMs = 90 min`. This is our own operational bound, **not a
+  provider guarantee**: Meta's cursor lifetime stays VALIDATE. A sequence-0 slice with a cursor uses the same 90-minute
+  bound on its `cursor_issued_at` at claim time; in-run continuations keep `SLICE_CURSOR_MAX_AGE_MS`.
+- **Invalid cursor.** A provider that refuses an adopted cursor goes through readSlice's existing single safe restart:
+  the original window from page 1, with no cursor. It is never retried blindly, and nothing is claimed complete.
+- **Satisfaction.** `completedContentTraversals(runId)` returns each completed traversal with its own `window_end`.
+  A relist mark is satisfied only when `last_signal_at ≤ that window_end − 120 s`. A continuation therefore never
+  satisfies a signal that arrived after the original traversal began; the newer signal stays pending and gets its own
+  follow-up run. A COMPLETED account run satisfies the account mark as of `min(run start, every traversal's
+  window_end) − 120 s`.
+- **Cap.** The hourly signal-run cap (6), the 10-operation signal budget and the run clock are unchanged.
+  Continuation reduces re-reads; it never adds runs.
+- **Payloads.** Cursors live only in `reconciliation_slices`. Outbox subjects stay IDs-only (pinned by guard).
+
+### 28.2 Confirm marks (replace per-hint confirmation)
+
+- **Creation.** A change or removal signal of a canonical interaction upserts its one confirm mark (`upsertConfirm`):
+  - all times are DB time;
+  - `last_signal_at = greatest(…)` and `signal_count + 1`;
+  - conflict target `signal_marks_one_pending`.
+
+  A non-canonical target is skipped as before (`SKIPPED_NON_CANONICAL_REMOVAL` / `SKIPPED_CONTENT_NOT_CANONICAL`). A
+  paused provider retains the mark with a 15-minute revisit.
+- **Claim + request (same transaction).** `claimAndRequest` asks `ingestion.claim_signal_confirmation`, which decides
+  under the mark's row lock:
+  - `claimed`: generation + 1, cooldown DB now + 5 min. The ONE H6-E confirmation of that claim is appended to the
+    outbox in the same transaction. Its dispatch key is `ingestion.confirm_interaction:{mark id}:g{generation}`.
+    *Deviation from §27's sketch (`{interaction}`):* the key is per **mark lifetime**, because a mark deleted after a
+    caught-up read and re-created later restarts at generation 1, and an interaction-based key would collide with the
+    old one and silently request nothing.
+  - `cooling_down`: nothing; the signal has coalesced into the mark.
+  - `caught_up` / `expired`: the mark is deleted, with no provider call. An expired mark under a fresh signal is
+    re-created and claimed once.
+  - `not_found`: nothing.
+
+  If the H6-E request finds the target gone or a placeholder, the mark is dropped. TypeScript never re-decides the
+  definer's answer and never reads the outbox.
+- **Read.** `confirmStoredInteraction`:
+  1. `begin_signal_confirmation_read`, in its own transaction: DB-stamps `read_started_at` and returns it as
+     **`started_at::text`**;
+  2. the unchanged H6-E read: exactly one provider read per attempt, outside any transaction;
+  3. a final transaction:
+     - `FOUND` / `AUTHORITATIVE_NOT_FOUND` → `complete_signal_confirmation_read(acct, interaction,
+       ${startedAt}::timestamptz)`, passing back the exact text, so microseconds survive (a JS Date would truncate
+       them);
+     - any other settled outcome (TEMPORARY_FAILURE on the final attempt, PROVIDER_CONTRACT_AMBIGUOUS — Meta's 100/33 —,
+       authorization or capability failures) → `backoffConfirmation`: `deferred_until = greatest(current, DB now +
+       min(6 h, 5 min × 2^(generation − 1)))`.
+
+  `confirmed_through_at` moves only through the definer and never regresses (0023 guard trigger). A retrying attempt
+  settles nothing.
+- **Trailing read.** A signal during or after a read leaves `last_signal_at > confirmed_through_at`. The next claim
+  after the cooldown, from the due path, reads once more. A burst converges on one immediate read plus one trailing
+  read; sustained signals cost ≤ 1 claim per 5 minutes per interaction; a mark is deleted only after a successful read
+  that began after its newest signal.
+- **Removal semantics** stay H6-E's. An authoritative not-found removes (`direct_fetch_confirmed`); an ambiguous one
+  changes nothing and backs off. A webhook alone never removes.
+- **Isolation.** Confirm marks are excluded from the account/relist summary, `deferAll`, the relist planner and the
+  run close hook (`kind in ('account','relist')`, pinned by guard).
+- **Due path.** For an ACTIVE account, `reviewDueConfirmations` claims at most `confirmReviewLimit` (10) due confirm
+  marks per invocation; any remaining get a 60-second revisit. The account/relist review then runs as before. The
+  outcome is `PLANNED_CONFIRMATION` when reconciliation is idle and a confirmation was requested.
+
+### 28.3 Global expiry
+
+The MAIN purge task (`ingestion.purge_provider_events`, system scope) first runs `expireSignalMarksSweep`:
+`system.expire_signal_marks(1000)` up to 5 batches, counts only. It then purges the inbox. Logs:
+- `signal.mark_expired.account`, `signal.mark_expired.relist`, `signal.mark_expired.confirm`;
+- a remainder warning.
+
+No other code names the definer (guard). The per-account `deleteExpired` in the review is unchanged and compares with
+DB time.
+
+### 28.4 Clock authority as implemented
+
+- **DB time** (`statement_timestamp()`): every mark's `expires_at` (now + 7 d), every `deferred_until` (now + delay,
+  including the cap/skew delay computed on the run clock), confirm-mark signal times, `cursor_parked_at`,
+  `read_started_at`, `confirmed_through_at`, the claim cooldown, the parked-TTL check and expiry.
+- **Run clock**: account/relist `last_signal_at`, run requested/started, satisfaction boundaries and the hourly cap.
+- **Provider time**: metadata only.
+
+### 28.5 Crash safety
+
+- A claim and its outbox row commit together.
+- A crash after `begin` but before `complete` leaves the mark pending. The next claim after the cooldown reads again,
+  and the dispatch key of the new generation is new.
+- A crash between park and adoption leaves the cursor parked until its TTL; it is then retired and the content gets a
+  fresh window.
+- Adoption and retirement share one transaction, so a cursor can't be adopted twice.
+
+### 28.6 Still VALIDATE / open
+
+- Meta's cursor lifetime (the 90-minute TTL is local).
+- Meta not-found authority (100/33 stays ambiguous).
+- The LIVE acceptance (H6-G) and the release (H6-F5).

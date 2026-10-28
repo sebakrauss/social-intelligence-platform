@@ -51,12 +51,13 @@ import type { InteractionSourceFact } from "@/modules/interactions";
 import { reconciliationArrival, relistArrival } from "../domain/policy";
 import { availabilityInput, gate, type Gate } from "./authority-gate";
 import { closeRunSignals, planRelistSlices } from "./signal-marks";
+import { insertContentTraversal } from "./traversal";
 import { SLICE_CURSOR_MAX_AGE_MS, advanceSlice, type ReconciliationSlice, type SliceStep } from "../domain/reconciliation-slice";
 import { RECONCILIATION_RUNTIME, defaultBudgetSnapshot, type ReconciliationBudgetSnapshot } from "../domain/reconciliation-state";
 import { IngestionAuthorityConflict, ingestInteractionFact } from "./ingest-interaction";
 import { orderParentsFirst } from "./ordering";
 import type { IngestionStores } from "./ports";
-import type { ReconciliationRunRecord, ReconciliationSliceRecord, SliceFinish } from "./reconciliation-ports";
+import type { ParkedCursor, ReconciliationRunRecord, ReconciliationSliceRecord, SliceFinish } from "./reconciliation-ports";
 import { SourceFactRejectedError, interactionSourceFactFromDto } from "./source-fact-mapping";
 
 import type { ReconciliationClock, ReconciliationScope } from "./reconciliation-scope";
@@ -207,7 +208,8 @@ interface ClaimedSlice {
 type ReadResult =
   | { readonly kind: "complete"; readonly pages: readonly ReadPage[]; readonly latestCreatedAt: Instant | null }
   | { readonly kind: "continuation"; readonly pages: readonly ReadPage[]; readonly cursor: string; readonly cursorIssuedAt: Date; readonly latestCreatedAt: Instant | null }
-  | { readonly kind: "budget_exhausted"; readonly pages: readonly ReadPage[] }
+  /** `resume`: the cursor of the next unread page, when the provider had given one (H6-F4d: parked on the slice). */
+  | { readonly kind: "budget_exhausted"; readonly pages: readonly ReadPage[]; readonly resume: ParkedCursor | null }
   | { readonly kind: "blocked"; readonly gate: Extract<Gate, { kind: "blocked" }> }
   | { readonly kind: "superseded" }
   | { readonly kind: "failed"; readonly failure: ProviderFailure };
@@ -261,7 +263,10 @@ export async function runReconciliationSlice(deps: SliceDependencies, input: { r
     const capability = slice.unit === "content_listing" ? "read_content" : "read_interactions";
     const checked = await gate(scope, slice.connectedAccountId, capability, content?.contentKind ?? VALIDATED_SCOPE.contentKind, content?.reportedSource ?? VALIDATED_SCOPE.source);
     if (checked.kind === "blocked") return closeBlocked(scope, clock, run, slice, checked, now);
-    const claim = await scope.reconciliation.claimSlice(slice.id, new Date(now.getTime() + RECONCILIATION_RUNTIME.sliceLeaseMs), now, new Date(now.getTime() - SLICE_CURSOR_MAX_AGE_MS));
+    // An adopted continuation (sequence 0 that already holds a cursor) may be reused within the 90-minute local TTL
+    // (0023, D-F4B-1); a cursor this run issued keeps the ordinary short age. Older ones are dropped: the window restarts.
+    const maxCursorAgeMs = slice.sequence === 0 && slice.cursor !== null ? RECONCILIATION_RUNTIME.parkedCursorLocalTtlMs : SLICE_CURSOR_MAX_AGE_MS;
+    const claim = await scope.reconciliation.claimSlice(slice.id, new Date(now.getTime() + RECONCILIATION_RUNTIME.sliceLeaseMs), now, new Date(now.getTime() - maxCursorAgeMs));
     if (claim === "busy") return { kind: "busy" };
     if (claim === undefined) return { kind: "already_finished" };
     const credentialId = checked.connection.activeCredentialId;
@@ -334,7 +339,10 @@ async function readSlice(deps: SliceDependencies, claimed: ClaimedSlice): Promis
       return "ok" as const;
     });
     if (reserved === "superseded") return { kind: "superseded" };
-    if (reserved === "budget") return { kind: "budget_exhausted", pages };
+    if (reserved === "budget") {
+      const resume = contract.cursor === null ? null : { cursor: contract.cursor.value, cursorIssuedAt: new Date(contract.cursor.issuedAt) };
+      return { kind: "budget_exhausted", pages, resume };
+    }
     if (reserved !== "ok") return { kind: "blocked", gate: reserved };
     const cursor = contract.cursor === null ? null : parsePageCursor(contract.cursor.value);
     if (contract.cursor !== null && cursor === undefined) return { kind: "failed", failure: { kind: "permanent", failureClass: "cursor_invalid", accountLevel: false, availability: null } };
@@ -353,7 +361,7 @@ async function readSlice(deps: SliceDependencies, claimed: ClaimedSlice): Promis
         restarted = true;
         pages = [];
         contract = { ...contract, cursor: null, watermark: null };
-        if (contract.budget.pagesRead + 1 >= contract.budget.maxPages) return { kind: "budget_exhausted", pages };
+        if (contract.budget.pagesRead + 1 >= contract.budget.maxPages) return { kind: "budget_exhausted", pages, resume: null };
         contract = { ...contract, budget: { ...contract.budget, pagesRead: contract.budget.pagesRead + 1 } };
         continue;
       }
@@ -437,7 +445,8 @@ async function commitSlice(scope: ReconciliationScope, deps: SliceDependencies, 
   if (result.kind === "budget_exhausted") {
     // The RUN's operations are spent: this content and every content not reached yet are incomplete, never complete.
     const finish: SliceFinish = { state: "ABANDONED_BUDGET", failureClass: null, retryNotBefore: null };
-    return stopRun(scope, clock, run, slice, finish, "budget_exhausted", availability, now, finish, conflicts);
+    // H6-F4d: the next unread page's cursor stays parked on this slice — the next traversal continues from it.
+    return stopRun(scope, clock, run, slice, finish, "budget_exhausted", availability, now, finish, conflicts, result.resume ?? undefined);
   }
   if (result.kind === "complete") {
     const syncedFrom = watermark?.syncedThrough ?? null;
@@ -482,8 +491,10 @@ async function commitSlice(scope: ReconciliationScope, deps: SliceDependencies, 
     await scope.reconciliation.enqueueSlice(next, run.correlationId, clock.newId(), now);
     return { kind: "finished", state: "CONTINUED", failureClass: null };
   }
-  // Out of pages or continuations (or of run operations) before the provider's end: nothing is claimed complete.
-  return closeSlice(scope, clock, run, slice, { state: "ABANDONED_BUDGET", failureClass: null, retryNotBefore: null }, "budget_exhausted", availability, now, conflicts);
+  // Out of pages or continuations (or of run operations) before the provider's end: nothing is claimed complete. H6-F4d:
+  // the provider's next cursor is parked, so a later run continues instead of re-reading pages 1..N.
+  return closeSlice(scope, clock, run, slice, { state: "ABANDONED_BUDGET", failureClass: null, retryNotBefore: null }, "budget_exhausted", availability, now, conflicts,
+    { cursor: result.cursor, cursorIssuedAt: result.cursorIssuedAt });
 }
 
 /** The listing's eligible content (read_content AND read_interactions readable for its exact scope), deterministic. */
@@ -521,29 +532,8 @@ async function planContentSlices(scope: ReconciliationScope, clock: Reconciliati
         contentItemId = existing.id;
         await scope.ingestion.content.noteObserved(existing.id, page.readAt);
       }
-      const watermark = await scope.reconciliation.watermark(slice.connectedAccountId, contentItemId);
-      const overlapMs = run.budget.overlapSeconds * 1000;
-      const windowStart = watermark?.syncedThrough === null || watermark?.syncedThrough === undefined
-        ? new Date(RECONCILIATION_RUNTIME.windowFloor)
-        : new Date(Math.max(new Date(RECONCILIATION_RUNTIME.windowFloor).getTime(), watermark.syncedThrough.getTime() - overlapMs));
-      await scope.reconciliation.insertSlice({
-        id: clock.newId(),
-        organizationId: run.organizationId,
-        workspaceId: run.workspaceId,
-        runId: run.id,
-        connectedAccountId: slice.connectedAccountId,
-        unit: "content_interactions",
-        contentItemId,
-        sequence: 0,
-        cursor: null,
-        cursorIssuedAt: null,
-        windowStart,
-        // Every content of a run is read as of the run's start: an interaction created later belongs to the next run.
-        windowEnd: run.startedAt ?? now,
-        maxPages: run.budget.interactionPagesPerSlice,
-        // Strictly increasing creation times keep the serial chain in listing order.
-        createdAt: new Date(now.getTime() + created + 1),
-      });
+      // H6-F4d: the ONE traversal helper — a parked continuation is adopted (original window), otherwise a fresh window.
+      await insertContentTraversal(scope, clock, { run, contentItemId, startedAt: run.startedAt ?? now, base: now, order: created });
       created += 1;
     }
   }
@@ -635,10 +625,10 @@ async function recordHistoryGap(scope: ReconciliationScope, clock: Reconciliatio
 
 /** Closes one slice (RUNNING at its attempt, or still PENDING), with its coverage, then moves the chain on. */
 async function closeSlice(scope: ReconciliationScope, clock: ReconciliationClock, run: ReconciliationRunRecord, slice: ReconciliationSliceRecord, finish: SliceFinish,
-  coverage: SliceReadResult | null, availability: AvailabilityInput | null, now: Date, conflicts = 0): Promise<SliceOutcome> {
+  coverage: SliceReadResult | null, availability: AvailabilityInput | null, now: Date, conflicts = 0, park?: ParkedCursor): Promise<SliceOutcome> {
   const closed = slice.state === "PENDING"
     ? await scope.reconciliation.finishPendingSlice(slice.id, finish, now)
-    : await scope.reconciliation.finishSlice(slice.id, slice.attempt, finish, conflicts, now);
+    : await scope.reconciliation.finishSlice(slice.id, slice.attempt, finish, conflicts, now, slice.unit === "content_interactions" ? park : undefined);
   if (!closed) return { kind: "superseded" };
   if (slice.contentItemId !== null && coverage !== null && availability !== null) {
     const watermark = await scope.reconciliation.watermark(slice.connectedAccountId, slice.contentItemId);
@@ -661,15 +651,16 @@ async function closeBlocked(scope: ReconciliationScope, clock: ReconciliationClo
 
 /** Closes the slice and every PENDING slice of the run (never read: `not_attempted` coverage), then the run. */
 async function stopRun(scope: ReconciliationScope, clock: ReconciliationClock, run: ReconciliationRunRecord, slice: ReconciliationSliceRecord, finish: SliceFinish,
-  coverage: SliceReadResult | null, availability: AvailabilityInput | null, now: Date, pendingFinish: SliceFinish, conflicts = 0): Promise<SliceOutcome> {
+  coverage: SliceReadResult | null, availability: AvailabilityInput | null, now: Date, pendingFinish: SliceFinish, conflicts = 0, park?: ParkedCursor): Promise<SliceOutcome> {
   const closed = slice.state === "PENDING"
     ? await scope.reconciliation.finishPendingSlice(slice.id, finish, now)
-    : await scope.reconciliation.finishSlice(slice.id, slice.attempt, finish, conflicts, now);
+    : await scope.reconciliation.finishSlice(slice.id, slice.attempt, finish, conflicts, now, slice.unit === "content_interactions" ? park : undefined);
   if (!closed) return { kind: "superseded" };
   const correlationId = correlationOf(run);
   const pendingCoverage: SliceReadResult | null = pendingFinish.state === "ABANDONED_BUDGET" ? "budget_exhausted" : coverage === null ? null : "not_attempted";
   for (const target of [slice, ...(await scope.reconciliation.pendingSlices(run.id))]) {
-    if (target.id !== slice.id) await scope.reconciliation.finishPendingSlice(target.id, pendingFinish, now);
+    // H6-F4d: an adopted continuation the run's budget never reached keeps (re-parks) its cursor, unread.
+    if (target.id !== slice.id) await scope.reconciliation.finishPendingSlice(target.id, pendingFinish, now, target.unit === "content_interactions" && target.cursor !== null);
     const result = target.id === slice.id ? coverage : pendingCoverage;
     if (target.contentItemId === null || result === null) continue;
     const watermark = await scope.reconciliation.watermark(target.connectedAccountId, target.contentItemId);

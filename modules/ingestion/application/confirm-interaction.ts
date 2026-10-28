@@ -38,7 +38,7 @@ import { coveredInteractionKinds } from "@/modules/coverage";
 import { parseWorkspaceId } from "@/domain/ids";
 import { parseProviderId } from "@/domain/provider-identity";
 import { parseInteractionSourceFact, removalBasisFrom, verifyStoredReread, type InteractionSourceFact, type StoredInteractionAuthority } from "@/modules/interactions";
-import type { ConfirmationOutcome } from "../domain/confirmation";
+import { completesConfirmation, type ConfirmationOutcome } from "../domain/confirmation";
 import { reconciliationArrival } from "../domain/policy";
 import { IngestionAuthorityConflict, ingestInteractionFact } from "./ingest-interaction";
 import { availabilityInput, classify, gate, type Gate, type ReconciliationClock, type ReconciliationScope } from "./reconciliation";
@@ -117,7 +117,36 @@ const instant = (date: Date): Instant => {
 const blockedOutcome = (blocked: Extract<Gate, { kind: "blocked" }>): ConfirmationOutcome =>
   blocked.availability?.reason === "ACCOUNT_PERMISSION_MISSING" ? "AUTHORIZATION_FAILURE" : "CAPABILITY_UNAVAILABLE";
 
+/**
+ * Step H6-F4d (0023): one confirmation attempt, bracketed by its confirm mark (when the interaction has one):
+ *   before  ingestion.begin_signal_confirmation_read stamps the DB time this direct reread begins (its own committed
+ *           transaction, strictly before the provider is reached); the value travels as LOSSLESS text, in memory only —
+ *           never in a payload, never through a JS Date (microseconds would be lost);
+ *   after   a COMPLETED authoritative reread (FOUND / AUTHORITATIVE_NOT_FOUND) confirms the mark through exactly that
+ *           read start (ingestion.complete_signal_confirmation_read); any other final outcome — Meta's ambiguous 100/33,
+ *           a temporary, authorization or capability failure, an ineligible target — leaves confirmed_through_at
+ *           untouched and backs the next claim off (DB time); a retried attempt settles nothing (the next attempt begins
+ *           its own read). A crash between the provider's answer and the settle simply leaves the mark unconfirmed: the
+ *           next claim re-reads (never a false caught-up).
+ * The mark schedules reads only; it never changes what counts as provider truth (removal authority stays H6-E's).
+ */
 export async function confirmStoredInteraction(
+  deps: ConfirmationDependencies,
+  input: { readonly interactionId: string; readonly connectedAccountId: string; readonly correlationId: CorrelationId },
+): Promise<ConfirmationResult> {
+  const begun = await deps.inScope((scope) => scope.signals.beginConfirmationRead(input.connectedAccountId, input.interactionId));
+  const result = await confirmOnce(deps, input);
+  if (result.kind === "confirmed" && begun.startedAt !== null) {
+    const startedAt = begun.startedAt;
+    await deps.inScope(async (scope) => {
+      if (completesConfirmation(result.outcome)) await scope.signals.completeConfirmationRead(input.connectedAccountId, input.interactionId, startedAt);
+      else await scope.signals.backoffConfirmation(input.connectedAccountId, input.interactionId);
+    });
+  }
+  return result;
+}
+
+async function confirmOnce(
   deps: ConfirmationDependencies,
   input: { readonly interactionId: string; readonly connectedAccountId: string; readonly correlationId: CorrelationId },
 ): Promise<ConfirmationResult> {

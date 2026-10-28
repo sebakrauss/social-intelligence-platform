@@ -58,13 +58,16 @@ describe("frozen constants (D-F5 = B, design §13)", () => {
     expect(signalRunCorrelation(CONTENT.id)).toBe(`sig.${CONTENT.id}`);
     expect(signalRunCorrelation(CONTENT.id)).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/);
   });
-  it("a signal confirmation's key is one per (interaction, routed hint): a redelivery is idempotent, a new change is new", () => {
-    const hint = "00000000-0000-4000-8000-0000000000e1";
-    const a = signalConfirmationDispatchKey(INTERACTION.id, hint);
-    expect(a).toBe(`ingestion.confirm_interaction:${INTERACTION.id}:h${hint}`);
-    expect(a).toBe(signalConfirmationDispatchKey(INTERACTION.id, hint));
-    expect(a).not.toBe(signalConfirmationDispatchKey(INTERACTION.id, "00000000-0000-4000-8000-0000000000e2"));
-    expect(a).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/);
+  it("H6-F4d: a confirmation's key is one per (confirm mark lifetime, claim generation) — canonical ids only", () => {
+    const mark = "00000000-0000-4000-8000-0000000000e1";
+    const a = signalConfirmationDispatchKey(mark, 1);
+    expect(a).toBe(`ingestion.confirm_interaction:${mark}:g1`);
+    expect(a).toBe(signalConfirmationDispatchKey(mark, 1));
+    expect(a).not.toBe(signalConfirmationDispatchKey(mark, 2));
+    expect(a).not.toBe(signalConfirmationDispatchKey("00000000-0000-4000-8000-0000000000e2", 1));
+    expect(signalConfirmationDispatchKey(mark, 2_147_483_647)).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/);
+    // The cooldown mirrors the one fixed in ingestion.claim_signal_confirmation (0023: interval '5 minutes').
+    expect(SIGNAL_RUNTIME).toMatchObject({ confirmationCooldownMs: 300_000, confirmationBackoffCapMs: 21_600_000, confirmReviewLimit: 10 });
   });
 });
 

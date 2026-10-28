@@ -38,6 +38,15 @@ export const SIGNAL_RUNTIME = Object.freeze({
   accountContentItemsPerRun: 9,
   /** Marks the router's due-mark sweep re-dispatches per run (0022 accepts 1..500). */
   dueMarkDispatchLimit: 100,
+  /**
+   * Step H6-F4d (D-F4B-5): the confirmation cooldown — fixed in ingestion.claim_signal_confirmation (0023); mirrored here
+   * only to compute the back-off of non-authoritative reads (pinned equal by test).
+   */
+  confirmationCooldownMs: 5 * 60 * 1000,
+  /** A non-authoritative read (ambiguous, failed, refused) defers the next claim 5 min × 2^(generation − 1), at most 6 h. */
+  confirmationBackoffCapMs: 6 * 60 * 60 * 1000,
+  /** Due confirm marks one process_signals invocation claims at most (the rest get a revisit and wait for the sweep). */
+  confirmReviewLimit: 10,
 });
 
 /** The closed outcome of one `ingestion.process_signals` invocation (design §14, plus the cases implementation found). */
@@ -89,15 +98,12 @@ export function signalRunBudget(plan: SignalRunPlan): ReconciliationBudgetSnapsh
 }
 
 /**
- * The dispatch key of a signal-requested confirmation: one per (interaction, routed hint) — canonical ids only.
- * H6-E's model is kept (one bounded confirmation per request); the key only makes a REDELIVERED signal idempotent.
- * Design §10's 5-minute bucket key is NOT used: a worker cannot see whether the bucket's confirmation already ran (no
- * outbox read), so a change arriving after it would be coalesced into a finished read and lost — and a relist cannot
- * stand in, because its window is by creation time and never re-reads an older comment. Bound: one direct read per
- * distinct verified change hint (hint dedupe already collapses provider retries).
+ * Step H6-F4d (D-F4B-3): the dispatch key of the ONE confirmation a claim of a confirm mark requests — per mark lifetime
+ * (its id) and claim generation, canonical ids only. A new mark of the same interaction (after the previous was caught
+ * up, expired or deleted) has a new id, so its first claim never collides with a finished confirmation's key.
  */
-export function signalConfirmationDispatchKey(interactionId: string, providerEventHintId: string): string {
-  return `${CONFIRM_INTERACTION_TOPIC}:${interactionId}:h${providerEventHintId}`;
+export function signalConfirmationDispatchKey(markId: string, generation: number): string {
+  return `${CONFIRM_INTERACTION_TOPIC}:${markId}:g${String(generation)}`;
 }
 
 /** §13.3: whether a traversal that started at `startedAt` satisfies a mark last signalled at `lastSignalAt`. */

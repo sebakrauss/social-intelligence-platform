@@ -76,7 +76,7 @@ export {
   type ConfirmationRequestOutcome,
   type ConfirmationResult,
 } from "./application/confirm-interaction";
-export { CONFIRMATION_OUTCOMES, CONFIRMATION_RUNTIME, CONFIRM_INTERACTION_TOPIC, confirmationDispatchKey, type ConfirmationOutcome } from "./domain/confirmation";
+export { CONFIRMATION_COMPLETING_OUTCOMES, CONFIRMATION_OUTCOMES, CONFIRMATION_RUNTIME, CONFIRM_INTERACTION_TOPIC, completesConfirmation, confirmationDispatchKey, type ConfirmationOutcome } from "./domain/confirmation";
 export type {
   ObservedEventAuthority,
   ReconciliationAuthorityStore,
@@ -98,11 +98,14 @@ export {
 } from "./domain/provider-events";
 export {
   dispatchDueSignalMarks,
+  expireSignalMarksSweep,
   purgeExpiredProviderEvents,
   routeDueProviderEvents,
   type ProviderEventDependencies,
+  type MarkExpirySummary,
   type ProviderEventStore,
   type PurgeSummary,
+  type SignalMarkExpiry,
   type RouteSummary,
 } from "./application/provider-events";
 export {

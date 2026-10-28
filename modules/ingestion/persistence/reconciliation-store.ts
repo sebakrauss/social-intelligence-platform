@@ -19,6 +19,7 @@ import type {
   ReconciliationWatermarkRecord,
 } from "../application/reconciliation-ports";
 import { RECONCILE_SLICE_TOPIC, SLICE_UNITS, sliceDispatchKey, type SliceUnit } from "../domain/reconciliation-slice";
+import { RECONCILIATION_RUNTIME } from "../domain/reconciliation-state";
 import { CONFIRM_INTERACTION_TOPIC, confirmationDispatchKey } from "../domain/confirmation";
 import { RECONCILIATION_RUN_STATES, RECONCILIATION_SLICE_STATES, type ReconciliationRunState, type ReconciliationSliceState } from "../domain/reconciliation-state";
 import type { SignalRunPlan } from "../domain/signals";
@@ -115,6 +116,14 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
   const OPEN_RUN = inArray(reconciliationRuns.state, ["REQUESTED", "RUNNING"]);
   const append = async (message: Parameters<typeof appendOutboxOnce>[1]): Promise<void> => {
     if ((await appendOutboxOnce(tx, message)) === "appended") noteAppended(message);
+  };
+  /** One continuation authority per content (0023 unique index): the slice about to park supersedes an older one. */
+  const retireSupersededParkedCursor = async (sliceId: string): Promise<void> => {
+    await tx.execute(sql`
+      update ingestion.reconciliation_slices p set cursor = null, cursor_issued_at = null, updated_at = greatest(p.updated_at, ${new Date()})
+        from ingestion.reconciliation_slices s
+       where s.id = ${sliceId}::uuid and p.id <> s.id and p.connected_account_id = s.connected_account_id and p.content_item_id = s.content_item_id
+         and p.state = 'ABANDONED_BUDGET' and p.cursor is not null`);
   };
   return {
     async requestRun(input) {
@@ -234,7 +243,10 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
       await tx.update(reconciliationSlices).set({ cursor: null, cursorIssuedAt: null, updatedAt: now })
         .where(and(eq(reconciliationSlices.id, id), eq(reconciliationSlices.state, "RUNNING")));
     },
-    async finishSlice(id, attempt, finish, conflicts, now) {
+    async finishSlice(id, attempt, finish, conflicts, now, park) {
+      // Step H6-F4d (0023): only a budget-abandoned slice parks its next cursor (the DB refuses every other state).
+      const parking = park !== undefined && finish.state === "ABANDONED_BUDGET";
+      if (parking) await retireSupersededParkedCursor(id);
       const rows = await tx.update(reconciliationSlices)
         .set({
           state: finish.state,
@@ -242,8 +254,8 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
           retryNotBefore: finish.retryNotBefore,
           completedAt: now,
           leasedUntil: null,
-          cursor: null,
-          cursorIssuedAt: null,
+          cursor: parking ? park.cursor : null,
+          cursorIssuedAt: parking ? park.cursorIssuedAt : null,
           conflictCount: sql`${reconciliationSlices.conflictCount} + ${conflicts}`,
           updatedAt: now,
         })
@@ -251,12 +263,43 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
         .returning({ id: reconciliationSlices.id });
       return rows.length === 1;
     },
-    async finishPendingSlice(id, finish, now) {
+    async finishPendingSlice(id, finish, now, keepCursor) {
+      // Step H6-F4d: an adopted continuation that never ran (the run's budget ended first) is parked again, unread.
+      const keep = keepCursor === true && finish.state === "ABANDONED_BUDGET";
+      if (keep) await retireSupersededParkedCursor(id);
       const rows = await tx.update(reconciliationSlices)
-        .set({ state: finish.state, failureClass: finish.failureClass, retryNotBefore: finish.retryNotBefore, completedAt: now, cursor: null, cursorIssuedAt: null, updatedAt: now })
+        .set({
+          state: finish.state, failureClass: finish.failureClass, retryNotBefore: finish.retryNotBefore, completedAt: now, updatedAt: now,
+          ...(keep ? {} : { cursor: null, cursorIssuedAt: null }),
+        })
         .where(and(eq(reconciliationSlices.id, id), eq(reconciliationSlices.state, "PENDING")))
         .returning({ id: reconciliationSlices.id });
       return rows.length === 1;
+    },
+    async parkedContinuation(connectedAccountId, contentItemId) {
+      // Row-locked: two planners can never adopt the same continuation (the one-open run serializes them anyway).
+      const result = await tx.execute<{ id: string; cursor: string; cursor_issued_at: unknown; window_start: unknown; window_end: unknown; eligible: boolean }>(sql`
+        select s.id, s.cursor, s.cursor_issued_at, s.window_start, s.window_end,
+               (s.cursor_parked_at >= pg_catalog.statement_timestamp() - ${RECONCILIATION_RUNTIME.parkedCursorLocalTtlMs} * interval '1 millisecond') as eligible
+          from ingestion.reconciliation_slices s
+         where s.connected_account_id = ${connectedAccountId}::uuid and s.content_item_id = ${contentItemId}::uuid and s.unit = 'content_interactions'
+           and s.state = 'ABANDONED_BUDGET' and s.cursor is not null
+         for update`);
+      const row = result.rows[0];
+      if (row === undefined) return undefined;
+      return {
+        sliceId: row.id,
+        cursor: row.cursor,
+        cursorIssuedAt: new Date(String(row.cursor_issued_at)),
+        windowStart: new Date(String(row.window_start)),
+        windowEnd: new Date(String(row.window_end)),
+        locallyEligible: row.eligible,
+      };
+    },
+    async retireParkedCursor(sliceId) {
+      await tx.execute(sql`
+        update ingestion.reconciliation_slices set cursor = null, cursor_issued_at = null, updated_at = greatest(updated_at, ${new Date()})
+         where id = ${sliceId}::uuid and state = 'ABANDONED_BUDGET' and cursor is not null`);
     },
     async nextPendingSlice(runId) {
       const rows = await tx.select().from(reconciliationSlices)
@@ -275,10 +318,11 @@ export function createPostgresReconciliationStore(tx: DatabaseTransaction, noteA
         .where(eq(reconciliationSlices.reconciliationRunId, runId));
       return rows.map((row) => ({ unit: unitOf(row.unit), state: sliceState(row.state) }));
     },
-    async completedContentItems(runId) {
-      const rows = await tx.selectDistinct({ contentItemId: reconciliationSlices.contentItemId }).from(reconciliationSlices)
+    async completedContentTraversals(runId) {
+      const rows = await tx.select({ contentItemId: reconciliationSlices.contentItemId, windowEnd: reconciliationSlices.windowEnd }).from(reconciliationSlices)
         .where(and(eq(reconciliationSlices.reconciliationRunId, runId), eq(reconciliationSlices.unit, "content_interactions"), eq(reconciliationSlices.state, "COMPLETED")));
-      return rows.map((row) => row.contentItemId).filter((id): id is string => id !== null).sort();
+      return rows.filter((row): row is { contentItemId: string; windowEnd: Date } => row.contentItemId !== null)
+        .sort((a, b) => a.contentItemId.localeCompare(b.contentItemId));
     },
     async activeBackoff(connectedAccountId, now) {
       const rows = await tx.select({ retryNotBefore: reconciliationSlices.retryNotBefore }).from(reconciliationSlices)

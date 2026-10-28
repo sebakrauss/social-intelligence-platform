@@ -7,7 +7,7 @@
  * Release order: routing (and, since H6-F4, the due-mark sweep) writes IDs-only `ingestion.process_signals` outbox rows,
  * consumed by the MAIN tenant task of the same name (H6-F4): the router and its consumer ship in ONE paired release.
  */
-import { dispatchDueSignalMarks, purgeExpiredProviderEvents, routeDueProviderEvents, type ProviderEventDependencies, type PurgeSummary, type RouteSummary } from "@/modules/ingestion";
+import { dispatchDueSignalMarks, expireSignalMarksSweep, purgeExpiredProviderEvents, routeDueProviderEvents, type MarkExpirySummary, type ProviderEventDependencies, type PurgeSummary, type RouteSummary } from "@/modules/ingestion";
 import type { SystemJobContext } from "@/platform/jobs";
 import type { Logger } from "@/platform/observability";
 import { withSystemScope } from "@/platform/db/system-scope";
@@ -30,12 +30,19 @@ export async function runRouteProviderEvents(context: SystemJobContext, logger: 
   return { ...summary, dueMarksDispatched };
 }
 
-export async function runPurgeProviderEvents(context: SystemJobContext, logger: Logger): Promise<PurgeSummary> {
+export async function runPurgeProviderEvents(context: SystemJobContext, logger: Logger): Promise<PurgeSummary & { readonly marks: MarkExpirySummary }> {
+  // Step H6-F4d: system-wide signal-mark expiry first, then the inbox retention — independent, each bounded; neither
+  // depends on the other (a mark never references a receipt or a hint).
+  const marks = await expireSignalMarksSweep(dependencies(context));
   const summary = await purgeExpiredProviderEvents(dependencies(context));
   const log = logger.child({ module: "jobs.provider_events", task: context.payload.task });
+  log.info("signal.mark_expired.account", { count: marks.accountMarks });
+  log.info("signal.mark_expired.relist", { count: marks.relistMarks });
+  log.info("signal.mark_expired.confirm", { count: marks.confirmMarks });
+  if (marks.remainderPossible) log.warn("signal.mark_expired.remainder", { count: marks.batches });
   log.info("webhook.purge.completed", { count: summary.inboxDeleted });
   log.info("webhook.purge.hints", { count: summary.hintsDeleted });
   log.info("webhook.purge.batches", { count: summary.batches });
   if (summary.remainderPossible) log.warn("webhook.purge.remainder", { count: summary.batches });
-  return summary;
+  return { ...summary, marks };
 }

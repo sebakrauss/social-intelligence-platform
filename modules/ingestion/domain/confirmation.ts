@@ -30,6 +30,14 @@ export const CONFIRMATION_OUTCOMES = [
 ] as const;
 export type ConfirmationOutcome = (typeof CONFIRMATION_OUTCOMES)[number];
 
+/**
+ * Step H6-F4d: the outcomes that are a COMPLETED authoritative reread — only these advance a confirm mark's
+ * confirmed_through_at. FOUND (the node was read and applied) and AUTHORITATIVE_NOT_FOUND (a validated not-found with a
+ * healthy connection). Everything else — Meta's ambiguous 100/33 included — leaves the newest signal un-reread.
+ */
+export const CONFIRMATION_COMPLETING_OUTCOMES = ["FOUND", "AUTHORITATIVE_NOT_FOUND"] as const satisfies readonly ConfirmationOutcome[];
+export const completesConfirmation = (outcome: ConfirmationOutcome): boolean => (CONFIRMATION_COMPLETING_OUTCOMES as readonly string[]).includes(outcome);
+
 /** The INTEGRATION task of one confirmation (subjects: interaction_id, connected_account_id; IDs only). */
 export const CONFIRM_INTERACTION_TOPIC = "ingestion.confirm_interaction" as const;
 

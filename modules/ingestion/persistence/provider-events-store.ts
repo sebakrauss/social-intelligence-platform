@@ -5,7 +5,8 @@
  *   recordProviderWebhook   WEB provider-signal scope only: system.record_provider_webhook. The ONLY place raw body bytes
  *                           travel, and only when the adapter's own `rawBodyRetainable` says so (D-F4; never re-decided).
  *   ProviderEventStore      SYSTEM scope only (the MAIN router and purge): due hint ids, system.route_provider_hint,
- *                           system.purge_provider_events and (H6-F4) system.dispatch_due_signal_marks. Identifiers,
+ *                           system.purge_provider_events, (H6-F4) system.dispatch_due_signal_marks and (H6-F4d)
+ *                           system.expire_signal_marks. Identifiers,
  *                           outcomes and counts — never a body.
  * Every definer result is validated against its closed vocabulary; anything else fails closed.
  */
@@ -81,6 +82,15 @@ export function createPostgresProviderEventStore(tx: DatabaseTransaction): Provi
       const row = result.rows[0];
       if (row === undefined || typeof row.inbox_deleted !== "number" || typeof row.hints_deleted !== "number") throw new Error("provider_event_purge_unrecognized");
       return Object.freeze({ inboxDeleted: row.inbox_deleted, hintsDeleted: row.hints_deleted });
+    },
+    async expireSignalMarks(limit) {
+      const result = await tx.execute<{ expired: unknown; account_marks: unknown; relist_marks: unknown; confirm_marks: unknown }>(sql`
+        select expired, account_marks, relist_marks, confirm_marks from system.expire_signal_marks(${limit})`);
+      const row = result.rows[0];
+      if (row === undefined || typeof row.expired !== "number" || typeof row.account_marks !== "number" || typeof row.relist_marks !== "number" || typeof row.confirm_marks !== "number") {
+        throw new Error("signal_mark_expiry_unrecognized");
+      }
+      return Object.freeze({ expired: row.expired, accountMarks: row.account_marks, relistMarks: row.relist_marks, confirmMarks: row.confirm_marks });
     },
     async dispatchDueMarks(limit) {
       const result = await tx.execute<{ dispatched: unknown }>(sql`select dispatched from system.dispatch_due_signal_marks(${limit})`);

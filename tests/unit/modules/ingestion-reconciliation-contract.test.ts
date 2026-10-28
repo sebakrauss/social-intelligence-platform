@@ -119,6 +119,8 @@ describe("reconciliation runtime limits (H6-C3)", () => {
       maxSliceAttempts: 6,
       rateLimitDefaultBackoffSeconds: 60,
       windowFloor: "2000-01-01T00:00:00.000Z",
+      // H6-F4d (D-F4B-1): local reuse window of a parked cursor — not a provider guarantee (Meta TTL: VALIDATE).
+      parkedCursorLocalTtlMs: 5_400_000,
     });
     // H6-C3b: the operation budget is the run's persisted max_operations — 40 by default (the ceiling), 8 for LIVE.
     expect([DEFAULT_MAX_OPERATIONS, LIVE_ACCEPTANCE_MAX_OPERATIONS, RECONCILIATION_OPERATIONS_CEILING]).toEqual([40, 8, 40]);
