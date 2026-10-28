@@ -126,7 +126,7 @@ describe("per-plane environment contract (deployed runs)", () => {
       "DATABASE_SYSTEM_URL", "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY",
       "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
       "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY",
-      "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET",
+      "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET", "PROVIDER_META_WEBHOOK_VERIFY_TOKEN",
     ]);
     // Step 7G-H5.6B: the retired bootstrap key can never come back unnoticed; the Roles Anywhere identity belongs here.
     expect(planeEnvironmentProblems("integration", PINNED, { AWS_ACCESS_KEY_ID: "synthetic", INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID: "synthetic" })).toEqual(["AWS_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID"]);
@@ -143,7 +143,7 @@ describe("per-plane environment contract (deployed runs)", () => {
       "INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM", "INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM",
       "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY",
       "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
-      "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET",
+      "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET", "PROVIDER_META_WEBHOOK_VERIFY_TOKEN",
     ]);
     for (const name of [...INTEGRATION_AWS_IDENTITY_VARIABLES, ...RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES]) {
       expect(() => { assertPlaneEnvironment("main", PINNED, { [name]: "synthetic" }); }, name).toThrow(NonRetryableJobError);
@@ -154,7 +154,7 @@ describe("per-plane environment contract (deployed runs)", () => {
 
   it("neither plane may hold any of the hosted web's Meta app configuration (Step 7G-C; Require App Secret OFF)", () => {
     for (const plane of ["main", "integration"] as const) {
-      for (const name of ["PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET"]) {
+      for (const name of ["PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET", "PROVIDER_META_WEBHOOK_VERIFY_TOKEN"]) {
         expect(planeEnvironmentProblems(plane, PINNED, { [name]: "synthetic" }), `${plane} ${name}`).toEqual([name]);
         expect(() => { assertPlaneEnvironment(plane, PINNED, { [name]: "synthetic" }); }, `${plane} ${name}`).toThrow(NonRetryableJobError);
       }

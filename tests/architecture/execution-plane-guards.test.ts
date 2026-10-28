@@ -27,7 +27,9 @@ const depcruise = require(path.join(root, ".dependency-cruiser.cjs")) as { optio
 
 const MAIN_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_sweep", "connections.move.release_source", "connections.move.activate_destination", "connections.move.reject_destination",
   // Step H6-C3: the reconciliation planner and the H6 terminal consumer open nothing.
-  "ingestion.reconcile_account", "interactions.observed"];
+  "ingestion.reconcile_account", "interactions.observed",
+  // Step H6-F3: the provider-event inbox router and its retention (system scope, DB only).
+  "ingestion.route_provider_events", "ingestion.purge_provider_events"];
 const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account", "ingestion.reconcile_slice", "ingestion.confirm_interaction"];
 /** Step 7E.7-B / 7G-H5.5-P5-B / 7G-H5.5-P12-B2: integration-only, operator-triggered diagnostics — discovered by the integration config, never registered. */
 const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic", "integration.read_content_validation", "integration.read_interactions_validation"];
@@ -82,9 +84,10 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     const integration = discoveredTasks(PLANE_DIRS.integration);
     expect(main).toEqual([...MAIN_TASKS].sort());
     expect(integration).toEqual([...INTEGRATION_TASKS, ...INTEGRATION_DIAGNOSTIC_TASKS].sort());
-    // The paired release expects exactly the discovered counts: INTEGRATION 7, MAIN 8 (H6-C3 adds 1 + 2; H6-E adds 1 + 0).
+    // The paired release expects exactly the discovered counts: INTEGRATION 7, MAIN 10 (H6-C3 adds 1 + 2; H6-E 1 + 0;
+    // H6-F3 0 + 2 — ingestion.process_signals is H6-F4's and NOT registered yet).
     expect(integration).toHaveLength(7);
-    expect(main).toHaveLength(8);
+    expect(main).toHaveLength(10);
     expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", integration.length], ["main", main.length]]);
     expect(main.filter((task) => integration.includes(task))).toEqual([]);
     for (const task of main) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("main");

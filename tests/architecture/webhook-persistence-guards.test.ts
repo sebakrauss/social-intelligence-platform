@@ -160,9 +160,9 @@ describe("H6-F2: a webhook is a signal", () => {
     }
   });
 
-  it("no TypeScript calls the new definers yet (the receiver and the jobs are H6-F3/F4)", () => {
-    const callers = sourceFiles(["app", "ui", "server", "modules", "platform", "integrations", "jobs"]).filter((file) =>
-      /record_provider_webhook|route_provider_hint|dispatch_due_signal_marks|provider_event_hint\(|purge_provider_events|signal_marks/.test(codeOf(file)));
-    expect(callers).toEqual([]);
+  it("H6-F3: exactly one TypeScript adapter calls the receipt, routing and purge definers; marks and the hint reader wait for H6-F4", () => {
+    const callers = (pattern: RegExp) => sourceFiles(["app", "ui", "server", "modules", "platform", "integrations", "jobs"]).filter((file) => pattern.test(codeOf(file)));
+    expect(callers(/system\.(record_provider_webhook|route_provider_hint|purge_provider_events)\(/)).toEqual(["modules/ingestion/persistence/provider-events-store.ts"]);
+    expect(callers(/dispatch_due_signal_marks|provider_event_hint\(|signal_marks/)).toEqual([]);
   });
 });

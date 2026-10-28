@@ -2,3 +2,4 @@
 export { createPostgresIngestionEventStore } from "./store";
 export { authorityConflicts, reconciliationRuns, reconciliationSlices, reconciliationWatermarks } from "./reconciliation-tables";
 export { createPostgresReconciliationStore } from "./reconciliation-store";
+export { createPostgresProviderEventStore, recordProviderWebhook, type ProviderWebhookReceipt } from "./provider-events-store";

@@ -124,6 +124,7 @@ export {
   classifyWebhookHint,
   webhookRawBytes,
   type ProviderWebhookPort,
+  type VerifiedWebhookDelivery,
   type WebhookEventHint,
   type WebhookHandshakeFailure,
   type WebhookHandshakeQuery,

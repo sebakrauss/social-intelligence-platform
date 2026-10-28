@@ -78,6 +78,20 @@ export async function withUserScope<T>(
   });
 }
 
+/**
+ * Provider-signal receipt (Step H6-F3; migration 0022): the web login as `authenticated` with NO claims and NO bound
+ * workspace — no user, no organization, no tenant. Its only purpose is system.record_provider_webhook, which itself
+ * refuses any transaction that carries claims or a workspace; every member policy keyed on auth.uid() or the sealed
+ * workspace admits nothing here. It takes no identity and no workspace argument, so a user scope can't become one.
+ */
+export async function withProviderSignalScope<T>(database: RuntimeDatabase<"web">, work: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
+  assertKind(database, "web");
+  return database.db.transaction(async (tx) => {
+    await tx.execute(sql`set local role authenticated`);
+    return work(tx);
+  });
+}
+
 /** Workspace job: exactly one workspace, from the job payload. */
 export async function withWorkspaceJobScope<T>(
   database: RuntimeDatabase<"worker">,

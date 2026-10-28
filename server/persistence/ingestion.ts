@@ -16,8 +16,8 @@ import { createPostgresConversationStore } from "@/modules/conversations/persist
 import { createPostgresCoverageStore } from "@/modules/coverage/persistence";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
 import { createPostgresConnectionWorkerStore } from "@/modules/connections/persistence";
-import type { IngestionStores, ReconciliationAuthorityStore, ReconciliationScope } from "@/modules/ingestion";
-import { createPostgresIngestionEventStore, createPostgresReconciliationStore } from "@/modules/ingestion/persistence";
+import type { IngestionStores, ProviderEventStore, ReconciliationAuthorityStore, ReconciliationScope } from "@/modules/ingestion";
+import { createPostgresIngestionEventStore, createPostgresProviderEventStore, createPostgresReconciliationStore } from "@/modules/ingestion/persistence";
 import { createPostgresInteractionStore, loadStoredInteractionAuthority } from "@/modules/interactions/persistence";
 import { boundWorkspaceOrganization } from "@/modules/tenancy/persistence";
 import { readSwitchRows, type DatabaseTransaction } from "@/platform/db";
@@ -74,4 +74,12 @@ export function reconciliationScope(scope: Pick<TenantJobScope, "tx" | "noteOutb
     ingestion: ingestionStores(scope),
     isolated: (work) => scope.tx.transaction((savepoint) => work(ingestionStores({ tx: savepoint, noteOutbox: scope.noteOutbox }))),
   };
+}
+
+/**
+ * Step H6-F3: the provider-event inbox store of the MAIN system tasks, over a SYSTEM-scope transaction (the caller,
+ * jobs/provider-events.ts, opens it). Identifier-only hints, the 0022 routing and purge definers — never a body.
+ */
+export function providerEventStore(tx: DatabaseTransaction): ProviderEventStore {
+  return createPostgresProviderEventStore(tx);
 }

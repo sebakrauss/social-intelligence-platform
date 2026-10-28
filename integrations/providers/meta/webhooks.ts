@@ -34,11 +34,11 @@ import {
   WebhookRejectedError,
   webhookRawBytes,
   type ProviderWebhookPort,
+  type VerifiedWebhookDelivery,
   type WebhookEventHint,
   type WebhookHandshakeQuery,
   type WebhookHandshakeResult,
   type WebhookHintChange,
-  type WebhookParseResult,
   type WebhookQueryValue,
   type WebhookRejectionReason,
   type WebhookRequest,
@@ -128,20 +128,10 @@ export function metaHintKey(parts: readonly string[]): string {
   return hash.digest("hex");
 }
 
-export interface MetaWebhookDelivery extends WebhookParseResult {
+/** The contract's verified delivery, narrowed to Meta's provider and object classes (H6-F3). */
+export interface MetaWebhookDelivery extends VerifiedWebhookDelivery {
   readonly provider: "meta";
   readonly object: MetaWebhookObject;
-  /** SHA-256 of the exact verified bytes (the delivery dedupe key). */
-  readonly bodySha256: string;
-  readonly entryCount: number;
-  /** Changes across the whole envelope (≤ MAX_WEBHOOK_CHANGES). */
-  readonly changeCount: number;
-  /** Changes whose field is outside the allowlist (classified, never inspected): they make the body non-retainable. */
-  readonly unsupportedChangeCount: number;
-  /** Identical normalized hints collapsed within this delivery. */
-  readonly duplicateHintCount: number;
-  /** D-F4: the verified body may be stored only when every change's field is allowlisted. */
-  readonly rawBodyRetainable: boolean;
 }
 
 type Json = Readonly<Record<string, unknown>>;
@@ -352,7 +342,7 @@ export interface MetaWebhookPortOptions {
  * The port-shaped parse: the App Secret is opened here, inside the call, and nowhere else in the Meta tree (the read
  * port's Graph transport opens access tokens only; this module opens the webhook secret only).
  */
-export function parseMetaWebhookWith(appSecret: SecretValue, request: WebhookRequest): Promise<WebhookParseResult> {
+export function parseMetaWebhookWith(appSecret: SecretValue, request: WebhookRequest): Promise<MetaWebhookDelivery> {
   try {
     return Promise.resolve(parseMetaWebhook(appSecret.expose(), request));
   } catch (error) {

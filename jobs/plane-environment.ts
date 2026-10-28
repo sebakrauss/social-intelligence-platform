@@ -59,8 +59,8 @@ export const INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV = "INTEGRATION_KMS_DIAGNOSTI
 /** The standard AWS SDK credential-chain variables: never an identity source of the integration worker. */
 const AWS_CREDENTIAL_CHAIN_VARIABLES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE"];
 
-/** The hosted web's Meta app configuration (Step 7G-C): never a jobs-plane variable. */
-const PROVIDER_META_APP_VARIABLES = ["PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET"];
+/** The hosted web's Meta app and webhook configuration (Steps 7G-C, H6-F3): never a jobs-plane variable. */
+const PROVIDER_META_APP_VARIABLES = ["PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET", "PROVIDER_META_WEBHOOK_VERIFY_TOKEN"];
 
 /** Variables a deployed run of each plane must NOT hold. */
 export const PLANE_FORBIDDEN_VARIABLES: Readonly<Record<ExecutionPlane, readonly string[]>> = Object.freeze({

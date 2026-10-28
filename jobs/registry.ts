@@ -25,12 +25,20 @@ import { RETRY_POLICIES, defineTaskRegistry } from "@/platform/jobs";
 export const SWEEPER_SCHEDULES = {
   dispatchSweep: "* * * * *",
   outcomeSweep: "*/2 * * * *",
+  // Step H6-F3 (design H6-F0 §3, §5): the inbox's guaranteed drain (the web nudge only lowers latency) and its retention.
+  routeProviderEvents: "* * * * *",
+  purgeProviderEvents: "*/15 * * * *",
 } as const;
 
 export const PRODUCTION_TASKS = defineTaskRegistry([
   { name: "outbox.relay", scope: "system", executionPlane: "main", retry: RETRY_POLICIES.transient },
   { name: "outbox.dispatch_sweep", scope: "system", executionPlane: "main", retry: RETRY_POLICIES.singleAttempt, schedule: { cron: SWEEPER_SCHEDULES.dispatchSweep } },
   { name: "outbox.outcome_sweep", scope: "system", executionPlane: "main", retry: RETRY_POLICIES.singleAttempt, schedule: { cron: SWEEPER_SCHEDULES.outcomeSweep } },
+  // Step H6-F3: drains the provider-event inbox (D-F1) — cron every minute, also nudged by the web after a new receipt.
+  // DB-only: no provider, no credential; a transient database failure is retried (routing is idempotent per hint).
+  { name: "ingestion.route_provider_events", scope: "system", executionPlane: "main", retry: RETRY_POLICIES.transient, schedule: { cron: SWEEPER_SCHEDULES.routeProviderEvents } },
+  // Step H6-F3: the 7-day retention of the inbox and its hints (bounded batches; the next run continues).
+  { name: "ingestion.purge_provider_events", scope: "system", executionPlane: "main", retry: RETRY_POLICIES.singleAttempt, schedule: { cron: SWEEPER_SCHEDULES.purgeProviderEvents } },
   {
     name: "connections.discover_assets",
     scope: "workspace",

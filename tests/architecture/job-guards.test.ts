@@ -85,7 +85,8 @@ describe("dispatch path", () => {
   const users = (pattern: RegExp): string[] => findReferences(production, [pattern]).map(([file]) => file);
 
   it("only the outbox relay and the post-commit nudge enqueue jobs", () => {
-    expect(users(/\.enqueue\(/)).toEqual(["platform/outbox/delivery.ts", "platform/outbox/nudge.ts"]);
+    // Step H6-F3: the webhook receiver's post-commit router nudge (a named MAIN system task, best effort).
+    expect(users(/\.enqueue\(/)).toEqual(["platform/outbox/delivery.ts", "platform/outbox/nudge.ts", "server/webhooks/runtime.ts"]);
   });
 
   it("only the adapter triggers runs or reads run state through the SDK", () => {
@@ -93,11 +94,13 @@ describe("dispatch path", () => {
   });
 
   it("system jobs run only from the named delivery tasks; tenant tasks only through the tenant wrapper", () => {
-    expect(users(/\brunSystemJob\(/).filter((file) => !file.startsWith("platform/jobs/"))).toEqual(["jobs/trigger/main/delivery.ts"]);
+    // Step H6-F3: the MAIN system-task runner moved to one shared helper used by delivery.ts and provider-events.ts.
+    expect(users(/\brunSystemJob\(/).filter((file) => !file.startsWith("platform/jobs/"))).toEqual(["jobs/trigger/main/system.ts"]);
     // Step 7E.7-B: the one direct task outside the wrappers is the integration-only KMS diagnostic (no registry entry,
     // no schedule — tests/unit/jobs/integration-kms-diagnostic.test.ts).
-    expect(users(/\btask\(\{/)).toEqual(["jobs/trigger/define.ts", "jobs/trigger/integration/kms-worker-auth-diagnostic.ts", "jobs/trigger/integration/read-content-validation.ts", "jobs/trigger/integration/read-interactions-validation.ts", "jobs/trigger/main/delivery.ts"]);
-    expect(users(/\bschedules\.task\(/)).toEqual(["jobs/trigger/main/delivery.ts"]);
+    expect(users(/\btask\(\{/)).toEqual(["jobs/trigger/define.ts", "jobs/trigger/integration/kms-worker-auth-diagnostic.ts", "jobs/trigger/integration/read-content-validation.ts", "jobs/trigger/integration/read-interactions-validation.ts", "jobs/trigger/main/delivery.ts", "jobs/trigger/main/provider-events.ts"]);
+    // Step H6-F3: the provider-event router and purge are scheduled system tasks too (through the same runner).
+    expect(users(/\bschedules\.task\(/)).toEqual(["jobs/trigger/main/delivery.ts", "jobs/trigger/main/provider-events.ts"]);
     expect(codeOf("jobs/trigger/define.ts")).toMatch(/runTenantJob\(/);
     expect(codeOf("jobs/trigger/define.ts")).toMatch(/runTenantStepJob\(/);
     // Tenant tasks are declared only through the wrappers (Step 5D: connections.discover_assets).

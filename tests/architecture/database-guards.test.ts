@@ -517,7 +517,8 @@ describe("migration lint", () => {
     }
     const scopes = read("platform/db/scopes.ts") + read("platform/db/system-scope.ts");
     const switches = [...scopes.matchAll(/set local role ([a-z_]+)/g)].map((match) => match[1]);
-    expect(switches.sort()).toEqual(["app_system", "app_worker", "authenticated"]);
+    // Step H6-F3: the provider-signal scope switches to `authenticated` too (no claims, no workspace; 0022 receipt only).
+    expect(switches.sort()).toEqual(["app_system", "app_worker", "authenticated", "authenticated"]);
     expect(scopes).not.toMatch(/set local role \$\{/);
   });
 });

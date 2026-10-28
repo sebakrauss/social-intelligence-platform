@@ -31,7 +31,12 @@ export const RETRY_POLICIES = {
 } as const satisfies Record<string, RetryPolicy>;
 
 /** The only tasks that may run in system scope (named, reviewed system jobs). */
-export const SYSTEM_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_sweep"] as const;
+export const SYSTEM_TASKS = [
+  "outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_sweep",
+  // Step H6-F3: the provider-event inbox drain (routing, D-F1) and its 7-day retention. Both read system tables only and
+  // reach tenant rows exclusively through the reviewed 0022 definers.
+  "ingestion.route_provider_events", "ingestion.purge_provider_events",
+] as const;
 export type SystemTaskName = (typeof SYSTEM_TASKS)[number];
 
 /** Keyed concurrency: none, one key per workspace, or one key per value of a declared subject ID. */

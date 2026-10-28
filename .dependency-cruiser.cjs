@@ -415,9 +415,16 @@ module.exports = {
     {
       name: "system-scope-delivery-only",
       severity: "error",
-      comment: "System scope and outbox delivery state are reachable only from the outbox delivery service (no generic privileged helper).",
-      from: { pathNot: "^(platform/outbox/delivery\\.ts$|platform/db/|tests/)" },
+      comment: "System scope and outbox delivery state are reachable only from the outbox delivery service and — system scope only — the H6-F3 provider-event inbox tasks (no generic privileged helper).",
+      from: { pathNot: "^(platform/outbox/delivery\\.ts$|jobs/provider-events\\.ts$|platform/db/|tests/)" },
       to: { path: "^platform/db/(system-scope|outbox-delivery)\\.ts$" },
+    },
+    {
+      name: "outbox-delivery-state-only-in-delivery",
+      severity: "error",
+      comment: "Outbox delivery state stays the delivery service's alone, even for the other reviewed system-scope user.",
+      from: { path: "^jobs/provider-events\\.ts$" },
+      to: { path: "^platform/db/outbox-delivery\\.ts$" },
     },
     {
       name: "outbox-delivery-jobs-only",
@@ -657,7 +664,8 @@ module.exports = {
       name: "meta-app-config-web-composition-only",
       severity: "error",
       comment: "Step 7G-C: the Meta app configuration (App ID, login configuration ID, App Secret) belongs to the hosted web. Only the web's connection runtime (server/connections/runtime.ts, where the Meta adapter is composed from Step 7G-D) reads it; the jobs planes, app/, ui/, modules and provider adapters never reach it — adapters receive explicit values from the composition.",
-      from: { pathNot: "^(server/connections/runtime\\.ts|tests/unit/server/meta-app-config\\.test\\.ts)$" },
+      // Step H6-F3: the webhook receiver's configuration reuses the same App Secret (never a duplicate variable).
+      from: { pathNot: "^(server/connections/runtime\\.ts|server/webhooks/meta-config\\.ts|tests/unit/server/meta-app-config\\.test\\.ts)$" },
       to: { path: "^server/connections/meta-app-config\\.ts$" },
     },
 

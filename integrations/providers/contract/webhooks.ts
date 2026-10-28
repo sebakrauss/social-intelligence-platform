@@ -56,6 +56,25 @@ export interface WebhookParseResult {
 }
 
 /**
+ * A verified delivery as the provider webhook port returns it (Step H6-F3): the identifier-only hints plus the bounded
+ * delivery-level facts the receipt persists (design H6-F0 §5, D-F4). `rawBodyRetainable` is the adapter's decision; the
+ * HTTP layer honors it and never decides it again. No body, header, signature or secret is part of it.
+ */
+export interface VerifiedWebhookDelivery extends WebhookParseResult {
+  readonly provider: ProviderName;
+  /** The provider's top-level object class (e.g. Meta `page` · `instagram`). */
+  readonly object: string;
+  /** SHA-256 (lower-case hex) of the exact verified bytes: the delivery dedupe key. */
+  readonly bodySha256: string;
+  readonly entryCount: number;
+  readonly changeCount: number;
+  readonly unsupportedChangeCount: number;
+  readonly duplicateHintCount: number;
+  /** D-F4: whether the verified body may be stored (every change's field is allowlisted). */
+  readonly rawBodyRetainable: boolean;
+}
+
+/**
  * The closed routing classification of a hint (design H6-F0 §12), derived from the target kind and the change — never
  * an authority: a removal signal is an urgent re-read request, not a tombstone.
  */
@@ -122,5 +141,5 @@ export interface ProviderWebhookPort {
   /** The subscription handshake: the challenge to echo when the mode and the verify token match, else a reason. */
   verifyHandshake(query: WebhookHandshakeQuery): WebhookHandshakeResult;
   /** Verify (signature over the exact bytes) then parse into identifier-only hints. Fails closed with WebhookRejectedError. */
-  parseWebhook(request: WebhookRequest): Promise<WebhookParseResult>;
+  parseWebhook(request: WebhookRequest): Promise<VerifiedWebhookDelivery>;
 }

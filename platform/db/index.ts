@@ -17,6 +17,7 @@ export {
   ALLOWED_CLAIM_ROLES,
   ScopeError,
   parseDatabaseClaims,
+  withProviderSignalScope,
   withUserScope,
   withWorkspaceJobScope,
   type DatabaseClaims,

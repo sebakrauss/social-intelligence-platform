@@ -47,6 +47,8 @@ describe("onboarding surface (Step 7G-F3)", () => {
     expect(sourceFiles(["app"])).toEqual([
       "app/api/health/route.ts",
       "app/api/oauth/[provider]/callback/route.ts",
+      // Step H6-F3: the Meta webhook receiver (public; trusted by the provider signature, never a session).
+      "app/api/webhooks/meta/route.ts",
       "app/auth/callback/route.ts",
       "app/layout.tsx",
       "app/onboarding/page.tsx",

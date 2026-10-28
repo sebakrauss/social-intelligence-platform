@@ -131,6 +131,7 @@ describe("auth configuration", () => {
       "PROVIDER_META_CLIENT_ID=",
       "PROVIDER_META_CONFIG_ID=",
       "PROVIDER_META_CLIENT_SECRET=",
+      "PROVIDER_META_WEBHOOK_VERIFY_TOKEN=",
       // Step 5K: explicit deployment tier and job-runtime provider mode (staging_stub only for preview/staging).
       "APP_DEPLOYMENT_ENV=",
       "CAPABILITY_PROVIDER_MODE=",

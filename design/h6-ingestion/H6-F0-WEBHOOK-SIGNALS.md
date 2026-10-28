@@ -492,3 +492,77 @@ None of these starts before its own gate.
 | **D-F5 = B** | Signal budget | Signal-initiated runs: `max_operations = 10`, ≤ 6 runs/hour/connected account; manual/operator Sync unchanged at 40; exhaustion keeps coverage honest and marks pending, follow-up completes later; at the cap marks coalesce and defer, never discarded (§9, §13, cases 34/37/39). Revisit 10 only from LIVE evidence. |
 
 Everything else in this document stays as designed in F0.
+
+## 25. H6-F3 as implemented (authoritative; source only, not released)
+
+**Route.** `app/api/webhooks/meta/route.ts` (`/api/webhooks/meta`, Node runtime, `force-dynamic`), Meta-only, thin:
+it delegates to `server/webhooks/meta-receiver.ts`, composed by `server/webhooks/runtime.ts`. No generic provider route.
+
+**GET (handshake).** `searchParams.getAll` feeds the H6-F1 primitive, so a repeated parameter stays ambiguous:
+
+| Case | Status |
+|---|---|
+| subscribe + correct token | 200 `text/plain`, body = the challenge only |
+| wrong mode, missing or wrong token | 403, empty |
+| missing, duplicated or malformed parameter or challenge | 400, empty |
+| receiver not configured or configuration invalid | 503, empty |
+
+**POST (delivery).** Strict order, each step failing closed:
+1. Not configured → 503.
+2. Content type other than `application/json` → 415.
+3. Declared length invalid or above 1 MiB → 413, body never read.
+4. Bounded stream read, cancelled above 1 MiB → 413.
+5. H6-F1 `parseWebhook` over the exact bytes, with only `x-hub-signature-256` passed: signature failures → 401,
+   `body_too_large` → 413, any other envelope rejection → 400.
+6. One provider-signal transaction calling `system.record_provider_webhook`; any failure → 503, so Meta retries.
+7. 200 with an empty body. Only for `recorded` with new hints > 0, `after()` sends a best-effort nudge whose failure
+   is logged and swallowed. A duplicate or a zero-new-hint receipt never nudges.
+
+Every response carries `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, and no reason detail.
+The receiver never calls `request.json()`, never decodes or re-serializes the body, and reads no cookie or session.
+
+**Provider-signal scope.** `withProviderSignalScope` in `platform/db/scopes.ts`: the web login only (`assertKind`),
+then `set local role authenticated` (a fixed literal), with no claims and no workspace binding. Its only user is
+`server/webhooks/runtime.ts`. Under it only the receipt definer works: no tenant row is visible, the inbox and hints
+are unreadable, and routing, purge, mark dispatch and `request_reconciliation` are refused (DB suite).
+
+**Receipt adapter.** `recordProviderWebhook` in `modules/ingestion/persistence/provider-events-store.ts` maps the
+H6-F1 hints to the 0022 shape (`hint_key` = `eventId`). It passes the bytes only when the adapter's
+`rawBodyRetainable` is true (D-F4, never re-decided), and validates the definer output against the closed vocabulary.
+
+**Configuration boundary.** `server/webhooks/meta-config.ts` reads the App Secret through the existing web Meta app
+configuration plus the new web-only `PROVIDER_META_WEBHOOK_VERIFY_TOKEN` (printable ASCII, 16–256 characters). If
+either is missing the receiver is unavailable (503), with no bypass. An invalid token raises an error naming the
+variable only. Both jobs planes refuse the variable (`jobs/plane-environment.ts`); `.env.example` names it with no value.
+
+**Proxy.** `SESSIONLESS_PATHS = ["/api/webhooks/meta"]`, exact match only, checked after the forbidden-environment
+refusal. Every other path, including the OAuth callback and look-alike paths, keeps the session refresh.
+
+**MAIN tasks** (`jobs/trigger/main/provider-events.ts`, literal ids, `SYSTEM_DELIVERY_QUEUE`, both in `SYSTEM_TASKS`):
+
+| Task | Cron | Retry | Bound |
+|---|---|---|---|
+| `ingestion.route_provider_events` | `* * * * *` | transient | ≤ 500 due hints per run, one system transaction per hint |
+| `ingestion.purge_provider_events` | `*/15 * * * *` | single attempt | batches of 1 000, ≤ 5 per run (≤ 5 000) |
+
+Both run through `runSystemJob` with a payload built in the task (`schedulePayload`); the vendor payload, whether from
+the schedule or the nudge, is ignored. Overlapping router runs serialize on the definer's row lock, so a hint is routed
+once (DB suite: two concurrent runs over 20 hints give 20 rows). Outcomes are tallied over the closed vocabulary:
+routed, retry, unmapped, multi_org_limit, not_due, not_pending, not_found. A `multi_org_limit` count raises an
+error-level `webhook.route.multi_org_limit_alert`. Logs carry event names and counts only.
+
+**Nudge.** The web enqueues the router task with a system payload and dispatch key
+`ingestion.route_provider_events:<receipt id>` through the existing web job runtime.
+
+**Topology after F3 (source).** MAIN 10, INTEGRATION 7. `ingestion.process_signals` is NOT registered (H6-F4).
+
+**Release-order hazard.** Routing writes `ingestion.process_signals` outbox rows. Their consumer arrives in H6-F4, so
+F3 must never be released without F4: a routed row would otherwise fail as `unknown_task`. H6-F5 releases them
+together (MAIN 11).
+
+**VALIDATE before release (not resolved here):**
+- The web `TRIGGER_SECRET_KEY` scope must allow triggering `ingestion.route_provider_events`. It is documented as
+  restricted to `outbox.relay`. If it isn't widened, the nudge fails silently and the cron still drains.
+- Triggering a `schedules.task` by id from the SDK (the nudge) must be confirmed on the deployed Trigger version.
+- Edge or WAF rate limiting on the public route stays VALIDATE (§19).
+- The H6-F1 VALIDATE items are untouched.

@@ -86,3 +86,21 @@ export type {
   ReconciliationStore,
   ReconciliationWatermarkRecord,
 } from "./application/reconciliation-ports";
+export {
+  PROVIDER_EVENT_RUNTIME,
+  PURGE_PROVIDER_EVENTS_TASK,
+  RECEIPT_OUTCOMES,
+  ROUTE_OUTCOMES,
+  ROUTE_PROVIDER_EVENTS_TASK,
+  routerNudgeDispatchKey,
+  type ReceiptOutcome,
+  type RouteOutcome,
+} from "./domain/provider-events";
+export {
+  purgeExpiredProviderEvents,
+  routeDueProviderEvents,
+  type ProviderEventDependencies,
+  type ProviderEventStore,
+  type PurgeSummary,
+  type RouteSummary,
+} from "./application/provider-events";

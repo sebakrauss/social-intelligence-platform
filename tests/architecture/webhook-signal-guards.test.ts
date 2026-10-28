@@ -20,14 +20,6 @@ const CONTRACT = "integrations/providers/contract/webhooks.ts";
 const WEBHOOK_MODULES = [CONTRACT, META, "integrations/providers/simulator/webhooks.ts"];
 const PRODUCTION = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "jobs", "db", "tools"];
 const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1] ?? "");
-const exists = (relative: string): boolean => {
-  try {
-    readdirSync(path.join(REPOSITORY_ROOT, relative));
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 describe("H6-F1: the Meta webhook module is pure", () => {
   it("imports only node:crypto and the provider contract (not even the domain directly: the adapter rule)", () => {
@@ -87,9 +79,10 @@ describe("H6-F1: hints are identifiers only", () => {
       const code = codeOf(file).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
       expect(code, file).not.toMatch(/InteractionSourceFact|removed_at_source|explicit_provider_signal|direct_fetch_confirmed|removalBasis|availability|visibility|coverage|watermark|synced_through|ingestInteractionFact|confirmStoredInteraction/);
     }
-    // No module outside the three webhook modules consumes the Meta parser yet (the receiver is H6-F3).
+    // The Meta parser's consumers: the read port (fails closed without the secret) and, since H6-F3, the web receiver's
+    // composition — the only place the webhook port is built from the web's secrets.
     const consumers = sourceFiles(PRODUCTION).filter((file) => /providers\/meta\/webhooks|parseMetaWebhook|createMetaWebhookPort|verifyMetaWebhookHandshake/.test(codeOf(file)) && file !== META);
-    expect(consumers).toEqual(["integrations/providers/meta/read-port.ts"]);
+    expect(consumers).toEqual(["integrations/providers/meta/read-port.ts", "server/webhooks/runtime.ts"]);
     expect(codeOf("integrations/providers/meta/read-port.ts")).toMatch(/if \(secret === undefined\) return Promise\.reject\(new WebhookRejectedError\("invalid_signature"\)\);/);
   });
 
@@ -101,16 +94,21 @@ describe("H6-F1: hints are identifiers only", () => {
   });
 });
 
-describe("H6-F1: scope of this gate", () => {
-  it("no webhook route, no migration 0022, no new task, no new environment variable", () => {
-    expect(exists("app/api/webhooks")).toBe(false);
-    for (const file of sourceFiles(["app", "server"])) expect(codeOf(file), file).not.toMatch(/webhooks\/|parseWebhook|x-hub-signature|hub\.challenge/);
+describe("H6-F1 → H6-F3: scope", () => {
+  it("one Meta-only route, no further migration, exactly the two F3 system tasks, the verify token web-only", () => {
+    // H6-F3: exactly one webhook route, Meta-only (no generic provider dispatch).
+    expect(sourceFiles(["app"]).filter((file) => file.startsWith("app/api/webhooks/"))).toEqual(["app/api/webhooks/meta/route.ts"]);
+    for (const file of sourceFiles(["app", "server"]).filter((f) => !f.startsWith("server/webhooks/") && f !== "app/api/webhooks/meta/route.ts")) {
+      expect(codeOf(file), file).not.toMatch(/parseWebhook|x-hub-signature|hub\.challenge/);
+    }
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    // H6-F2 adds exactly 0022 (persistence only); still no route and no task (H6-F3/F4).
+    // H6-F2 added exactly 0022; H6-F3 adds none.
     expect(migrations.at(-1)).toBe("0022_provider_webhook_signals.sql");
-    expect(PRODUCTION_TASKS.tasks.map((t) => t.name).filter((n) => /webhook|provider_event|process_signal|purge/.test(n))).toEqual([]);
-    expect(RELEASE_PLANES.map((p) => [p.plane, p.expectedTasks])).toEqual([["integration", 7], ["main", 8]]);
-    for (const file of sourceFiles(PRODUCTION)) expect(codeOf(file), file).not.toMatch(/PROVIDER_META_WEBHOOK_VERIFY_TOKEN/);
+    expect(PRODUCTION_TASKS.tasks.map((t) => t.name).filter((n) => /webhook|provider_event|process_signal|purge/.test(n)).sort()).toEqual(["ingestion.purge_provider_events", "ingestion.route_provider_events"]);
+    expect(PRODUCTION_TASKS.get("ingestion.process_signals")).toBeUndefined();
+    expect(RELEASE_PLANES.map((p) => [p.plane, p.expectedTasks])).toEqual([["integration", 7], ["main", 10]]);
+    // The verify token: read by the web receiver's config only; refused by both jobs planes.
+    expect(sourceFiles(PRODUCTION).filter((file) => /PROVIDER_META_WEBHOOK_VERIFY_TOKEN/.test(codeOf(file))).sort()).toEqual(["jobs/plane-environment.ts", "server/webhooks/meta-config.ts"]);
     // The App Secret still reaches only the web's Meta app configuration; no jobs-plane code names the webhook secret.
     expect(sourceFiles(["jobs"]).filter((file) => /webhookSecret/.test(codeOf(file)))).toEqual([]);
     expect(sourceFiles(PRODUCTION).filter((file) => /webhookSecret/.test(codeOf(file)))).toEqual(["integrations/providers/meta/read-port.ts"]);

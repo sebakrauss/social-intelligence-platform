@@ -48,7 +48,7 @@ describe("the closed release table", () => {
       // Step H6-C3: + ingestion.reconcile_slice (INTEGRATION); + ingestion.reconcile_account, interactions.observed (MAIN).
       // Step H6-E: + ingestion.confirm_interaction (INTEGRATION).
       ["integration", "trigger.integration.config.ts", 7],
-      ["main", "trigger.config.ts", 8],
+      ["main", "trigger.config.ts", 10],
     ]);
     expect(Object.isFrozen(RELEASE_PLANES)).toBe(true);
   });
