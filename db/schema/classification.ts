@@ -148,6 +148,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "owner_reconciliation_request INSERT app_owner",
       // 0019 (G6): RESTRICTIVE — the web can't append the reconciliation topics itself.
       "no_direct_reconciliation_routing INSERT authenticated",
+      // 0021 (H6-E1): RESTRICTIVE — the complete inventory of internal (definer- and job-runtime-only) topics.
+      "no_direct_internal_topics INSERT authenticated",
     ],
     privileges: {
       authenticated: ["INSERT"],
@@ -425,7 +427,7 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
  * The only RESTRICTIVE policies (every other policy is permissive). A restrictive policy narrows what the listed roles'
  * permissive policies allow; flipping one either way changes isolation, so the set is pinned exactly.
  */
-export const RESTRICTIVE_POLICIES: readonly string[] = ["system.outbox no_direct_move_routing", "system.outbox no_direct_reconciliation_routing"];
+export const RESTRICTIVE_POLICIES: readonly string[] = ["system.outbox no_direct_move_routing", "system.outbox no_direct_reconciliation_routing", "system.outbox no_direct_internal_topics"];
 
 /** EXECUTE grants per function (non-owner grantees). Every function in an application schema is listed. */
 export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]>> = {

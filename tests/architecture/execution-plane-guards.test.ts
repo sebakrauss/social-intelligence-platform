@@ -138,15 +138,16 @@ describe("the persisted plane selects the runtime; no cross-plane fallback", () 
   it("system.outbox_runs stays plane-free; the plane lives on the logical delivery (0011); no later migration touches either", () => {
     expect(Object.keys(outboxRuns)).not.toContain("executionPlane");
     // Later migrations (0012+, e.g. Step 7G-F4C's attempt invalidation) may exist, but none may touch the outbox runs or the plane.
-    // H6-C3b (0019) may only APPEND to system.outbox (an insert policy, a restrictive insert policy, one INSERT) — never
-    // alter, update, delete, grant on it, nor name the plane.
+    // H6-C3b (0019) may only APPEND to system.outbox (an insert policy, a restrictive insert policy, one INSERT), and
+    // H6-E1 (0021) only adds a restrictive insert policy — never alter, update, delete, grant on it, nor name the plane.
     const later = readdirSync(path.join(root, "db/migrations")).filter((file) => file.endsWith(".sql") && file >= "0012");
     for (const file of later) {
       const text = readFileSync(path.join(root, "db/migrations", file), "utf8");
       expect(text, file).not.toMatch(/outbox_runs|execution_plane/);
-      const uses = [...text.matchAll(/^.*\bsystem\.outbox\b.*$/gm)].map((match) => match[0].trim());
-      if (file !== "0019_reconciliation_request.sql") expect(uses, file).toEqual([]);
-      else for (const use of uses) expect(use, file).toMatch(/^(create policy [a-z_]+ on system\.outbox (as restrictive )?for insert to (app_owner|authenticated)|insert into system\.outbox \()/);
+      const uses = [...text.matchAll(/^.*\bsystem\.outbox\b.*$/gm)].map((match) => match[0].trim()).filter((line) => !line.startsWith("--"));
+      if (file === "0019_reconciliation_request.sql") for (const use of uses) expect(use, file).toMatch(/^(create policy [a-z_]+ on system\.outbox (as restrictive )?for insert to (app_owner|authenticated)|insert into system\.outbox \()/);
+      else if (file === "0021_outbox_internal_topics.sql") expect(uses, file).toEqual(["create policy no_direct_internal_topics on system.outbox as restrictive for insert to authenticated"]);
+      else expect(uses, file).toEqual([]);
     }
   });
 });

@@ -299,3 +299,39 @@ unconfirmed.
 policy, so a member could append `ingestion.confirm_interaction` directly. The impact is bounded: own workspace only,
 everything re-derived server-side, and no removal possible on Meta. Still, a migration gate adding the topic to a
 restrictive member policy should precede the H6-E release.
+
+## H6-E1 — member outbox topic provenance (migration 0021; source only, not applied)
+
+**Inventory (derived from the repository, pinned by `tests/architecture/outbox-member-topics-guards`).** The web
+(`authenticated`, 0004 `append_own`) appends exactly two topics as the member, through two message builders:
+`connections.discover_assets` (completed exchange) and `capability.evaluate_account` (link, save_selection,
+re-evaluation). Every other tenant task of `PRODUCTION_TASKS` is internal — its producer is a reviewed definer
+(`connections.route_move_step` for the three Move topics, 0010; `ingestion.request_reconciliation` for
+`ingestion.reconcile_account`, 0019) or the job runtime (`ingestion.reconcile_slice`, `interactions.observed`,
+`ingestion.confirm_interaction`). System-scope tasks (`outbox.*`) are never outbox topics: the relay resolves a row's
+topic as a tenant task only (`unknown_task` otherwise).
+
+**Finding.** Before 0021 a member could append `ingestion.confirm_interaction` directly: 0010 and 0019 removed their own
+topics from `append_own`, but H6-E added a job-runtime-only topic without a policy.
+
+**TL decision: complete internal inventory + closure guard (not an allowlist).** 0021 creates ONE restrictive INSERT
+policy for `authenticated`, `no_direct_internal_topics`, naming all seven internal topics (overlapping 0010 and 0019 on
+purpose, so one policy is the auditable inventory). An exact SQL allowlist was rejected because the permanent suites
+(T-27, `persistence`, `moves`) exercise the generic member append with synthetic topics through the real web pipeline;
+closing the class is the guard's job instead: every tenant task registered without being a member topic must appear in
+0021, or CI fails. The worker (`append_bound_workspace`), `app_owner` (owner policies) and `app_system` are untouched;
+no row is read or rewritten; no topic, payload or runtime behavior changes.
+
+**Proven on the real database (`tests/db/suites/outbox-member-topics`).** Members still append both member topics (and
+a synthetic one) into their bound workspace; they cannot append the confirmation topic in the trusted producer's exact
+shape, nor any other internal topic, nor anything cross-workspace, cross-organization or as another user. The H6-E
+producer (`enqueueConfirmation`, worker scope) still appends its IDs-only row — system initiator, exactly
+`connected_account_id` + `interaction_id` — and the real relay dispatches it once to INTEGRATION with an IDs-only payload.
+
+**Residual (unchanged, documented).** `append_own` binds `workspace_id` to the sealed workspace and `initiator_user_id`
+to the verified claims, but does not check `organization_id` on a member's own-workspace row; the relay derives the
+tenant from `workspace_id`, so the column is metadata there. Out of scope here.
+
+**Release order.** Apply 0021 (H6-E2) before the paired Trigger release that carries `ingestion.confirm_interaction`
+(INTEGRATION 7 / MAIN 8). On Meta the released confirmation still removes nothing until a LIVE validation gate
+establishes an authoritative not-found.

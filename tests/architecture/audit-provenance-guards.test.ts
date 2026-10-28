@@ -138,7 +138,9 @@ describe("H6-C3d: 0020's scope", () => {
     expect(sql.toLowerCase()).not.toMatch(/\b(insert into|update|delete from|truncate|alter table|create table|drop|audit_events_action_check)\b/);
   });
 
-  it("0020 is the ledger's last migration (no 0021)", () => {
-    expect(migrationNames().at(-1)).toBe(M0020);
+  it("no later migration touches audit: 0021 (H6-E1) is the ledger's last and is an outbox policy only", () => {
+    const later = migrationNames().filter((name) => name > M0020);
+    expect(later).toEqual(["0021_outbox_internal_topics.sql"]);
+    for (const name of later) expect(code(name).toLowerCase(), name).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
   });
 });
