@@ -1,0 +1,458 @@
+# H6-F0 — Webhook signal ingestion (design only)
+
+Status: **frozen** (Step H6-F0 design; TL decisions D-F1 … D-F5 frozen in H6-F0C, §24). No route, migration, task,
+subscription, provider call or deployment is part of F0/F0C. Source authority at design time: `9097f75` (Trigger
+20261028.1 on both planes; web `da86455`; dev-v2 ledger 21).
+
+Authoritative inputs: TA §14.1–§14.3, §38.8, §40, §61; CLAUDE.md §5, §10, §13; H6 TL decisions 1–6 (README);
+`modules/interactions/domain/vocabulary.ts` (`webhook_relist`); `modules/ingestion/domain/policy.ts`
+(`PROVIDER_EVENT_INBOX_POLICY`); H6-E (`ingestion.confirm_interaction`, Meta not-found unconfirmed); 0021.
+
+**Principle (unchanged):** `webhook = signal` · `provider re-read = authority` · `reconciliation = completeness`.
+
+---
+
+## 1. What already exists (do not duplicate)
+
+| Primitive | Where | Use in H6-F |
+|---|---|---|
+| Webhook hint contract: `WebhookRequest` (raw body + lower-cased headers), `WebhookEventHint` (IDs only, `change` is a hint), `WebhookParseResult`, `WebhookRejectedError` (`missing_signature` · `invalid_signature` · `stale_timestamp` · `malformed_payload`) | `integrations/providers/contract/webhooks.ts` | Reused; extended (§6) |
+| `parseWebhook` on `ProviderReadPort` | contract `read-port.ts`; Meta + staging-stub refuse (`invalid_signature`) | Moves to a web-composed webhook port (§6); read ports keep refusing |
+| Simulator signer/parser (HMAC-SHA256 over `<ts>.<body>`, tolerance, fail-closed) | `integrations/providers/simulator/webhooks.ts` | Simulator acceptance (its own scheme; Meta's is separate) |
+| `subscribe` / `unsubscribe` operations, `manage_webhooks` capability name | contract read port / errors | H6-G only |
+| Inbox policy: raw verified body only in `provider_event_inbox`, ≤ 7 days, never copied | `PROVIDER_EVENT_INBOX_POLICY` (TL decision 3) | Enforced by the 0022 inbox |
+| Source-fact mechanism `webhook_relist` = `listInteractions · listed` ("the content is re-listed, never trusted"); CHECK already in 0017 | vocabulary / 0017 | The new-interaction path (§9) — no new mechanism |
+| Removal basis `explicit_provider_signal` ("a verified webhook removal") | vocabulary / `state.ts` | **Not produced by H6-F** (§11) |
+| Per-content watermarks and coverage (`account × capability × content_item`) | 0017, 0018 | Content-targeted relist fits them unchanged |
+| `ingestion.confirm_interaction` (stored re-read, one read per attempt) | H6-E | Change/removal path (§10) |
+| `ingestion.provider_pause` switch | `platform/flags/registry.ts` | Honored by processing |
+| Meta App Secret `PROVIDER_META_CLIENT_SECRET` — **web-only**; both jobs planes refuse it | `server/connections/meta-app-config.ts`, `jobs/plane-environment.ts` | Meta signs webhooks with the App Secret → verification can only live in WEB |
+| Post-commit relay nudge (best effort; sweeper fallback) | `platform/outbox/nudge.ts` | Pattern reused for the router nudge |
+| M-01: a content-bearing asset is ACTIVE in at most one workspace **per organization** | `connected_accounts_m01_active_content_asset` | Mapping (§7) |
+
+Missing today: any webhook route (`app/api` has only health and OAuth callback), raw-body size handling, edge or
+application rate limiting, an inbox table, a routing primitive from provider asset to account, a retention job of any
+kind, and Meta's own signature/handshake code. The proxy (`proxy.ts`) matches every route and refreshes session
+cookies; a webhook route must keep the forbidden-environment check but skip the cookie refresh.
+
+Constraints discovered: the outbox relay dispatches **tenant tasks only** (`registry.tenant(row.topic)` →
+`unknown_task`); the web login can `SET ROLE` only to `authenticated`; system scope covers system tables only
+(CLAUDE.md §5); TA §40 requires the receiver to read **no tenant data**.
+
+---
+
+## 2. Authority model (frozen)
+
+A webhook may only say "something about this provider asset/content/interaction may have changed". It never creates
+interaction text, author data, visibility, availability/removal, conversation state, coverage, watermarks or
+capability. Every canonical change from webhook-triggered work comes from an existing provider re-read:
+
+| Signal leads to | Provider read | Fact provenance |
+|---|---|---|
+| Content relist (new interactions) | `listInteractions` (INTEGRATION slice) | `webhook_relist · listInteractions · listed` |
+| Account reconciliation (new content) | existing planner + slices | `reconciliation · …` (unchanged) |
+| Stored confirmation (change/removal of a canonical interaction) | `getInteraction` stored (H6-E) | `stored_reread · getInteraction · stored` |
+
+H6-F adds no source-fact mechanism, no removal basis, no coverage state and no capability.
+
+---
+
+## 3. Topology
+
+```
+Meta ──HTTPS──▶ WEB  POST /api/webhooks/meta
+                 1 route known? · 2 size/type caps · 3 X-Hub-Signature-256 over RAW bytes (App Secret, constant time)
+                 4 parse (whitelisted IDs only) · 5 one tx: system.record_provider_webhook(...)  (definer, no claims)
+                 6 200 ── post-commit best-effort nudge ─▶ MAIN ingestion.route_provider_events
+                                                              (also cron every minute: the durable fallback)
+MAIN  ingestion.route_provider_events   (system scope; drains PENDING hints in bounded batches)
+        definer ingestion.route_provider_hint(hint) → ACTIVE account(s) for (platform, provider asset)
+        → per (hint, account): IDs-only outbox row  ingestion.process_signals {connected_account_id, provider_event_hint_id}
+MAIN  ingestion.process_signals          (workspace scope; per account serial; DB only, no provider)
+        re-derives the hint for the BOUND account · gates · upserts a signal mark · requests at most one run/confirmation
+INTEGRATION  ingestion.reconcile_slice (existing; relist plan → webhook_relist)  ·  ingestion.confirm_interaction (H6-E)
+MAIN  ingestion.purge_provider_events    (system scope; cron; deletes inbox + hints older than 7 days)
+```
+
+The WEB holds no provider credential and makes no provider call; MAIN holds none either; only the existing
+INTEGRATION tasks read the provider.
+
+**D-F1 = A (frozen).** `system.provider_event_inbox` is deliberately the **durable queue** of this system-scoped
+workflow: the receiver commits the receipt and dedupe, answers 200, then nudges the MAIN router best-effort; the MAIN
+cron/sweeper guarantees eventual drain. The tenant outbox relay is **not** extended to route provider receipts (it
+dispatches tenant tasks only), and the HTTP receiver never waits for routing or provider re-reads.
+
+---
+
+## 4. HTTP receipt (WEB)
+
+Route `app/api/webhooks/[provider]/route.ts` (TA §40 path) → thin → `server/webhooks/route.ts`. Node runtime,
+`dynamic = "force-dynamic"`, every response `Cache-Control: no-store`, empty body except the handshake.
+
+**GET — subscription handshake.** Accept only `hub.mode=subscribe`, `hub.verify_token` equal (constant time) to
+`PROVIDER_META_WEBHOOK_VERIFY_TOKEN`, and `hub.challenge` matching `^[A-Za-z0-9_-]{1,128}$`. Answer `200 text/plain`
+with the challenge; anything else `403`. No database access, nothing logged but the outcome.
+
+**POST — delivery**, in this order (each step fails closed before the next, cheapest first):
+
+| # | Check | Failure |
+|---|---|---|
+| 1 | Provider known (`meta`) and receiver configured (App Secret + verify token present) | `404`, body never read |
+| 2 | `content-type: application/json`; `content-length` ≤ `MAX_WEBHOOK_BODY_BYTES` (1 MiB); stream read with the same hard cap (chunked bodies included) | `415` / `413` |
+| 3 | `x-hub-signature-256` = `sha256=` + 64 hex; HMAC-SHA256(App Secret, **exact received bytes**) compared with `timingSafeEqual` on equal-length buffers. The SHA-1 `x-hub-signature` is never accepted | `401`; nothing stored; metric `webhook.rejected{reason}` |
+| 4 | JSON parse (only now); envelope `{ object ∈ {page, instagram}, entry[] }`; ≤ 1000 changes | `400` (`malformed_payload`) |
+| 5 | Whitelisted extraction into hints (§6); unknown fields/items counted, never guessed | — (counted) |
+| 6 | One transaction: `system.record_provider_webhook(...)` | `503` (Meta retries) |
+| 7 | `200` | — |
+
+**What must succeed before 2xx:** signature + envelope + the committed receipt (or a recognized duplicate). The
+response never waits for routing, a provider read, ingestion, conversations, AI or notifications. A database failure is
+`503` (a 200 would lose the signal; Meta's retry is the recovery). The router nudge is after commit and best effort.
+
+**Logging:** reason codes, body-length bucket, hint counts, receipt id digest. Never the body, a header value, the App
+Secret, the verify token, comment text or author names/ids.
+
+**Secrets:** the App Secret is opened only through `readMetaAppConfig` (`SecretValue`) and `expose()`d only inside the
+HMAC call of `integrations/providers/meta/webhooks.ts`. New web-only secret `PROVIDER_META_WEBHOOK_VERIFY_TOKEN`
+(class secret; added to `META_APP_CONFIG_VARIABLES`'s receiver configuration and to the jobs planes' refusal list).
+Separate Meta app per environment (TA §40, §51).
+
+**Trust:** the route needs no user session; its trust is the provider signature. No workspace, organization, account,
+user or role is ever read from the query or body — they are derived server-side, later, in MAIN (§7).
+
+**Proxy:** `/api/webhooks/` keeps `rejectForbiddenWebEnvironment` and skips `refreshSessionCookies`.
+
+**Database scope:** a new narrow helper `withProviderSignalScope(web, work)` — web login → `SET LOCAL ROLE authenticated`
+(fixed literal, R3), **no claims, no workspace binding** — whose only use is the record definer. The definer refuses
+(`42501`) when `auth.uid()` or `app.current_workspace()` is set, so no member transaction can record a receipt.
+
+---
+
+## 5. Raw payload, retention and cleanup (frozen; TL decision 3 + TA §40)
+
+- **D-F4 = A (frozen).** The verified raw body (`bytea`, ≤ 1 MiB, byte-exact) is stored **only** in
+  `system.provider_event_inbox`, only after the signature validated, and **only when every change's `field` is in the
+  receiver allowlist** (`feed` for `page`, `comments` for `instagram`). A delivery carrying any disallowed field (for
+  example Messenger `messages`, which S9 forbids) persists **no raw body**: only the approved bounded metadata, plus the
+  approved hints extracted in memory when they independently satisfy the whitelist. The disallowed content is never
+  persisted — unsupported fields are never a shadow message archive. No index touches the body; no member SELECT; no
+  copy into tenant tables, job payloads or logs.
+- Never copied into hints, marks, outbox rows, job payloads, logs, analytics, error reports or diagnostics
+  (`forbiddenCopies`).
+- **Retention: 7 days for everything webhook-derived**: inbox rows (body included), hint rows and signal marks. Nothing
+  else survives: after 7 days what remains is the canonical facts produced by re-reads (their normal lifecycle), the
+  runs/slices/coverage/watermarks of webhook-triggered runs (attributed by `plan` + system initiator), and aggregate
+  metrics. 7 days exceeds Meta's retry window (VALIDATE: documented as ~36 h), so dedupe stays effective.
+- Cleanup: MAIN system cron `ingestion.purge_provider_events` (every 15 min, bounded batches, definer
+  `system.purge_provider_events(before, limit)`); marks expire through `ingestion.process_signals` (tenant side).
+  TA-Q-11 stays VALIDATE for production; the 7-day value is the policy constant, configurable per environment.
+
+---
+
+## 6. Provider adapter (Meta, pure)
+
+`integrations/providers/meta/webhooks.ts`: `verifyMetaHandshake(query, verifyToken)` and
+`parseMetaWebhook(appSecret, request) → WebhookParseResult`, exposed through a new contract
+`ProviderWebhookPort { verifyHandshake, parseWebhook }` composed **in the web** (the read port is integration-only;
+its `parseWebhook` keeps refusing). Contract additions to `WebhookEventHint`: `parent: ProviderObjectRef<"interaction"> | null`,
+`field` and `item` (closed enums). Extraction is a whitelist: provider object ids, verb, field/item, times. Text
+(`message`, `text`), author (`from.id`, `from.name`, `username`) and any other value are never read.
+
+| Meta field (VALIDATE all shapes) | Extracted | Hint |
+|---|---|---|
+| `page` · `feed` · `item=comment` · `verb ∈ add, edited, remove, hide, unhide` | `entry.id` (Page), `comment_id`, `post_id`, `parent_id`, `entry.time` | target interaction; `parent` when `parent_id ≠ post_id` (reply) |
+| `page` · `feed` · `item ∈ post, status, photo, video` · `verb=add` | `entry.id`, `post_id`, `entry.time` | target content, `created` |
+| `page` · `feed` · `item=post…` · `verb ∈ edited, remove` | as above | target content, recorded only |
+| `instagram` · `comments` | `entry.id` (IG professional account), `value.id`, `media.id`, `parent_id`, `entry.time` | target interaction `created` (reply when `parent_id`) |
+| anything else (`reaction`, `share`, `live_comments`, `mentions`, `messages`, …) | nothing | ignored, counted |
+
+Meta sends **no delivery id** and **no timestamp header** (VALIDATE): `deliveryId = null`, replay protection is dedupe
+plus an entry-age bound (entries with `time` outside `[now − 7 d, now + 5 min]` → `STALE`, counted).
+
+---
+
+## 7. Account mapping (MAIN; frozen)
+
+`(platform from object, provider asset id = entry.id)` → `connections.connected_accounts` with `status = 'ACTIVE'`,
+`asset_class = 'content_bearing'`, same platform and `provider_asset_id`. Facebook: the Page id. Instagram: the
+professional account id (`instagram_business_account`, as discovery stores it; VALIDATE that webhooks carry the same).
+
+- Done by the system router through definer `ingestion.route_provider_hint(hint_id)` (EXECUTE `app_system` only): it
+  reads accounts by asset identity, writes only IDs-only outbox rows, and returns counts — never tenant data.
+- Zero matches → `RETRYABLE` with backoff (1, 5, 15 min; activation races) → `UNMAPPED` (terminal) after 3 attempts.
+- **D-F2 = A with no partial fan-out above the cap (frozen).** Several matches can only be different organizations
+  (M-01). For **1..5** legitimate ACTIVE matches the router fans out to **all** of them; each tenant independently
+  re-derives workspace, connected account, connection, capability and (later) credential authority — no cross-tenant
+  canonical sharing. For **> 5** matches the hint is classified **`MULTI_ORG_LIMIT`** (terminal): no tenant processing
+  is created, the receipt/hint stays operationally visible within retention, a metric and alert are emitted, and the
+  mapping fails closed until the configuration is investigated. Query ordering never decides which tenants receive a
+  provider event — the choice is all or none. Pinned by simulator cases 27 and 36.
+- At processing, `ingestion.provider_event_hint(hint_id)` (EXECUTE `app_worker`) returns the hint **only** if its
+  asset is the bound workspace's ACTIVE account — a move, unlink or removal between routing and processing yields
+  `SKIPPED_ACCOUNT_INACTIVE`, never a cross-workspace action.
+
+---
+
+## 8. Deduplication and ordering
+
+| Level | Key | Effect of a duplicate |
+|---|---|---|
+| Delivery | `body_sha256` unique | `record` returns `duplicate`; 200; nothing new |
+| Hint | `hint_key` = SHA-256(`v1` · provider · object · asset · field · item · verb · target · parent · `entry.time`) unique | row not inserted; re-batched retries collapse |
+| Processing | dispatch key `ingestion.process_signals:{hint}:{account}` (outbox unique) | relay duplicate absorbed |
+| Provider work | one PENDING mark per (account, kind, target) + one open run per account (0018) + confirmation coalescing key | bursts collapse |
+
+Never random UUIDs, `received_at` or raw-body equality. Distinct edits of one comment are distinct hints, coalesced by
+marks.
+
+Ordering is never trusted: a reply hint before its parent → content relist reads both (H6-A1 placeholder rule if
+needed); remove before create → confirmation of a non-canonical target is skipped and the relist finds whatever
+exists; an edit after a newer re-read → the stored re-read applies the provider's current state, and the H6-A1 stale
+rules keep history. Hint times only order diagnostics.
+
+---
+
+## 9. New-interaction signal path (D-F3 = A, frozen)
+
+Account reconciliation **cannot** serve this alone: its listing slice reads one page from the floor date and at most
+`contentItemsPerRun` (10) contents, so a comment on an older post would never be read. The frozen vocabulary already
+names the answer — `webhook_relist`: re-list the content.
+
+**Relist plan** (frozen): `ingestion.reconciliation_runs.plan ∈ {account, relist}`. A relist run has no listing
+slice; its planner creates `content_interactions` slices for the account's PENDING relist marks (≤ 10, oldest first),
+with the existing windows (per-content watermark − overlap → run start), coverage and conversation semantics. Facts
+carry `webhook_relist`. Only **canonical** content of the mapped account is relisted (ownership was established by an
+earlier listing); a hint naming unknown content raises an **account** mark instead (the newest content is what listing
+finds) and counts `signal.content_not_canonical` — an honest, measured gap. No content row is ever fabricated from
+webhook data.
+
+**Signal budget (D-F5 = B, frozen).** Every run requested from webhook signals — relist or account — is requested with
+`max_operations = 10` (`SIGNAL_MAX_OPERATIONS`, within the 0019 CHECK 1..40); manual/operator Sync keeps its ordinary
+40. Ten operations are an initial bounded authority, not a completeness claim. When a signal-driven traversal exhausts
+its budget: slices end `ABANDONED_BUDGET` exactly as today, coverage stays honest (`UNKNOWN / TRAVERSAL_INCOMPLETE`
+for what was not traversed), the pending marks are **not** satisfied (only a slice that reached the provider's end of
+pages satisfies them, §13), and the close hook requests the follow-up run that completes the traversal later. Budget
+exhaustion is never zero interactions. Revisit `10` only from LIVE operational evidence (TA-Q-32).
+
+Arrival: a relisted fact created after its content's epoch arrives as `realtime`; first traversals and pre-epoch items
+stay `backfill` (H6-C1 rule), so forward-only automation is never fed history.
+
+---
+
+## 10. Change and removal signal paths (H6-E integration)
+
+- `edited`, `hide`, `unhide` of a **canonical** interaction → `ingestion.confirm_interaction` (stored re-read applies
+  text versions and visibility through the one canonical path). Of a non-canonical interaction → relist mark.
+- `remove` of a canonical interaction → **urgent confirmation, never a tombstone.** On Meta the stored re-read's
+  not-found (100/33) stays `unconfirmed` → `PROVIDER_CONTRACT_AMBIGUOUS` → no change. The signal raises urgency only;
+  two ambiguous indications are not authority. Non-canonical target → recorded, nothing requested.
+- Coalescing: confirmation requests from signals use dispatch key
+  `ingestion.confirm_interaction:{interaction}:{5-minute bucket}` (an optional coalescing key on the H6-E producer;
+  existing callers keep their per-request key; nothing else in H6-E changes).
+- Instagram: no edit/remove webhooks are assumed (VALIDATE). An IG reply hint is never confirmed or relisted.
+
+---
+
+## 11. Removal authority (frozen)
+
+H6-F never produces `explicit_provider_signal` and never writes `removed_at_source`. The domain vocabulary admits "a
+verified webhook removal" as a basis; using it would require a separate validation gate proving Meta's `remove` verb
+semantics and an explicit TL decision. A guard pins that no webhook code names the basis.
+
+---
+
+## 12. Event classification matrix
+
+R = recognized · I = enough identifiers to route · C = targeted confirmation · L = content relist · A = account
+reconciliation · S = stored only · X = ignored after metrics.
+
+| Class (Meta) | R | I | C | L | A | S | X |
+|---|---|---|---|---|---|---|---|
+| FB comment created | ✓ | ✓ | – | ✓ (canonical content) | ✓ (unknown content) | ✓ | – |
+| FB reply created | ✓ | ✓ | – | ✓ | ✓ (unknown content) | ✓ | – |
+| FB comment/reply edited | ✓ | ✓ | ✓ canonical | ✓ non-canonical | – | ✓ | – |
+| FB comment/reply hidden / unhidden | ✓ | ✓ | ✓ canonical | ✓ non-canonical | – | ✓ | – |
+| FB comment/reply removed | ✓ | ✓ | ✓ canonical (urgent; never tombstone) | – | – | ✓ | non-canonical |
+| FB content created | ✓ | ✓ | – | – | ✓ | ✓ | – |
+| FB content edited / removed | ✓ | ✓ | – | – | – | ✓ | ✓ (no content-state model in H6) |
+| IG comment created | ✓ | ✓ | – | ✓ canonical content | ✓ unknown content | ✓ | – |
+| IG reply (any) | ✓ | ✓ | – | – | – | ✓ | ✓ `SKIPPED_CAPABILITY` (`REPLIES_NOT_READ`) |
+| Account / subscription change (deauthorize, permissions) | – | – | – | – | – | – | H6-G |
+| Unknown / unsupported field or item | – | – | – | – | – | metadata only | ✓ |
+
+---
+
+## 13. Coalescing (frozen; budget and cap per D-F5 = B)
+
+Tenant table `ingestion.signal_marks`: one **PENDING** mark per (account, kind ∈ {relist, account}, content item or
+null), with `first_signal_at`, `last_signal_at`, `signal_count`.
+
+1. A signal upserts its mark (count + last time). 30 signals for one post = one mark.
+2. No open run → request one run (system initiator, plan from the marks). An open run → nothing (the mark waits).
+3. A content slice that reaches the provider's end of pages, in a run started at `S`, **satisfies** (deletes) the marks
+   of that content whose `last_signal_at + 120 s ≤ S` (skew margin). Later signals keep the mark PENDING.
+4. **Close hook** (same transaction as the run's close): PENDING marks left → request exactly one follow-up run.
+5. Caps (frozen): ≤ 1 open run per account (0018); ≤ **6** signal-requested runs per hour per connected account
+   (`SIGNAL_RUNS_PER_ACCOUNT_PER_HOUR`), each with `max_operations = 10` (§9). At the cap, additional signals keep
+   coalescing into their pending/deferred marks — never discarded — and the router's due-mark sweep (definer returning
+   IDs only) re-dispatches `ingestion.process_signals` once capacity is available; the future scheduler may also resume
+   this work. There is no provider-call-per-webhook model.
+6. Marks expire after 7 days (`signal.mark_expired`); coverage is untouched, so the gap stays truthful.
+
+No signal is silently lost: it is a durable mark until a traversal that started after it reads its content, or it
+expires visibly. Provider amplification is bounded by runs, never by webhook count.
+
+---
+
+## 14. Failure and retry model
+
+| Stage | States | Retry | Terminal |
+|---|---|---|---|
+| HTTP | `ACCEPTED` · `DUPLICATE` · rejected (never stored) | DB failure → `503` (Meta retries) | bad signature `401`, malformed `400`, too large `413` |
+| Inbox row | `RECEIVED` → `ROUTED` / `UNSUPPORTED` | — | — |
+| Hint | `PENDING` → `ROUTED` · `RETRYABLE` (no mapping yet) · `UNMAPPED` · `MULTI_ORG_LIMIT` (> 5 ACTIVE matches, D-F2) · `UNSUPPORTED` · `STALE` | router task: transient policy; mapping: 3 attempts | `UNMAPPED` after attempts; `MULTI_ORG_LIMIT` immediately (alert) |
+| Processing (per tenant) | `PLANNED_RELIST` · `PLANNED_ACCOUNT` · `PLANNED_CONFIRMATION` · `ABSORBED` · `DEFERRED` · `SKIPPED_{ACCOUNT_INACTIVE, PAUSED, CAPABILITY, CONTENT_NOT_CANONICAL, NON_CANONICAL_REMOVAL}` | task transient policy (DB, relay) | every `SKIPPED_*` |
+| Mark | `PENDING` → satisfied (deleted) / expired | close hook, due-mark sweep | expiry (7 d) |
+
+The prompt's vocabulary maps as RECEIVED, ROUTED, DUPLICATE, UNSUPPORTED, UNMAPPED, ENQUEUED (= PLANNED_*),
+COMPLETED (mark satisfied), RETRYABLE_FAILURE, TERMINAL_FAILURE. HTTP success is independent of processing success.
+Invalid signatures are never retried by Wrenkind. Processing outcomes live in logs/metrics and mark state; a
+workspace job never updates the system hint table.
+
+---
+
+## 15. Proposed task topology (after H6-F: MAIN 8 → 11, INTEGRATION 7 unchanged)
+
+| Task | Plane | Scope | Payload | Why |
+|---|---|---|---|---|
+| `ingestion.route_provider_events` | MAIN | system | none (drains) | mapping + fan-out; cron every minute + post-commit nudge |
+| `ingestion.process_signals` | MAIN | workspace | `connected_account_id`, `provider_event_hint_id` | tenant-side classification, marks, run/confirmation requests |
+| `ingestion.purge_provider_events` | MAIN | system | none | 7-day retention |
+| `ingestion.reconcile_account` / `reconcile_slice` / `confirm_interaction` | existing | — | unchanged | relist plan + close hook; coalescing key |
+
+`ingestion.process_signals` is an internal topic: a **new** RESTRICTIVE member policy in 0022 (0021 is pinned
+forward-only; its guard becomes "the union of restrictive member policies covers every internal topic").
+
+---
+
+## 16. Proposed migration 0022 (for a future gate; not authored)
+
+- `system.provider_event_inbox` (system class): `id`, `provider` ('meta'), `object` ('page' · 'instagram'),
+  `body_sha256` (hex, **unique**), `body` bytea null (≤ 1 MiB; null when a field is outside the allowlist), `body_bytes`,
+  `hint_count`, `ignored_count`, `stale_count`, `state` ('RECEIVED' · 'ROUTED' · 'UNSUPPORTED'), `received_at`
+  (`statement_timestamp()`, never the caller's), `routed_at`, `expires_at` (= received + 7 d). Index `(expires_at)`,
+  partial `(received_at) where state = 'RECEIVED'`.
+- `system.provider_event_hints` (system class): `id`, `inbox_id` → inbox (cascade), `ordinal`, `platform`,
+  `provider_asset_id`, `field`, `item`, `change`, `target_kind`, `provider_target_id`, `provider_content_id`,
+  `provider_parent_id`, `occurred_at`, `hint_key` (hex, **unique**), `state`, `route_attempts`, `next_route_at`,
+  `mapped_count`, `received_at`, `expires_at`. Provider ids `^[0-9A-Za-z_.:-]{1,128}$`. No author id, no text. Partial
+  index `(next_route_at) where state in ('PENDING','RETRYABLE')`.
+- `ingestion.signal_marks` (tenant, forced RLS, composite workspace FKs to account and content item): `id`,
+  `organization_id`, `workspace_id`, `connected_account_id`, `kind` ('relist' · 'account'), `content_item_id` null,
+  `first_signal_at`, `last_signal_at`, `signal_count`, `requested_run_id` null, `expires_at`; unique nulls not
+  distinct `(workspace_id, connected_account_id, kind, content_item_id)`.
+- `ingestion.reconciliation_runs.plan text not null default 'account' check (plan in ('account','relist'))` (expand).
+- Definers (empty `search_path`, owner `app_owner`): `system.record_provider_webhook` (EXECUTE `authenticated`; refuses
+  claims/workspace), `ingestion.route_provider_hint` and `ingestion.due_signal_accounts` (EXECUTE `app_system`),
+  `ingestion.provider_event_hint` (EXECUTE `app_worker`), `system.purge_provider_events` (EXECUTE `app_system`).
+- Policies: inbox/hints — owner policies for the definers, `app_system` SELECT/UPDATE of routing columns; **no**
+  `authenticated`, `app_worker` or `anon` grant. Marks — worker bound-workspace policies; no member access (a future
+  health UI reads a derived, authorized query). Outbox — owner policy for the router definer's `ingestion.process_signals`
+  rows; new RESTRICTIVE member policy for that topic.
+- Classification, introspection and grant tests; T-26 unchanged.
+
+---
+
+## 17. Capability, coverage, scheduler, audit
+
+- **Capability:** processing runs the same gate as reconciliation (account, connection, pause, profile, capability at
+  the content scope) plus the interaction-kind check. A webhook never upgrades capability; an IG reply signal is
+  `SKIPPED_CAPABILITY` and never implies reply coverage.
+- **Coverage:** a receipt, hint, mark or routing step never writes coverage, never advances `synced_through`, never
+  validates history depth and never turns UNKNOWN into COMPLETE. Only the relist/account slices do, exactly as today.
+- **Scheduler (future gate):** webhooks = low-latency signal; scheduler = eventual-consistency safety net (it will also
+  drain stale marks); manual Sync = operator recovery. None replaces another; H6-F builds no scheduler.
+- **Audit:** none per webhook (no audit flooding). Receipts are operational metadata. Audit belongs to subscription
+  lifecycle and operator actions (H6-G).
+
+---
+
+## 18. Observability (identifiers and enums only)
+
+Counters: `webhook.accepted`, `webhook.duplicate_delivery`, `webhook.rejected{missing_signature|invalid_signature|malformed_payload|too_large|unsupported_type}`,
+`webhook.hints{class}`, `webhook.hints.duplicate`, `webhook.entries.ignored`, `webhook.entries.stale`,
+`hint.routed`, `hint.unmapped`, `hint.route_retry`, `hint.multi_org_fanout{count}`, `hint.multi_org_limit` (alerting), `signal.{planned_relist|planned_account|planned_confirmation|absorbed|deferred|skipped_*}`,
+`signal.content_not_canonical`, `signal.runs_capped`, `signal.mark_expired`, `purge.rows`. Gauges: pending marks,
+oldest pending mark age, oldest inbox body age (alarm > 7 d), RECEIVED backlog. Lags: received → routed → planned →
+run started → mark satisfied.
+
+## 19. Abuse controls
+
+Signature before JSON parsing; 1 MiB and 1000-change caps; delivery and hint dedupe; unmapped hints terminal after 3
+attempts and purged at 7 days; router batches bounded (500 hints/run); processing is DB-only; provider work only through
+marks and runs (≤ 1 open run per account, 6 signal runs per hour, 10-operation signal budget; manual Sync alone keeps
+40). Edge rate limit on `/api/webhooks/*` (TA
+§38.8; Vercel firewall rule, VALIDATE). The endpoint can never become a provider-call amplifier: no request path calls
+a provider.
+
+---
+
+## 20. Simulator acceptance plan (future gate)
+
+1 valid FB comment signal → relist → canonical · 2 duplicate delivery · 3 reply before comment · 4 edit burst → one
+confirmation per bucket · 5 removal signal → confirmation, Meta-shaped not-found → no change · 6 invalid signature ·
+7 malformed payload · 8 unknown account → retries → UNMAPPED · 9 disconnected account · 10 provider pause · 11 stale
+profile · 12 IG reply signal → SKIPPED_CAPABILITY, no coverage · 13 burst of N for one content → one mark, ≤ 2 runs ·
+14 signal during an open run → follow-up via close hook · 15 signal after the run started → mark survives satisfaction ·
+16 processing crash + retry · 17 relay duplicate · 18 account moved between routing and processing · 19 workspace
+isolation (other workspace's hint never visible) · 20 retention purge · 21 no webhook text becomes canonical without a
+re-read · 22 no coverage change from receipt alone · 23 no provider call from WEB or MAIN · 24 IDs-only payloads ·
+25 zero `unknown_task` · 26 comment on content older than the account run's listing → relist reads it · 27 multi-org
+asset (D-F2) · 28 non-allowlisted field → body not stored · 29 router nudge lost → cron routes · 30 member transaction
+cannot record a receipt; member SQL cannot append `ingestion.process_signals` · 31 handshake wrong token · 32 body
+over cap (declared and chunked) · 33 stale entry time · 34 hourly cap (6) → deferred → due-mark sweep · 35 mark expiry ·
+36 same asset ACTIVE in 6 organizations → `MULTI_ORG_LIMIT`, zero tenant processing, alert (D-F2) · 37 signal run
+exhausts its 10 operations → `ABANDONED_BUDGET`, coverage `UNKNOWN / TRAVERSAL_INCOMPLETE`, mark still pending, follow-up
+run completes it (D-F5) · 38 disallowed field (`messages`) with an allowed `feed` change → no raw body, allowed hint
+persisted (D-F4) · 39 manual Sync during signal traffic keeps `max_operations = 40` (D-F5).
+
+## 21. LIVE acceptance plan (future; needs H6-G)
+
+1. Meta app dashboard: callback URL + verify token for the Dev app → handshake LIVE.
+2. Dashboard "Test" deliveries (synthetic page ids): signature, receipt, `UNMAPPED` path; zero provider calls.
+3. After subscription (H6-G): one real comment on a controlled post → receipt → mapping → relist → canonical comment.
+4. Duplicate delivery only if Meta retries naturally; never by replaying a body (re-signing would be forging).
+No destructive social action is required.
+
+## 22. Subscription lifecycle → H6-G
+
+Subscribing Pages (`subscribed_apps`, fields `feed`), Instagram subscription, the extra permission this likely needs
+(`pages_manage_metadata`, VALIDATE), refresh/reconcile of subscriptions, unsubscribe on unlink/remove, app-level
+webhook configuration per environment, and the `manage_webhooks` capability entry. INTEGRATION tasks (credentials);
+not platform mutations of social content, so not the Platform Mutation Executor.
+
+## 23. Implementation sequence (frozen in H6-F0C)
+
+1. **H6-F1** — webhook contract additions; pure Meta signature verification; handshake verification primitive; bounded
+   raw-body parser; Meta envelope → IDs-only hints; fixtures and tests only. No database, runtime or web route.
+2. **H6-F2** — migration 0022: inbox, hints, marks; RLS, definers, policies (incl. the restrictive member policy for
+   `ingestion.process_signals`); `reconciliation_runs.plan`; DB suites.
+3. **H6-F2b** — apply 0022 to dev-v2.
+4. **H6-F3** — HTTP receiver, provider signal scope, proxy exception, router and purge tasks.
+5. **H6-F4** — tenant processing, marks, targeted relist, close hook, coalescing, budget and cap enforcement.
+6. **H6-F5** — release/deploy sequencing (paired Trigger release MAIN 11 / INTEGRATION 7, then web).
+7. **H6-G** — Meta webhook configuration, subscription lifecycle, LIVE acceptance.
+
+None of these starts before its own gate.
+
+## 24. TL decisions (frozen in H6-F0C)
+
+| # | Decision | Frozen as |
+|---|---|---|
+| **D-F1 = A** | Router dispatch | Durable inbox + MAIN nudge + cron (§3): `system.provider_event_inbox` is the durable queue of this system-scoped workflow; the tenant outbox relay is not extended; the receiver never waits for routing or re-reads. |
+| **D-F2 = A with no partial fan-out above cap** | Same asset ACTIVE in several organizations | 1..5 matches → fan out to all, each tenant re-deriving its own authority; > 5 → `MULTI_ORG_LIMIT`: no tenant processing, receipt/hint visible within retention, metric + alert, fail closed; query ordering never selects tenants (§7, cases 27/36). |
+| **D-F3 = A** | New-interaction path | Targeted `webhook_relist` plan over canonical content (§9); bounded account-reconciliation fallback for non-canonical content; webhook text never trusted; no content row fabricated. |
+| **D-F4 = A** | Raw body | Verified byte-exact body ≤ 1 MiB, ≤ 7 days, inbox only, no index, no member SELECT, no copies; no raw body when any field is outside the allowlist — metadata plus independently whitelisted hints only (§5, case 38). |
+| **D-F5 = B** | Signal budget | Signal-initiated runs: `max_operations = 10`, ≤ 6 runs/hour/connected account; manual/operator Sync unchanged at 40; exhaustion keeps coverage honest and marks pending, follow-up completes later; at the cap marks coalesce and defer, never discarded (§9, §13, cases 34/37/39). Revisit 10 only from LIVE evidence. |
+
+Everything else in this document stays as designed in F0.
