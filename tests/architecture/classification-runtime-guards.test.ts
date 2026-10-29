@@ -13,7 +13,8 @@ import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 
 const PRODUCTION = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "jobs", "db", "tools", "mutations"];
-const RUNTIME = ["modules/classification/application", "modules/classification/persistence", "server/persistence/classification.ts"];
+// The DETERMINISTIC runtime (H7-B). The H7-C task-A gateway binding (application/ai) is guarded in ai-gateway-guards.
+const RUNTIME = ["modules/classification/application/ports.ts", "modules/classification/application/understand-deterministic.ts", "modules/classification/persistence", "server/persistence/classification.ts"];
 const strip = (code: string): string => code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
 const users = (pattern: RegExp) => sourceFiles(PRODUCTION).filter((file) => pattern.test(strip(codeOf(file))));
 

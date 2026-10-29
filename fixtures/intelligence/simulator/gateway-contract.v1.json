@@ -1,0 +1,515 @@
+{
+ "scriptVersion": "simulator-script.v1",
+ "synthetic": true,
+ "description": "Step H7-C gateway contract scenarios for the deterministic simulator (keyed by opaque reference and attempt; never by text). Synthetic; not a model benchmark.",
+ "references": {
+  "valid_es": [
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "safety": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "none",
+         "confidence": "high"
+        }
+       ]
+      },
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "price_objection",
+         "confidence": "high"
+        }
+       ]
+      },
+      "sentiment": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "negative",
+         "confidence": "high"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "es"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     },
+     "summary": "Commercial objection about the price.",
+     "evidence": [
+      {
+       "quote": "caro"
+      }
+     ]
+    }
+   }
+  ],
+  "valid_pt_br": [
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "safety": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "none",
+         "confidence": "high"
+        }
+       ]
+      },
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "price_objection",
+         "confidence": "high"
+        }
+       ]
+      },
+      "sentiment": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "negative",
+         "confidence": "high"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "pt-BR"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     },
+     "evidence": [
+      {
+       "quote": "caro"
+      }
+     ]
+    }
+   }
+  ],
+  "valid_unsupported_language_medium": [
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "safety": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "none",
+         "confidence": "medium"
+        }
+       ]
+      },
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "price_objection",
+         "confidence": "medium"
+        }
+       ]
+      },
+      "sentiment": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "negative",
+         "confidence": "medium"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "fr"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     },
+     "evidence": [
+      {
+       "quote": "trop cher"
+      }
+     ]
+    }
+   }
+  ],
+  "malformed_json": [
+   {
+    "kind": "raw",
+    "text": "{\"schemaVersion\": \"understanding-output.v1\", "
+   },
+   {
+    "kind": "raw",
+    "text": "not json at all"
+   }
+  ],
+  "unknown_taxonomy_value": [
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "expensive_price",
+         "confidence": "high"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "es"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     }
+    }
+   },
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "expensive_price",
+         "confidence": "high"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "es"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     }
+    }
+   }
+  ],
+  "reask_then_valid": [
+   {
+    "kind": "raw",
+    "text": "{oops"
+   },
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "safety": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "none",
+         "confidence": "high"
+        }
+       ]
+      },
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "price_objection",
+         "confidence": "high"
+        }
+       ]
+      },
+      "sentiment": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "negative",
+         "confidence": "high"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "es"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     },
+     "summary": "Commercial objection about the price.",
+     "evidence": [
+      {
+       "quote": "caro"
+      }
+     ]
+    }
+   }
+  ],
+  "reask_twice_invalid": [
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "expensive_price",
+         "confidence": "high"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "es"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     }
+    }
+   },
+   {
+    "kind": "raw",
+    "text": "still not json"
+   }
+  ],
+  "reasoning_field_in_output": [
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "safety": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "none",
+         "confidence": "high"
+        }
+       ]
+      },
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "price_objection",
+         "confidence": "high"
+        }
+       ]
+      },
+      "sentiment": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "negative",
+         "confidence": "high"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "es"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     },
+     "summary": "Commercial objection about the price.",
+     "evidence": [
+      {
+       "quote": "caro"
+      }
+     ],
+     "reasoning": "step by step: the user says caro"
+    }
+   },
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "safety": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "none",
+         "confidence": "high"
+        }
+       ]
+      },
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "price_objection",
+         "confidence": "high"
+        }
+       ]
+      },
+      "sentiment": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "negative",
+         "confidence": "high"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "es"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     },
+     "summary": "Commercial objection about the price.",
+     "evidence": [
+      {
+       "quote": "caro"
+      }
+     ],
+     "reasoning": "step by step: the user says caro"
+    }
+   }
+  ],
+  "provider_reasoning_discarded": [
+   {
+    "kind": "output",
+    "body": {
+     "schemaVersion": "understanding-output.v1",
+     "taxonomyVersion": "taxonomy.v1",
+     "dimensions": {
+      "safety": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "none",
+         "confidence": "high"
+        }
+       ]
+      },
+      "intent": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "price_objection",
+         "confidence": "high"
+        }
+       ]
+      },
+      "sentiment": {
+       "status": "assessed",
+       "values": [
+        {
+         "key": "negative",
+         "confidence": "high"
+        }
+       ]
+      },
+      "language": {
+       "status": "assessed",
+       "languages": [
+        "es"
+       ],
+       "certainty": "certain",
+       "confidence": "high"
+      }
+     },
+     "summary": "Commercial objection about the price.",
+     "evidence": [
+      {
+       "quote": "caro"
+      }
+     ]
+    },
+    "reasoning": "PROVIDER-SIDE THINKING THAT MUST NEVER SURFACE",
+    "modelVersion": "simulator-1-variant"
+   }
+  ],
+  "refusal": [
+   {
+    "kind": "refusal"
+   }
+  ],
+  "provider_unavailable": [
+   {
+    "kind": "unavailable"
+   }
+  ],
+  "timeout": [
+   {
+    "kind": "timeout"
+   }
+  ],
+  "rate_limited": [
+   {
+    "kind": "rate_limited",
+    "retryAfterSeconds": 30
+   }
+  ],
+  "provider_input_too_large": [
+   {
+    "kind": "input_too_large"
+   }
+  ],
+  "reask_then_refusal": [
+   {
+    "kind": "raw",
+    "text": "{"
+   },
+   {
+    "kind": "refusal"
+   }
+  ],
+  "reask_then_timeout": [
+   {
+    "kind": "raw",
+    "text": "{"
+   },
+   {
+    "kind": "timeout"
+   }
+  ]
+ }
+}

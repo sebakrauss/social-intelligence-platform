@@ -19,11 +19,14 @@ const DOMAIN_FILES = sourceFiles([`${MODULE}/domain`]);
 const MODULE_FILES = sourceFiles([MODULE]);
 /** H7-B: the runtime service layer (no infrastructure) and the persistence adapter (the only DB code). */
 const APPLICATION_FILES = sourceFiles([`${MODULE}/application`]);
-const PURE_FILES = [...DOMAIN_FILES, ...APPLICATION_FILES, `${MODULE}/index.ts`];
+/** H7-C: the task-A gateway binding (the only classification code that may name the AI gateway and the prompt). */
+const AI_APPLICATION_FILES = APPLICATION_FILES.filter((file) => file.startsWith(`${MODULE}/application/ai/`));
+const DETERMINISTIC_APPLICATION_FILES = APPLICATION_FILES.filter((file) => !AI_APPLICATION_FILES.includes(file));
+const PURE_FILES = [...DOMAIN_FILES, ...DETERMINISTIC_APPLICATION_FILES, `${MODULE}/index.ts`];
 const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1] ?? "");
 
 describe("H7-A1: the classification domain is pure", () => {
-  it("has exactly the domain files of the A1 scope; H7-B adds only the deterministic application service and its persistence", () => {
+  it("has exactly the domain files of the A1 scope; H7-B adds the deterministic service + persistence, H7-C the task-A gateway binding", () => {
     expect(DOMAIN_FILES.map((f) => path.basename(f))).toEqual([
       "assessment.ts",
       "confidence.ts",
@@ -42,6 +45,8 @@ describe("H7-A1: the classification domain is pure", () => {
       "watch-terms.ts",
     ]);
     expect(MODULE_FILES.filter((f) => !f.startsWith(`${MODULE}/domain/`))).toEqual([
+      `${MODULE}/application/ai/understand-interaction.ts`,
+      `${MODULE}/application/ai/understanding-task.ts`,
       `${MODULE}/application/ports.ts`,
       `${MODULE}/application/understand-deterministic.ts`,
       `${MODULE}/index.ts`,
@@ -55,14 +60,19 @@ describe("H7-A1: the classification domain is pure", () => {
       for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|@\/domain\/[a-z-]+)$/);
     }
     for (const specifier of importsOf(`${MODULE}/index.ts`)) expect(specifier).toMatch(/^\.\/(domain|application)\/[a-z-]+$/);
-    for (const file of APPLICATION_FILES) {
+    for (const file of DETERMINISTIC_APPLICATION_FILES) {
       for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/domain\/[a-z-]+|@\/modules\/interactions)$/);
+    }
+    // H7-C: the gateway binding sees its own files, the pure domain, the gateway PORT and the versioned prompt only.
+    for (const file of AI_APPLICATION_FILES) {
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/\.\.\/domain\/[a-z-]+|@\/ai\/gateway|@\/prompts\/classification\/understanding\.v1)$/);
     }
   });
 
   it("names no infrastructure, provider, model SDK, network or environment access (domain + application)", () => {
     const forbidden = /@\/(platform|server|jobs|db|integrations|ai|mutations|app|ui)\b|from ["'](next|@trigger\.dev|pg|postgres|drizzle-orm|openai|@anthropic-ai|node:)|process\.env|\bfetch\(|XMLHttpRequest|WebSocket|require\(|\bimport\(|graph\.facebook|instagram\.com|ANTHROPIC|OPENAI|API_KEY/;
     for (const file of PURE_FILES) expect(codeOf(file), file).not.toMatch(forbidden);
+    for (const file of AI_APPLICATION_FILES) expect(codeOf(file), file).not.toMatch(/@\/(platform|server|jobs|db|integrations|mutations|app|ui)\b|@\/ai\/providers|from ["'](next|@trigger\.dev|pg|postgres|drizzle-orm|openai|@anthropic-ai|node:)|process\.env|\bfetch\(|ANTHROPIC|OPENAI|API_KEY/);
     // The persistence adapter is the only DB code: drizzle + platform/db, nothing else.
     for (const file of sourceFiles([`${MODULE}/persistence`])) {
       for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(drizzle-orm|@\/platform\/db|\.\/[a-z-]+|\.\.\/application\/[a-z-]+)$/);
@@ -86,9 +96,10 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
     expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql"]);
   });
 
-  it("registers no classification / intelligence task and no `ai/` layer; only the MAIN consumer and its composition use the module", () => {
+  it("registers no classification / intelligence task; `ai/` is only H7-C's gateway + simulator, imported by no runtime; only the MAIN consumer and its composition use the module", () => {
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).filter((name) => /^(classification|intelligence|ai)\./.test(name))).toEqual([]);
-    expect(sourceFiles(["ai"])).toEqual([]);
+    expect(sourceFiles(["ai"])).toEqual(["ai/gateway/attempt.ts", "ai/gateway/failures.ts", "ai/gateway/gateway.ts", "ai/gateway/index.ts", "ai/gateway/provider-port.ts", "ai/gateway/registry.ts", "ai/gateway/task.ts", "ai/providers/simulator/index.ts"]);
+    expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations", "db"]).filter((file) => /@\/ai\/|@\/prompts\/|application\/ai\//.test(codeOf(file)))).toEqual([]);
     expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual(["jobs/reconciliation.ts", "server/persistence/classification.ts"]);
   });
 });

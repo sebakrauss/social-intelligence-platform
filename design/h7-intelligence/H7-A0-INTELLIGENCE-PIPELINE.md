@@ -775,3 +775,54 @@ Decisions and boundaries:
   `RESUME_CANONICAL`, completed by the next apply. No delete/reset mode.
 - **Delivery**: the tool wakes nothing. In dev-v2 the deployed MAIN `outbox.dispatch_sweep` (≥ 60 s old rows) delivers
   the row to `interactions.observed` naturally; that is the first remote run H7-B1b-1 observes.
+
+## 29. H7-C as implemented (AI gateway, simulator, offline evaluation; no real model)
+
+- **Layout (TA §6.2, §10 above):** `ai/gateway` (generic, task-agnostic: failures, registry + routes, provider port,
+  task contract, attempt metadata, runner), `ai/providers/simulator` (the only provider), `prompts/classification/
+  understanding.v1.ts` (versioned, SHA-256 pinned), and the task-A binding in `modules/classification/application/ai`
+  (`UNDERSTANDING_TASK`, `understandInteraction`). The gateway imports nothing outside itself; the binding imports the
+  pure domain, the gateway port and the prompt; neither is exported from the module index nor imported by any runtime.
+- **Gateway order:** route by task id (server config; disabled ⇒ AI_UNAVAILABLE) → kill switch → model enabled +
+  structured output + provider composed → input bound (system + data chars; over ⇒ AI_INPUT_TOO_LARGE, never
+  truncated) → budget port (denied ⇒ AI_BUDGET) → call → strict `JSON.parse` + the **A1 validator unchanged** → one
+  re-ask carrying only closed issue codes (never the rejected output) → second invalid ⇒ AI_INVALID_OUTPUT.
+- **Failures:** exactly the five A1 classes (test-pinned equal). A `cause` refines the class without changing it and
+  carries explicit retryability: transport (`provider_unavailable`, `timeout`, `rate_limited` + retry-after) ⇒
+  AI_UNAVAILABLE **retryable by the later runtime only** (H7-A0 §11.3, ≤ 3); `task_disabled`, `kill_switch`,
+  `model_unavailable` ⇒ AI_UNAVAILABLE non-retryable; refusal, budget, input limit, invalid output ⇒ non-retryable.
+  No new failure class was needed.
+- **Untrusted boundary:** the data block is the task's allowlisted data object as JSON with `< > &` escaped, between
+  fixed delimiters — social text can never close its section; the system text is static policy. No tools.
+  Data fields: contract/taxonomy versions, validated languages, kind, platform, source, brand name, link/own-brand
+  hints, analyzed text, parent/root/caption excerpts (A1 bounds). Never author, handle, profile, credential, webhook
+  body, history or watch-term match.
+- **No chain-of-thought:** no gateway type has a reasoning field; the A1 closed schema rejects one inside the output;
+  a vendor's reasoning is dropped at the adapter (simulator-proven).
+- **Registry:** provider key, model key, configured model version, enabled, structured-output support, `tools: "none"`,
+  input/output char bounds, `cost: { status: "OPEN" }` (TA-Q-23). No credential, no environment read. The reported model
+  version is recorded per attempt. No vendor is named in product code; Anthropic remains a recommendation (TA-Q-06).
+- **Attempt metadata (in memory; no table, no migration):** workspace, subject ids, pipeline / task / prompt (version +
+  hash) / schema / taxonomy / confidence-policy / language-policy / input-contract versions, provider, model, reported
+  model version, attempt number + kind, start/end (runtime clock), input chars, usage, `costEstimate: null`, outcome,
+  failure class, issue codes. Never text.
+- **Simulator:** answers from a script keyed by (opaque reference, attempt); never reads the request; no randomness,
+  clock or I/O. Contract scenarios: `fixtures/intelligence/simulator/gateway-contract.v1.json` (valid ES/pt-BR /
+  unsupported-medium, malformed JSON, unknown value, re-ask paths, reasoning in output, vendor reasoning, refusal,
+  unavailable, timeout, rate limit, provider input limit).
+- **Evaluation:** corpus `fixtures/intelligence/classification/understanding-eval.v1.json` (68 hand-authored synthetic
+  cases: es 36 · pt-BR 12 · en 12 · es+en 2 · es+pt-BR 1 · unsupported 3 · uncertain 1 · unknown 1; 27
+  `protected_critical`, 16 `safety_critical`, 5 prompt injection). Runner `tests/eval/classification/` evaluates any
+  provider through the real gateway + A1 policies: per-value P/R/F1, micro/macro, exact-set, abstention, protection
+  accuracy, protected-meaning recall (protected or uncertain), strict protected recall, safety recall, safety FP rate,
+  raw language-cap violations, unsupported-language behavior, per-language rates, failure classes, schema-failure rate,
+  configuration invariance, critical failures. `npm run eval:classification` prints the golden report
+  ("NOT a real model benchmark"). Negative tests prove detection of: missed complaint, objection as price question,
+  accusation as scam content, profanity as hate, unknown value, unsupported language above medium, safety erasing
+  protection, obeyed injection, routing drift.
+- **Promotion:** policy `understanding-promotion.v0`; numeric thresholds **OPEN** (PD OQ-16 / OQ-28). Blocking rules:
+  no critical regression vs baseline, configuration invariance, language cap, real model required. The best verdict is
+  THRESHOLDS_OPEN; a simulator report is always BLOCKED (`not_a_real_model`). Shadow runs are defined, not run.
+- **Deliberately unresolved:** real provider and models (H7-D, TA-Q-06), the INTELLIGENCE plane, request continuation
+  from DETERMINISTIC_DONE, attempt / ledger persistence (needs a migration), budgets and prices, numeric gates, live
+  shadow, watch-term effective revision.
