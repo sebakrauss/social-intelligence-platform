@@ -38,6 +38,8 @@ export function createHumanCorrection(input: HumanCorrectionInput): { readonly o
       : { kind: "abstained", abstention: input.correction.abstention },
     assessedAt: input.assessedAt,
     corrects: input.corrects ?? null,
+    // A person stating the language is certain of it.
+    languageCertainty: input.dimension === "language" && input.correction.kind === "values" ? "certain" : null,
     ...(input.topicCatalog === undefined ? {} : { topicCatalog: input.topicCatalog }),
   });
 }

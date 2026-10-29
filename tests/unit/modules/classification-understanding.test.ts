@@ -5,7 +5,10 @@ import {
   UNDERSTANDING_OUTPUT_SCHEMA_VERSION,
   buildUnderstandingInput,
   capConfidence,
+  createAssessment,
+  createHumanCorrection,
   excerpt,
+  languageResultOfAssessment,
   languageResultOf,
   languageSupport,
   maxSemanticConfidence,
@@ -191,5 +194,39 @@ describe("structured output validator (closed, fail closed)", () => {
     const result = validateUnderstandingOutput({ ...valid(), dimensions: { intent: valid().dimensions.intent } }, TEXT);
     if (!result.ok) throw new Error("unexpected");
     expect(languageResultOf(result.output)).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("H7-A2: language certainty travels with the stored language assessment", () => {
+  const base = { ref: "l-1", target: TARGET, method: AI_METHOD, assessedAt: "2026-10-29T10:00:00.000Z", dimension: "language" } as const;
+  const values = (keys: readonly string[]) => ({ kind: "values" as const, values: keys.map((key) => ({ key, confidence: { level: "high" as const, score: null } })), reasonCodes: [] });
+
+  it("is required for a language assessment with values and forbidden for every other assessment", () => {
+    expect(createAssessment({ ...base, content: values(["es"]) })).toMatchObject({ ok: false, violations: ["LANGUAGE_CERTAINTY_INVALID"] });
+    expect(createAssessment({ ...base, content: values(["es"]), languageCertainty: "uncertain" }).ok).toBe(true);
+    expect(createAssessment({ ...base, content: { kind: "abstained", abstention: "insufficient_evidence" } }).ok).toBe(true);
+    expect(createAssessment({ ...base, content: { kind: "abstained", abstention: "insufficient_evidence" }, languageCertainty: "certain" })).toMatchObject({ ok: false, violations: ["LANGUAGE_CERTAINTY_INVALID"] });
+    expect(createAssessment({ ...base, dimension: "intent", content: values(["praise"]), languageCertainty: "certain" })).toMatchObject({ ok: false, violations: ["LANGUAGE_CERTAINTY_INVALID"] });
+  });
+
+  it("round-trips: a stored assessment yields the same language result (and support) the output had", () => {
+    const result = validateUnderstandingOutput({ ...valid(), dimensions: { ...valid().dimensions, language: { status: "assessed", languages: ["es"], certainty: "uncertain", confidence: "medium" } } }, TEXT);
+    if (!result.ok) throw new Error("unexpected");
+    const refs = { safety: "r-s", authenticity: "r-a", intent: "r-i", sentiment: "r-se", risk: "r-r", response_need: "r-n", language: "r-l" };
+    const stored = toAiAssessments(result.output, { target: TARGET, method: AI_METHOD, assessedAt: "2026-10-29T10:00:00.000Z" as Parameters<typeof toAiAssessments>[1]["assessedAt"], refs });
+    const language = stored.find((a) => a.dimension === "language");
+    if (language === undefined) throw new Error("missing");
+    expect(languageResultOfAssessment(language)).toEqual(languageResultOf(result.output));
+    expect(languageSupport(languageResultOfAssessment(language))).toBe("uncertain");
+    expect(stored.filter((a) => a.dimension !== "language").every((a) => a.languageCertainty === null)).toBe(true);
+  });
+
+  it("a person stating the language is certain of it; an abstention or another dimension reads as unknown", () => {
+    const human = createHumanCorrection({ ref: "h-l", target: TARGET, dimension: "language", actor: { kind: "workspace_member", ref: "m" }, correction: { kind: "values", keys: ["pt-BR"] }, assessedAt: "2026-10-29T10:00:00.000Z" });
+    if (!human.ok) throw new Error(human.violations.join(","));
+    expect(languageResultOfAssessment(human.assessment)).toEqual({ kind: "detected", languages: ["pt-BR"], certainty: "certain" });
+    const abstained = createAssessment({ ...base, content: { kind: "abstained", abstention: "none_fits" } });
+    if (!abstained.ok) throw new Error("unexpected");
+    expect(languageResultOfAssessment(abstained.assessment)).toEqual({ kind: "unknown" });
   });
 });

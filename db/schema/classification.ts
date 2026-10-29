@@ -43,6 +43,8 @@ export const APPLICATION_SCHEMAS = [
   "app", "app_private", "tenancy", "audit", "system", "idempotency", "connections", "credentials", "capability", "app_migrations", "t26_fixture",
   // Step H6-B (0017): the canonical source model, one schema per owning module.
   "content", "interactions", "conversations", "coverage", "ingestion",
+  // Step H7-A2 (0024): classification persistence (TA §7.1 owner).
+  "classification",
 ] as const;
 
 /** Schema USAGE per runtime role (no other role may hold USAGE or CREATE). */
@@ -64,6 +66,7 @@ export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number],
   conversations: ["authenticated", "app_worker"],
   coverage: ["authenticated", "app_worker"],
   ingestion: ["authenticated", "app_worker"],
+  classification: ["authenticated", "app_worker"],
 };
 
 export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>> = {
@@ -440,6 +443,38 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     policies: ["owner_bound_delete DELETE app_owner", "owner_bound_insert INSERT app_owner", "owner_bound_read SELECT app_owner"],
     privileges: {},
   },
+  // Step H7-A2 (0024): the analysis idempotency anchor — the bound worker only (state, completion and time are the only
+  // updatable columns; a terminal request is final).
+  "classification.understanding_requests": {
+    class: "workspace_tenant",
+    policies: ["worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: { app_worker: ["INSERT", "SELECT", "UPDATE(completed_at)", "UPDATE(state)", "UPDATE(updated_at)"] },
+  },
+  // Step H7-A2 (0024): append-only assessments. Machine origins: the bound worker; human corrections: members with
+  // workflow.internal (TA §10.3 "correct labels"), as themselves. Guests read nothing.
+  "classification.assessments": {
+    class: "append_only_history",
+    policies: ["member_correct INSERT authenticated", "member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
+  // Step H7-A2 (0024): append-only watch-term revisions and terms. No runtime writer until the authoring permission is
+  // decided (watch-term management is not in the TA §10.3 catalog).
+  "classification.watch_term_revisions": {
+    class: "append_only_history",
+    policies: ["member_read SELECT authenticated", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["SELECT"] },
+  },
+  "classification.watch_terms": {
+    class: "append_only_history",
+    policies: ["member_read SELECT authenticated", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["SELECT"] },
+  },
+  // Step H7-A2 (0024): append-only deterministic signals (facts, no semantic value), written by the bound worker.
+  "classification.signals": {
+    class: "append_only_history",
+    policies: ["member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
   "t26_fixture.conversations": {
     class: "test_fixture",
     policies: ["user_content ALL authenticated", "worker_bound ALL app_worker"],
@@ -522,4 +557,9 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "ingestion.begin_signal_confirmation_read(uuid,uuid)": ["app_worker"],
   "ingestion.complete_signal_confirmation_read(uuid,uuid,timestamp with time zone)": ["app_worker"],
   "system.expire_signal_marks(integer)": ["app_system"],
+  // Step H7-A2 (0024): IMMUTABLE CHECK validators (they run as the inserting role) and the request guard trigger.
+  "classification.assessment_values_valid(text,text,text[],text[],numeric[],text[])": ["app_worker", "authenticated"],
+  "classification.source_spans_valid(integer[],integer[],integer)": ["app_worker"],
+  "classification.watch_phrases_valid(text[],integer)": ["app_worker"],
+  "classification.understanding_request_guard()": [],
 };

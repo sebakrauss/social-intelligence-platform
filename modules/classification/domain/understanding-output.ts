@@ -258,10 +258,10 @@ export function languageResultOf(output: ValidatedUnderstanding): LanguageResult
 export function toAiAssessments(output: ValidatedUnderstanding, input: { readonly target: AnalysisTarget; readonly method: AiMethod; readonly assessedAt: Instant; readonly refs: Readonly<Partial<Record<UnderstandingDimension, string>>> }): readonly Assessment[] {
   const cap = maxSemanticConfidence(languageResultOf(output));
   const out: Assessment[] = [];
-  const add = (dimension: UnderstandingDimension, content: Assessment["content"]): void => {
+  const add = (dimension: UnderstandingDimension, content: Assessment["content"], languageCertainty: LanguageCertainty | null = null): void => {
     const ref = input.refs[dimension];
     if (ref === undefined) throw new TypeError("assessment_ref_missing");
-    const created = createAssessment({ ref, target: input.target, dimension, method: input.method, content, assessedAt: input.assessedAt });
+    const created = createAssessment({ ref, target: input.target, dimension, method: input.method, content, assessedAt: input.assessedAt, languageCertainty });
     if (!created.ok) throw new TypeError(`assessment_invalid:${created.violations.join(",")}`);
     out.push(created.assessment);
   };
@@ -269,9 +269,11 @@ export function toAiAssessments(output: ValidatedUnderstanding, input: { readonl
     if (dimension === "language") {
       const language = output.language;
       if (language === null) continue;
-      add("language", language.status === "assessed"
-        ? { kind: "values", values: language.languages.map((tag) => ({ key: tag, confidence: { level: language.confidence, score: null } })), reasonCodes: [] }
-        : { kind: "abstained", abstention: language.status });
+      if (language.status === "assessed") {
+        add("language", { kind: "values", values: language.languages.map((tag) => ({ key: tag, confidence: { level: language.confidence, score: null } })), reasonCodes: [] }, language.certainty);
+      } else {
+        add("language", { kind: "abstained", abstention: language.status });
+      }
       continue;
     }
     const result = output.dimensions[dimension];

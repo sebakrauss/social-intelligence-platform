@@ -11,9 +11,9 @@
  *   - confirm marks never enter the account/relist review, the relist planner or the run close hook;
  *   - confirm-mark files are provider-free and decide nothing from the outbox; claims, read starts and completion go
  *     only through the 0023 definers (read_started_at round-trips as text); global expiry only through the system
- *     definer, from the MAIN purge task, before the inbox purge; no migration after 0023.
+ *     definer, from the MAIN purge task, before the inbox purge; no H6 migration after 0023.
  */
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { codeOf, sourceFiles } from "../support/source-scan";
@@ -194,8 +194,10 @@ describe("H6-F4d: confirm marks", () => {
     expect(PRODUCTION_TASKS.tasks.find((task) => task.name === "ingestion.purge_provider_events")?.executionPlane).toBe("main");
   });
 
-  it("no migration after 0023", () => {
+  it("no H6 migration after 0023: the only later one is H7-A2's classification persistence, which names no ingestion object", () => {
     const migrations = readdirSync("db/migrations").filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toMatch(/^0023_resumable_signal_progress\.sql$/);
+    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql"]);
+    const later = readFileSync("db/migrations/0024_classification_persistence.sql", "utf8").replace(/--[^\n]*/g, " ");
+    expect(later).not.toMatch(/ingestion\.|system\.|signal_marks|outbox/);
   });
 });

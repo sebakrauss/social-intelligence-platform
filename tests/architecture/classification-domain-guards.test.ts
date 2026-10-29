@@ -2,7 +2,7 @@
  * Step H7-A1 — static guards around the pure classification domain (H7-A0; D-H7-1 … D-H7-6):
  *   - the domain is pure: imports only the shared kernel and its own files; no DB, server, jobs, Next, Trigger, provider,
  *     Meta, model SDK, network, environment or Node built-in;
- *   - no model/provider credential, AI dependency, migration 0024, task or outbox topic was introduced;
+ *   - no model/provider credential, AI dependency, task or outbox topic was introduced (H7-A2 adds only migration 0024);
  *   - watch terms can't become meaning: no semantic file imports the matcher or signals, no rule origin exists for them,
  *     and the AI input contract has no field for them;
  *   - the domain has no path to a platform mutation or moderation action.
@@ -65,9 +65,9 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
     expect(names.filter((name) => /anthropic|openai|langchain|@ai-sdk|^ai$|cohere|mistral|gemini|@google\/generative|ollama|huggingface|franc|cld|langdetect/i.test(name))).toEqual([]);
   });
 
-  it("creates no migration after 0023", () => {
+  it("the only migration after 0023 is H7-A2's classification persistence (0024)", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toMatch(/^0023_/);
+    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql"]);
   });
 
   it("registers no classification / intelligence task and no `ai/` layer", () => {

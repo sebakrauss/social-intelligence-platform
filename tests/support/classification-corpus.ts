@@ -91,6 +91,7 @@ export function assessment(input: {
   readonly at?: string;
   readonly ref?: string;
   readonly corrects?: string | null;
+  readonly certainty?: "certain" | "uncertain";
 }): Assessment {
   const created = createAssessment({
     ref: input.ref ?? nextRef(),
@@ -102,6 +103,7 @@ export function assessment(input: {
       : { kind: "values", values: (input.values ?? []).map((key) => ({ key, confidence: { level: input.level ?? "high", score: null } })), reasonCodes: [] },
     assessedAt: input.at ?? "2026-10-29T10:00:00.000Z",
     corrects: input.corrects ?? null,
+    languageCertainty: input.dimension === "language" && input.abstain === undefined ? (input.certainty ?? "certain") : null,
     topicCatalog: TOPIC_CATALOG,
   });
   if (!created.ok) throw new Error(`fixture assessment invalid: ${created.violations.join(",")}`);

@@ -20,7 +20,7 @@
 import { isUuid, type WorkspaceId } from "@/domain/ids";
 import { parseInstant, type Instant } from "@/domain/instant";
 import { isAbstention, isConfidenceLevel, isConfidenceScore, type Abstention, type ValueConfidence } from "./confidence";
-import { MAX_LANGUAGE_TAGS, parseLanguageTag } from "./language";
+import { MAX_LANGUAGE_TAGS, parseLanguageTag, type LanguageCertainty, type LanguageResult, type LanguageTag } from "./language";
 import { TAXONOMY, TAXONOMY_VERSION, isClosedDimension, isDimension, isReasonCode, isTaxonomyValue, type ClosedDimensionDefinition, type Dimension } from "./taxonomy";
 
 export interface AnalysisTarget {
@@ -118,6 +118,11 @@ export interface Assessment {
   readonly taxonomyVersion: string;
   /** Human only: the `ref` of the assessment this one corrects (display lineage; nothing is mutated). */
   readonly corrects: string | null;
+  /**
+   * Language assessments with values only: the detection certainty (H7-A2: persisted, so the language policy can tell
+   * a validated detection from an uncertain one when it re-reads stored assessments). Null for every other assessment.
+   */
+  readonly languageCertainty: LanguageCertainty | null;
 }
 
 export const ASSESSMENT_VIOLATIONS = [
@@ -137,6 +142,7 @@ export const ASSESSMENT_VIOLATIONS = [
   "REASON_CODE_INVALID",
   "ABSTENTION_INVALID",
   "CORRECTION_LINK_INVALID",
+  "LANGUAGE_CERTAINTY_INVALID",
 ] as const;
 export type AssessmentViolation = (typeof ASSESSMENT_VIOLATIONS)[number];
 
@@ -149,6 +155,8 @@ export interface AssessmentInput {
   readonly assessedAt: unknown;
   readonly taxonomyVersion?: string;
   readonly corrects?: string | null;
+  /** Required (`certain` | `uncertain`) for a language assessment with values; absent for every other assessment. */
+  readonly languageCertainty?: LanguageCertainty | null;
   /** Required for a topics assessment: the workspace topic catalog keys it may use (owned by `topics`). */
   readonly topicCatalog?: ReadonlySet<string>;
 }
@@ -229,6 +237,9 @@ export function createAssessment(input: AssessmentInput): { readonly ok: true; r
   if (corrects !== null && (input.method.kind !== "human" || !nonEmpty(corrects, 128))) out.push("CORRECTION_LINK_INVALID");
 
   const content: AssessmentContent | { readonly kind: "unknown" } = isContent(input.content) ? input.content : { kind: "unknown" };
+  const languageCertainty = input.languageCertainty ?? null;
+  const certaintyRequired = dimension === "language" && content.kind === "values";
+  if (certaintyRequired ? languageCertainty !== "certain" && languageCertainty !== "uncertain" : languageCertainty !== null) out.push("LANGUAGE_CERTAINTY_INVALID");
   if (dimension !== undefined) {
     if (content.kind === "values") {
       out.push(...valueViolations(input, dimension, content.values));
@@ -252,7 +263,7 @@ export function createAssessment(input: AssessmentInput): { readonly ok: true; r
     : Object.freeze({ kind: "abstained" as const, abstention: content.abstention });
   return {
     ok: true,
-    assessment: Object.freeze({ ref: input.ref as string, target, dimension, method: Object.freeze({ ...input.method }), content: frozen, assessedAt, taxonomyVersion, corrects }),
+    assessment: Object.freeze({ ref: input.ref as string, target, dimension, method: Object.freeze({ ...input.method }), content: frozen, assessedAt, taxonomyVersion, corrects, languageCertainty }),
   };
 }
 
@@ -285,4 +296,10 @@ export function assessmentIdentityKey(assessment: Pick<Assessment, "ref" | "targ
 export function understandingRequestKey(target: AnalysisTarget, pipelineVersion: string): string {
   if (!nonEmpty(pipelineVersion)) throw new TypeError("pipeline_version_invalid");
   return `${target.sourceTextVersionId}|${pipelineVersion}`;
+}
+
+/** The language result a stored language assessment carries (an abstention or another dimension ⇒ unknown). */
+export function languageResultOfAssessment(assessment: Assessment): LanguageResult {
+  if (assessment.dimension !== "language" || assessment.content.kind !== "values" || assessment.languageCertainty === null) return Object.freeze({ kind: "unknown" as const });
+  return Object.freeze({ kind: "detected" as const, languages: Object.freeze(assessment.content.values.map((v) => v.key as LanguageTag)), certainty: assessment.languageCertainty });
 }

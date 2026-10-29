@@ -689,3 +689,36 @@ dependency was added; no migration after 0023.
 Clarifications (non-semantic): language pre-detection, when added, is a deterministic **hint**, not an M-05 rule
 assessment (a rule would outrank the AI refinement of mixed/uncertain cases that §6 assigns to task A). The synthetic
 fixtures in `tests/support/classification-corpus.ts` are unit-domain fixtures only — not the H7-C evaluation corpus.
+
+---
+
+## 26. H7-A2 as implemented (migration 0024, authored — NOT applied; H7-A3 applies it)
+
+`db/migrations/0024_classification_persistence.sql`: schema `classification` (TA §7.1 owner), five tables, three
+IMMUTABLE CHECK validators, one guard trigger. Expand-only; registered in `db/schema/classification.ts`.
+
+| Table | Class | Writers | Readers | Identity / invariant |
+|---|---|---|---|---|
+| `understanding_requests` | tenant | bound worker (INSERT `PENDING`; UPDATE state/completed/updated only) | bound worker | unique (text version, pipeline version); terminal is final; never back to `PENDING` |
+| `assessments` | append-only | bound worker (machine origins only) · `workflow.internal` members (`human`, as themselves) | non-guest members, worker | target = (workspace, interaction, its OWN text version); machine identity = (text version, dimension, method) — `assessmentIdentityKey`; human rows appended; `corrects` = same interaction + dimension |
+| `signals` | append-only | bound worker | non-guest members, worker | closed kinds, no semantic column; spans only; one per (version, kind, versions, rule identity) |
+| `watch_term_revisions`, `watch_terms` | append-only | **none yet** (authoring permission not in TA §10.3 — OPEN) | non-guest members, worker | revision unique per workspace; phrases bounded, no `#`/`@` |
+
+Decisions and boundaries:
+- **Vocabulary**: taxonomy v1 is enforced in SQL (`assessment_values_valid`) and locked to the domain by
+  `tests/architecture/classification-persistence-guards.test.ts` (static) and the DB suite (every domain value
+  round-tripped). Topic assessments are refused (`assessments_topics_deferred`) until the `topics` module exists.
+- **Language certainty** (A1 gap closed, additive): `Assessment.languageCertainty` (required for a language assessment
+  with values, null otherwise) and `languageResultOfAssessment()` let the language policy re-derive validated vs
+  uncertain from stored rows; stored as `language_certainty`.
+- **Not persisted** (derivations or later owners): accepted interpretation, Protection Evaluation, Needs review,
+  priority/value (workflow), topic values (topics), the AI call ledger, attempts/cost, and the output-level summary and
+  evidence spans of an AI answer (H7-C/D add them with the AI runtime: one row per gateway attempt — task, versions,
+  provider, model, tokens, cost estimate, latency, outcome class, ids only — and one bounded result record per accepted
+  output: summary ≤ 240 chars, ≤ 3 evidence spans).
+- **M-09 stays policy**: every assessment keeps its text version, time, origin and correction link; nothing in the DB
+  encodes "an earlier human correction always wins".
+- **Retention**: product data — no purge; every row cascades only from its workspace's deletion.
+- **Indexes** (all serve a stated read or invariant): PKs; `(workspace, interaction, dimension, id)` (precedence reads,
+  correction FK); `assessments_machine_identity` (idempotency); `signals_once` (idempotency + signals of a version);
+  `understanding_requests_once` (idempotency); `watch_term_revisions_once` (latest revision).
