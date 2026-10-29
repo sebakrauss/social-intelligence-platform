@@ -749,3 +749,29 @@ Decisions and boundaries:
   already committed in its own transaction and is never rolled back. Logs carry ids, counts and outcome classes only.
 - **Authority**: existing 0024 worker grants (requests INSERT PENDING / SELECT / UPDATE state columns; signals
   INSERT / SELECT); no grant change, no migration.
+
+## 28. H7-B1b-0 as implemented (shared-dev acceptance fixture tool; not executed)
+
+- **Why**: dev-v2 had no sanctioned way to create a synthetic canonical interaction (H7-B1b STOP). The tool is operator
+  tooling following the managed-suite convention: `npm run db:dev-fixture` (tools/db/dev-fixture.ts, plain node) proves
+  the target, then runs `vitest.dev-fixture.config.ts` (global setup re-proves target, mode, migration ledger and worker
+  login) → `tests/db/dev-fixtures/classification-acceptance.operator.ts` → the core module beside it.
+- **Target guard**: `tools/db/dev-fixture-guard.ts`: checkTarget + the SHA-256 of `SUPABASE_PROJECT_REF` equal to the
+  pinned dev-v2 digest, managed endpoints only, sa-east-1, worker on the transaction pooler. Plan by default; apply needs
+  `--apply --confirm-dev-fixture <exact phrase>`. The protected P2-E workspace (and its id range) is refused.
+- **Fixture**: fixed synthetic ids `a7b1b000-…`; org + MONITOR_ONLY workspace without members; connection provider
+  `simulator` (inert in every deployed plane), ACTIVE, no credential; one facebook content-bearing asset/account
+  `wrenkind_fixture_h7_b1b_page`. Scenario `fixtures/providers/simulator/h7-classification-acceptance.scenario.json`: one
+  post, one audience comment whose text carries ONE scheme-less documentation link `example.com/h7-b1b` (simulator
+  fixtures carry no URL scheme); frozen detector → `link_present` only.
+- **Canonical path**: simulator listing → `interactionSourceFactFromDto` (reconciliation · listInteractions · listed,
+  true of the simulator read) → `ingestInteractionFact` in a worker job scope bound to the fixture workspace → content,
+  author, interaction, ONE text version, state observation, conversation, ONE `created` event (arrival `backfill` by
+  the canonical first-observation rule) and its genuine IDs-only `interactions.observed` outbox row. The hierarchy is
+  the only SQL the tool writes (no service creates org/workspace/connection without a signed-in user and OAuth). No
+  audit row is written for the hierarchy (no actor).
+- **Identity**: absent → create; exact match → `ALREADY_PRESENT_MATCH`, nothing written; anything else →
+  `FIXTURE_IDENTITY_CONFLICT`, nothing written. Hierarchy and canonical are two transactions; a failure between them is
+  `RESUME_CANONICAL`, completed by the next apply. No delete/reset mode.
+- **Delivery**: the tool wakes nothing. In dev-v2 the deployed MAIN `outbox.dispatch_sweep` (≥ 60 s old rows) delivers
+  the row to `interactions.observed` naturally; that is the first remote run H7-B1b-1 observes.

@@ -19,6 +19,7 @@
     "db:preflight": "node tools/db/preflight.ts",
     "db:migrate": "node tools/db/migrate.ts",
     "db:provision-roles": "node tools/db/provision-roles.ts",
+    "db:dev-fixture": "node tools/db/dev-fixture.ts",
     "ops:switch": "node tools/ops/switch.ts",
     "secret-scan": "node tools/secret-scan/cli.ts",
     "trigger:release": "node tools/trigger/deploy-release-pair.ts",

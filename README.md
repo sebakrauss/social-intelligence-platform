@@ -51,6 +51,7 @@ SQL migrations (`db/migrations/`); Drizzle mappings only type queries. Every tab
 | `npm run db:migrate [-- --apply]` | Prints a secret-free plan; applies pending migrations only with `--apply`. Never drops anything. |
 | `npm run db:provision-roles [-- --apply [--rotate]]` | Creates the three login roles if absent (passwords taken from the runtime URLs, sent as SCRAM verifiers) or validates them; `--rotate` changes passwords in place. Never drops or recreates a role (R8). |
 | `npm run test:db:managed` | The same isolation, concurrency, persistence and introspection suites against the managed development project. Reports **NOT RUN** (exit 2) when its configuration is absent. |
+| `npm run db:dev-fixture [-- --apply --confirm-dev-fixture <phrase>]` | Step H7-B1b-0 shared-dev acceptance fixture (`tests/db/dev-fixtures/`): ONE synthetic workspace, simulator connection without credential and one canonical comment ingested through `ingestInteractionFact`. Plan (read-only) by default; refuses any target but the pinned `social-intelligence-dev-v2` digest, and the protected P2-E workspace. Never deletes; never writes classification rows. |
 
 **Database CA.** TLS to a managed endpoint always verifies the server certificate and host name. A runtime gets
 the CA either as a path (`DATABASE_SSL_ROOT_CERT`, local development) or as PEM content

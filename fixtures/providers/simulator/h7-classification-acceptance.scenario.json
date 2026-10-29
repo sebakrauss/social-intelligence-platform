@@ -1,0 +1,79 @@
+{
+  "scenarioId": "h7_classification_acceptance",
+  "description": "Step H7-B1b-0: the ONE synthetic Facebook page, post and audience comment of the shared-dev deterministic Classification acceptance fixture (tests/db/dev-fixtures). Synthetic data only; never evidence about Meta. The link is scheme-less (simulator fixtures carry no URL scheme) on the reserved documentation domain.",
+  "simulated": true,
+  "apiVersion": "simulator-v1",
+  "clockStart": "2026-10-29T12:00:00.000Z",
+  "pageSize": 10,
+  "rateBudget": { "mode": "not_reported" },
+  "webhookToleranceSeconds": 300,
+  "credentials": [
+    {
+      "id": "wrenkind_fixture_h7_b1b_credential",
+      "secret": "synthetic-h7-fixture-credential-not-a-secret",
+      "status": "active",
+      "expiresAt": null,
+      "refresh": "not_supported",
+      "assets": ["wrenkind_fixture_h7_b1b_page"]
+    }
+  ],
+  "assets": [
+    {
+      "id": "wrenkind_fixture_h7_b1b_page",
+      "platform": "facebook",
+      "assetClass": "content_bearing",
+      "displayName": "Wrenkind H7 Acceptance Fixture (synthetic page)",
+      "identity": "wrenkind_fixture_h7_b1b_brand",
+      "permissions": ["sim.read_account", "sim.read_content", "sim.read_interactions"],
+      "linkedAdAccounts": [],
+      "webhooks": "not_supported",
+      "subscribed": false
+    }
+  ],
+  "authors": [
+    {
+      "id": "wrenkind_fixture_h7_b1b_brand",
+      "platform": "facebook",
+      "role": "account_identity",
+      "displayName": "Wrenkind H7 Acceptance Fixture",
+      "handle": "wrenkind_fixture_h7_b1b_brand"
+    },
+    {
+      "id": "wrenkind_fixture_h7_b1b_user",
+      "platform": "facebook",
+      "role": "user",
+      "displayName": "Synthetic Fixture User",
+      "handle": "wrenkind_fixture_h7_b1b_user"
+    }
+  ],
+  "contents": [
+    {
+      "id": "wrenkind_fixture_h7_b1b_post",
+      "account": "wrenkind_fixture_h7_b1b_page",
+      "kind": "post",
+      "reportedSource": "organic",
+      "caption": "Synthetic acceptance post (Wrenkind fixture)",
+      "publishedAt": "2026-10-29T10:00:00.000Z",
+      "availability": "available"
+    }
+  ],
+  "interactions": [
+    {
+      "id": "wrenkind_fixture_h7_b1b_comment",
+      "content": "wrenkind_fixture_h7_b1b_post",
+      "parent": null,
+      "author": "wrenkind_fixture_h7_b1b_user",
+      "text": "This is a synthetic acceptance comment with one documentation link: example.com/h7-b1b",
+      "createdAt": "2026-10-29T10:30:00.000Z",
+      "editedAt": null,
+      "revision": "r1",
+      "visibility": "visible",
+      "presence": "present",
+      "restrictions": []
+    }
+  ],
+  "campaigns": [],
+  "adGroups": [],
+  "ads": [],
+  "faultPresets": {}
+}
