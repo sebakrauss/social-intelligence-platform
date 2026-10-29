@@ -658,3 +658,34 @@ subscribed; no source fix required).
 
 Ordering note: TA step 7 (Inbox read side) is not built; H7-B can land before it (understanding works without the
 Inbox), but no "Needs review" surface exists until step 7. Topics (task C) stay with step 12.
+
+---
+
+## 25. H7-A1 as implemented (pure domain; clarifications, no semantic change)
+
+`modules/classification/domain/*`, public API `modules/classification/index.ts` (TA §7.1: `classification` owns
+assessments, accepted interpretation, language assessment and protection — no separate "intelligence" module). Pure:
+imports only `@/domain/*` and its own files (depcruise `module-domain-pure`, `domain-no-packages`; guard
+`tests/architecture/classification-domain-guards.test.ts`). No persistence, task, gateway, model, credential or
+dependency was added; no migration after 0023.
+
+| File | What it freezes |
+|---|---|
+| `taxonomy.ts` | A–H with stable keys, cardinality, exclusive `safety.none`, risk reason codes (`reputation_risk`, `severe_safety_risk` only), protected intents → PD D-35 meanings, review-only safety values, the three automation categories; `safety.hate_speech` the only addition (D-H7-2) |
+| `confidence.ts` | `low · medium · high` per value; optional score = evidence only (thresholds OPEN); explicit abstention `none_fits` / `insufficient_evidence`; cap function |
+| `language.ts` | BCP-47 subset (language, script, region; other forms fail closed); validated = `es-*`, `pt-BR`, `en-*` and mixes among them; unsupported / uncertain / unknown ⇒ semantic max `medium` (D-H7-5). `pt` without region and `pt-PT` are not validated (conservative) |
+| `assessment.ts` | Target = (workspace, interaction, source text version); origins rule / ai / platform hint / human; validated construction; machine identity = (text version, dimension, method); human identity = its `ref`; request key = (text version, pipeline version). The only rule origin is `link_reputation_malicious` → `safety.malicious_link` |
+| `precedence.ts` | M-05: latest human (any text version, flagged `humanOnEarlierVersion` — TA §24.2; M-09 stays OPEN) > rule (its one value) > latest AI on the current version > platform hint; outcomes `accepted · abstained · none`; rule-vs-AI `none` ⇒ `conflict` |
+| `protection.ts` | From accepted **intent** only: `protected` (protected meaning at high) · `uncertain` (missing, abstained, conflict, failed, protected below high, any value below high, unvalidated language for machine evidence) · `not_protected` |
+| `needs-review.ts` | Reasons `protection_uncertain`, `review_safety_label`, `low_confidence`, `interpretation_conflict` (medium alone is not a reason) |
+| `text-segments.ts`, `watch-terms.ts` | `Intl.Segmenter` (word, `und`) on the source text ⇒ offsets are UTF-16 code units of the source, normalization per token (NFKC → lower → Latin accent fold → NFC) ⇒ no offset mapping needed; token-exact phrases, variants, excludes; **hashtag and mention tokens excluded by default** (open product decision; explicit `include` option); `#`/`@` terms refused in v1; **technical bounds** (defensive, not product limits): text 32 768, phrase 256 chars / 16 tokens, 32 variants and 32 excludes per term, 1 000 terms, 8 192 phrases, 50 occurrences per term. Behavior pinned to the runtime ICU by `watch-term-matcher.v1` |
+| `signals.ts` | `watch_term_match`, `link_present` (local detection, never fetched), `text_empty`, `text_emoji_only`, `author_own_brand`: facts without dimension or value; no profanity signal |
+| `understanding-input.ts` | Bounded context contract (§13 bounds); excerpts grapheme-safe; analyzed text never truncated (`TEXT_TOO_LARGE`); no author/handle/profile/credential/raw-body/watch-term field by construction |
+| `understanding-output.ts` | Closed schema for task A (topics excluded — task C); unknown keys/values fail; quotes ⇒ verified source spans; re-ask once then no assessment; failure classes; `toAiAssessments` applies the language cap |
+| `value-inputs.ts` | Projection only (no score/weight): purchase / product-or-service question, response need, escalation, risk, protection, source, active ad, provider time |
+| `human-correction.ts` | New human assessment (high), `corrects` = the corrected assessment's `ref`; feedback (dismiss, false positive/negative, not valuable) stays consumer state |
+| `versions.ts` | Independent versions (taxonomy, confidence, language policy, precedence, protection, needs review, signals, matcher, input contract, output schema, value inputs) |
+
+Clarifications (non-semantic): language pre-detection, when added, is a deterministic **hint**, not an M-05 rule
+assessment (a rule would outrank the AI refinement of mixed/uncertain cases that §6 assigns to task A). The synthetic
+fixtures in `tests/support/classification-corpus.ts` are unit-domain fixtures only — not the H7-C evaluation corpus.
