@@ -826,3 +826,39 @@ Decisions and boundaries:
 - **Deliberately unresolved:** real provider and models (H7-D, TA-Q-06), the INTELLIGENCE plane, request continuation
   from DETERMINISTIC_DONE, attempt / ledger persistence (needs a migration), budgets and prices, numeric gates, live
   shadow, watch-term effective revision.
+
+## 30. H7-D0 as implemented (real provider adapters + bake-off tooling; live run pending credentials)
+
+- **SDKs (official only, exact pins):** `openai` 7.45.1 (Apache-2.0, no dependencies; all peers optional) and
+  `@anthropic-ai/sdk` 1.3.0 (Apache-2.0; standardwebhooks, json-schema-to-ts, @opentelemetry/api). 8 packages added,
+  no install scripts, nothing removed or changed, npm audit 0. Chosen over hand-written REST: compile-time-verified
+  request/response shapes and typed errors. No orchestration framework. Imported only by `ai/providers/{openai,
+  anthropic}` (depcruise; the adapters' contract test is the single test exemption).
+- **Adapters** conform to the unchanged `ModelProvider` port. OpenAI: Responses API, `instructions` = system,
+  one user message = data block, `text.format` json_schema `strict: true`, `reasoning.effort`, `store: false`,
+  `service_tier: "default"`, `truncation: "disabled"`. Anthropic: Messages API, `system`, one user message,
+  `output_config: { effort, format: json_schema }`, `thinking: disabled` (lowest-cost explicit setting),
+  `service_tier: "standard_only"`, `speed: "standard"`; never the SDK's refusal-fallback middleware. Both: SDK retries
+  0, explicit timeout, no tools / sampling knobs / batch, reported model must equal the requested id (or its dated
+  snapshot) else `model_mismatch`; only text, reported model and usage (incl. cached tokens) cross the port; reasoning /
+  thinking, ids, headers (except retry-after) and raw objects never do.
+- **Gateway contract (additive):** `GatewayTask.outputJsonSchema` + `ProviderRequest.responseFormat.{schemaName,
+  jsonSchema}`; `ProviderUsage.cachedInputTokens`; causes `provider_auth_failed`, `provider_request_rejected`,
+  `model_mismatch` (AI_UNAVAILABLE, non-retryable). No new failure class.
+- **Task A v2 (`understanding-task.v2`):** one provider-neutral strict-dialect JSON Schema generated from taxonomy.v1
+  (every property required, no additional properties, absent = null), sent identically to every provider;
+  `fromStructuredOutput` removes ONLY the forced nulls of optional fields before the unchanged A1 validator. Prompt
+  (`understanding-prompt.v1`) and output schema (`understanding-output.v1`) unchanged. Mechanical differences between
+  providers: system field name (`instructions` vs `system`) and the schema name (OpenAI only).
+- **Bake-off tooling:** `npm run eval:classification:live -- --candidates … [--run --confirm-real-model-calls <phrase>]`
+  (refuses CI / deployed environments; PLAN by default). Candidates frozen in `tests/eval/classification/live/
+  candidates.ts` (gpt-6-luna and gpt-6.1-terra effort `none`; claude-sonnet-5-5 effort `low`, thinking disabled; output
+  cap 2 000 tokens). Evaluation-only prices `fixtures/intelligence/evaluation/model-prices.eval-2026-10-29.json`
+  (official list prices read 2026-10-29; not billing; TA-Q-23 open). Spend ledger: conservative maximum per run
+  (⌈chars/2⌉ tokens × 2 attempts + output cap), denies any run that would cross US$15. Pass 1 all cases; pass 2
+  critical cases ×2 for qualifying candidates; stability = any label / protection / needs-review / failure change.
+  Sanitized evidence only in ignored `.wrenkind-local/evidence/h7-d0/`.
+- **Status:** PLAN upper bound US$11.08 (Luna 0.36 · Terra 3.57 · Sonnet 7.15). The live run did NOT happen:
+  `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are absent from the operator environment. No comparison, no recommendation.
+- **Before any customer content (not decided here):** provider data retention and training defaults, ZDR eligibility,
+  data residency / region, DPA and subprocessor posture (TA-Q-06, TA-Q-15, TA §22.3).

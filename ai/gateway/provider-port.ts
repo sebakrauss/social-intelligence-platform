@@ -18,19 +18,24 @@ export interface ProviderRequest {
   readonly system: string;
   /** The one delimited data section (social text is data, never instruction). */
   readonly data: string;
-  readonly responseFormat: { readonly kind: "json"; readonly schemaVersion: string };
+  /** The task's provider-neutral JSON Schema for native structured output (the task's own validator still decides). */
+  readonly responseFormat: { readonly kind: "json"; readonly schemaVersion: string; readonly schemaName: string; readonly jsonSchema: Readonly<Record<string, unknown>> };
   readonly maxOutputChars: number;
 }
 
 export interface ProviderUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** Input tokens served from the provider's prompt cache (null when the provider reports none). */
+  readonly cachedInputTokens: number | null;
 }
 
 export type ProviderResponse =
   | { readonly kind: "completed"; readonly text: string; readonly modelVersion: string | null; readonly usage: ProviderUsage | null }
   | { readonly kind: "refused" }
-  | { readonly kind: "failed"; readonly cause: "provider_unavailable" | "timeout" | "rate_limited" | "provider_input_limit"; readonly retryAfterSeconds: number | null };
+  | { readonly kind: "failed"; readonly cause: ProviderFailureCause; readonly retryAfterSeconds: number | null };
+
+export type ProviderFailureCause = "provider_unavailable" | "timeout" | "rate_limited" | "provider_input_limit" | "provider_auth_failed" | "provider_request_rejected" | "model_mismatch";
 
 /** Opaque call identity for tracing and for the simulator's script; an adapter never sends it to a vendor. */
 export interface ProviderCall {

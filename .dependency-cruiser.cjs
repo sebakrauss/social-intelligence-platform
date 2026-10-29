@@ -214,8 +214,8 @@ module.exports = {
     {
       name: "ai-sdk-only-in-ai-providers",
       severity: "error",
-      comment: "AI provider SDK types stay inside ai/providers (TA §22).",
-      from: { pathNot: "^ai/providers/" },
+      comment: "AI provider SDK types stay inside ai/providers (TA §22). H7-D0: the adapters' contract test alone may use the SDKs' own error classes and types to build realistic mocks.",
+      from: { pathNot: "^(ai/providers/|tests/unit/ai/provider-adapters\\.test\\.ts$)" },
       to: { path: npmPackage(AI_SDKS) },
     },
 

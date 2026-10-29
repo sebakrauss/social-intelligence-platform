@@ -24,10 +24,13 @@ const PRODUCT = ["app", "ui", "server", "domain", "modules", "platform", "integr
 const RUNTIME = ["app", "ui", "server", "platform", "integrations", "jobs", "db", "mutations"];
 
 describe("H7-C: vendor-free", () => {
-  it("no model SDK is a dependency or imported anywhere", () => {
+  it("the only model SDKs are the two OFFICIAL ones (H7-D0), pinned exactly; no orchestration framework; imported only by their adapters (+ the adapters' contract test)", () => {
     const pkg = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
-    expect(Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).filter((name) => /anthropic|openai|langchain|@ai-sdk|^ai$|cohere|mistral|gemini|@google\/generative|ollama|huggingface/i.test(name))).toEqual([]);
-    for (const file of sourceFiles([...PRODUCT, "ai", "tests", "tools"])) expect(importsOf(file).filter((s) => /openai|@anthropic-ai|langchain|@ai-sdk/.test(s)), file).toEqual([]);
+    const all = { ...pkg.dependencies, ...pkg.devDependencies };
+    expect(Object.keys(all).filter((name) => /anthropic|openai|langchain|@ai-sdk|^ai$|cohere|mistral|gemini|@google\/generative|ollama|huggingface|llamaindex/i.test(name)).sort()).toEqual(["@anthropic-ai/sdk", "openai"]);
+    for (const name of ["@anthropic-ai/sdk", "openai"]) expect(all[name], name).toMatch(/^\d+\.\d+\.\d+$/);
+    const importers = sourceFiles([...PRODUCT, "ai", "tests", "tools"]).filter((file) => importsOf(file).some((s) => /^(openai|@anthropic-ai\/sdk)(\/|$)/.test(s))).sort();
+    expect(importers).toEqual(["ai/providers/anthropic/index.ts", "ai/providers/openai/index.ts", "tests/unit/ai/provider-adapters.test.ts"]);
   });
 
   it("no product code branches on a vendor name (only future ai/providers/<vendor> adapters and registry config may)", () => {
@@ -134,5 +137,64 @@ describe("H7-C: nothing is wired to a runtime", () => {
   it("no migration after 0024", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
     expect(migrations.at(-1)).toBe("0024_classification_persistence.sql");
+  });
+});
+
+describe("H7-D0: real provider adapters and the live bake-off", () => {
+  const ADAPTERS = ["ai/providers/openai/index.ts", "ai/providers/anthropic/index.ts"];
+  const LIVE = sourceFiles(["tests/eval/classification/live"]).concat(["tests/eval/classification/live.eval.ts", "tools/eval/classification-live.ts"]);
+
+  it("adapters import only their own SDK and the gateway port; read no environment; disable SDK retries; use no tools, fallback or middleware", () => {
+    for (const file of ADAPTERS) {
+      const code = strip(codeOf(file));
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(openai|openai\/resources\/responses\/responses|@anthropic-ai\/sdk|@anthropic-ai\/sdk\/resources\/messages\/messages|@\/ai\/gateway)$/);
+      expect(code, file).not.toMatch(/process\.env|import\.meta\.env|readFileSync|tools\s*:|tool_choice|middleware|Fallback|background|previous_response_id|temperature|top_p|top_k|"priority"|"fast"|"flex"|"auto"|batch/i);
+      expect(code, file).toMatch(/maxRetries: 0/);
+      expect(code, file).toMatch(/return failed\("model_mismatch"\)/);
+    }
+    expect(strip(codeOf("ai/providers/openai/index.ts"))).toMatch(/strict: true/);
+    expect(strip(codeOf("ai/providers/openai/index.ts"))).toMatch(/store: false/);
+    expect(strip(codeOf("ai/providers/anthropic/index.ts"))).toMatch(/service_tier: "standard_only"/);
+  });
+
+  it("adapters return only text, reported model and usage: no raw response, id, header or reasoning crosses the port", () => {
+    for (const file of ADAPTERS) {
+      const code = strip(codeOf(file));
+      expect(code, file).toMatch(/kind: "completed",\s+text,\s+modelVersion: (response|message)\.model,\s+usage:/);
+      expect(code, file).not.toMatch(/_request_id|requestID|raw:|reasoning: (response|message)|thinking: (response|message)/);
+      // Headers are read for exactly one value: the retry-after of a rate limit.
+      expect([...code.matchAll(/\.headers\b/g)].length, file).toBe(1);
+      expect(code, file).toMatch(/headers\?\.get\("retry-after"\)/);
+    }
+  });
+
+  it("no product or runtime code composes a real provider; only the live bake-off does", () => {
+    for (const file of sourceFiles([...PRODUCT, "tools"])) expect(importsOf(file).filter((s) => /ai\/providers\/(openai|anthropic)/.test(s)), file).toEqual([]);
+    expect(sourceFiles(["tests"]).filter((file) => /candidateProvider\(/.test(strip(codeOf(file)))).sort()).toEqual(["tests/eval/classification/live.eval.ts", "tests/eval/classification/live/candidates.ts"]);
+  });
+
+  it("the live run is operator-only: never in a default / CI config, refuses CI and needs an explicit confirmation", () => {
+    for (const config of ["vitest.config.ts", "vitest.db.config.ts", "vitest.db-managed.config.ts", "vitest.jobs-managed.config.ts", "vitest.eval.config.ts", "vitest.dev-fixture.config.ts"]) {
+      expect(codeOf(config), config).not.toMatch(/live\.eval|eval-live/);
+    }
+    expect(codeOf("vitest.eval-live.config.ts")).toMatch(/include: \["tests\/eval\/classification\/live\.eval\.ts"\]/);
+    const cli = strip(codeOf("tools/eval/classification-live.ts"));
+    expect(cli.indexOf('"CI"')).toBeLessThan(cli.indexOf("spawnSync("));
+    expect(cli).toMatch(/--confirm-real-model-calls/);
+    const runner = strip(codeOf("tests/eval/classification/live.eval.ts"));
+    expect(runner).toMatch(/process\.env\["CI"\] !== undefined \|\| process\.env\["GITHUB_ACTIONS"\] !== undefined/);
+    expect(runner.indexOf("LIVE_EVAL_BUDGET_USD) fail(")).toBeLessThan(runner.indexOf("readCredential(c.credential)"));
+    expect((JSON.parse(codeOf("package.json")) as { scripts: Record<string, string> }).scripts["test"]).toBe("vitest run");
+  });
+
+  it("the bake-off reads only the committed synthetic corpus: no database, dev-v2, ingestion or fixture-tool input", () => {
+    for (const file of LIVE) expect(strip(codeOf(file)), file).not.toMatch(/@\/platform\/db|@\/tools\/db|from "pg"|DATABASE_|dev-fixture|dev-v2|@\/modules\/(ingestion|interactions)|@\/server\//);
+    expect(strip(codeOf("tests/eval/classification/live.eval.ts"))).toMatch(/fixtures\/intelligence\/classification\/understanding-eval\.v1\.json/);
+  });
+
+  it("credentials are read only at the operator boundary and handed only to SDK clients; never printed", () => {
+    expect(sourceFiles(["ai", "modules", "tests/eval", "tools"]).filter((file) => /OPENAI_API_KEY|ANTHROPIC_API_KEY/.test(strip(codeOf(file)))).sort())
+      .toEqual(["tests/eval/classification/live-tools.test.ts", "tests/eval/classification/live/candidates.ts", "tests/eval/classification/live/credentials.ts"]);
+    for (const file of LIVE) expect(strip(codeOf(file)), file).not.toMatch(/console\.log\([^)]*(key|credential)|stdout\.write\([^)]*readCredential/i);
   });
 });

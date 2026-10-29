@@ -62,7 +62,7 @@ describe("structured output and the one re-ask", () => {
     expect(result.kind).toBe("assessed");
     if (result.kind !== "assessed") return;
     expect(result.method).toEqual({
-      kind: "ai", provider: "simulator", model: "simulator-contract", modelVersion: "simulator-1", taskId: "classification.understanding", taskVersion: "understanding-task.v1",
+      kind: "ai", provider: "simulator", model: "simulator-contract", modelVersion: "simulator-1", taskId: "classification.understanding", taskVersion: "understanding-task.v2",
       promptVersion: "understanding-prompt.v1", promptHash: UNDERSTANDING_TASK.prompt.hash, schemaVersion: "understanding-output.v1", taxonomyVersion: "taxonomy.v1", confidencePolicyVersion: "confidence.v1",
     });
     expect(result.output.dimensions.intent).toMatchObject({ status: "assessed", values: [{ key: "price_objection" }] });
@@ -241,7 +241,7 @@ describe("registry and simulator", () => {
 
   it("a task the gateway runs is opaque to it: a generic task works the same way", async () => {
     const echo: GatewayTask<{ readonly n: number }, number> = {
-      taskId: "test.echo", taskVersion: "echo.v1", prompt: { version: "echo-prompt.v1", hash: "0".repeat(64), system: "Return the number." }, outputSchemaVersion: "echo.v1", versions: {},
+      taskId: "test.echo", taskVersion: "echo.v1", prompt: { version: "echo-prompt.v1", hash: "0".repeat(64), system: "Return the number." }, outputSchemaVersion: "echo.v1", outputJsonSchema: { name: "echo_v1", schema: { type: "object" } }, versions: {},
       data: (i) => ({ n: i.n }), validate: (parsed) => (typeof parsed === "object" && parsed !== null && "schemaVersion" in parsed ? { ok: true, value: 1 } : { ok: false, issues: ["X"] }),
     };
     const h = harness({ routes: { "test.echo": { kind: "model", model: { providerKey: "simulator", modelKey: "simulator-contract" } } } });

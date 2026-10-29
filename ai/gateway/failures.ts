@@ -7,7 +7,10 @@
  *   AI_UNAVAILABLE      provider_unavailable · timeout ·   yes         bounded transport retry (≤ 3, backoff, honor
  *                       rate_limited                                   retry-after), then AI_FAILED
  *   AI_UNAVAILABLE      task_disabled · kill_switch ·      no          deterministic only until configuration changes
- *                       model_unavailable
+ *                       model_unavailable ·
+ *                       provider_auth_failed ·             (H7-D0: a provider refused the credential, rejected the
+ *                       provider_request_rejected ·        request, or served a model other than the one requested —
+ *                       model_mismatch                     never retried, never re-routed)
  *   AI_INVALID_OUTPUT   invalid_output (after ONE re-ask)  no          no assessment (TA §23.2)
  *   AI_REFUSED          refused                            no          same as invalid (no retry loop)
  *   AI_BUDGET           budget_exhausted                   no          no call until the budget policy allows
@@ -26,6 +29,9 @@ export const AI_FAILURE_CAUSES = [
   "task_disabled",
   "kill_switch",
   "model_unavailable",
+  "provider_auth_failed",
+  "provider_request_rejected",
+  "model_mismatch",
   "invalid_output",
   "refused",
   "budget_exhausted",
@@ -41,6 +47,9 @@ const CLASS_OF: Readonly<Record<AiFailureCause, AiFailureClass>> = Object.freeze
   task_disabled: "AI_UNAVAILABLE",
   kill_switch: "AI_UNAVAILABLE",
   model_unavailable: "AI_UNAVAILABLE",
+  provider_auth_failed: "AI_UNAVAILABLE",
+  provider_request_rejected: "AI_UNAVAILABLE",
+  model_mismatch: "AI_UNAVAILABLE",
   invalid_output: "AI_INVALID_OUTPUT",
   refused: "AI_REFUSED",
   budget_exhausted: "AI_BUDGET",

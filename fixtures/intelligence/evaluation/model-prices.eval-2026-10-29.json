@@ -1,0 +1,17 @@
+{
+ "pricingVersion": "eval-prices.2026-10-29",
+ "purpose": "Step H7-D0 evaluation-only spend estimation (bake-off budget guard). NOT Wrenkind billing, NOT a production price table; TA-Q-23 (unit-cost model) remains OPEN.",
+ "status": "VERIFIED_FROM_OFFICIAL_LIST_PRICES",
+ "retrievedAt": "2026-10-29",
+ "currency": "USD",
+ "unit": "per_1m_tokens",
+ "sources": {
+  "openai": "https://developers.openai.com/api/docs/pricing (Standard tier)",
+  "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing (base input / cache hits / output)"
+ },
+ "models": {
+  "openai/gpt-6-luna": { "input": 0.10, "cachedInput": 0.01, "output": 0.50, "cachedIncludedInInput": true },
+  "openai/gpt-6.1-terra": { "input": 1.00, "cachedInput": 0.05, "output": 5.00, "cachedIncludedInInput": true },
+  "anthropic/claude-sonnet-5-5": { "input": 2.00, "cachedInput": 0.10, "output": 10.00, "cachedIncludedInInput": false }
+ }
+}

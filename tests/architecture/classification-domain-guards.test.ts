@@ -46,6 +46,7 @@ describe("H7-A1: the classification domain is pure", () => {
     ]);
     expect(MODULE_FILES.filter((f) => !f.startsWith(`${MODULE}/domain/`))).toEqual([
       `${MODULE}/application/ai/understand-interaction.ts`,
+      `${MODULE}/application/ai/understanding-output-schema.ts`,
       `${MODULE}/application/ai/understanding-task.ts`,
       `${MODULE}/application/ports.ts`,
       `${MODULE}/application/understand-deterministic.ts`,
@@ -88,7 +89,8 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
   it("adds no AI/model dependency", () => {
     const pkg = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
     const names = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
-    expect(names.filter((name) => /anthropic|openai|langchain|@ai-sdk|^ai$|cohere|mistral|gemini|@google\/generative|ollama|huggingface|franc|cld|langdetect/i.test(name))).toEqual([]);
+    // H7-D0 added exactly the two official provider SDKs (used only by ai/providers adapters); nothing else.
+    expect(names.filter((name) => /anthropic|openai|langchain|@ai-sdk|^ai$|cohere|mistral|gemini|@google\/generative|ollama|huggingface|franc|cld|langdetect/i.test(name)).sort()).toEqual(["@anthropic-ai/sdk", "openai"]);
   });
 
   it("the only migration after 0023 is H7-A2's classification persistence (0024)", () => {
@@ -98,7 +100,8 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
 
   it("registers no classification / intelligence task; `ai/` is only H7-C's gateway + simulator, imported by no runtime; only the MAIN consumer and its composition use the module", () => {
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).filter((name) => /^(classification|intelligence|ai)\./.test(name))).toEqual([]);
-    expect(sourceFiles(["ai"])).toEqual(["ai/gateway/attempt.ts", "ai/gateway/failures.ts", "ai/gateway/gateway.ts", "ai/gateway/index.ts", "ai/gateway/provider-port.ts", "ai/gateway/registry.ts", "ai/gateway/task.ts", "ai/providers/simulator/index.ts"]);
+    expect(sourceFiles(["ai"])).toEqual(["ai/gateway/attempt.ts", "ai/gateway/failures.ts", "ai/gateway/gateway.ts", "ai/gateway/index.ts", "ai/gateway/provider-port.ts", "ai/gateway/registry.ts", "ai/gateway/task.ts",
+      "ai/providers/anthropic/index.ts", "ai/providers/openai/index.ts", "ai/providers/simulator/index.ts"]);
     expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations", "db"]).filter((file) => /@\/ai\/|@\/prompts\/|application\/ai\//.test(codeOf(file)))).toEqual([]);
     expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual(["jobs/reconciliation.ts", "server/persistence/classification.ts"]);
   });

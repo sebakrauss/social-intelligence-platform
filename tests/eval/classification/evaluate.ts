@@ -11,7 +11,7 @@
  *   configuration invariance (route, model, prompt and schema identical for every case — prompt injection cannot move
  *   them) · critical failures (protected_critical / safety_critical cases that failed a critical check).
  */
-import { createAiGateway, createModelRegistry, type AiGateway, type AttemptRecord, type ModelDescriptor, type ModelProvider } from "@/ai/gateway";
+import { createAiGateway, createModelRegistry, type AiGateway, type AttemptRecord, type BudgetPort, type ModelDescriptor, type ModelProvider } from "@/ai/gateway";
 import { parseInstant } from "@/domain/instant";
 import {
   CLOSED_DIMENSIONS,
@@ -46,6 +46,11 @@ export interface EvaluationSubject {
   readonly realModel: boolean;
   /** Test seam: the gateway used for one case (default: one gateway for every case). */
   readonly gatewayFor?: (testCase: EvalCase, standard: AiGateway) => AiGateway;
+  /** H7-D0 live runs: the spend ledger's budget port (default: allow), a real clock (latency), a case subset, a hook. */
+  readonly budget?: BudgetPort;
+  readonly now?: () => Date;
+  readonly include?: (testCase: EvalCase) => boolean;
+  readonly onCase?: (result: CaseResult) => void;
 }
 
 export interface DimensionCaseResult {
@@ -64,6 +69,9 @@ export interface CaseResult {
   readonly weight: number;
   readonly outcome: "assessed" | "failed";
   readonly failureClass: UnderstandingFailureClass | null;
+  readonly failureCause: string | null;
+  /** The case's provider calls (ids, versions, usage, timing, outcomes — never text). */
+  readonly attempts: readonly AttemptRecord[];
   readonly dimensions: Readonly<Partial<Record<ClosedDimension, DimensionCaseResult>>>;
   readonly protection: { readonly expected: string; readonly actual: ProtectionResult; readonly pass: boolean };
   readonly needsReview: { readonly expected: boolean | null; readonly actual: boolean; readonly pass: boolean };
@@ -127,16 +135,21 @@ async function evaluateCase(testCase: EvalCase, gateway: AiGateway, routeFingerp
   const built = buildUnderstandingInput({ ...params, interactionKind: params["interactionKind"], platform: params["platform"], source: params["source"], linkPresent: params["linkPresent"], text: testCase.text });
   let accepted: Partial<Record<ClosedDimension, AcceptedInterpretation>> = {};
   let failureClass: UnderstandingFailureClass | null = null;
+  let failureCause: string | null = null;
   let attempts: readonly AttemptRecord[] = [];
   let language = languageSupport({ kind: "unknown" });
   let capViolation = false;
   if (!built.ok) {
     if (!built.violations.includes("TEXT_TOO_LARGE")) throw new Error(`corpus_input_invalid:${testCase.id}:${built.violations.join(",")}`);
     failureClass = "AI_INPUT_TOO_LARGE";
+    failureCause = "input_limit";
   } else {
     const result = await understandInteraction(gateway, built.input, { workspaceId: TARGET.workspaceId, interactionId: TARGET.interactionId, sourceTextVersionId: TARGET.sourceTextVersionId, pipelineVersion: "classification.ai.eval", reference: testCase.id });
     attempts = result.attempts;
-    if (result.kind === "failed") failureClass = result.failure.class;
+    if (result.kind === "failed") {
+      failureClass = result.failure.class;
+      failureCause = result.failure.cause;
+    }
     else {
       const support = languageSupport(languageResultOf(result.output));
       language = support;
@@ -186,6 +199,8 @@ async function evaluateCase(testCase: EvalCase, gateway: AiGateway, routeFingerp
     weight: testCase.weight,
     outcome: failureClass === null ? "assessed" as const : "failed" as const,
     failureClass,
+    failureCause,
+    attempts,
     dimensions,
     protection: { expected: testCase.expectedProtection, actual: protection.result, pass: protectionPass },
     needsReview: { expected: testCase.expectedNeedsReview, actual: review.needsReview, pass: needsReviewPass },
@@ -203,14 +218,19 @@ export async function evaluateCorpus(corpus: EvalCorpus, subject: EvaluationSubj
     registry: createModelRegistry([subject.model]),
     routes: { [UNDERSTANDING_TASK_ID]: { kind: "model", model: route } },
     providers: [subject.provider],
-    budget: { reserve: () => Promise.resolve("allowed" as const) },
+    budget: subject.budget ?? { reserve: () => Promise.resolve("allowed" as const) },
     killed: () => false,
-    now: () => NOW,
+    now: subject.now ?? (() => NOW),
   });
+  const cases = corpus.cases.filter((testCase) => subject.include?.(testCase) ?? true);
   const results: CaseResult[] = [];
-  for (const testCase of corpus.cases) results.push(await evaluateCase(testCase, subject.gatewayFor?.(testCase, standard) ?? standard, "no-attempt"));
+  for (const testCase of cases) {
+    const result = await evaluateCase(testCase, subject.gatewayFor?.(testCase, standard) ?? standard, "no-attempt");
+    results.push(result);
+    subject.onCase?.(result);
+  }
 
-  const scored = corpus.cases.map((testCase, index) => ({ testCase, result: results[index] as CaseResult }));
+  const scored = cases.map((testCase, index) => ({ testCase, result: results[index] as CaseResult }));
   const perDimension: Record<string, EvaluationReport["perDimension"][string]> = {};
   for (const dimension of SEMANTIC) {
     const counts = new Map<string, { tp: number; fp: number; fn: number }>();
@@ -283,7 +303,7 @@ export async function evaluateCorpus(corpus: EvalCorpus, subject: EvaluationSubj
     providerKey: subject.model.providerKey,
     modelKey: subject.model.modelKey,
     realModelBenchmark: subject.realModel,
-    corpus: { id: corpus.corpusId, version: corpus.corpusVersion, cases: corpus.cases.length },
+    corpus: { id: corpus.corpusId, version: corpus.corpusVersion, cases: cases.length },
     passRate: ratio(results.filter((r) => r.pass).length, results.length),
     weightedPassRate: ratio(scored.filter(({ result }) => result.pass).reduce((sum, { testCase }) => sum + testCase.weight, 0), weight),
     perDimension,

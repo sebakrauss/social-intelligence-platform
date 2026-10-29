@@ -25,6 +25,8 @@ export interface GatewayTask<I, O> {
   readonly taskVersion: string;
   readonly prompt: TaskPrompt;
   readonly outputSchemaVersion: string;
+  /** The output's provider-neutral JSON Schema (mechanically strict-compatible), for native structured output only. */
+  readonly outputJsonSchema: { readonly name: string; readonly schema: Readonly<Record<string, unknown>> };
   /** Every other version the output depends on (recorded on each attempt). */
   readonly versions: Readonly<Record<string, string>>;
   /** The task's data object (pure; untrusted fields stay data). */

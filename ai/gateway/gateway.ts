@@ -88,7 +88,8 @@ export function createAiGateway(deps: GatewayDependencies): AiGateway {
       if (model === undefined || !model.enabled || model.structuredOutput === "none" || provider === undefined) return failed("model_unavailable");
 
       const data = renderDataBlock(task.data(input));
-      const base = { model: route.model, data, responseFormat: { kind: "json" as const, schemaVersion: task.outputSchemaVersion }, maxOutputChars: model.maxOutputChars };
+      const responseFormat = { kind: "json" as const, schemaVersion: task.outputSchemaVersion, schemaName: task.outputJsonSchema.name, jsonSchema: task.outputJsonSchema.schema };
+      const base = { model: route.model, data, responseFormat, maxOutputChars: model.maxOutputChars };
       const initial: ProviderRequest = { ...base, system: task.prompt.system };
       const inputChars = initial.system.length + initial.data.length;
       if (inputChars > model.maxInputChars) return failed("input_limit");
