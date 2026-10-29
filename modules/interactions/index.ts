@@ -67,9 +67,11 @@ export {
   type StoredRereadObservation,
 } from "./domain/stored-authority";
 export type {
+  AnalysisTextRecord,
   CurrentStateUpdate,
   InteractionRecord,
   InteractionStore,
+  InteractionTextReader,
   NewAuthor,
   NewInteractionRow,
   NewStateObservation,

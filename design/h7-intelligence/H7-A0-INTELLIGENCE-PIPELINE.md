@@ -722,3 +722,30 @@ Decisions and boundaries:
 - **Indexes** (all serve a stated read or invariant): PKs; `(workspace, interaction, dimension, id)` (precedence reads,
   correction FK); `assessments_machine_identity` (idempotency); `signals_once` (idempotency + signals of a version);
   `understanding_requests_once` (idempotency); `watch_term_revisions_once` (latest revision).
+
+## 27. H7-B as implemented (deterministic runtime, MAIN; no release)
+
+- **Target**: the immutable source text version the `interactions.observed` event names. Ingestion sets
+  `source_text_version_id` only for `created` / `text_changed`, from the version it established in the same transaction;
+  the consumer verifies the payload against the persisted event before analysis. The reader joins version **and**
+  interaction (another interaction's version reads as absent) and never reads the current-text pointer.
+- **Topology**: no new task or topic (MAIN 11 / INTEGRATION 7). The deterministic stage runs inside the existing MAIN
+  `interactions.observed` consumer, in its single workspace-scoped job transaction. A new internal topic would also need
+  the 0021 restrictive outbox policy extended, which means a migration; that is deferred to the stage that first needs one.
+- **Pipeline version**: `classification.deterministic.v1`. One request per (text version, pipeline version); the 0024
+  unique key is the concurrency authority (`on conflict do nothing` + `for update` re-read).
+- **States**: PENDING → `SKIPPED_OWN_BRAND` (terminal; canonical `author_role = account_identity`) or `DETERMINISTIC_DONE`
+  (non-terminal; awaits H7-C/E, no sweeper). A request already past PENDING is left untouched. Whether H7-C/E continues v1
+  requests to AI_PENDING or closes them is a later decision.
+- **Signals**: link_present (spans, no fetch), text_empty, text_emoji_only, author_own_brand. An equivalent existing row is
+  success; a different fact under the same identity fails closed (non-retryable `classification_signal_conflict`).
+- **Watch terms: deferred.** The effective-revision selection of a workspace is not frozen and no revision writer or
+  authoring permission exists.
+- **Not written**: assessments of any dimension, protection, needs-review, priority, events, outbox rows, canonical rows.
+  `state_changed` / `removed_at_source` events produce no request; a removed interaction's historical text is still
+  analyzed when its version event arrives.
+- **Failures**: target_not_found / target_not_eligible / signal_conflict / invalid_arrival → non-retryable; database
+  transients follow the task's transient retry policy. A classification failure fails the consumer run, but ingestion has
+  already committed in its own transaction and is never rolled back. Logs carry ids, counts and outcome classes only.
+- **Authority**: existing 0024 worker grants (requests INSERT PENDING / SELECT / UPDATE state columns; signals
+  INSERT / SELECT); no grant change, no migration.

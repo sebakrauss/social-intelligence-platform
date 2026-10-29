@@ -17,10 +17,13 @@ import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 const MODULE = "modules/classification";
 const DOMAIN_FILES = sourceFiles([`${MODULE}/domain`]);
 const MODULE_FILES = sourceFiles([MODULE]);
+/** H7-B: the runtime service layer (no infrastructure) and the persistence adapter (the only DB code). */
+const APPLICATION_FILES = sourceFiles([`${MODULE}/application`]);
+const PURE_FILES = [...DOMAIN_FILES, ...APPLICATION_FILES, `${MODULE}/index.ts`];
 const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1] ?? "");
 
 describe("H7-A1: the classification domain is pure", () => {
-  it("has exactly the domain files of the A1 scope, and the module has no application, persistence or task layer yet", () => {
+  it("has exactly the domain files of the A1 scope; H7-B adds only the deterministic application service and its persistence", () => {
     expect(DOMAIN_FILES.map((f) => path.basename(f))).toEqual([
       "assessment.ts",
       "confidence.ts",
@@ -38,19 +41,32 @@ describe("H7-A1: the classification domain is pure", () => {
       "versions.ts",
       "watch-terms.ts",
     ]);
-    expect(MODULE_FILES.filter((f) => !f.startsWith(`${MODULE}/domain/`))).toEqual([`${MODULE}/index.ts`]);
+    expect(MODULE_FILES.filter((f) => !f.startsWith(`${MODULE}/domain/`))).toEqual([
+      `${MODULE}/application/ports.ts`,
+      `${MODULE}/application/understand-deterministic.ts`,
+      `${MODULE}/index.ts`,
+      `${MODULE}/persistence/index.ts`,
+      `${MODULE}/persistence/store.ts`,
+    ]);
   });
 
   it("imports only the shared kernel (@/domain/*) and its own domain files", () => {
     for (const file of DOMAIN_FILES) {
       for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|@\/domain\/[a-z-]+)$/);
     }
-    for (const specifier of importsOf(`${MODULE}/index.ts`)) expect(specifier).toMatch(/^\.\/domain\/[a-z-]+$/);
+    for (const specifier of importsOf(`${MODULE}/index.ts`)) expect(specifier).toMatch(/^\.\/(domain|application)\/[a-z-]+$/);
+    for (const file of APPLICATION_FILES) {
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/domain\/[a-z-]+|@\/modules\/interactions)$/);
+    }
   });
 
-  it("names no infrastructure, provider, model SDK, network or environment access", () => {
+  it("names no infrastructure, provider, model SDK, network or environment access (domain + application)", () => {
     const forbidden = /@\/(platform|server|jobs|db|integrations|ai|mutations|app|ui)\b|from ["'](next|@trigger\.dev|pg|postgres|drizzle-orm|openai|@anthropic-ai|node:)|process\.env|\bfetch\(|XMLHttpRequest|WebSocket|require\(|\bimport\(|graph\.facebook|instagram\.com|ANTHROPIC|OPENAI|API_KEY/;
-    for (const file of MODULE_FILES) expect(codeOf(file), file).not.toMatch(forbidden);
+    for (const file of PURE_FILES) expect(codeOf(file), file).not.toMatch(forbidden);
+    // The persistence adapter is the only DB code: drizzle + platform/db, nothing else.
+    for (const file of sourceFiles([`${MODULE}/persistence`])) {
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(drizzle-orm|@\/platform\/db|\.\/[a-z-]+|\.\.\/application\/[a-z-]+)$/);
+    }
   });
 
   it("has no path to a platform mutation or moderation action", () => {
@@ -70,10 +86,10 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
     expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql"]);
   });
 
-  it("registers no classification / intelligence task and no `ai/` layer", () => {
+  it("registers no classification / intelligence task and no `ai/` layer; only the MAIN consumer and its composition use the module", () => {
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).filter((name) => /^(classification|intelligence|ai)\./.test(name))).toEqual([]);
     expect(sourceFiles(["ai"])).toEqual([]);
-    expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual([]);
+    expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual(["jobs/reconciliation.ts", "server/persistence/classification.ts"]);
   });
 });
 

@@ -1,2 +1,2 @@
 /** Interactions persistence (PostgreSQL). Composed by server/persistence; the tables are owned by this module only. */
-export { createPostgresInteractionStore, loadStoredInteractionAuthority } from "./store";
+export { createPostgresInteractionStore, createPostgresInteractionTextReader, loadStoredInteractionAuthority } from "./store";

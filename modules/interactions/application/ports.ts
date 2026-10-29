@@ -119,6 +119,26 @@ export interface SubtreeSnapshot {
   readonly depthExceeded: boolean;
 }
 
+/**
+ * One immutable source text version WITH its interaction (Step H7-B: the analysis target of classification). Read by
+ * (interaction, version) — never through the interaction's mutable current-text pointer.
+ */
+export interface AnalysisTextRecord {
+  readonly organizationId: string;
+  readonly workspaceId: string;
+  readonly interactionId: string;
+  readonly sourceTextVersionId: string;
+  readonly observed: boolean;
+  readonly kind: string | null;
+  readonly authorRole: string | null;
+  readonly sourceText: string;
+}
+
+/** Read-only access to analysis targets for downstream modules (classification). No write path. */
+export interface InteractionTextReader {
+  analysisText(interactionId: string, sourceTextVersionId: string): Promise<AnalysisTextRecord | undefined>;
+}
+
 export interface InteractionStore {
   /** The author row for (platform, provider author id), created if absent; the label follows the latest observation. */
   ensureAuthor(author: NewAuthor): Promise<string>;

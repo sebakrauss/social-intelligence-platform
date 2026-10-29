@@ -20,7 +20,7 @@ import type { DatabaseTransaction } from "@/platform/db";
 import { ANCESTRY_MAX_DEPTH } from "../domain/relation";
 import { issueStoredInteractionAuthority, type StoredInteractionAuthority } from "../domain/stored-authority";
 import { isInteractionKind } from "../domain/vocabulary";
-import type { InteractionStore, NewInteractionRow, ObservedFields } from "../application/ports";
+import type { InteractionStore, InteractionTextReader, NewInteractionRow, ObservedFields } from "../application/ports";
 import { authors, interactionRows, sourceTextVersions, stateObservations } from "./tables";
 
 
@@ -198,4 +198,31 @@ export async function loadStoredInteractionAuthority(tx: DatabaseTransaction, wo
     parentId,
     kind: row.kind,
   });
+}
+
+/**
+ * Step H7-B: the analysis-text reader — one specific source text version joined to ITS OWN interaction in the bound
+ * workspace (the composite (workspace, interaction, version) relation), never the current-text pointer. Read-only.
+ */
+export function createPostgresInteractionTextReader(tx: DatabaseTransaction): InteractionTextReader {
+  return {
+    async analysisText(interactionId, sourceTextVersionId) {
+      const rows = await tx
+        .select({
+          organizationId: interactionRows.organizationId,
+          workspaceId: interactionRows.workspaceId,
+          interactionId: interactionRows.id,
+          sourceTextVersionId: sourceTextVersions.id,
+          observed: interactionRows.observed,
+          kind: interactionRows.kind,
+          authorRole: interactionRows.authorRole,
+          sourceText: sourceTextVersions.sourceText,
+        })
+        .from(sourceTextVersions)
+        .innerJoin(interactionRows, and(eq(interactionRows.workspaceId, sourceTextVersions.workspaceId), eq(interactionRows.id, sourceTextVersions.interactionId)))
+        .where(and(eq(sourceTextVersions.id, sourceTextVersionId), eq(sourceTextVersions.interactionId, interactionId)))
+        .limit(1);
+      return rows[0];
+    },
+  };
 }
