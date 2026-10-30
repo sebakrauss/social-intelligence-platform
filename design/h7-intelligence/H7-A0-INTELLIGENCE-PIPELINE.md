@@ -957,3 +957,23 @@ Decisions and boundaries:
 - **Authority:** every golden output conforms to the transport schema and passes A1; transport-valid but semantically
   invalid outputs (unknown values, confidence, score, language tag / certainty, reason code, cardinality, duplicates,
   exclusive `none`, evidence and summary bounds) are still rejected by A1 with the same issue codes.
+
+## 36. H7-D0i as implemented (union-free Anthropic transport schema v2)
+
+- **Cause (proven, H7-D0h):** with only the schema varying, 0 optional / 7 unions ⇒ 400 and 16 optional / 0 unions ⇒
+  200: the seven dimension-level `anyOf` (assessed | abstention) are what Anthropic's grammar compiler rejects.
+- **v2 (`anthropic-transport-schema.v2`):** each dimension `anyOf` is merged into ONE closed object — the branch property
+  union (mechanically from the canonical branches), `status` required with the united canonical enum (`assessed`,
+  `none_fits`, `insufficient_evidence`), branch-specific properties optional; shared non-discriminator properties must
+  be identical (otherwise the projection throws), and any remaining `anyOf` throws. The cross-field rules the branches
+  encoded stay in A1 (assessed without values ⇒ `CARDINALITY_VIOLATION`; an abstention with any other key ⇒
+  `UNEXPECTED_KEY`; language fields ⇒ their own issue codes), tested for every dimension.
+- **Optional-parameter budget:** the pure merge would give 25 optional parameters (> Anthropic's explicit maximum of 24).
+  One A1-lossless rule keeps it at 24: a nullable array outside a merged object (only the root `evidence`) is a required
+  array whose empty value is its absence — A1 validates `evidence: []` and an omitted `evidence` identically (pinned by
+  test). 24 equals the documented maximum; there is no further lossless reduction without a semantic change.
+- **Metrics (v1 → v2):** unions 7 → 0, anyOf 7 → 0, objects 23 → 16, properties 55 → 48, enums 16 → 9 (23 values), depth
+  6 → 5, bytes 4201 → 3197, optional 16 → 24, null types 0. The guard now requires 0 unions / 0 anyOf / 0 null types and
+  ≤ 24 optional parameters.
+- **Unchanged:** canonical schema (content-pinned), A1, the strict-dialect bridge, prompt, corpus, evaluator, the OpenAI
+  schema (byte-identical) and the simulator.

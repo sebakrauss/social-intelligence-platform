@@ -1,86 +1,103 @@
 /**
- * Step H7-D0g — the ANTHROPIC TRANSPORT SCHEMA: a deterministic projection of the gateway's provider-neutral output
- * schema for Anthropic's constrained decoding. H7-D0f isolated the remaining Sonnet 5.5 400 to the full schema's
- * compiled grammar (same request, a trivial schema ⇒ 200), although it is inside every documented explicit limit.
+ * Step H7-D0g / H7-D0i — the ANTHROPIC TRANSPORT SCHEMA: a deterministic projection of the gateway's provider-neutral
+ * output schema for Anthropic's constrained decoding. H7-D0f isolated the remaining Sonnet 5.5 400 to the full schema's
+ * compiled grammar; H7-D0h isolated it further to UNION branching (0 optional / 7 unions ⇒ 400; 16 optional / 0
+ * unions ⇒ 200). v2 therefore contains NO union at all.
  *
  *   CANONICAL schema     the task's strict-dialect JSON Schema (unchanged; OpenAI still receives it as is)
  *   TRANSPORT schema     this projection — sent only to Anthropic, only to keep the grammar compilable
  *   A1 validator         the final authority after the provider answers (unchanged): JSON.parse ⇒ the task's
- *                        strict-dialect bridge ⇒ validator; anything the projection no longer encodes fails there
+ *                        strict-dialect bridge (unchanged) ⇒ validator; anything the projection no longer encodes
+ *                        fails there — nothing is mapped, filled in or coerced
  *
- * Rules (structure-preserving; nothing is added, no key is renamed, objects keep `additionalProperties: false`):
- *   1. a property whose schema is `{type: "null"}` only (a strict-dialect placeholder that can only be null) is
- *      dropped: omitted and null are the same thing once the strict-dialect bridge has run
- *   2. a nullable property (`anyOf` with a `{type: "null"}` branch) becomes a NON-required property holding its
- *      non-null schema (a single branch is unwrapped). In the strict dialect a nullable property is how an OPTIONAL
- *      field is spelled (all properties required, absent = null), so this is Anthropic's native spelling of the same
- *      optionality — never applied to a non-nullable property, which stays required
- *   3. a multi-value string enum becomes `{type: "string"}` (the closed value list moves to A1, which rejects any
- *      other value; nothing is mapped or coerced) — EXCEPT a discriminator: an enum property present in every object
- *      branch of an `anyOf` keeps its enum, so each branch stays recognizable. Single-value enums are kept
- *   everything else (types, arrays, items, object boundaries, required non-nullable fields) is copied unchanged
+ * Rules (nothing added or renamed; every object keeps `additionalProperties: false`):
+ *   1. a null-only placeholder property (`{type: "null"}`) is dropped: omitted ≡ null once the bridge has run
+ *   2. a nullable property (`anyOf` with a `{type: "null"}` branch) — the strict dialect's spelling of an OPTIONAL
+ *      field — becomes a non-required property holding its non-null schema; non-nullable properties stay required.
+ *      Exception (v2): a nullable ARRAY on an object that is not a merged union object becomes a REQUIRED array — the
+ *      empty array is its absence (A1 validates `[]` and an omitted array identically; pinned by test). It keeps the
+ *      optional-parameter count within Anthropic's explicit limit of 24
+ *   3. (v2) an `anyOf` of object branches (assessed | abstention) is MERGED into one object: the property union in
+ *      branch order; a property in several branches must have the same schema, except the branch discriminator — an
+ *      enum present in every branch — whose enums are united; required = the properties required in EVERY branch (the
+ *      discriminator); branch-specific properties become optional. The cross-field rules the branches encoded
+ *      (assessed needs values; an abstention carries nothing but its status) stay in A1. Incompatible shared schemas,
+ *      or an `anyOf` that is not mergeable, throw (fail closed) — the output never contains an `anyOf`
+ *   4. a multi-value string enum becomes `{type: "string"}` (the closed list moves to A1), except discriminators and
+ *      single-value enums, which keep theirs
  */
 
 type Schema = Readonly<Record<string, unknown>>;
 
-export const ANTHROPIC_TRANSPORT_SCHEMA_VERSION = "anthropic-transport-schema.v1" as const;
+export const ANTHROPIC_TRANSPORT_SCHEMA_VERSION = "anthropic-transport-schema.v2" as const;
 
 const isSchema = (value: unknown): value is Schema => typeof value === "object" && value !== null && !Array.isArray(value);
 const isNullOnly = (schema: Schema): boolean => schema["type"] === "null" && Object.keys(schema).length === 1;
 const isObjectSchema = (schema: Schema): boolean => schema["type"] === "object" && isSchema(schema["properties"]);
-const hasEnum = (schema: unknown): boolean => isSchema(schema) && Array.isArray(schema["enum"]);
+const isStringEnum = (schema: unknown): schema is Schema => isSchema(schema) && schema["type"] === "string" && Array.isArray(schema["enum"]) && (schema["enum"] as unknown[]).every((v) => typeof v === "string");
+const unsupported = (reason: string): never => { throw new TypeError(`anthropic_schema_projection_unsupported:${reason}`); };
 
-/** Properties present in EVERY object branch with an enum in each: the branches' discriminators. */
-function discriminatorsOf(branches: readonly unknown[]): ReadonlySet<string> {
-  const objects = branches.filter(isSchema).filter(isObjectSchema);
-  const first = objects[0];
-  if (first === undefined || objects.length < 2 || objects.length !== branches.filter((b) => !(isSchema(b) && isNullOnly(b))).length) return new Set();
-  return new Set(Object.keys(first["properties"] as Schema).filter((key) => objects.every((branch) => hasEnum((branch["properties"] as Schema)[key]))));
+/** Rule 3: one object from object branches (fail closed on anything not mergeable). */
+function mergeBranches(branches: readonly unknown[]): { readonly merged: Schema; readonly discriminators: ReadonlySet<string> } {
+  const objects = branches.map((branch) => (isSchema(branch) && isObjectSchema(branch) && branch["additionalProperties"] === false ? branch : unsupported("anyOf_branch_not_a_closed_object")));
+  const props = objects.map((branch) => branch["properties"] as Readonly<Record<string, Schema>>);
+  const discriminators = new Set(Object.keys(props[0] ?? {}).filter((key) => props.every((p) => isStringEnum(p[key]))));
+  if (discriminators.size === 0) unsupported("anyOf_without_discriminator");
+  const properties: Record<string, Schema> = {};
+  for (const p of props) {
+    for (const [key, schema] of Object.entries(p)) {
+      const seen = properties[key];
+      if (seen === undefined) properties[key] = discriminators.has(key) ? { ...schema, enum: [...(schema["enum"] as string[])] } : schema;
+      else if (discriminators.has(key)) properties[key] = { ...seen, enum: [...new Set([...(seen["enum"] as string[]), ...(schema["enum"] as string[])])] };
+      else if (JSON.stringify(seen) !== JSON.stringify(schema)) unsupported(`incompatible_shared_property:${key}`);
+    }
+  }
+  const required = Object.keys(properties).filter((key) => objects.every((branch) => (branch["required"] as string[]).includes(key)));
+  return { merged: { type: "object", properties, required, additionalProperties: false }, discriminators };
 }
 
 function project(schema: Schema, keepEnum: boolean): Schema {
   if (Array.isArray(schema["anyOf"])) {
-    const branches = schema["anyOf"] as unknown[];
-    const discriminators = discriminatorsOf(branches);
-    return { ...schema, anyOf: branches.map((branch) => (isSchema(branch) ? projectBranch(branch, discriminators) : branch)) };
+    const { merged, discriminators } = mergeBranches(schema["anyOf"] as unknown[]);
+    return projectObject(merged, discriminators, true);
   }
   if (Array.isArray(schema["enum"])) {
     const values = schema["enum"] as unknown[];
-    const relaxable = !keepEnum && values.length > 1 && schema["type"] === "string" && values.every((v) => typeof v === "string");
+    const relaxable = !keepEnum && values.length > 1 && isStringEnum(schema);
     return relaxable ? Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "enum")) : { ...schema };
   }
-  if (isObjectSchema(schema)) return projectObject(schema, new Set());
+  if (isObjectSchema(schema)) return projectObject(schema, new Set(), false);
   if (schema["type"] === "array" && isSchema(schema["items"])) return { ...schema, items: project(schema["items"], false) };
   return { ...schema };
 }
 
-function projectBranch(branch: Schema, discriminators: ReadonlySet<string>): Schema {
-  return isObjectSchema(branch) ? projectObject(branch, discriminators) : project(branch, false);
-}
-
-function projectObject(schema: Schema, discriminators: ReadonlySet<string>): Schema {
+function projectObject(schema: Schema, discriminators: ReadonlySet<string>, merged: boolean): Schema {
   const properties: Record<string, Schema> = {};
   const required = new Set(Array.isArray(schema["required"]) ? (schema["required"] as string[]) : []);
   for (const [key, value] of Object.entries(schema["properties"] as Schema)) {
-    if (!isSchema(value)) throw new TypeError(`anthropic_schema_projection_unsupported:${key}`);
-    if (isNullOnly(value)) {
+    if (!isSchema(value)) unsupported(`property:${key}`);
+    const child = value as Schema;
+    if (isNullOnly(child)) {
       required.delete(key);
       continue;
     }
-    const branches = Array.isArray(value["anyOf"]) ? (value["anyOf"] as unknown[]) : null;
+    const branches = Array.isArray(child["anyOf"]) ? (child["anyOf"] as unknown[]) : null;
     if (branches !== null && branches.some((b) => isSchema(b) && isNullOnly(b))) {
       const nonNull = branches.filter((b) => !(isSchema(b) && isNullOnly(b)));
-      required.delete(key);
       const single = nonNull.length === 1 ? nonNull[0] : undefined;
-      properties[key] = isSchema(single) ? project(single, false) : project({ ...value, anyOf: nonNull }, false);
+      const inner = isSchema(single) ? single : { anyOf: nonNull };
+      if (!merged && inner["type"] === "array") required.add(key);
+      else required.delete(key);
+      properties[key] = project(inner, false);
       continue;
     }
-    properties[key] = project(value, discriminators.has(key));
+    properties[key] = project(child, discriminators.has(key));
   }
-  const kept = Object.keys(schema["properties"] as Schema).filter((key) => required.has(key) && Object.hasOwn(properties, key));
+  const kept = Object.keys(properties).filter((key) => required.has(key));
   return { ...schema, properties, required: kept };
 }
 
+const containsAnyOf = (node: unknown): boolean => (Array.isArray(node) ? node.some(containsAnyOf) : isSchema(node) && (Object.hasOwn(node, "anyOf") || Object.values(node).some(containsAnyOf)));
 const cache = new WeakMap<object, Schema>();
 
 /** The Anthropic transport schema of a canonical strict-dialect schema (pure, deterministic; memoized per object). */
@@ -88,6 +105,7 @@ export function projectSchemaForAnthropic(canonical: Schema): Schema {
   const hit = cache.get(canonical);
   if (hit !== undefined) return hit;
   const projected = project(canonical, false);
+  if (containsAnyOf(projected)) unsupported("union_remains");
   cache.set(canonical, projected);
   return projected;
 }

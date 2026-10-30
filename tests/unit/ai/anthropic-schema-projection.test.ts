@@ -12,7 +12,7 @@ import type { ProviderRequest } from "@/ai/gateway";
 import { ANTHROPIC_TRANSPORT_SCHEMA_VERSION, measureSchemaComplexity, projectSchemaForAnthropic } from "@/ai/providers/anthropic/schema-projection";
 import { createOpenAIProvider } from "@/ai/providers/openai";
 import { UNDERSTANDING_OUTPUT_JSON_SCHEMA, fromStructuredOutput } from "@/modules/classification/application/ai/understanding-output-schema";
-import { SAFETY_VALUES } from "@/modules/classification/domain/taxonomy";
+import { SAFETY_VALUES, TAXONOMY, type ClosedDimensionDefinition } from "@/modules/classification/domain/taxonomy";
 import { validateUnderstandingOutput } from "@/modules/classification/domain/understanding-output";
 import { parseEvalCorpus } from "../../eval/classification/corpus";
 import { goldenOutput } from "../../eval/classification/golden";
@@ -57,7 +57,11 @@ const nodes = (node: unknown, at = "$"): [string, Node][] => {
 const isNullOnly = (n: Node): boolean => n["type"] === "null" && Object.keys(n).length === 1;
 const nonNullBranches = (n: Node): Node[] => (Array.isArray(n["anyOf"]) ? (n["anyOf"] as Node[]).filter((b) => !isNullOnly(b)) : [n]);
 
-describe("H7-D0g: Anthropic transport schema projection — structure", () => {
+describe("H7-D0i: Anthropic transport schema v2 — structure (no unions)", () => {
+  const dims = (schema: Node) => ((schema["properties"] as Record<string, Node>)["dimensions"] as Node)["properties"] as Record<string, Node>;
+  /** The canonical branch inventory of one dimension, derived mechanically (null branch excluded). */
+  const branchesOf = (dimension: string) => nonNullBranches(dims(CANONICAL)[dimension] as Node);
+
   it("the canonical schema is unchanged (content pin) and the projection never mutates its input", () => {
     // Pinned at the pre-H7-D0g source (5e57741): the schema OpenAI receives and the A1 contract's generation aid.
     expect(sha256(CANONICAL)).toBe("53e161d44c29648043af1de527990d07b756b709a0efb9016f39831b7ca9d978");
@@ -65,87 +69,81 @@ describe("H7-D0g: Anthropic transport schema projection — structure", () => {
     expect(JSON.stringify(CANONICAL)).toBe(CANONICAL_JSON);
   });
 
-  it("is deterministic (same output for an equal input; pinned fingerprint + version)", () => {
+  it("is deterministic (same output for an equal input; pinned v2 fingerprint + version)", () => {
     expect(projectSchemaForAnthropic(structuredClone<Node>(CANONICAL))).toEqual(PROJECTED);
     expect(JSON.stringify(projectSchemaForAnthropic(structuredClone<Node>(CANONICAL)))).toBe(JSON.stringify(PROJECTED));
-    expect(ANTHROPIC_TRANSPORT_SCHEMA_VERSION).toBe("anthropic-transport-schema.v1");
-    expect(sha256(PROJECTED)).toBe("a7d444e796c3c8538bd15581618194ae8315a7d84b9d48c068c2ed24fe095593");
+    expect(ANTHROPIC_TRANSPORT_SCHEMA_VERSION).toBe("anthropic-transport-schema.v2");
+    expect(sha256(PROJECTED)).toBe("062f21b710694ac10330226d55fb01637549babd6673596c81883d60392422e5");
   });
 
-  it("keeps every root property; root identity fields and dimensions stay required", () => {
+  it("the seven canonical dimension unions are gone: no anyOf / oneOf / type array anywhere", () => {
+    expect(Object.values(dims(CANONICAL)).filter((d) => Array.isArray(d["anyOf"]))).toHaveLength(7);
+    for (const [at, node] of nodes(PROJECTED)) {
+      for (const key of ["anyOf", "oneOf", "allOf"]) expect(Object.hasOwn(node, key), `${at}: ${key}`).toBe(false);
+      expect(Array.isArray(node["type"]), at).toBe(false);
+      expect(node["type"], at).not.toBe("null");
+    }
+  });
+
+  it("each dimension is ONE closed object: status required with the united canonical status enum; the branch property union is complete; nothing invented", () => {
+    for (const [dimension, merged] of Object.entries(dims(PROJECTED))) {
+      const branches = branchesOf(dimension);
+      expect(branches.length, dimension).toBe(2);
+      expect(merged["type"], dimension).toBe("object");
+      expect(merged["additionalProperties"], dimension).toBe(false);
+      expect(merged["required"], dimension).toEqual(["status"]);
+      const statuses = branches.flatMap((b) => ((b["properties"] as Record<string, Node>)["status"] as Node)["enum"] as string[]);
+      expect(((merged["properties"] as Record<string, Node>)["status"] as Node)["enum"], dimension).toEqual(statuses);
+      expect(statuses, dimension).toEqual(["assessed", "none_fits", "insufficient_evidence"]);
+      // Every non-placeholder branch property is present, and no other property exists.
+      const expected = [...new Set(branches.flatMap((b) => Object.entries(b["properties"] as Record<string, Node>).filter(([, v]) => !isNullOnly(v)).map(([k]) => k)))];
+      expect(Object.keys(merged["properties"] as Node), dimension).toEqual(expected);
+    }
+  });
+
+  it("requiredness: non-nullable canonical properties outside a merged union stay required; strict-dialect nullables become optional; root evidence is a required array (empty ≡ absent)", () => {
     expect(Object.keys(PROJECTED["properties"] as Node)).toEqual(Object.keys(CANONICAL["properties"] as Node));
-    expect(PROJECTED["required"]).toEqual(["schemaVersion", "taxonomyVersion", "dimensions"]);
+    expect(PROJECTED["required"]).toEqual(["schemaVersion", "taxonomyVersion", "dimensions", "evidence"]);
+    expect((PROJECTED["properties"] as Record<string, Node>)["dimensions"]?.["required"]).toEqual([]);
+    for (const [at, node] of nodes(PROJECTED)) {
+      if (at.endsWith(".values[]")) expect(node["required"], at).toEqual(["key", "confidence"]);
+      if (at.endsWith(".evidence[]")) expect(node["required"], at).toEqual(["quote"]);
+    }
   });
 
-  it("requiredness: every NON-nullable canonical property stays required; ONLY the strict-dialect nullable (= optional) ones become optional — exactly the ones the A1 bridge strips", () => {
-    const optionalized: string[] = [];
-    const dropped: string[] = [];
-    const pair = (c: Node, p: Node, at: string): void => {
-      if (Array.isArray(c["anyOf"])) {
-        const cb = nonNullBranches(c);
-        const pb = Array.isArray(p["anyOf"]) ? (p["anyOf"] as Node[]) : [p];
-        expect(pb.length, at).toBe(cb.length);
-        cb.forEach((branch, i) => { pair(branch, pb[i] as Node, `${at}|${String(i)}`); });
-        return;
-      }
-      if (c["type"] === "array") { pair(c["items"] as Node, p["items"] as Node, `${at}[]`); return; }
-      if (c["type"] !== "object") return;
-      expect(p["additionalProperties"], at).toBe(false);
-      const cp = c["properties"] as Record<string, Node>;
-      const pp = p["properties"] as Record<string, Node>;
-      const preq = new Set(p["required"] as string[]);
-      for (const [key, child] of Object.entries(cp)) {
-        const nullable = Array.isArray(child["anyOf"]) && (child["anyOf"] as Node[]).some(isNullOnly);
-        if (isNullOnly(child)) { expect(Object.hasOwn(pp, key), `${at}.${key}`).toBe(false); dropped.push(`${at}.${key}`); continue; }
-        expect(Object.hasOwn(pp, key), `${at}.${key}`).toBe(true);
-        if (nullable) { expect(preq.has(key), `${at}.${key}`).toBe(false); optionalized.push(`${at}.${key}`); } else expect(preq.has(key), `${at}.${key}`).toBe(true);
-        const single = nonNullBranches(child);
-        pair(single.length === 1 ? single[0] as Node : { anyOf: single }, pp[key] as Node, `${at}.${key}`);
-      }
-    };
-    pair(CANONICAL, PROJECTED, "$");
-    const leaf = (p: string) => p.replace(/\|\d+/g, "").split(".").at(-1)?.replace("[]", "") ?? "";
-    // The fields fromStructuredOutput strips when null: summary, evidence, a dimension, score, reasonCodes.
-    expect([...new Set(optionalized.map(leaf))].sort()).toEqual(["authenticity", "evidence", "intent", "language", "reasonCodes", "response_need", "risk", "safety", "score", "sentiment", "summary"].sort());
-    expect([...new Set(dropped.map(leaf))]).toEqual(["reasonCodes"]);
+  it("A1 treats an omitted evidence array and an empty one identically (the ONLY nullable → required rule)", () => {
+    const testCase = CORPUS.cases.find((c) => c.id === "es-cl-praise-01") ?? (() => { throw new Error("case"); })();
+    const absent = validateUnderstandingOutput(fromStructuredOutput(goldenOutput(testCase)), testCase.text);
+    const empty = validateUnderstandingOutput(fromStructuredOutput({ ...goldenOutput(testCase), evidence: [] }), testCase.text);
+    expect(absent.ok && empty.ok).toBe(true);
+    expect(empty).toEqual(absent);
   });
 
-  it("types and object / array boundaries are preserved; the only node change is a removed multi-value string enum (no value added or renamed)", () => {
+  it("types and array boundaries are preserved; multi-value enums other than status become string; no value added or renamed", () => {
     const relaxed: string[] = [];
-    const pair = (c: Node, p: Node, at: string): void => {
-      if (Array.isArray(c["anyOf"])) {
-        const cb = nonNullBranches(c);
-        const pb = Array.isArray(p["anyOf"]) ? (p["anyOf"] as Node[]) : [p];
-        cb.forEach((branch, i) => { pair(branch, pb[i] as Node, at); });
-        return;
-      }
-      expect(p["type"], at).toBe(c["type"]);
-      if (Array.isArray(c["enum"])) {
-        if (Array.isArray(p["enum"])) expect(p["enum"], at).toEqual(c["enum"]);
-        else { expect((c["enum"] as unknown[]).length, at).toBeGreaterThan(1); expect(p, at).toEqual({ type: "string" }); relaxed.push(at); }
-      } else expect(Object.hasOwn(p, "enum"), at).toBe(false);
-      if (c["type"] === "array") pair(c["items"] as Node, p["items"] as Node, `${at}[]`);
-      if (c["type"] === "object") {
-        for (const [key, child] of Object.entries(c["properties"] as Record<string, Node>)) {
-          const target = (p["properties"] as Record<string, Node>)[key];
-          if (target !== undefined) pair(child, target, `${at}.${key}`);
-        }
-      }
-    };
-    pair(CANONICAL, PROJECTED, "$");
-    // Value keys, confidence levels, language certainty and reason codes move to A1; the branch discriminators (status) stay.
-    expect(relaxed.length).toBe(15);
-    expect(relaxed.every((at) => /\.(key|confidence|certainty)$|reasonCodes\[\]$/.test(at))).toBe(true);
-    for (const [at, node] of nodes(PROJECTED)) if (at.endsWith(".status")) expect(Array.isArray(node["enum"]), at).toBe(true);
+    for (const [at, node] of nodes(PROJECTED)) {
+      if (node["type"] === "string" && !Array.isArray(node["enum"])) relaxed.push(at);
+      if (Array.isArray(node["enum"])) expect(at === "$.schemaVersion" || at === "$.taxonomyVersion" || at.endsWith(".status"), at).toBe(true);
+    }
+    expect(relaxed.filter((at) => /\.(key|confidence|certainty)$|reasonCodes\[\]$/.test(at))).toHaveLength(15);
+    expect(nodes(PROJECTED).filter(([, n]) => n["type"] === "array").length).toBe(nodes(CANONICAL).filter(([, n]) => n["type"] === "array").length);
   });
 
-  it("introduces no keyword outside Anthropic's documented subset", () => {
-    expect([...new Set(nodes(PROJECTED).flatMap(([, n]) => Object.keys(n)))].sort()).toEqual(["additionalProperties", "anyOf", "enum", "items", "properties", "required", "type"]);
+  it("introduces no keyword outside Anthropic's documented subset; every object closed", () => {
+    expect([...new Set(nodes(PROJECTED).flatMap(([, n]) => Object.keys(n)))].sort()).toEqual(["additionalProperties", "enum", "items", "properties", "required", "type"]);
     for (const [at, node] of nodes(PROJECTED)) if (node["type"] === "object") expect(node["additionalProperties"], at).toBe(false);
+  });
+
+  it("fails closed on what it cannot merge (incompatible shared property, branch without discriminator, non-object branch)", () => {
+    const obj = (properties: Record<string, unknown>, required: string[]) => ({ type: "object", properties, required, additionalProperties: false });
+    const wrap = (anyOf: unknown[]) => obj({ d: { anyOf } }, ["d"]);
+    expect(() => projectSchemaForAnthropic(wrap([obj({ s: { type: "string", enum: ["a"] }, x: { type: "string" } }, ["s"]), obj({ s: { type: "string", enum: ["b"] }, x: { type: "number" } }, ["s"])]))).toThrow("incompatible_shared_property:x");
+    expect(() => projectSchemaForAnthropic(wrap([obj({ x: { type: "string" } }, ["x"]), obj({ y: { type: "string" } }, ["y"])]))).toThrow("anyOf_without_discriminator");
+    expect(() => projectSchemaForAnthropic(wrap([{ type: "string" }, { type: "number" }]))).toThrow("anyOf_branch_not_a_closed_object");
   });
 });
 
-describe("H7-D0g: complexity — materially lower, and guarded against drift", () => {
+describe("H7-D0i: complexity — union-free, and guarded against drift", () => {
   const pre = measureSchemaComplexity(CANONICAL);
   const post = measureSchemaComplexity(PROJECTED);
 
@@ -153,18 +151,18 @@ describe("H7-D0g: complexity — materially lower, and guarded against drift", (
     expect(pre).toEqual({ bytes: 5864, objects: 23, properties: 60, requiredProperties: 60, optionalProperties: 0, enums: 31, enumValues: 85, anyOf: 16, anyOfBranches: 39, unionParameters: 16, nullTypes: 21, arrays: 9, maxDepth: 7 });
   });
 
-  it("the transport schema stays under these ceilings (well below the documented 16 unions / 24 optional parameters)", () => {
-    expect(post.unionParameters).toBeLessThanOrEqual(8);
-    expect(post.anyOf).toBeLessThanOrEqual(8);
-    expect(post.anyOfBranches).toBeLessThanOrEqual(16);
-    expect(post.enums).toBeLessThanOrEqual(16);
-    expect(post.enumValues).toBeLessThanOrEqual(24);
+  it("ZERO unions (H7-D0h: unions are what Anthropic's compiler rejects); optional parameters within the documented maximum of 24", () => {
+    expect(post.unionParameters).toBe(0);
+    expect(post.anyOf).toBe(0);
+    expect(post.anyOfBranches).toBe(0);
     expect(post.nullTypes).toBe(0);
+    expect(post.optionalProperties).toBeLessThanOrEqual(24);
     expect(post.maxDepth).toBeLessThanOrEqual(6);
-    expect(post.optionalProperties).toBeLessThanOrEqual(18);
-    expect(post.objects).toBe(pre.objects);
+    expect(post.enums).toBeLessThanOrEqual(10);
+    expect(post.enumValues).toBeLessThanOrEqual(24);
+    expect(post.objects).toBeLessThanOrEqual(16);
     expect(post.arrays).toBe(pre.arrays);
-    for (const key of ["unionParameters", "anyOfBranches", "enums", "enumValues", "nullTypes", "bytes"] as const) expect(post[key], key).toBeLessThan(pre[key]);
+    for (const key of ["unionParameters", "anyOfBranches", "enums", "enumValues", "nullTypes", "objects", "bytes", "maxDepth"] as const) expect(post[key], key).toBeLessThan(pre[key]);
   });
 });
 
@@ -184,15 +182,25 @@ describe("H7-D0g: provider boundaries — only Anthropic projects", () => {
 
 describe("H7-D0g: the canonical A1 validator stays the authority", () => {
   const testCase = CORPUS.cases.find((c) => c.id === "es-cl-praise-01") ?? (() => { throw new Error("case"); })();
-  const base = () => structuredClone(goldenOutput(testCase)) as Record<string, unknown> & { dimensions: Record<string, Record<string, unknown>> };
+  /** A canonical output in its Anthropic transport form (v2: the required evidence array, empty when absent). */
+  type Output = Record<string, unknown> & { dimensions: Record<string, Record<string, unknown>> };
+  const transportForm = (output: Record<string, unknown>): Output => {
+    const copy: Record<string, unknown> = structuredClone(output);
+    copy["evidence"] = output["evidence"] ?? [];
+    return copy as Output;
+  };
+  const base = (): Output => transportForm(goldenOutput(testCase));
   const assessed = (key: string, extra: Record<string, unknown> = {}) => ({ status: "assessed", values: [{ key, confidence: "high" }], ...extra });
 
-  it("every golden output conforms to the transport schema AND passes A1 (golden labels unchanged)", () => {
+  it("every golden output, in its transport form, conforms to the transport schema AND passes A1 with the same result (golden labels unchanged)", () => {
     let checked = 0;
     for (const c of CORPUS.cases.filter((x) => x.expectedFailure === null)) {
-      const output = goldenOutput(c);
+      const canonical = goldenOutput(c);
+      const output = transportForm(canonical);
       expect(conforms(PROJECTED, output), c.id).toBe(true);
-      expect(validateUnderstandingOutput(fromStructuredOutput(output), c.text).ok, c.id).toBe(true);
+      const viaTransport = validateUnderstandingOutput(fromStructuredOutput(JSON.parse(JSON.stringify(output))), c.text);
+      expect(viaTransport.ok, c.id).toBe(true);
+      expect(viaTransport, c.id).toEqual(validateUnderstandingOutput(fromStructuredOutput(canonical), c.text));
       checked += 1;
     }
     expect(checked).toBeGreaterThan(60);
@@ -227,9 +235,61 @@ describe("H7-D0g: the canonical A1 validator stays the authority", () => {
 
   it("the structure the projection keeps is still enforced by the transport schema itself", () => {
     const extraKey = base(); (extraKey as Record<string, unknown>)["extra"] = 1;
-    const abstentionWithValues = base(); abstentionWithValues.dimensions["sentiment"] = { status: "none_fits", values: [] };
+    const unknownStatus = base(); unknownStatus.dimensions["sentiment"] = { status: "abstained" };
+    const missingStatus = base(); missingStatus.dimensions["sentiment"] = { values: [{ key: "positive", confidence: "high" }] };
     const missingVersion = base(); Reflect.deleteProperty(missingVersion, "schemaVersion");
     const nullScore = base(); nullScore.dimensions["sentiment"] = { status: "assessed", values: [{ key: "positive", confidence: "high", score: null }] };
-    for (const output of [extraKey, abstentionWithValues, missingVersion, nullScore]) expect(conforms(PROJECTED, output)).toBe(false);
+    for (const output of [extraKey, unknownStatus, missingStatus, missingVersion, nullScore]) expect(conforms(PROJECTED, output)).toBe(false);
+    // …and A1 independently rejects the same status mistakes.
+    for (const output of [unknownStatus, missingStatus]) {
+      const result = validateUnderstandingOutput(fromStructuredOutput(output), testCase.text);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.failure.issues).toContain("STATUS_INVALID");
+    }
+  });
+
+  // H7-D0i: the cross-field rules the removed unions encoded are A1's — for EVERY dimension.
+  const CLOSED = ["safety", "authenticity", "intent", "sentiment", "risk", "response_need"] as const;
+  const branchCases: [string, (o: ReturnType<typeof base>) => void, string][] = [
+    ...CLOSED.flatMap((d): [string, (o: ReturnType<typeof base>) => void, string][] => [
+      [`${d}: assessed without values`, (o) => { o.dimensions[d] = { status: "assessed" }; }, "CARDINALITY_VIOLATION"],
+      [`${d}: assessed with an empty values array`, (o) => { o.dimensions[d] = { status: "assessed", values: [] }; }, "CARDINALITY_VIOLATION"],
+      [`${d}: abstention carrying values`, (o) => { o.dimensions[d] = { status: "none_fits", values: [{ key: "x", confidence: "high" }] }; }, "UNEXPECTED_KEY"],
+      [`${d}: abstention carrying an empty values array`, (o) => { o.dimensions[d] = { status: "insufficient_evidence", values: [] }; }, "UNEXPECTED_KEY"],
+    ]),
+    ["risk: abstention carrying reason codes", (o) => { o.dimensions["risk"] = { status: "none_fits", reasonCodes: ["reputation_risk"] }; }, "UNEXPECTED_KEY"],
+    ["language: assessed without languages", (o) => { o.dimensions["language"] = { status: "assessed", certainty: "certain", confidence: "high" }; }, "CARDINALITY_VIOLATION"],
+    ["language: assessed without certainty", (o) => { o.dimensions["language"] = { status: "assessed", languages: ["es"], confidence: "high" }; }, "LANGUAGE_CERTAINTY_INVALID"],
+    ["language: assessed without confidence", (o) => { o.dimensions["language"] = { status: "assessed", languages: ["es"], certainty: "certain" }; }, "CONFIDENCE_INVALID"],
+    ["language: abstention carrying languages", (o) => { o.dimensions["language"] = { status: "none_fits", languages: ["es"] }; }, "UNEXPECTED_KEY"],
+    ["language: abstention carrying certainty", (o) => { o.dimensions["language"] = { status: "insufficient_evidence", certainty: "certain" }; }, "UNEXPECTED_KEY"],
+  ];
+  for (const [name, change, issue] of branchCases) {
+    it(`branch consistency — transport-valid, A1 rejects: ${name} (${issue})`, () => {
+      const output = base();
+      change(output);
+      expect(conforms(PROJECTED, output), "the union-free transport schema admits it").toBe(true);
+      const result = validateUnderstandingOutput(fromStructuredOutput(output), testCase.text);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.failure.issues).toContain(issue);
+    });
+  }
+
+  it("valid assessed and abstention forms pass A1 for every dimension", () => {
+    for (const d of CLOSED) {
+      const key = (TAXONOMY[d] as ClosedDimensionDefinition).values[0] ?? "";
+      for (const form of [{ status: "assessed", values: [{ key, confidence: "medium" }] }, { status: "none_fits" }, { status: "insufficient_evidence" }]) {
+        const output = base();
+        output.dimensions[d] = form;
+        expect(conforms(PROJECTED, output), `${d} ${form.status}`).toBe(true);
+        expect(validateUnderstandingOutput(fromStructuredOutput(output), testCase.text).ok, `${d} ${form.status}`).toBe(true);
+      }
+    }
+    for (const form of [{ status: "assessed", languages: ["es"], certainty: "certain", confidence: "high" }, { status: "none_fits" }]) {
+      const output = base();
+      output.dimensions["language"] = form;
+      expect(conforms(PROJECTED, output)).toBe(true);
+      expect(validateUnderstandingOutput(fromStructuredOutput(output), testCase.text).ok).toBe(true);
+    }
   });
 });
