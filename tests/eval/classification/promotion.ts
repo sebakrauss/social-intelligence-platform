@@ -6,13 +6,15 @@
  *   no_critical_regression     a protected_critical / safety_critical case that passed in the baseline must not fail
  *                              (without a baseline: no critical failure at all)
  *   configuration_invariance   route, model, prompt and schema identical across all cases (injection cannot move them)
- *   language_cap               no raw output above `medium` for an unsupported / uncertain language
+ *   language_cap               v1 (H7-D0k): the deterministic cap holds — no EFFECTIVE semantic confidence above
+ *                              `medium` for a non-validated language, and no non-validated language detected as
+ *                              validated (a cap bypass); a RAW model confidence above it is reported, never blocking
  *   real_model_required        a simulator report is never promotion evidence
  */
 import type { EvaluationReport } from "./evaluate";
 
 export const PROMOTION_POLICY = Object.freeze({
-  version: "understanding-promotion.v0",
+  version: "understanding-promotion.v1",
   thresholds: Object.freeze({ status: "OPEN" as const, authority: "PD OQ-16 / OQ-28; H7-A0 §16" }),
   blockingRules: Object.freeze(["no_critical_regression", "configuration_invariance", "language_cap", "real_model_required"] as const),
   shadow: Object.freeze({ status: "DEFINED_NOT_RUN" as const, rule: "assessments stored non-accepting, compared in evals, then promoted (H7-A0 §11.1); live shadow belongs to the first real-model runtime gate" }),
@@ -30,7 +32,8 @@ export function evaluatePromotion(candidate: EvaluationReport, baseline: Evaluat
     if (baseline === null || (baselinePassed.has(failure.id) && !baselineCritical.has(failure.id))) reasons.push(`critical_regression:${failure.id}`);
   }
   if (!candidate.configurationInvariant) reasons.push("configuration_not_invariant");
-  if (candidate.languageCapRawViolations > 0) reasons.push(`language_cap_violations:${String(candidate.languageCapRawViolations)}`);
+  if (candidate.effectiveCapViolations > 0) reasons.push(`language_cap_effective_violations:${String(candidate.effectiveCapViolations)}`);
+  if (candidate.languageSupport.bypasses > 0) reasons.push(`language_cap_bypasses:${String(candidate.languageSupport.bypasses)}`);
   if (!candidate.realModelBenchmark) reasons.push("not_a_real_model");
   // Every rule blocks; with none violated the numeric thresholds are still OPEN, so nothing is ever promoted here.
   if (reasons.length > 0) return { verdict: "BLOCKED", reasons: Object.freeze(reasons) };

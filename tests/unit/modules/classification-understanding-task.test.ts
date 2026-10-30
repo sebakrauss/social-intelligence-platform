@@ -18,7 +18,7 @@ import {
 } from "@/modules/classification";
 import { UNDERSTANDING_DATA_FIELDS, UNDERSTANDING_TASK, understandingData } from "@/modules/classification/application/ai/understanding-task";
 import { UNDERSTANDING_OUTPUT_JSON_SCHEMA, fromStructuredOutput } from "@/modules/classification/application/ai/understanding-output-schema";
-import { UNDERSTANDING_PROMPT_HASH, UNDERSTANDING_PROMPT_SYSTEM } from "@/prompts/classification/understanding.v1";
+import { UNDERSTANDING_PROMPT_HASH, UNDERSTANDING_PROMPT_SYSTEM } from "@/prompts/classification/understanding.v2";
 
 const reply = () => {
   const built = buildUnderstandingInput({

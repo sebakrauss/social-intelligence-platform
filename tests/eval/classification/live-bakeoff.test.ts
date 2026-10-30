@@ -22,7 +22,7 @@ import { CONSECUTIVE_TRANSPORT_FAILURE_LIMIT, createTransportBreaker } from "./l
 import { CANDIDATES, LIVE_CALL_TIMEOUT_MS, MAX_OUTPUT_TOKENS, candidateModel } from "./live/candidates";
 import { parsePriceDescriptor } from "./live/spend";
 
-const CORPUS: EvalCorpus = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v1.json"), "utf8")));
+const CORPUS: EvalCorpus = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v2.json"), "utf8")));
 const PRICES = parsePriceDescriptor(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/evaluation/model-prices.eval-2026-10-29.json"), "utf8")));
 const PRICE = PRICES.models["openai/gpt-6-luna"] ?? (() => { throw new Error("price"); })();
 const GOLDEN = goldenScript(CORPUS);

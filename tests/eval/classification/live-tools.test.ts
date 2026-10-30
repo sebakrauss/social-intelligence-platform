@@ -18,7 +18,7 @@ import { attemptUsd, createSpendLedger, parsePriceDescriptor, runMaxUsd } from "
 import { percentile, stabilityDisagreements } from "./live/stability";
 
 const PRICES = parsePriceDescriptor(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/evaluation/model-prices.eval-2026-10-29.json"), "utf8")));
-const CORPUS = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v1.json"), "utf8")));
+const CORPUS = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v2.json"), "utf8")));
 const attempt = (usage: AttemptRecord["usage"], outcome: AttemptRecord["outcome"] = "accepted"): AttemptRecord => ({ usage, outcome, inputChars: 4_000 } as unknown as AttemptRecord);
 
 describe("price descriptor (evaluation only)", () => {

@@ -64,9 +64,10 @@ describe("H7-A1: the classification domain is pure", () => {
     for (const file of DETERMINISTIC_APPLICATION_FILES) {
       for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/domain\/[a-z-]+|@\/modules\/interactions)$/);
     }
-    // H7-C: the gateway binding sees its own files, the pure domain, the gateway PORT and the versioned prompt only.
+    // H7-C: the gateway binding sees its own files, the pure domain, the gateway PORT and the versioned prompt only
+    // (H7-D0k: prompt v2).
     for (const file of AI_APPLICATION_FILES) {
-      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/\.\.\/domain\/[a-z-]+|@\/ai\/gateway|@\/prompts\/classification\/understanding\.v1)$/);
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/\.\.\/domain\/[a-z-]+|@\/ai\/gateway|@\/prompts\/classification\/understanding\.v2)$/);
     }
   });
 

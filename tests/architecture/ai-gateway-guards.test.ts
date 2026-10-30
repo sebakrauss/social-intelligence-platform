@@ -17,8 +17,10 @@ import { UNDERSTANDING_DATA_FIELDS } from "@/modules/classification/application/
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 
 const strip = (code: string): string => code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
-/** eval-corpus.v1 content pin (H7-D0a: the corpus may not change between bake-off runs). */
+/** eval-corpus.v1 content pin (H7-D0a: the corpus may not change between bake-off runs) — the H7-D0 FINAL corpus, kept. */
 const CORPUS_SHA256 = "76b2351b38582cc9538c39c4d9a0c2013ab786ec54088720ad82cc01fda93da5";
+/** eval-corpus.v2 content pin (H7-D0k: the current corpus). */
+const CORPUS_V2_SHA256 = "8dc159ffb74c70acd90a30b00fe35dc9f290ae5502acefb0f0f2c59cd527c989";
 const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1] ?? "");
 const GATEWAY = sourceFiles(["ai/gateway"]);
 const SIMULATOR = sourceFiles(["ai/providers/simulator"]);
@@ -42,7 +44,7 @@ describe("H7-C: vendor-free", () => {
   });
 
   it("no environment or credential reader in the gateway, the simulator, the binding or the prompt", () => {
-    for (const file of [...GATEWAY, ...SIMULATOR, ...BINDING, "prompts/classification/understanding.v1.ts"]) {
+    for (const file of [...GATEWAY, ...SIMULATOR, ...BINDING, "prompts/classification/understanding.v1.ts", "prompts/classification/understanding.v2.ts"]) {
       expect(strip(codeOf(file)), file).not.toMatch(/process\.env|import\.meta\.env|API_KEY|apiKey|SECRET|withCredential|loadEnvironment|readFileSync|\.env\b/);
     }
   });
@@ -192,7 +194,10 @@ describe("H7-D0: real provider adapters and the live bake-off", () => {
 
   it("the bake-off reads only the committed synthetic corpus: no database, dev-v2, ingestion or fixture-tool input", () => {
     for (const file of LIVE) expect(strip(codeOf(file)), file).not.toMatch(/@\/platform\/db|@\/tools\/db|from "pg"|DATABASE_|dev-fixture|dev-v2|@\/modules\/(ingestion|interactions)|@\/server\//);
-    expect(strip(codeOf("tests/eval/classification/live.eval.ts"))).toMatch(/fixtures\/intelligence\/classification\/understanding-eval\.v1\.json/);
+    // H7-D0k: the current corpus (v2) via the corpus module; the runner refuses any other version.
+    expect(strip(codeOf("tests/eval/classification/corpus.ts"))).toMatch(/export const CORPUS_FILE = "fixtures\/intelligence\/classification\/understanding-eval\.v2\.json";/);
+    expect(strip(codeOf("tests/eval/classification/live.eval.ts"))).toMatch(/import \{ CORPUS_FILE, CORPUS_VERSION, parseEvalCorpus/);
+    expect(strip(codeOf("tests/eval/classification/live.eval.ts"))).toMatch(/if \(corpus\.corpusVersion !== CORPUS_VERSION\) fail\(/);
   });
 
   it("credentials are read only at the operator boundary and handed only to SDK clients; never printed", () => {
@@ -231,8 +236,14 @@ describe("H7-D0a: transport diagnostics and the live circuit breaker", () => {
     for (const file of ["ai/providers/openai/index.ts", "ai/providers/anthropic/index.ts"]) expect(strip(codeOf(file)), file).toMatch(/timeout: options\.timeoutMs/);
   });
 
-  it("prompt and corpus are unchanged (content pins)", () => {
-    expect(createHash("sha256").update(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v1.json"))).digest("hex")).toBe(CORPUS_SHA256);
+  it("prompt and corpus are unchanged (content pins): v1 = the H7-D0 FINAL identity, v2 = current (H7-D0k)", () => {
+    const sha = (file: string) => createHash("sha256").update(readFileSync(path.join(REPOSITORY_ROOT, file))).digest("hex");
+    expect(sha("fixtures/intelligence/classification/understanding-eval.v1.json")).toBe(CORPUS_SHA256);
+    expect(sha("fixtures/intelligence/classification/understanding-eval.v2.json")).toBe(CORPUS_V2_SHA256);
     expect(strip(codeOf("prompts/classification/understanding.v1.ts"))).toMatch(/export const UNDERSTANDING_PROMPT_HASH = "bb354c69fc617761c95823e78c32cc5a55876d0f50206c10bbfeb50645b698a7";/);
+    expect(strip(codeOf("prompts/classification/understanding.v2.ts"))).toMatch(/export const UNDERSTANDING_PROMPT_HASH = "c177c6f36c77337645d2cc9f45628f80bd2fbeddd8f5ac2a418ac97ae2c9b7bf";/);
+    // The task binds v2 only; v1 is imported by nothing (historical identity).
+    expect(strip(codeOf("modules/classification/application/ai/understanding-task.ts"))).toMatch(/@\/prompts\/classification\/understanding\.v2"/);
+    expect(sourceFiles(["ai", "modules", "tools", "tests", "app", "server", "jobs"]).filter((file) => /prompts\/classification\/understanding\.v1"/.test(codeOf(file)))).toEqual([]);
   });
 });

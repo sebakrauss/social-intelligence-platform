@@ -977,3 +977,34 @@ Decisions and boundaries:
   ≤ 24 optional parameters.
 - **Unchanged:** canonical schema (content-pinned), A1, the strict-dialect bridge, prompt, corpus, evaluator, the OpenAI
   schema (byte-identical) and the simulator.
+
+## 37. H7-D0k as implemented (TL decisions after the H7-D0j adjudication)
+
+- **Identities:** H7-D0 FINAL = unversioned evaluator (now `classification-evaluator.v1` by convention) +
+  `understanding-prompt.v1` + `eval-corpus.v1` — all kept, pinned, never re-scored as v2. Next bake-off =
+  `classification-evaluator.v2` + `understanding-prompt.v2` (sha c177c6f3…) + `eval-corpus.v2` (sha 8dc159ff…) +
+  `understanding-promotion.v1`; the live evidence now records evaluator / prompt / corpus versions.
+- **Decision 1 — language cap is deterministic policy:** D-H7-5 is enforced by `toAiAssessments`
+  (`maxSemanticConfidence` + `capConfidence`). A raw model confidence above it is informational
+  (`rawLanguageCapExceedance(s)`), never critical. Scored instead: (a) the model's language SUPPORT group vs the gold
+  one (domain `languageSupport`): a non-validated language detected as validated is a cap BYPASS ⇒ critical on a
+  critical-tagged case; a validated language detected as non-validated OVER-CAPS ⇒ accuracy error (case fails, not
+  critical); same-cap group differences are informational; (b) the EFFECTIVE confidence of every semantic assessment
+  ≤ the cap ⇒ a violation is a product-invariant failure, always critical. The five non-validated corpus cases carry the
+  new explicit `language_critical` tag; validated-language cases never do. Bake-off qualification and promotion use the
+  bypass / effective conditions instead of raw exceedances.
+- **Decision 2 — `es-co-commercial-objection-01` (corpus v2):** text "No compro más acá, el despacho es caro y tarda una
+  semana" (57 chars ≤ the 60-char quote bound); gold intent `price_objection` (allowed `complaint`,
+  `product_service_problem`); sentiment negative, safety none, Protection protected, Needs review false,
+  `protected_critical`.
+- **Decision 3 — commercial-intent boundary:** documented in `taxonomy.ts` and stated in prompt v2 (generic wording):
+  purchase_question = asking for commercial information / conditions; price_objection = a price, fee, cost, charge or
+  delivery fee is too high / not worth it; other_commercial_objection = refusing or resisting buying, renewing or
+  continuing for a non-price commercial reason; a price objection stays price_objection even with "I will stop buying".
+  No taxonomy value changed.
+- **Decision 4 — protected criticality by meaning:** an intent check is critical only when an expected protected MEANING
+  is lost (plus the unchanged Protection check); an exact protected sibling with the same meaning is visible in the new
+  `protectedIntentStrictRecall` (and the intent metrics) but not critical. New `protectedIntentMeaningRecall`; the
+  existing outcome-level `protectedMeaningRecall` / `protectedStrictRecall` are unchanged.
+- **Unchanged:** A1, taxonomy values, canonical schema, Anthropic transport schema v2, OpenAI schema, safety metrics and
+  rules, the H7-D0a hardening, prices, candidates.

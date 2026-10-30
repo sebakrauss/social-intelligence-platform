@@ -1,6 +1,7 @@
 /**
- * Step H7-C — the offline evaluation corpus of task A (fixtures/intelligence/classification/understanding-eval.v1.json):
- * its strict format and parser. Hand-authored synthetic cases only; labels are taxonomy.v1 keys, never prose.
+ * Step H7-C — the offline evaluation corpus of task A (fixtures/intelligence/classification/understanding-eval.v2.json;
+ * v1 is kept as the corpus of the H7-D0 FINAL bake-off, H7-D0k): its strict format and parser. Hand-authored synthetic
+ * cases only; labels are taxonomy.v1 keys, never prose.
  *
  *   expected.<dimension>   { values: [gold…], allowed?: [tolerated extras], forbidden?: [critical errors], reasonCodes? }
  *                          | { abstain: true }          (an abstention or no assessment is the right answer)
@@ -8,17 +9,22 @@
  *   expectedNeedsReview    true · false · null (not scored: legitimately depends on the model's confidence)
  *   expectedFailure        null · one of the gateway failure classes (e.g. AI_INPUT_TOO_LARGE for an over-bound text)
  *   tags                   protected_critical (protected meaning: complaint, problem, fraud accusation, objection) ·
- *                          safety_critical (hate, threat, harassment, insult, scam, impersonation review) · others
+ *                          safety_critical (hate, threat, harassment, insult, scam, impersonation review) ·
+ *                          language_critical (v2: a non-validated language whose support must not be mistaken for a
+ *                          validated one — that would bypass the deterministic cap) · others (informational)
  *   goldConfidence         the confidence the GOLDEN simulator emits (high, or medium for capped / ambiguous cases)
  */
 import { CLOSED_DIMENSIONS, TAXONOMY, TAXONOMY_VERSION, UNDERSTANDING_FAILURE_CLASSES, UNDERSTANDING_INPUT_CONTRACT_VERSION, isReasonCode, isTaxonomyValue, type ClosedDimension, type ClosedDimensionDefinition } from "@/modules/classification";
 
-export const CORPUS_VERSION = "eval-corpus.v1";
+/** The current corpus (H7-D0k). Older versions still parse, for historical evidence only. */
+export const CORPUS_VERSION = "eval-corpus.v2";
+export const CORPUS_FILE = "fixtures/intelligence/classification/understanding-eval.v2.json";
+export const KNOWN_CORPUS_VERSIONS = ["eval-corpus.v1", "eval-corpus.v2"] as const;
 export const PROTECTION_EXPECTATIONS = ["protected", "not_protected", "uncertain", "protected_or_uncertain"] as const;
 export type ProtectionExpectation = (typeof PROTECTION_EXPECTATIONS)[number];
 export const LANGUAGE_GROUPS = ["es", "pt-BR", "en", "es+en", "es+pt-BR", "unsupported", "uncertain", "unknown"] as const;
 export type LanguageGroup = (typeof LANGUAGE_GROUPS)[number];
-export const CASE_TAGS = ["protected_critical", "safety_critical", "prompt_injection", "price_contrast", "scam_contrast", "profanity", "negative_not_harmful", "ambiguous", "sarcasm", "emoji", "slang",
+export const CASE_TAGS = ["protected_critical", "safety_critical", "language_critical", "prompt_injection", "price_contrast", "scam_contrast", "profanity", "negative_not_harmful", "ambiguous", "sarcasm", "emoji", "slang",
   "reply_context", "spam", "code_switching", "unsupported_language", "uncertain_language", "long_input"] as const;
 export type CaseTag = (typeof CASE_TAGS)[number];
 export const CATEGORIES = ["neutral_praise", "support_request", "product_service_question", "purchase_intent", "generic_price_question", "explicit_price_objection", "complaint", "fraud_accusation_against_brand",
@@ -47,7 +53,7 @@ export interface EvalCase {
 
 export interface EvalCorpus {
   readonly corpusId: string;
-  readonly corpusVersion: typeof CORPUS_VERSION;
+  readonly corpusVersion: (typeof KNOWN_CORPUS_VERSIONS)[number];
   readonly cases: readonly EvalCase[];
 }
 
@@ -93,7 +99,7 @@ function textOf(input: Record<string, unknown>, path: string): string {
 }
 
 export function parseEvalCorpus(value: unknown): EvalCorpus {
-  if (!isRecord(value) || value["corpusVersion"] !== CORPUS_VERSION || value["synthetic"] !== true || value["taxonomyVersion"] !== TAXONOMY_VERSION || value["inputContractVersion"] !== UNDERSTANDING_INPUT_CONTRACT_VERSION || !Array.isArray(value["cases"])) {
+  if (!isRecord(value) || !(KNOWN_CORPUS_VERSIONS as readonly unknown[]).includes(value["corpusVersion"]) || value["synthetic"] !== true || value["taxonomyVersion"] !== TAXONOMY_VERSION || value["inputContractVersion"] !== UNDERSTANDING_INPUT_CONTRACT_VERSION || !Array.isArray(value["cases"])) {
     throw new TypeError("corpus_invalid:$");
   }
   const ids = new Set<string>();
@@ -134,5 +140,5 @@ export function parseEvalCorpus(value: unknown): EvalCorpus {
       goldConfidence: oneOf(["high", "medium"] as const, raw["goldConfidence"], `${path}.goldConfidence`),
     });
   });
-  return Object.freeze({ corpusId: String(value["corpusId"]), corpusVersion: CORPUS_VERSION, cases: Object.freeze(cases) });
+  return Object.freeze({ corpusId: String(value["corpusId"]), corpusVersion: value["corpusVersion"] as (typeof KNOWN_CORPUS_VERSIONS)[number], cases: Object.freeze(cases) });
 }

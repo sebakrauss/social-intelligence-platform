@@ -25,7 +25,7 @@ const sha256 = (value: unknown): string => createHash("sha256").update(JSON.stri
 const CANONICAL = UNDERSTANDING_OUTPUT_JSON_SCHEMA;
 const CANONICAL_JSON = JSON.stringify(CANONICAL);
 const PROJECTED = projectSchemaForAnthropic(CANONICAL);
-const CORPUS = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v1.json"), "utf8")));
+const CORPUS = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v2.json"), "utf8")));
 
 /** A minimal validator for exactly the keyword subset both schemas use (type, properties, required, additionalProperties, enum, anyOf, items). */
 function conforms(schema: Node, value: unknown): boolean {

@@ -21,6 +21,17 @@
  * Price (frozen, H7-A0 §4.2): a price inquiry is topic `price` + intent `purchase_question`; "muy caro" is topic `price`
  * + intent `price_objection` (+ negative sentiment) and is PROTECTED. There is no `expensive_price` category.
  *
+ * Commercial-intent boundary (H7-D0k, TL decision 3; no value added — these are the semantics of existing keys):
+ *   purchase_question            asking for commercial information or purchase conditions (price, delivery, payment)
+ *                                — asking is not objecting; not protected by itself
+ *   price_objection              saying a price, fee, cost, charge or delivery fee is too high, excessive, unacceptable
+ *                                or not worth it — protected (commercial_objection)
+ *   other_commercial_objection   explicit refusal or resistance to buying, renewing or continuing a commercial
+ *                                relationship for a commercial reason that is NOT mainly price (delivery speed, contract
+ *                                terms, stock …) — protected (commercial_objection). An objection about price is
+ *                                `price_objection` even when the text also says the person will stop buying
+ * Independent intents may coexist within the dimension's cardinality (intent is multi).
+ *
  * The single addition to the PD/Model starting set is `safety.hate_speech` (D-H7-2; non-duplication proven in H7-A0
  * §4.3): an attack on a person or group based on a protected characteristic. The final value lists stay open (PD D-21):
  * a change is a new TAXONOMY_VERSION; treatment of history is PD OQ-11.

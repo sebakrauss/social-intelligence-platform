@@ -72,7 +72,13 @@ function summary(candidate: BakeoffCandidate, report: EvaluationReport, spentUsd
     strictProtectedRecall: report.protectedStrictRecall,
     safetyRecall: report.safetyRecall,
     safetyFalsePositiveRate: report.safetyFalsePositiveRate,
-    languageCapViolations: report.languageCapRawViolations,
+    evaluatorVersion: report.evaluatorVersion,
+    // v2 (H7-D0k): raw exceedances are informational; bypasses / over-capping / effective violations are scored.
+    rawLanguageCapExceedances: report.rawLanguageCapExceedances,
+    languageSupport: report.languageSupport,
+    effectiveCapViolations: report.effectiveCapViolations,
+    protectedIntentMeaningRecall: report.protectedIntentMeaningRecall,
+    protectedIntentStrictRecall: report.protectedIntentStrictRecall,
     schemaFailures: count("AI_INVALID_OUTPUT"),
     refusals: count("AI_REFUSED"),
     reasks: attempts.filter((a) => a.kind === "reask").length,
@@ -131,7 +137,9 @@ export async function runBakeoff(input: BakeoffInput) {
     pass1[candidate.id] = await run(candidate);
   }
   // The H7-D0 qualification rule, unchanged.
-  const qualifies = (report: EvaluationReport): boolean => report.criticalFailures.length === 0 && report.languageCapRawViolations === 0
+  // H7-D0k: the language condition is the deterministic cap's (no bypass, no effective violation — both critical);
+  // a raw exceedance no longer disqualifies.
+  const qualifies = (report: EvaluationReport): boolean => report.criticalFailures.length === 0 && report.languageSupport.bypasses === 0 && report.effectiveCapViolations === 0
     && !report.cases.some((c) => c.failureClass === "AI_REFUSED" || c.failureClass === "AI_INVALID_OUTPUT" || c.failureClass === "AI_UNAVAILABLE" || c.failureClass === "AI_BUDGET");
   const stability: Record<string, { casesRun: number; disagreements: ReturnType<typeof stabilityDisagreements>; transientFailures: number }> = {};
   for (const candidate of input.candidates) {

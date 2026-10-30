@@ -12,12 +12,14 @@ import { createAiGateway, createModelRegistry, type AiGateway } from "@/ai/gatew
 import { createSimulatorProvider, simulatorModel, type SimulatedResponse } from "@/ai/providers/simulator";
 import { UNDERSTANDING_TASK_ID } from "@/modules/classification/application/ai/understanding-task";
 import { REPOSITORY_ROOT } from "../../support/source-scan";
-import { parseEvalCorpus, type EvalCorpus } from "./corpus";
-import { evaluateCorpus, type EvaluationReport } from "./evaluate";
+import { UNDERSTANDING_PROMPT_SYSTEM, UNDERSTANDING_PROMPT_VERSION } from "@/prompts/classification/understanding.v2";
+import { protectedMeaningOf, type Assessment } from "@/modules/classification";
+import { CORPUS_VERSION, parseEvalCorpus, type EvalCorpus } from "./corpus";
+import { EVALUATOR_VERSION, effectiveCapViolations, evaluateCorpus, goldLanguageSupport, type EvaluationReport } from "./evaluate";
 import { goldenScript, transformCase, values, withCase } from "./golden";
-import { evaluatePromotion } from "./promotion";
+import { PROMOTION_POLICY, evaluatePromotion } from "./promotion";
 
-const CORPUS: EvalCorpus = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v1.json"), "utf8")));
+const CORPUS: EvalCorpus = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v2.json"), "utf8")));
 const MODEL = simulatorModel("simulator-golden");
 const GOLDEN = goldenScript(CORPUS);
 const evaluate = (script: ReadonlyMap<string, readonly SimulatedResponse[]>, gatewayFor?: (id: string, standard: AiGateway) => AiGateway): Promise<EvaluationReport> =>
@@ -56,7 +58,7 @@ describe("corpus", () => {
   });
 
   it("refuses an unknown taxonomy value, an unknown dimension and a duplicate id", () => {
-    const raw = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v1.json"), "utf8")) as { cases: Record<string, unknown>[] };
+    const raw = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v2.json"), "utf8")) as { cases: Record<string, unknown>[] };
     const mutate = (change: (c: Record<string, unknown>[]) => void) => { const copy = structuredClone(raw); change(copy.cases); return copy; };
     expect(() => parseEvalCorpus(mutate((c) => { (c[0] as { expected: Record<string, unknown> }).expected["intent"] = { values: ["expensive_price"] }; }))).toThrow(/corpus_unknown_value/);
     expect(() => parseEvalCorpus(mutate((c) => { (c[0] as { expected: Record<string, unknown> }).expected["topics"] = { values: ["price"] }; }))).toThrow(/corpus_invalid/);
@@ -73,7 +75,12 @@ describe("golden simulator run (machinery check, NOT a model benchmark)", () => 
     expect(golden.safetyFalsePositiveRate.value).toBe(0);
     expect(golden.criticalFailures).toEqual([]);
     expect(golden.configurationInvariant).toBe(true);
-    expect(golden.languageCapRawViolations).toBe(0);
+    expect(golden.rawLanguageCapExceedances).toBe(0);
+    expect(golden.effectiveCapViolations).toBe(0);
+    expect(golden.languageSupport).toMatchObject({ bypasses: 0, overCapped: 0 });
+    expect(golden.protectedIntentMeaningRecall.value).toBe(1);
+    expect(golden.protectedIntentStrictRecall.value).toBe(1);
+    expect(golden.evaluatorVersion).toBe("classification-evaluator.v2");
   });
 
   it("labels itself honestly: provider simulator, not a real model benchmark; promotion can never pass on it", () => {
@@ -154,13 +161,14 @@ describe("negative evaluator tests: bad behavior is caught", () => {
     expect(report.failures).toMatchObject({ AI_INVALID_OUTPUT: 1 });
   });
 
-  it("an unsupported language answered with confidence above medium", async () => {
+  it("H7-D0k: an unsupported language answered above medium is RECORDED (raw) but not critical — the deterministic cap applies", async () => {
     const id = "fr-price-objection-01";
     const report = await evaluate(transformCase(GOLDEN, CORPUS, id, (b) => { b.dimensions["intent"] = values(["price_objection", "high"]); }));
     const result = caseOf(report, id);
-    expect(result).toMatchObject({ languageCapRawViolation: true, pass: false, protection: { actual: "uncertain" } });
-    expect(report.languageCapRawViolations).toBe(1);
-    expect(evaluatePromotion(report, golden).reasons).toContain("language_cap_violations:1");
+    // Raw high on a protected intent never makes it PROTECTED: the effective confidence is capped ⇒ UNCERTAIN.
+    expect(result).toMatchObject({ rawLanguageCapExceedance: true, effectiveCapViolation: false, criticalFailures: [], pass: true, protection: { actual: "uncertain", pass: true }, languageSupport: { expected: "unsupported", actual: "unsupported", outcome: "correct" } });
+    expect(report).toMatchObject({ rawLanguageCapExceedances: 1, effectiveCapViolations: 0 });
+    expect(evaluatePromotion(report, golden).reasons.filter((r) => r.startsWith("language_cap"))).toEqual([]);
   });
 
   it("a safety label that erases the protected intent", async () => {
@@ -200,5 +208,162 @@ describe("negative evaluator tests: bad behavior is caught", () => {
     const regressed = await evaluate(transformCase(GOLDEN, CORPUS, id, (b) => { b.dimensions["intent"] = values(["neutral_conversation", "high"]); }));
     expect(evaluatePromotion(regressed, regressed).reasons).not.toContain(`critical_regression:${id}`);
     expect(evaluatePromotion(regressed, golden).reasons).toContain(`critical_regression:${id}`);
+  });
+});
+
+describe("H7-D0k: language policy — deterministic cap, support-group scoring (classification-evaluator.v2)", () => {
+  const language = (languages: string[], certainty: "certain" | "uncertain", confidence = "high") => ({ status: "assessed", languages, certainty, confidence });
+
+  it("versions: evaluator v2, prompt v2, corpus v2; promotion v1", () => {
+    expect([EVALUATOR_VERSION, UNDERSTANDING_PROMPT_VERSION, CORPUS_VERSION, CORPUS.corpusVersion, PROMOTION_POLICY.version]).toEqual(["classification-evaluator.v2", "understanding-prompt.v2", "eval-corpus.v2", "eval-corpus.v2", "understanding-promotion.v1"]);
+  });
+
+  it("uncertain and unknown languages: raw high is recorded, the cap applies, nothing critical", async () => {
+    for (const id of ["und-uncertain-01", "emoji-only-01"]) {
+      const report = await evaluate(transformCase(GOLDEN, CORPUS, id, (b) => { b.dimensions["safety"] = values(["none", "high"]); }));
+      const result = caseOf(report, id);
+      expect(result, id).toMatchObject({ rawLanguageCapExceedance: true, effectiveCapViolation: false, criticalFailures: [], protection: { actual: "uncertain" }, languageSupport: { outcome: "correct" } });
+    }
+    expect(caseOf(golden, "und-uncertain-01").languageSupport).toEqual({ expected: "uncertain", actual: "uncertain", outcome: "correct" });
+    expect(caseOf(golden, "emoji-only-01").languageSupport).toEqual({ expected: "unknown", actual: "unknown", outcome: "correct" });
+  });
+
+  it("validated es / en / pt-BR keep high (a protected meaning is PROTECTED); a validated mix behaves as the domain says", () => {
+    for (const id of ["es-cl-price-objection-01", "en-complaint-01", "pt-br-complaint-01"]) expect(caseOf(golden, id), id).toMatchObject({ protection: { actual: "protected" }, languageSupport: { outcome: "correct" } });
+    expect(caseOf(golden, "mix-es-en-complaint-01")).toMatchObject({ protection: { actual: "protected" }, languageSupport: { expected: "validated_mixed", actual: "validated_mixed", outcome: "correct" } });
+    expect(goldLanguageSupport(CORPUS.cases.find((c) => c.id === "es-cl-price-objection-01") ?? (() => { throw new Error("case"); })())).toBe("validated");
+  });
+
+  it("a non-validated language detected as VALIDATED bypasses the cap ⇒ critical on a language_critical case, promotion blocked", async () => {
+    const id = "fr-price-objection-01";
+    const report = await evaluate(transformCase(GOLDEN, CORPUS, id, (b) => { b.dimensions["language"] = language(["es"], "certain"); b.dimensions["intent"] = values(["price_objection", "high"]); }));
+    const result = caseOf(report, id);
+    expect(result.languageSupport).toEqual({ expected: "unsupported", actual: "validated", outcome: "bypass" });
+    expect(result.criticalFailures).toContain("language_support:validated_bypass:unsupported->validated");
+    expect(result.pass).toBe(false);
+    expect(report.languageSupport.bypasses).toBe(1);
+    expect(evaluatePromotion(report, golden).reasons).toEqual(expect.arrayContaining([`critical_regression:${id}`, "language_cap_bypasses:1"]));
+  });
+
+  it("a validated language treated as non-validated OVER-CAPS: an accuracy error (the case fails), not critical", async () => {
+    const id = "pt-br-praise-01";
+    const report = await evaluate(transformCase(GOLDEN, CORPUS, id, (b) => { b.dimensions["language"] = language(["pt"], "certain"); }));
+    const result = caseOf(report, id);
+    expect(result.languageSupport).toEqual({ expected: "validated", actual: "unsupported", outcome: "over_capped" });
+    expect(result).toMatchObject({ pass: false, criticalFailures: [] });
+    expect(report.languageSupport).toMatchObject({ overCapped: 1, bypasses: 0 });
+  });
+
+  it("the effective-cap invariant is checked on the product's own assessments (a violation would be detected)", () => {
+    const value = (level: "low" | "medium" | "high") => ({ key: "praise", confidence: { level, score: null } });
+    const assessment = (dimension: string, level: "low" | "medium" | "high") => ({ dimension, content: { kind: "values", values: [value(level)], reasonCodes: [] } }) as unknown as Assessment;
+    const fr = { kind: "detected" as const, languages: ["fr"] as never, certainty: "certain" as const };
+    const es = { kind: "detected" as const, languages: ["es"] as never, certainty: "certain" as const };
+    expect(effectiveCapViolations(fr, [assessment("intent", "high")])).toEqual(["intent"]);
+    expect(effectiveCapViolations(fr, [assessment("intent", "medium"), assessment("language", "high")])).toEqual([]);
+    expect(effectiveCapViolations(es, [assessment("intent", "high")])).toEqual([]);
+    expect(effectiveCapViolations({ kind: "unknown" }, [assessment("sentiment", "high")])).toEqual(["sentiment"]);
+  });
+
+  it("critical tags: every non-validated gold language case is explicitly language_critical; validated ones never are", () => {
+    for (const c of CORPUS.cases) {
+      const support = goldLanguageSupport(c);
+      const validated = support === "validated" || support === "validated_mixed";
+      expect(c.tags.includes("language_critical"), c.id).toBe(!validated);
+    }
+    expect(CORPUS.cases.filter((c) => c.tags.includes("language_critical")).map((c) => c.id).sort()).toEqual(["de-complaint-01", "emoji-only-01", "fr-price-objection-01", "it-praise-01", "und-uncertain-01"]);
+  });
+});
+
+describe("H7-D0k: es-co-commercial-objection-01 (eval-corpus.v2, TL decision 2)", () => {
+  const testCase = CORPUS.cases.find((c) => c.id === "es-co-commercial-objection-01") ?? (() => { throw new Error("case"); })();
+
+  it("an explicit price objection (fee too high) + delivery complaint; gold price_objection; other_commercial_objection not required", () => {
+    expect(testCase.text).toBe("No compro más acá, el despacho es caro y tarda una semana");
+    expect(testCase.text.length).toBeLessThanOrEqual(60);
+    expect(testCase).toMatchObject({ category: "explicit_price_objection", expectedProtection: "protected", expectedNeedsReview: false, tags: ["protected_critical"] });
+    expect(testCase.expected).toEqual({
+      safety: { kind: "values", values: ["none"], allowed: [], forbidden: [], reasonCodes: [] },
+      intent: { kind: "values", values: ["price_objection"], allowed: ["complaint", "product_service_problem"], forbidden: [], reasonCodes: [] },
+      sentiment: { kind: "values", values: ["negative"], allowed: [], forbidden: [], reasonCodes: [] },
+    });
+  });
+
+  it("the golden answer passes — including a whole-text evidence quote within the 60-character bound", async () => {
+    expect(caseOf(golden, testCase.id)).toMatchObject({ pass: true, protection: { actual: "protected" }, needsReview: { actual: false }, protectedIntent: { strictMatch: true, meaningPreserved: true } });
+    const report = await evaluate(transformCase(GOLDEN, CORPUS, testCase.id, (b) => { b["evidence"] = [{ quote: testCase.text }]; }));
+    expect(caseOf(report, testCase.id)).toMatchObject({ pass: true, failureClass: null });
+  });
+});
+
+describe("H7-D0k: commercial-intent boundary (taxonomy + prompt v2, TL decision 3)", () => {
+  const base = CORPUS.cases.find((c) => c.id === "es-cl-price-question-01") ?? (() => { throw new Error("case"); })();
+  const synthetic = (id: string, text: string, intent: string, protection: string) => ({
+    id, category: "purchase_intent", locale: "es-CL", language: { group: "es", tags: ["es-CL"], certainty: "certain" }, input: { ...base.input, text },
+    expected: { intent: { values: [intent] } }, expectedProtection: protection, expectedNeedsReview: null, expectedFailure: null, tags: protection === "protected" ? ["protected_critical"] : [], weight: 1, goldConfidence: "high",
+  });
+  const MINI = parseEvalCorpus({ corpusId: "commercial-boundary-synthetic", corpusVersion: "eval-corpus.v2", taxonomyVersion: "taxonomy.v1", inputContractVersion: "understanding-input.v1", synthetic: true, cases: [
+    synthetic("boundary-purchase-question", "¿Cuánto cuesta el despacho?", "purchase_question", "not_protected"),
+    synthetic("boundary-price-objection", "El despacho es demasiado caro.", "price_objection", "protected"),
+    synthetic("boundary-other-objection", "No compro más acá; prefiero una tienda que entregue hoy.", "other_commercial_objection", "protected"),
+  ] });
+  const run = (script: ReadonlyMap<string, readonly SimulatedResponse[]>) => evaluateCorpus(MINI, { provider: createSimulatorProvider(script), model: MODEL, realModel: false });
+
+  it("the contract separates them: asking is not protected; a price objection and a non-price objection are both commercial objections", async () => {
+    expect([protectedMeaningOf("purchase_question"), protectedMeaningOf("price_objection"), protectedMeaningOf("other_commercial_objection")]).toEqual([undefined, "commercial_objection", "commercial_objection"]);
+    const report = await run(goldenScript(MINI));
+    expect(report.cases.map((c) => [c.id, c.protection.actual, c.pass])).toEqual([["boundary-purchase-question", "not_protected", true], ["boundary-price-objection", "protected", true], ["boundary-other-objection", "protected", true]]);
+  });
+
+  it("prompt v2 states the three definitions (generic, no corpus wording)", () => {
+    expect(UNDERSTANDING_PROMPT_SYSTEM).toMatch(/- purchase_question: asking for commercial information or purchase conditions/);
+    expect(UNDERSTANDING_PROMPT_SYSTEM).toMatch(/- price_objection: saying a price, fee, cost or charge \(a delivery fee included\) is too high/);
+    expect(UNDERSTANDING_PROMPT_SYSTEM).toMatch(/- other_commercial_objection: refusing or resisting buying, renewing or continuing for a commercial reason that is not mainly about price/);
+    expect(UNDERSTANDING_PROMPT_SYSTEM).not.toMatch(/es-co|commercial-objection-01|despacho|Café Aurora/);
+  });
+
+  it("a price objection answered as a price question loses the protected meaning ⇒ critical", async () => {
+    const report = await run(transformCase(goldenScript(MINI), MINI, "boundary-price-objection", (b) => { b.dimensions["intent"] = values(["purchase_question", "high"]); }));
+    expect(report.cases.find((c) => c.id === "boundary-price-objection")?.criticalFailures).toEqual(["intent:missed_protected:price_objection", "protection:not_protected"]);
+  });
+});
+
+describe("H7-D0k: protected criticality at protected-meaning level (TL decision 4)", () => {
+  const id = "es-co-commercial-objection-01";
+  const answered = async (key: string, level: "low" | "medium" | "high") => {
+    const report = await evaluate(transformCase(GOLDEN, CORPUS, id, (b) => { b.dimensions["intent"] = values([key, level]); }));
+    return { report, result: caseOf(report, id) };
+  };
+
+  it("exact protected intent ⇒ strict and meaning pass", () => {
+    expect(caseOf(golden, id).protectedIntent).toEqual({ strictMatch: true, meaningPreserved: true });
+  });
+
+  it("a SIBLING protected intent (same meaning, Protection right) ⇒ strict fails, meaning passes, NOT critical; strict recall shows it", async () => {
+    const { report, result } = await answered("other_commercial_objection", "high");
+    expect(result).toMatchObject({ protectedIntent: { strictMatch: false, meaningPreserved: true }, protection: { actual: "protected", pass: true }, criticalFailures: [], pass: false });
+    expect(result.dimensions.intent).toMatchObject({ pass: false, missing: ["price_objection"], unexpected: ["other_commercial_objection"] });
+    expect(report.protectedIntentStrictRecall.value).toBeLessThan(1);
+    expect(report.protectedIntentMeaningRecall.value).toBe(1);
+    expect(report.criticalFailures.map((f) => f.id)).not.toContain(id);
+  });
+
+  it("a different protected meaning (complaint only) loses commercial_objection ⇒ critical, even with Protection right", async () => {
+    const { result } = await answered("complaint", "high");
+    expect(result.protection.actual).toBe("protected");
+    expect(result.criticalFailures).toEqual(["intent:missed_protected:price_objection"]);
+  });
+
+  it("Protection UNCERTAIN where PROTECTED is expected ⇒ critical (the meaning alone is not enough)", async () => {
+    const { result } = await answered("price_objection", "medium");
+    expect(result).toMatchObject({ protectedIntent: { strictMatch: true, meaningPreserved: true }, protection: { actual: "uncertain", pass: false } });
+    expect(result.criticalFailures).toEqual(["protection:uncertain"]);
+  });
+
+  it("an unrelated, unprotected intent ⇒ critical (meaning lost and Protection not_protected)", async () => {
+    for (const intent of ["neutral_conversation", "praise"]) {
+      const { result } = await answered(intent, "high");
+      expect(result.criticalFailures, intent).toEqual(["intent:missed_protected:price_objection", "protection:not_protected"]);
+    }
   });
 });

@@ -9,13 +9,29 @@
  *   metric) · strict protected recall · safety recall (review safety values) · safety false-positive rate · language
  *   cap violations in raw outputs · unsupported-language behavior · per-language pass rates · failure classes ·
  *   configuration invariance (route, model, prompt and schema identical for every case — prompt injection cannot move
- *   them) · critical failures (protected_critical / safety_critical cases that failed a critical check).
+ *   them) · critical failures (protected_critical / safety_critical / language_critical cases that failed a critical
+ *   check, plus any product-invariant violation).
+ *
+ * classification-evaluator.v2 (H7-D0k, TL decisions 1 and 4; v1 = the unversioned evaluator of H7-D0 FINAL):
+ *   language    the D-H7-5 cap is DETERMINISTIC product policy (`toAiAssessments`), so a raw model confidence above it
+ *               is informational only (`rawLanguageCapExceedance`). What is scored is (a) the model's language SUPPORT
+ *               group against the gold one — a non-validated language detected as validated would BYPASS the cap
+ *               (critical on a critical-tagged case); a validated language detected as non-validated over-caps
+ *               (an accuracy error: the case fails, not critical) — and (b) the EFFECTIVE confidence of every semantic
+ *               assessment ≤ `maxSemanticConfidence` (a violation is a product-invariant failure: always critical)
+ *   intent      critical only when an expected PROTECTED MEANING is lost (or Protection is wrong); an exact protected
+ *               sibling mismatch (same meaning, Protection right) stays visible in the strict protected-intent recall
+ *               and the intent metrics, never critical by itself
  */
 import { createAiGateway, createModelRegistry, type AiGateway, type AttemptRecord, type BudgetPort, type ModelDescriptor, type ModelProvider } from "@/ai/gateway";
 import { parseInstant } from "@/domain/instant";
 import {
   CLOSED_DIMENSIONS,
   REVIEW_SAFETY_VALUES,
+  compareConfidence,
+  isLanguageValidated,
+  maxSemanticConfidence,
+  parseLanguageTag,
   acceptInterpretation,
   buildUnderstandingInput,
   deriveNeedsReview,
@@ -26,7 +42,11 @@ import {
   protectedMeaningOf,
   toAiAssessments,
   type AcceptedInterpretation,
+  type Assessment,
   type ClosedDimension,
+  type LanguageResult,
+  type LanguageSupport,
+  type LanguageTag,
   type ProtectionResult,
   type UnderstandingFailureClass,
 } from "@/modules/classification";
@@ -38,6 +58,33 @@ const TARGET = parseAnalysisTarget({ workspaceId: "e7a10000-0000-4000-8000-00000
 const ASSESSED_AT = parseInstant("2026-10-29T12:00:00.000Z");
 const NOW = new Date("2026-10-29T12:00:00.000Z");
 const SEMANTIC = CLOSED_DIMENSIONS;
+
+/** H7-D0k: v2 = deterministic language cap + protected-meaning criticality (v1: H7-D0 FINAL, unversioned). */
+export const EVALUATOR_VERSION = "classification-evaluator.v2" as const;
+const CRITICAL_TAGS: readonly string[] = ["protected_critical", "safety_critical", "language_critical"];
+
+/** How the model's language support group compares with the gold one, for the deterministic cap. */
+export type LanguageSupportOutcome = "correct" | "same_cap_other_group" | "over_capped" | "bypass" | "not_assessed";
+
+/** The gold language support group of a case (same domain functions as the product). */
+export function goldLanguageSupport(testCase: EvalCase): LanguageSupport {
+  const tags = testCase.language.tags.map(parseLanguageTag);
+  if (tags.length === 0 || tags.some((tag) => tag === undefined)) return languageSupport({ kind: "unknown" });
+  return languageSupport({ kind: "detected", languages: tags as LanguageTag[], certainty: testCase.language.certainty });
+}
+
+export function languageSupportOutcome(expected: LanguageSupport, actual: LanguageSupport | null): LanguageSupportOutcome {
+  if (actual === null) return "not_assessed";
+  if (actual === expected) return "correct";
+  if (isLanguageValidated(expected) === isLanguageValidated(actual)) return "same_cap_other_group";
+  return isLanguageValidated(actual) ? "bypass" : "over_capped";
+}
+
+/** The semantic assessments whose EFFECTIVE confidence exceeds the language cap (must always be none). */
+export function effectiveCapViolations(language: LanguageResult, assessments: readonly Assessment[]): readonly string[] {
+  const cap = maxSemanticConfidence(language);
+  return assessments.filter((a) => a.dimension !== "language" && a.content.kind === "values" && a.content.values.some((v) => compareConfidence(v.confidence.level, cap) > 0)).map((a) => a.dimension);
+}
 
 export interface EvaluationSubject {
   readonly provider: ModelProvider;
@@ -78,7 +125,12 @@ export interface CaseResult {
   readonly protection: { readonly expected: string; readonly actual: ProtectionResult; readonly pass: boolean };
   readonly needsReview: { readonly expected: boolean | null; readonly actual: boolean; readonly pass: boolean };
   readonly failurePass: boolean;
-  readonly languageCapRawViolation: boolean;
+  /** Informational (v2): a raw semantic confidence above the cap, before the deterministic policy. Never critical. */
+  readonly rawLanguageCapExceedance: boolean;
+  readonly languageSupport: { readonly expected: LanguageSupport; readonly actual: LanguageSupport | null; readonly outcome: LanguageSupportOutcome };
+  readonly effectiveCapViolation: boolean;
+  /** Expected protected intents vs predicted: exact labels and protected meanings (null when none is expected). */
+  readonly protectedIntent: { readonly strictMatch: boolean; readonly meaningPreserved: boolean } | null;
   readonly fingerprint: string;
   readonly criticalFailures: readonly string[];
   readonly pass: boolean;
@@ -113,7 +165,12 @@ export interface EvaluationReport {
   readonly protectedStrictRecall: Ratio;
   readonly safetyRecall: Ratio;
   readonly safetyFalsePositiveRate: Ratio;
-  readonly languageCapRawViolations: number;
+  readonly evaluatorVersion: typeof EVALUATOR_VERSION;
+  readonly protectedIntentMeaningRecall: Ratio;
+  readonly protectedIntentStrictRecall: Ratio;
+  readonly rawLanguageCapExceedances: number;
+  readonly languageSupport: { readonly cases: number; readonly correct: number; readonly sameCapOtherGroup: number; readonly overCapped: number; readonly bypasses: number; readonly notAssessed: number };
+  readonly effectiveCapViolations: number;
   readonly unsupportedLanguage: { readonly cases: number; readonly protectionUncertainRate: Ratio };
   readonly byLanguage: Readonly<Record<string, { readonly passRate: Ratio; readonly protectionAccuracy: Ratio }>>;
   readonly failures: Readonly<Record<string, number>>;
@@ -140,7 +197,9 @@ async function evaluateCase(testCase: EvalCase, gateway: AiGateway, routeFingerp
   let failureCause: string | null = null;
   let attempts: readonly AttemptRecord[] = [];
   let language = languageSupport({ kind: "unknown" });
+  let actualSupport: LanguageSupport | null = null;
   let capViolation = false;
+  let effectiveViolation = false;
   if (!built.ok) {
     if (!built.violations.includes("TEXT_TOO_LARGE")) throw new Error(`corpus_input_invalid:${testCase.id}:${built.violations.join(",")}`);
     failureClass = "AI_INPUT_TOO_LARGE";
@@ -155,11 +214,13 @@ async function evaluateCase(testCase: EvalCase, gateway: AiGateway, routeFingerp
     else {
       const support = languageSupport(languageResultOf(result.output));
       language = support;
+      actualSupport = support;
       if (support !== "validated" && support !== "validated_mixed") {
         capViolation = Object.values(result.output.dimensions).some((d) => d.status === "assessed" && d.values.some((v) => v.confidence.level === "high"));
       }
       const refs = Object.fromEntries(["language", ...SEMANTIC].map((d) => [d, `${testCase.id}:${d}`]));
       const assessments = toAiAssessments(result.output, { target: TARGET, method: result.method, assessedAt: ASSESSED_AT, refs });
+      effectiveViolation = effectiveCapViolations(languageResultOf(result.output), assessments).length > 0;
       accepted = Object.fromEntries(SEMANTIC.map((d) => [d, acceptInterpretation(d, assessments.filter((a) => a.dimension === d), TARGET)]));
     }
   }
@@ -169,6 +230,8 @@ async function evaluateCase(testCase: EvalCase, gateway: AiGateway, routeFingerp
 
   const dimensions: Partial<Record<ClosedDimension, DimensionCaseResult>> = {};
   const critical: string[] = [];
+  const criticalCase = testCase.tags.some((tag) => CRITICAL_TAGS.includes(tag));
+  let protectedIntent: CaseResult["protectedIntent"] = null;
   for (const [dimension, expectation] of Object.entries(testCase.expected) as [ClosedDimension, EvalCase["expected"][ClosedDimension]][]) {
     if (expectation === undefined) continue;
     const interpretation = accepted[dimension];
@@ -185,15 +248,28 @@ async function evaluateCase(testCase: EvalCase, gateway: AiGateway, routeFingerp
     dimensions[dimension] = { pass, predicted, abstained, missing, unexpected, forbiddenHits };
     if (forbiddenHits.length > 0) critical.push(`${dimension}:forbidden:${forbiddenHits.join("+")}`);
     if (dimension === "safety" && testCase.tags.includes("safety_critical") && missing.some((v) => (REVIEW_SAFETY_VALUES as readonly string[]).includes(v))) critical.push(`safety:missed:${missing.join("+")}`);
-    if (dimension === "intent" && testCase.tags.includes("protected_critical") && missing.some((v) => protectedMeaningOf(v) !== undefined)) critical.push(`intent:missed_protected:${missing.join("+")}`);
+    if (dimension === "intent") {
+      const expectedProtected = expectation.values.filter((v) => protectedMeaningOf(v) !== undefined);
+      if (expectedProtected.length > 0) {
+        const predictedMeanings = new Set<string | undefined>(predicted.map(protectedMeaningOf).filter((m) => m !== undefined));
+        const lost = expectedProtected.filter((v) => !predictedMeanings.has(protectedMeaningOf(v)));
+        protectedIntent = { strictMatch: expectedProtected.every((v) => predicted.includes(v)), meaningPreserved: lost.length === 0 };
+        // v2: a lost protected MEANING is critical; a sibling with the same meaning is not (strict recall shows it).
+        if (testCase.tags.includes("protected_critical") && lost.length > 0) critical.push(`intent:missed_protected:${lost.join("+")}`);
+      }
+    }
   }
   const protectionPass = (PROTECTION_PASS[testCase.expectedProtection] ?? []).includes(protection.result);
   if (!protectionPass && testCase.tags.includes("protected_critical")) critical.push(`protection:${protection.result}`);
   const needsReviewPass = testCase.expectedNeedsReview === null || testCase.expectedNeedsReview === review.needsReview;
   if (!needsReviewPass && testCase.tags.includes("safety_critical")) critical.push(`needs_review:${String(review.needsReview)}`);
   const failurePass = failureClass === testCase.expectedFailure;
-  if (capViolation) critical.push("language_cap:raw_high_confidence");
-  const pass = Object.values(dimensions).every((d) => d.pass) && protectionPass && needsReviewPass && failurePass && !capViolation;
+  const expectedSupport = goldLanguageSupport(testCase);
+  const supportOutcome = languageSupportOutcome(expectedSupport, actualSupport);
+  if (supportOutcome === "bypass" && criticalCase) critical.push(`language_support:validated_bypass:${expectedSupport}->${String(actualSupport)}`);
+  if (effectiveViolation) critical.push("language_cap:effective_violation");
+  const languagePass = supportOutcome !== "bypass" && supportOutcome !== "over_capped";
+  const pass = Object.values(dimensions).every((d) => d.pass) && protectionPass && needsReviewPass && failurePass && languagePass && !effectiveViolation;
   return Object.freeze({
     id: testCase.id,
     group: testCase.language.group,
@@ -207,7 +283,10 @@ async function evaluateCase(testCase: EvalCase, gateway: AiGateway, routeFingerp
     protection: { expected: testCase.expectedProtection, actual: protection.result, pass: protectionPass },
     needsReview: { expected: testCase.expectedNeedsReview, actual: review.needsReview, pass: needsReviewPass },
     failurePass,
-    languageCapRawViolation: capViolation,
+    rawLanguageCapExceedance: capViolation,
+    languageSupport: { expected: expectedSupport, actual: actualSupport, outcome: supportOutcome },
+    effectiveCapViolation: effectiveViolation,
+    protectedIntent,
     fingerprint: fingerprintOf(attempts, routeFingerprint),
     criticalFailures: Object.freeze(critical),
     pass,
@@ -315,7 +394,19 @@ export async function evaluateCorpus(corpus: EvalCorpus, subject: EvaluationSubj
     protectedStrictRecall: ratio(strictProtected.filter(({ result }) => result.protection.actual === "protected").length, strictProtected.length),
     safetyRecall: ratio(safetyTp, safetyTp + safetyFn),
     safetyFalsePositiveRate: ratio(noneCases.filter(({ result }) => (result.dimensions.safety?.predicted ?? []).some((v) => v !== "none")).length, noneCases.length),
-    languageCapRawViolations: results.filter((r) => r.languageCapRawViolation).length,
+    evaluatorVersion: EVALUATOR_VERSION,
+    protectedIntentMeaningRecall: ratio(results.filter((r) => r.protectedIntent?.meaningPreserved === true).length, results.filter((r) => r.protectedIntent !== null).length),
+    protectedIntentStrictRecall: ratio(results.filter((r) => r.protectedIntent?.strictMatch === true).length, results.filter((r) => r.protectedIntent !== null).length),
+    rawLanguageCapExceedances: results.filter((r) => r.rawLanguageCapExceedance).length,
+    languageSupport: {
+      cases: results.length,
+      correct: results.filter((r) => r.languageSupport.outcome === "correct").length,
+      sameCapOtherGroup: results.filter((r) => r.languageSupport.outcome === "same_cap_other_group").length,
+      overCapped: results.filter((r) => r.languageSupport.outcome === "over_capped").length,
+      bypasses: results.filter((r) => r.languageSupport.outcome === "bypass").length,
+      notAssessed: results.filter((r) => r.languageSupport.outcome === "not_assessed").length,
+    },
+    effectiveCapViolations: results.filter((r) => r.effectiveCapViolation).length,
     unsupportedLanguage: { cases: unsupported.length, protectionUncertainRate: ratio(unsupported.filter(({ result }) => result.protection.actual === "uncertain").length, unsupported.length) },
     byLanguage,
     failures,

@@ -4,7 +4,8 @@
  *
  *   input      `UnderstandingInput` (A1 builder: bounded context, no author / handle / profile / credential / raw body /
  *              watch-term field by construction); the data block copies ONLY the allowlisted fields below
- *   prompt     prompts/classification/understanding.v1 (versioned, content-hashed)
+ *   prompt     prompts/classification/understanding.v2 (versioned, content-hashed; H7-D0k: v1 + the commercial-intent
+ *              boundary — v1 stays the prompt of the H7-D0 FINAL bake-off)
  *   output     the A1 strict validator (`validateUnderstandingOutput`) — unknown keys / values fail, nothing coerced;
  *              H7-D0: a provider-neutral strict JSON Schema for native structured output, whose forced `null`s for
  *              optional fields are removed (`fromStructuredOutput`) BEFORE the A1 validator — which still decides
@@ -13,7 +14,7 @@
  * Not exported from the module index: no deployed runtime composes it yet (the INTELLIGENCE plane is a later gate).
  */
 import type { GatewayTask } from "@/ai/gateway";
-import { UNDERSTANDING_PROMPT_HASH, UNDERSTANDING_PROMPT_SYSTEM, UNDERSTANDING_PROMPT_VERSION } from "@/prompts/classification/understanding.v1";
+import { UNDERSTANDING_PROMPT_HASH, UNDERSTANDING_PROMPT_SYSTEM, UNDERSTANDING_PROMPT_VERSION } from "@/prompts/classification/understanding.v2";
 import { CONFIDENCE_CONTRACT_VERSION } from "../../domain/confidence";
 import { LANGUAGE_POLICY_VERSION } from "../../domain/language";
 import { TAXONOMY_VERSION } from "../../domain/taxonomy";

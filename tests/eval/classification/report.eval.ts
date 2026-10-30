@@ -14,7 +14,7 @@ import { goldenScript } from "./golden";
 import { evaluatePromotion } from "./promotion";
 
 it("classification understanding — offline evaluation report (simulator)", async () => {
-  const corpus = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v1.json"), "utf8")));
+  const corpus = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v2.json"), "utf8")));
   const report = await evaluateCorpus(corpus, { provider: createSimulatorProvider(goldenScript(corpus)), model: simulatorModel("simulator-golden"), realModel: false });
   const { cases, ...summary } = report;
   process.stdout.write(`${JSON.stringify({ ...summary, promotion: evaluatePromotion(report, null), failedCases: cases.filter((c) => !c.pass).map((c) => c.id) }, null, 1)}\n`);

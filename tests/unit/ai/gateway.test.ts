@@ -63,7 +63,7 @@ describe("structured output and the one re-ask", () => {
     if (result.kind !== "assessed") return;
     expect(result.method).toEqual({
       kind: "ai", provider: "simulator", model: "simulator-contract", modelVersion: "simulator-1", taskId: "classification.understanding", taskVersion: "understanding-task.v2",
-      promptVersion: "understanding-prompt.v1", promptHash: UNDERSTANDING_TASK.prompt.hash, schemaVersion: "understanding-output.v1", taxonomyVersion: "taxonomy.v1", confidencePolicyVersion: "confidence.v1",
+      promptVersion: "understanding-prompt.v2", promptHash: UNDERSTANDING_TASK.prompt.hash, schemaVersion: "understanding-output.v1", taxonomyVersion: "taxonomy.v1", confidencePolicyVersion: "confidence.v1",
     });
     expect(result.output.dimensions.intent).toMatchObject({ status: "assessed", values: [{ key: "price_objection" }] });
     expect(result.output.evidence).toEqual([{ start: 4, end: 8 }]);
