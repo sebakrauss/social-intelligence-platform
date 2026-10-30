@@ -1053,3 +1053,34 @@ Decisions and boundaries:
   evidence `classification-stability-evidence.v1` under `.wrenkind-local/evidence/h7-d0-stability/`.
 - **Applied offline to the H7-D0 v2 FINAL pass 1 (sha256 a27052b4…):** blocking Luna 3, Terra 1, Sonnet 0; reviewable
   3 / 6 / 9; eligible: Sonnet only; stability PLAN 43 cases × 2 = 86 calls ≤ US$4.22.
+
+## 40. H7-D0v2g as implemented (STABILITY_B_BLOCKING_SAFE + promotion v3)
+
+- **Policy (TL decision after the H7-D0v2f adjudication):** stability proves production-safety reproducibility, not
+  exact semantic reproducibility. `tests/eval/classification/live/stability-policy.ts`
+  (`classification-stability-policy.v2`) classifies each critical case (stored pass 1 + repeats) into exactly one
+  class: BLOCKING (any observation with a BAR_B blocking severity, a language-cap bypass, an effective-cap violation, a
+  failure class, an unrecorded severity or missing observations; or a safety-outcome change on a safety_critical case),
+  REVIEW_ROUTING (Protection or Needs review differ, nothing blocking), SEMANTIC_PRECISION (labels or a
+  language-accuracy outcome differ at identical routing), INFORMATIONAL (only a same-cap language group). Identical
+  observations carry no class; latency and usage are never compared. Pure, model-independent (a test scans the source).
+  v1 (implicit, H7-D0v2e) = exact zero disagreements.
+- **Promotion `understanding-promotion.v3`:** `qualifiesForPromotion` = 0 pass-1 blocking critical failures AND 0
+  blocking stability disagreements (stability not run ⇒ not qualified) AND no systemic reliability failure.
+  Review-routing, semantic-precision and reviewable counts are ranking metrics, not gates. `compareCandidates` = the
+  12-step lexicographic order: blocking, blocking stability, language invariant, protected-meaning misses, safety false
+  negatives, reliability, review-routing instability, reviewable degradations, semantic-precision instability, precision
+  misses, latency p50, cost (a missing stability metric ranks last). An ordering, never a selection.
+- **Stability evidence `classification-stability-evidence.v2`:** per case `stabilityClass` + `stabilityReasons` and a
+  `stabilityPolicy` summary; the v1 `stable` / exact disagreement fields keep their meaning.
+- **Offline replay (`live/stability-replay.ts`, CLI `--stability-replay --parent … --parent-sha256 … --stability …
+  --stability-sha256 …`, no `--run`, no phrase, no model call):** verifies the parent exactly as stability-only does and
+  the stability evidence (SHA-256, known version v1/v2, the parent's SHA-256, prompt, corpus, transport schemas,
+  candidate configuration fingerprints, COMPLETE, served model), recomputes the pass-1 severity with `classifySeverity`,
+  rebuilds the repeat observations from the stored signatures and severities, and writes a new
+  `classification-stability-policy-replay.v1` artifact under `.wrenkind-local/evidence/h7-d0-stability-replay/`.
+  Historical evidence is read only, never rewritten.
+- **Replay of H7-D0v2e (parent a27052b4…, stability e7448e99…):** Sonnet 5.5 — pass-1 blocking 0, blocking stability
+  0, review routing 1, semantic precision 3, informational 0, systemic 0 ⇒ qualified; Luna and Terra stay unqualified
+  (pass-1 blocking 3 / 1; stability not run). The historical H7-D0v2e result stays FAIL under the previous (v1) policy.
+  Provisional recommendation: Claude Sonnet 5.5. No production model is selected by this step.

@@ -62,7 +62,7 @@ describe("H7-D0v2a: per-case evidence carries evaluator v2's conclusions", () =>
 });
 
 describe("H7-D0v2a: provenance = exactly the current benchmark stack (no v1 fallback)", () => {
-  it("evidence identity v3; evaluator v3, prompt v2 + pinned hash, corpus v2 + SHA-256 of the parsed bytes, promotion v2, transport schemas, candidate fingerprints", () => {
+  it("evidence identity v3; evaluator v3, prompt v2 + pinned hash, corpus v2 + SHA-256 of the parsed bytes, promotion v3, transport schemas, candidate fingerprints", () => {
     const provenance = liveEvidenceProvenance(CORPUS, sha256Hex(BYTES));
     expect(provenance).toEqual({
       taxonomyVersion: "taxonomy.v1",
@@ -72,7 +72,7 @@ describe("H7-D0v2a: provenance = exactly the current benchmark stack (no v1 fall
       promptHash: "c177c6f36c77337645d2cc9f45628f80bd2fbeddd8f5ac2a418ac97ae2c9b7bf",
       corpusVersion: "eval-corpus.v2",
       corpusSha256: "8dc159ffb74c70acd90a30b00fe35dc9f290ae5502acefb0f0f2c59cd527c989",
-      promotionVersion: "understanding-promotion.v2",
+      promotionVersion: "understanding-promotion.v3",
       transportSchemas: { openai: "canonical-strict", anthropic: "anthropic-transport-schema.v2" },
       candidateConfig: {},
     });

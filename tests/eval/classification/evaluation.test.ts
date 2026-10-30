@@ -215,8 +215,8 @@ describe("negative evaluator tests: bad behavior is caught", () => {
 describe("H7-D0k: language policy — deterministic cap, support-group scoring (classification-evaluator.v2)", () => {
   const language = (languages: string[], certainty: "certain" | "uncertain", confidence = "high") => ({ status: "assessed", languages, certainty, confidence });
 
-  it("versions: evaluator v3 (v2 scoring + BAR_B severity), prompt v2, corpus v2; promotion v2", () => {
-    expect([EVALUATOR_VERSION, UNDERSTANDING_PROMPT_VERSION, CORPUS_VERSION, CORPUS.corpusVersion, PROMOTION_POLICY.version]).toEqual(["classification-evaluator.v3", "understanding-prompt.v2", "eval-corpus.v2", "eval-corpus.v2", "understanding-promotion.v2"]);
+  it("versions: evaluator v3 (v2 scoring + BAR_B severity), prompt v2, corpus v2; promotion v3", () => {
+    expect([EVALUATOR_VERSION, UNDERSTANDING_PROMPT_VERSION, CORPUS_VERSION, CORPUS.corpusVersion, PROMOTION_POLICY.version]).toEqual(["classification-evaluator.v3", "understanding-prompt.v2", "eval-corpus.v2", "eval-corpus.v2", "understanding-promotion.v3"]);
   });
 
   it("uncertain and unknown languages: raw high is recorded, the cap applies, nothing critical", async () => {

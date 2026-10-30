@@ -14,6 +14,9 @@
  *   eligibility  recomputed offline from the parent's per-case conclusions with the same `classifySeverity` as live
  *   run          only eligible candidates; only the critical set (protected ∪ safety ∪ language critical, deduplicated);
  *                two new observations per case; with the stored pass-1 signature: three; never a majority vote
+ *   policy       H7-D0v2g: the observations are also classified under STABILITY_B_BLOCKING_SAFE
+ *                (`stability-policy.ts`); `stable` keeps the v1 meaning (exact zero disagreements), `stabilityPolicy`
+ *                carries the v2 classes and the categorical qualification (zero blocking stability disagreements)
  */
 import type { EvalCase, EvalCorpus } from "../corpus";
 import { EVALUATOR_VERSION, evaluateCorpus, severitySummary, type CaseResult } from "../evaluate";
@@ -25,8 +28,10 @@ import { candidateConfigFingerprint } from "./evidence";
 import type { Candidate } from "./candidates";
 import { createSpendLedger, runMaxUsd, type ModelPrice } from "./spend";
 import { caseSignature, signatureOf, type SignatureFields } from "./stability";
+import { classifyStabilityCase, summarizeStability, type StabilityObservation } from "./stability-policy";
 
-export const STABILITY_EVIDENCE_VERSION = "classification-stability-evidence.v1" as const;
+/** v2 (H7-D0v2g): + per-case `stabilityClass` and the `stabilityPolicy` summary; v1 files stay readable (replay). */
+export const STABILITY_EVIDENCE_VERSION = "classification-stability-evidence.v2" as const;
 export const STABILITY_BUDGET_USD = 5;
 export const STABILITY_CONFIRMATION = "send-synthetic-critical-cases-to-real-models-h7-d0-stability";
 export const ACCEPTED_PARENT_EVIDENCE_VERSIONS: readonly string[] = ["classification-live-evidence.v2", "classification-live-evidence.v3"];
@@ -153,12 +158,18 @@ export async function runStabilityOnly(input: StabilityOnlyInput) {
     repeats.push([...report.cases]);
   }
   const stored = new Map(input.parentCases.map((c) => [c.id, c]));
+  const tagsOf = new Map(input.corpus.cases.map((c) => [c.id, c.tags]));
   const cases = [...ids].sort().map((id) => {
     const pass1 = stored.get(id);
     const observed = repeats.map((run) => run.find((r) => r.id === id));
     const signatures = [pass1 === undefined ? null : signatureOf(pass1), ...observed.map((r) => (r === undefined ? null : caseSignature(r)))];
     const complete = signatures.length === 1 + STABILITY_EXTRA_RUNS && signatures.every((s) => s !== null);
-    return { id, observations: signatures.filter((s) => s !== null).length, signatures, disagreement: !complete || new Set(signatures).size > 1, severities: observed.map((r) => r?.severity ?? null) };
+    const observations: StabilityObservation[] = [
+      ...(pass1 === undefined ? [] : [{ ...pass1, severity: classifySeverity(pass1) }]),
+      ...observed.flatMap((r) => (r === undefined ? [] : [{ ...r, labels: Object.fromEntries(Object.entries(r.dimensions).map(([d, v]) => [d, v.predicted])), severity: r.severity }])),
+    ];
+    const stability = classifyStabilityCase(id, tagsOf.get(id) ?? [], complete ? observations : observations.slice(0, 1));
+    return { id, observations: signatures.filter((s) => s !== null).length, signatures, disagreement: !complete || new Set(signatures).size > 1, severities: observed.map((r) => r?.severity ?? null), stabilityClass: stability.class, stabilityReasons: stability.reasons };
   });
   const attempts = repeats.flat().flatMap((r) => r.attempts);
   const ms = attempts.map((a) => a.completedAt.getTime() - a.startedAt.getTime());
@@ -167,7 +178,8 @@ export async function runStabilityOnly(input: StabilityOnlyInput) {
   return {
     candidate: input.candidate.id,
     status,
-    stable: status === "COMPLETE" && disagreements.length === 0,
+    stable: status === "COMPLETE" && disagreements.length === 0, // v1 rule (exact), kept for continuity
+    stabilityPolicy: { ...summarizeStability(cases.map((c) => ({ id: c.id, class: c.stabilityClass, reasons: c.stabilityReasons }))), complete: status === "COMPLETE" },
     casesRun: repeats.flat().length,
     disagreements,
     cases,

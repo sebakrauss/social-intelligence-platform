@@ -16,7 +16,10 @@
  *   STABILITY-ONLY  (H7-D0v2d) `stability-plan` / `stability-run`: verify a recorded pass-1 parent (path + SHA-256 +
  *                   unchanged model inputs, live/stability-only.ts), re-classify it offline under BAR_B, and for the
  *                   eligible candidates only plan / run two observations of each critical case (US$5 cap; its own
- *                   confirmation phrase). Evidence: `classification-stability-evidence.v1`.
+ *                   confirmation phrase). Evidence: `classification-stability-evidence.v2`.
+ *   REPLAY          (H7-D0v2g) `stability-replay`: verify a pass-1 parent AND a recorded stability evidence (each by
+ *                   SHA-256) and replay them OFFLINE under the current stability policy + promotion v3 — no
+ *                   credential, no call. Artifact: `classification-stability-policy-replay.v1`.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -31,6 +34,7 @@ import { CRITICAL, STABILITY_EXTRA_RUNS, createDiagnosticLog, runBakeoff, type B
 import { CANDIDATES, LIVE_CALL_TIMEOUT_MS, MAX_OUTPUT_TOKENS, candidateModel, candidateProvider, isCandidateId, type Candidate } from "./live/candidates";
 import { credentialPresence, readCredential } from "./live/credentials";
 import { liveEvidenceProvenance, sha256Hex } from "./live/evidence";
+import { replayStability } from "./live/stability-replay";
 import { STABILITY_BUDGET_USD, STABILITY_CONFIRMATION, STABILITY_EVIDENCE_VERSION, plannedStabilityUsd, reclassifyParent, runStabilityOnly, stabilityCases, verifyParentEvidence } from "./live/stability-only";
 import { parsePriceDescriptor, runMaxUsd, type ModelPrice, type PriceDescriptor } from "./live/spend";
 
@@ -42,16 +46,36 @@ const fail = (message: string): never => {
   throw new Error(`live eval refused: ${message}`);
 };
 
-type Mode = "plan" | "run" | "stability-plan" | "stability-run";
+type Mode = "plan" | "run" | "stability-plan" | "stability-run" | "stability-replay";
 function settings(): { readonly mode: Mode; readonly candidates: readonly Candidate[] } {
   if (process.env["CI"] !== undefined || process.env["GITHUB_ACTIONS"] !== undefined) fail("CI environment");
   const mode = process.env["WRENKIND_LIVE_EVAL_MODE"] ?? "plan";
-  if (mode !== "plan" && mode !== "run" && mode !== "stability-plan" && mode !== "stability-run") fail("mode must be plan, run, stability-plan or stability-run");
+  if (mode !== "plan" && mode !== "run" && mode !== "stability-plan" && mode !== "stability-run" && mode !== "stability-replay") fail("mode must be plan, run, stability-plan, stability-run or stability-replay");
   if (mode === "run" && process.env["WRENKIND_LIVE_EVAL_CONFIRMATION"] !== LIVE_EVAL_CONFIRMATION) fail("run needs the exact confirmation phrase");
   if (mode === "stability-run" && process.env["WRENKIND_LIVE_EVAL_CONFIRMATION"] !== STABILITY_CONFIRMATION) fail("stability-run needs the exact stability confirmation phrase");
   const ids = (process.env["WRENKIND_LIVE_EVAL_CANDIDATES"] ?? "").split(",").filter((id) => id !== "");
   if (ids.length === 0 || new Set(ids).size !== ids.length || !ids.every(isCandidateId)) fail("candidates must be distinct known candidate ids");
   return { mode: mode as Mode, candidates: ids.map((id) => CANDIDATES[id as keyof typeof CANDIDATES]) };
+}
+
+/** H7-D0v2g: offline replay of recorded stability evidence under the current policy (no credential, no call). */
+function stabilityReplay(candidates: readonly Candidate[], corpus: EvalCorpus, corpusSha256: string): void {
+  const read = (pathVar: string, shaVar: string) => {
+    const file = process.env[pathVar] ?? "";
+    const expected = process.env[shaVar] ?? "";
+    if (file === "" || !/^[0-9a-f]{64}$/.test(expected)) fail(`stability-replay needs ${pathVar} and a 64-hex ${shaVar}`);
+    const bytes = readFileSync(path.resolve(REPOSITORY_ROOT, file));
+    return { raw: JSON.parse(bytes.toString("utf8")) as unknown, sha256: sha256Hex(bytes), expectedSha256: expected };
+  };
+  const provenance = liveEvidenceProvenance(corpus, corpusSha256, candidates);
+  const replay = replayStability({ corpus, current: { ...provenance, candidates }, parent: read("WRENKIND_LIVE_EVAL_PARENT", "WRENKIND_LIVE_EVAL_PARENT_SHA256"), stability: read("WRENKIND_LIVE_EVAL_STABILITY", "WRENKIND_LIVE_EVAL_STABILITY_SHA256") });
+  if (!replay.ok) fail(`replay refused: ${replay.reasons.join(", ")}`);
+  const artifact = { gate: "H7-D0-stability-replay", at: new Date().toISOString(), ...replay, promptVersion: provenance.promptVersion, promptHash: provenance.promptHash, corpusVersion: provenance.corpusVersion, corpusSha256: provenance.corpusSha256 };
+  const dir = path.join(REPOSITORY_ROOT, ".wrenkind-local/evidence/h7-d0-stability-replay");
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${artifact.at.replace(/[:.]/g, "")}.json`);
+  writeFileSync(file, `${JSON.stringify(artifact, null, 1)}\n`, { flag: "wx" });
+  process.stdout.write(`${JSON.stringify({ ...artifact, artifactFile: path.relative(REPOSITORY_ROOT, file) })}\n`);
 }
 
 /** H7-D0v2d: stability-only — never re-runs pass 1; fails closed unless the parent's model inputs are unchanged. */
@@ -118,6 +142,10 @@ it("H7-D0 live classification bake-off (operator only)", async () => {
   const corpus = parseEvalCorpus(JSON.parse(corpusBytes.toString("utf8")));
   if (corpus.corpusVersion !== CORPUS_VERSION) fail(`corpus ${corpus.corpusVersion} is not the current ${CORPUS_VERSION}`);
   const prices = parsePriceDescriptor(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, PRICES_FILE), "utf8")));
+  if (mode === "stability-replay") {
+    stabilityReplay(candidates, corpus, sha256Hex(corpusBytes));
+    return;
+  }
   if (mode === "stability-plan" || mode === "stability-run") {
     await stabilityOnly(mode, candidates, corpus, sha256Hex(corpusBytes), prices);
     return;

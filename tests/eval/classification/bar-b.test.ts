@@ -107,7 +107,7 @@ describe("H7-D0v2d: promotion v2 and bake-off qualification", () => {
     const verdict = evaluatePromotion(report, null);
     expect(verdict.verdict).toBe("THRESHOLDS_OPEN");
     expect(verdict.secondary.reviewableDegradations).toBe(report.reviewableDegradations.length);
-    expect(PROMOTION_POLICY.version).toBe("understanding-promotion.v2");
+    expect(PROMOTION_POLICY.version).toBe("understanding-promotion.v3");
   });
 
   it("12 · blocking > 0 ⇒ blocked", async () => {
@@ -124,9 +124,9 @@ describe("H7-D0v2d: promotion v2 and bake-off qualification", () => {
   });
 
   it("ranking: strictly lexicographic — a lower cost never outranks more reviewable degradations or any blocking", () => {
-    const facts = (candidate: string, over: Partial<RankingFacts>): RankingFacts => ({ candidate, blocking: 0, languageInvariant: 0, protectedMeaningMisses: 0, safetyFalseNegatives: 0, stabilityDisagreements: 0, reliabilityFailures: 0, reviewableDegradations: 0, precisionMisses: 0, latencyP50Ms: 3000, costUsd: 1, ...over });
-    const ordered = [facts("cheap-blocking", { blocking: 1, costUsd: 0.01 }), facts("cheap-reviewable", { reviewableDegradations: 5, costUsd: 0.01 }), facts("costly-clean", { costUsd: 1 })].sort(compareCandidates).map((f) => f.candidate);
-    expect(ordered).toEqual(["costly-clean", "cheap-reviewable", "cheap-blocking"]);
+    const facts = (candidate: string, over: Partial<RankingFacts>): RankingFacts => ({ candidate, blocking: 0, blockingStability: 0, languageInvariant: 0, protectedMeaningMisses: 0, safetyFalseNegatives: 0, reliabilityFailures: 0, reviewRoutingInstability: 0, reviewableDegradations: 0, semanticPrecisionInstability: 0, precisionMisses: 0, latencyP50Ms: 3000, costUsd: 1, ...over });
+    const ordered = [facts("cheap-blocking", { blocking: 1, costUsd: 0.01 }), facts("cheap-unstable", { blockingStability: 1, costUsd: 0.01 }), facts("cheap-routing", { reviewRoutingInstability: 1, costUsd: 0.01 }), facts("cheap-reviewable", { reviewableDegradations: 5, costUsd: 0.01 }), facts("cheap-precision", { semanticPrecisionInstability: 3, costUsd: 0.01 }), facts("costly-clean", { costUsd: 1 })].sort(compareCandidates).map((f) => f.candidate);
+    expect(ordered).toEqual(["costly-clean", "cheap-precision", "cheap-reviewable", "cheap-routing", "cheap-unstable", "cheap-blocking"]);
   });
 });
 
@@ -176,7 +176,7 @@ describe("H7-D0v2d: pass-1 evidence reuse (fail closed)", () => {
   it("20 · eligibility is recomputed from the stored conclusions: reviewable-only qualifies, blocking does not", async () => {
     const reviewable = (await parentFor(transformCase(GOLDEN, CORPUS, "en-injection-02", (b) => { b.dimensions["intent"] = values(["complaint", "medium"]); }))).cases[sonnet.id] as unknown as ParentCase[];
     const blocking = (await parentFor(intent("es-ar-complaint-01", "neutral_conversation", "high"))).cases[sonnet.id] as unknown as ParentCase[];
-    expect(reclassifyParent(reviewable)).toMatchObject({ eligible: true, blockingCriticalFailures: [], evaluatorVersion: "classification-evaluator.v3", promotionVersion: "understanding-promotion.v2" });
+    expect(reclassifyParent(reviewable)).toMatchObject({ eligible: true, blockingCriticalFailures: [], evaluatorVersion: "classification-evaluator.v3", promotionVersion: "understanding-promotion.v3" });
     expect(reclassifyParent(blocking)).toMatchObject({ eligible: false });
   });
 });
