@@ -921,3 +921,17 @@ Decisions and boundaries:
   evidence carries it per attempt as `rejectionDiagnostic`; the OpenAI adapter is unchanged.
 - **Not changed:** `service_tier` (documented as supported) and `speed` (only `"fast"` is documented as rejected on
   unsupported models) stay as they are until a sanitized diagnostic names them.
+
+## 34. H7-D0e as implemented (Sonnet 5.5 speed omission)
+
+- **Root cause (proven, H7-D0d):** one live diagnostic call with the frozen request returned HTTP 400
+  `invalid_request_error`, sanitized category `invalid_speed`, field `speed`: Claude Sonnet 5.5 rejects
+  `speed: "standard"`.
+- **Fix:** the per-model thinking table became a per-model request-capability table
+  (`anthropicRequestCapabilitiesFor`: `{noUpfrontThinking, speed}`; `claude-sonnet-5-5` → `between_tools` + speed
+  `omitted`; unlisted models → `disabled` + `standard`). `AnthropicModelSettings.speed` is `"standard" | "omitted"` and
+  must match the table (`anthropic_speed_parameter_unsupported` otherwise, before any call). With `omitted` the outbound
+  request has no `speed` key at all. The Sonnet candidate now sets `speed: "omitted"`.
+- **Unchanged:** thinking, effort, service tier, structured output and schema, max tokens, prompt, corpus, evaluator,
+  prices, the OpenAI adapter, the H7-D0a hardening and the H7-D0c diagnostics. The only outbound difference from the
+  H7-D0d request is the removed `speed` field (pinned by a structural test).

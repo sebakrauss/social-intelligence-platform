@@ -8,7 +8,8 @@
  *              decides); output_config.effort and thinking from the model settings — the model's NO-UP-FRONT-THINKING
  *              mode (`noUpfrontThinkingModeFor`: `between_tools` on Claude Sonnet 5.5, which rejects `disabled` with
  *              400; `disabled` elsewhere), validated per model when the provider is built; nothing left to vendor
- *              defaults; service tier `standard_only` and speed `standard` (never priority / fast); no tools, no
+ *              defaults; service tier `standard_only`; speed `standard` (never fast) — or NO `speed` field where the
+ *              model rejects it (`anthropicRequestCapabilitiesFor`: Claude Sonnet 5.5, H7-D0e); no tools, no
  *              temperature / top_p
  *   client     SDK retries 0 (retries belong to the later runtime); explicit timeout; NO middleware — in particular
  *              never the SDK's refusal-fallback middleware: a refusal counts against the model that produced it and is
@@ -48,14 +49,31 @@ export type AnthropicThinkingMode = "disabled" | "between_tools";
  * instead (accepted at effort `high` or below); ONLY Sonnet 5.5 accepts `between_tools`. Models not listed use
  * `disabled`. Extend this table per model, never with a family-wide rule.
  */
-const NO_UPFRONT_THINKING: Readonly<Record<string, AnthropicThinkingMode>> = Object.freeze({ "claude-sonnet-5-5": "between_tools" });
-export const noUpfrontThinkingModeFor = (model: string): AnthropicThinkingMode => NO_UPFRONT_THINKING[model] ?? "disabled";
+/**
+ * How the adapter sends the speed parameter: `standard` (explicit standard speed, never fast) or `omitted` (no `speed`
+ * field at all). H7-D0e — Claude Sonnet 5.5 rejects `speed: "standard"` with a 400 (`invalid_request_error`, sanitized
+ * category `invalid_speed`, field `speed`; one live diagnostic call, 2026-10-30), so it gets NO speed field.
+ */
+export type AnthropicSpeedParameter = "standard" | "omitted";
+
+/** The per-model request capabilities this adapter honours (explicit per model; never a family-wide rule). */
+export interface AnthropicRequestCapabilities {
+  readonly noUpfrontThinking: AnthropicThinkingMode;
+  readonly speed: AnthropicSpeedParameter;
+}
+const DEFAULT_REQUEST_CAPABILITIES: AnthropicRequestCapabilities = Object.freeze({ noUpfrontThinking: "disabled", speed: "standard" });
+const MODEL_REQUEST_CAPABILITIES: Readonly<Record<string, AnthropicRequestCapabilities>> = Object.freeze({
+  "claude-sonnet-5-5": Object.freeze({ noUpfrontThinking: "between_tools", speed: "omitted" }),
+});
+export const anthropicRequestCapabilitiesFor = (model: string): AnthropicRequestCapabilities => MODEL_REQUEST_CAPABILITIES[model] ?? DEFAULT_REQUEST_CAPABILITIES;
+export const noUpfrontThinkingModeFor = (model: string): AnthropicThinkingMode => anthropicRequestCapabilitiesFor(model).noUpfrontThinking;
 
 export interface AnthropicModelSettings {
   readonly model: string;
   /** `between_tools` requires effort `high` or below — the only levels this type admits. */
   readonly effort: "low" | "medium" | "high";
   readonly thinking: AnthropicThinkingMode;
+  readonly speed: AnthropicSpeedParameter;
   readonly maxTokens: number;
 }
 
@@ -149,9 +167,11 @@ export function diagnoseAnthropicRejection(error: unknown): Omit<RequestRejectio
 }
 
 export function createAnthropicProvider(options: AnthropicProviderOptions): ModelProvider {
-  // A thinking mode the model does not take would be rejected on every call: refuse the configuration up front.
+  // A thinking mode or speed parameter the model does not take would be rejected on every call: refuse it up front.
   for (const settings of Object.values(options.models)) {
-    if (settings.thinking !== noUpfrontThinkingModeFor(settings.model)) throw new TypeError(`anthropic_thinking_mode_unsupported:${settings.model}:${settings.thinking}`);
+    const capabilities = anthropicRequestCapabilitiesFor(settings.model);
+    if (settings.thinking !== capabilities.noUpfrontThinking) throw new TypeError(`anthropic_thinking_mode_unsupported:${settings.model}:${settings.thinking}`);
+    if (settings.speed !== capabilities.speed) throw new TypeError(`anthropic_speed_parameter_unsupported:${settings.model}:${settings.speed}`);
   }
   return {
     providerKey: ANTHROPIC_PROVIDER_KEY,
@@ -167,7 +187,8 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Mode
         thinking: { type: settings.thinking },
         output_config: { effort: settings.effort, format: { type: "json_schema", schema: { ...request.responseFormat.jsonSchema } } },
         service_tier: "standard_only",
-        speed: "standard",
+        // The key is absent (not undefined / null) when the model takes no speed parameter.
+        ...(settings.speed === "standard" ? { speed: "standard" as const } : {}),
       };
       let message: Message;
       try {

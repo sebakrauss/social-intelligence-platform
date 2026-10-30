@@ -10,7 +10,7 @@ import OpenAI from "openai";
 import type { Response, ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderRequest } from "@/ai/gateway";
-import { createAnthropicProvider, diagnoseAnthropicRejection, noUpfrontThinkingModeFor, type AnthropicMessagesClient, type AnthropicThinkingMode } from "@/ai/providers/anthropic";
+import { anthropicRequestCapabilitiesFor, createAnthropicProvider, diagnoseAnthropicRejection, noUpfrontThinkingModeFor, type AnthropicMessagesClient, type AnthropicSpeedParameter, type AnthropicThinkingMode } from "@/ai/providers/anthropic";
 import { REQUEST_REJECTION_CATEGORIES, REQUEST_REJECTION_FIELDS, TRANSPORT_DIAGNOSTIC_CODES, normalizeConnectionCause, type RequestRejectionDiagnostic } from "@/ai/providers/diagnostics";
 import { createOpenAIProvider, type OpenAIResponsesClient } from "@/ai/providers/openai";
 import { UNDERSTANDING_OUTPUT_JSON_SCHEMA } from "@/modules/classification/application/ai/understanding-output-schema";
@@ -108,18 +108,18 @@ const message = (overrides: Partial<Message> = {}): Message => ({
 const anthropic = (respond: () => Promise<Message>) => {
   const create = vi.fn<(body: MessageCreateParamsNonStreaming, options?: { timeout?: number; maxRetries?: number }) => Promise<Message>>(() => respond());
   const client: AnthropicMessagesClient = { messages: { create } };
-  const provider = createAnthropicProvider({ client, models: { "claude-sonnet-5-5": { model: "claude-sonnet-5-5", effort: "low", thinking: "between_tools", maxTokens: 2_000 } }, timeoutMs: 60_000 });
+  const provider = createAnthropicProvider({ client, models: { "claude-sonnet-5-5": { model: "claude-sonnet-5-5", effort: "low", thinking: "between_tools", speed: "omitted", maxTokens: 2_000 } }, timeoutMs: 60_000 });
   return { create, provider };
 };
 
 describe("Anthropic adapter", () => {
-  it("maps the request: native JSON schema, effort low, thinking between_tools (Sonnet 5.5), standard tier/speed, no tools / sampling, SDK retries 0", async () => {
+  it("maps the request: native JSON schema, effort low, thinking between_tools + no speed field (Sonnet 5.5), standard tier, no tools / sampling, SDK retries 0", async () => {
     const { create, provider } = anthropic(() => Promise.resolve(message()));
     await provider.complete(request("anthropic", "claude-sonnet-5-5"), CALL);
     const [body, options] = create.mock.calls[0] ?? [];
     expect(body).toEqual({
       model: "claude-sonnet-5-5", max_tokens: 2_000, system: "SYSTEM POLICY", messages: [{ role: "user", content: request("anthropic", "claude-sonnet-5-5").data }],
-      thinking: { type: "between_tools" }, output_config: { effort: "low", format: { type: "json_schema", schema: UNDERSTANDING_OUTPUT_JSON_SCHEMA } }, service_tier: "standard_only", speed: "standard",
+      thinking: { type: "between_tools" }, output_config: { effort: "low", format: { type: "json_schema", schema: UNDERSTANDING_OUTPUT_JSON_SCHEMA } }, service_tier: "standard_only",
     });
     expect(Object.keys(body ?? {})).not.toEqual(expect.arrayContaining(["tools", "tool_choice", "temperature", "top_p", "top_k"]));
     expect(options).toEqual({ timeout: 60_000, maxRetries: 0 });
@@ -190,7 +190,7 @@ describe("transport diagnostics (operator metadata only)", () => {
     ];
     for (const [error, code] of cases) {
       const { seen, sink } = sinkFor();
-      const provider = createAnthropicProvider({ client: { messages: { create: () => Promise.reject(error()) } }, models: { "claude-sonnet-5-5": { model: "claude-sonnet-5-5", effort: "low", thinking: "between_tools", maxTokens: 2_000 } }, timeoutMs: 30_000, onTransportDiagnostic: sink });
+      const provider = createAnthropicProvider({ client: { messages: { create: () => Promise.reject(error()) } }, models: { "claude-sonnet-5-5": { model: "claude-sonnet-5-5", effort: "low", thinking: "between_tools", speed: "omitted", maxTokens: 2_000 } }, timeoutMs: 30_000, onTransportDiagnostic: sink });
       await provider.complete(request("anthropic", "claude-sonnet-5-5"), CALL);
       expect(seen, String(code)).toEqual(code === null ? [] : [{ reference: "case-1", attempt: 1, code }]);
     }
@@ -206,20 +206,21 @@ describe("transport diagnostics (operator metadata only)", () => {
 
 // ── H7-D0b regression: Claude Sonnet 5.5 rejects thinking "disabled" with HTTP 400 ──────────────────────────
 describe("H7-D0b: Sonnet 5.5 thinking-mode regression (the 67/67 provider_request_rejected bake-off failure)", () => {
-  const models = (thinking: AnthropicThinkingMode, model = "claude-sonnet-5-5") => ({ [model]: { model, effort: "low" as const, thinking, maxTokens: 2_000 } });
+  const models = (thinking: AnthropicThinkingMode, model = "claude-sonnet-5-5", speed: AnthropicSpeedParameter = anthropicRequestCapabilitiesFor(model).speed) => ({ [model]: { model, effort: "low" as const, thinking, speed, maxTokens: 2_000 } });
   const client = () => {
     const create = vi.fn<(body: MessageCreateParamsNonStreaming) => Promise<Message>>(() => Promise.resolve(message()));
     return { create, client: { messages: { create } } };
   };
 
-  it("Sonnet 5.5 sends thinking between_tools — never disabled — with effort low, the same schema, standard tier / speed, no tools / sampling", async () => {
+  it("Sonnet 5.5 sends thinking between_tools — never disabled — with effort low, the same schema, standard tier, no speed field, no tools / sampling", async () => {
     const { create, client: c } = client();
     await createAnthropicProvider({ client: c, models: models("between_tools"), timeoutMs: 30_000 }).complete(request("anthropic", "claude-sonnet-5-5"), CALL);
     const body = create.mock.calls[0]?.[0];
     expect(body?.thinking).toEqual({ type: "between_tools" });
     expect(JSON.stringify(body)).not.toContain('"disabled"');
     expect(body?.output_config).toEqual({ effort: "low", format: { type: "json_schema", schema: UNDERSTANDING_OUTPUT_JSON_SCHEMA } });
-    expect([body?.service_tier, body?.speed]).toEqual(["standard_only", "standard"]);
+    expect(body?.service_tier).toBe("standard_only");
+    expect(body !== undefined && Object.hasOwn(body, "speed")).toBe(false);
     for (const key of ["tools", "tool_choice", "temperature", "top_p", "top_k", "budget_tokens", "display", "block_binding"]) expect(JSON.stringify(body), key).not.toContain(`"${key}"`);
   });
 
@@ -316,7 +317,7 @@ describe("H7-D0c: sanitized Anthropic request-rejection diagnostics", () => {
   it("the adapter reports it ONLY for provider_request_rejected, with the call identity; the gateway result is unchanged", async () => {
     const run = async (error: () => Error) => {
       const seen: RequestRejectionDiagnostic[] = [];
-      const provider = createAnthropicProvider({ client: { messages: { create: () => Promise.reject(error()) } }, models: { "claude-sonnet-5-5": { model: "claude-sonnet-5-5", effort: "low", thinking: "between_tools", maxTokens: 2_000 } }, timeoutMs: 30_000, onRequestRejection: (d) => { seen.push(d); } });
+      const provider = createAnthropicProvider({ client: { messages: { create: () => Promise.reject(error()) } }, models: { "claude-sonnet-5-5": { model: "claude-sonnet-5-5", effort: "low", thinking: "between_tools", speed: "omitted", maxTokens: 2_000 } }, timeoutMs: 30_000, onRequestRejection: (d) => { seen.push(d); } });
       return { result: await provider.complete(request("anthropic", "claude-sonnet-5-5"), CALL), seen };
     };
     const rejected = await run(() => bad("speed: not supported for this model"));
@@ -326,5 +327,49 @@ describe("H7-D0c: sanitized Anthropic request-rejection diagnostics", () => {
       const { seen } = await run(error);
       expect(seen).toEqual([]);
     }
+  });
+});
+
+// ── H7-D0e regression: Claude Sonnet 5.5 rejects `speed: "standard"` with HTTP 400 (invalid_speed / speed) ────────
+describe("H7-D0e: Sonnet 5.5 speed omission", () => {
+  const capture = async (model: string, speed: AnthropicSpeedParameter, thinking: AnthropicThinkingMode) => {
+    const create = vi.fn<(body: MessageCreateParamsNonStreaming) => Promise<Message>>(() => Promise.resolve(message({ model })));
+    await createAnthropicProvider({ client: { messages: { create } }, models: { [model]: { model, effort: "low", thinking, speed, maxTokens: 2_000 } }, timeoutMs: 30_000 }).complete(request("anthropic", model), CALL);
+    const body = create.mock.calls[0]?.[0];
+    if (body === undefined) throw new Error("no call");
+    return body;
+  };
+
+  it("the Sonnet 5.5 request has NO speed key — not undefined, not null, not standard — and survives serialization without one", async () => {
+    const body = await capture("claude-sonnet-5-5", "omitted", "between_tools");
+    expect(Object.hasOwn(body, "speed")).toBe(false);
+    expect(Object.keys(body)).not.toContain("speed");
+    expect(JSON.stringify(body)).not.toContain('"speed"');
+    expect(Object.keys(JSON.parse(JSON.stringify(body)) as object)).not.toContain("speed");
+  });
+
+  it("the ONLY outbound difference from the H7-D0d request is the removed speed field (everything else equivalent)", async () => {
+    const body = await capture("claude-sonnet-5-5", "omitted", "between_tools");
+    const h7d0d = {
+      model: "claude-sonnet-5-5", max_tokens: 2_000, system: "SYSTEM POLICY", messages: [{ role: "user", content: request("anthropic", "claude-sonnet-5-5").data }],
+      thinking: { type: "between_tools" }, output_config: { effort: "low", format: { type: "json_schema", schema: UNDERSTANDING_OUTPUT_JSON_SCHEMA } }, service_tier: "standard_only", speed: "standard",
+    };
+    const { speed, ...rest } = h7d0d;
+    expect(speed).toBe("standard");
+    expect(body).toEqual(rest);
+    expect(Object.keys(body).sort()).toEqual(["max_tokens", "messages", "model", "output_config", "service_tier", "system", "thinking"]);
+    for (const key of ["tools", "tool_choice", "temperature", "top_p", "top_k", "budget_tokens", "display", "block_binding"]) expect(JSON.stringify(body), key).not.toContain(`"${key}"`);
+  });
+
+  it("model-specific, never family-wide: other models keep explicit standard speed; a mismatched setting is refused before any call", async () => {
+    expect(anthropicRequestCapabilitiesFor("claude-sonnet-5-5")).toEqual({ noUpfrontThinking: "between_tools", speed: "omitted" });
+    expect(anthropicRequestCapabilitiesFor("claude-other-model")).toEqual({ noUpfrontThinking: "disabled", speed: "standard" });
+    expect((await capture("claude-other-model", "standard", "disabled")).speed).toBe("standard");
+    const create = vi.fn();
+    const client = { messages: { create } } as unknown as AnthropicMessagesClient;
+    const settings = (model: string, thinking: AnthropicThinkingMode, speed: AnthropicSpeedParameter) => ({ [model]: { model, effort: "low" as const, thinking, speed, maxTokens: 2_000 } });
+    expect(() => createAnthropicProvider({ client, models: settings("claude-sonnet-5-5", "between_tools", "standard"), timeoutMs: 30_000 })).toThrow("anthropic_speed_parameter_unsupported:claude-sonnet-5-5:standard");
+    expect(() => createAnthropicProvider({ client, models: settings("claude-other-model", "disabled", "omitted"), timeoutMs: 30_000 })).toThrow("anthropic_speed_parameter_unsupported:claude-other-model:omitted");
+    expect(create).not.toHaveBeenCalled();
   });
 });
