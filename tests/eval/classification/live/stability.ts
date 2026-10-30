@@ -1,7 +1,8 @@
 /**
  * Step H7-D0 — stability analysis: the same critical cases observed several times per candidate. A case is UNSTABLE
- * when its validated labels (per dimension), protection result, needs-review or failure class differ between any two
- * observations. Variance detection only — never a majority vote.
+ * when its validated labels (per dimension), protection result, needs-review, failure class — or (H7-D0v2a) its
+ * evaluator-v2 language-support outcome or effective-cap status — differ between any two observations. Variance
+ * detection only — never a majority vote.
  */
 import type { CaseResult } from "../evaluate";
 
@@ -11,6 +12,8 @@ export const caseSignature = (result: CaseResult): string =>
     protection: result.protection.actual,
     needsReview: result.needsReview.actual,
     failure: result.failureClass,
+    languageSupport: result.languageSupport.outcome,
+    effectiveCapViolation: result.effectiveCapViolation,
   });
 
 export interface StabilityFinding {

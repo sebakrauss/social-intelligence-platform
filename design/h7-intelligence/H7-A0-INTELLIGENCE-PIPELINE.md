@@ -1008,3 +1008,19 @@ Decisions and boundaries:
   existing outcome-level `protectedMeaningRecall` / `protectedStrictRecall` are unchanged.
 - **Unchanged:** A1, taxonomy values, canonical schema, Anthropic transport schema v2, OpenAI schema, safety metrics and
   rules, the H7-D0a hardening, prices, candidates.
+
+## 38. H7-D0v2a as implemented (v2 live evidence contract + language-critical stability)
+
+- **Defect (found before any call in the v2 bake-off attempt):** the live evidence did not serialize evaluator v2's
+  per-case conclusions nor the corpus hash. Fixed without touching scoring: `sanitizedCases` now copies
+  `rawLanguageCapExceedance`, `languageSupport` ({expected, actual, outcome} — closed enums), `effectiveCapViolation` and
+  `protectedIntent` ({strictMatch, meaningPreserved}) from `CaseResult`; nothing is recomputed in the evidence layer.
+- **Identity + provenance (`tests/eval/classification/live/evidence.ts`):** `classification-live-evidence.v2` (earlier
+  files = v1, untouched); evaluator, prompt version + pinned hash, corpus version + SHA-256 of the exact bytes the
+  runner parsed, promotion version, transport schemas (OpenAI canonical strict, Anthropic transport v2). The per-case
+  field list `SANITIZED_CASE_FIELDS` is pinned by a test that also requires every `CaseResult` key to be serialized or
+  explicitly summarized / excluded.
+- **Stability (TL decision):** the selection is the deduplicated union protected_critical ∪ safety_critical ∪
+  language_critical (`STABILITY_TAGS`, `CRITICAL`), used by pass 2 and by PLAN; repetitions unchanged (pass 1 + 2). The
+  stability signature additionally compares the language-support outcome and the effective-cap status, so a change such
+  as correct → bypass is a disagreement. PLAN upper bound: US$11.74 (was 11.28) ≤ US$15.

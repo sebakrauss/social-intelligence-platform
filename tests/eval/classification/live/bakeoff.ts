@@ -1,7 +1,8 @@
 /**
  * Step H7-D0 / H7-D0a — the bake-off orchestration (provider-agnostic, so it is testable with mocked providers):
- * pass 1 = every case once per candidate; pass 2 = the protected_critical / safety_critical cases STABILITY_EXTRA_RUNS
- * more times, only for qualifying candidates. Guards, in order of precedence:
+ * pass 1 = every case once per candidate; pass 2 = the critical cases (protected_critical ∪ safety_critical ∪
+ * language_critical — H7-D0v2a, each case once per repetition) STABILITY_EXTRA_RUNS more times, only for qualifying
+ * candidates. Guards, in order of precedence:
  *
  *   spend ledger        a run whose maximum would cross the cap is denied (AI_BUDGET, no call) ⇒ the bake-off stops
  *   transport breaker   K = 3 consecutive retryable transport failures (H7-D0a) ⇒ the WHOLE bake-off stops at once —
@@ -20,7 +21,9 @@ import { createSpendLedger, type ModelPrice } from "./spend";
 import { percentile, stabilityDisagreements } from "./stability";
 
 export const STABILITY_EXTRA_RUNS = 2;
-export const CRITICAL = (c: EvalCase): boolean => c.tags.includes("protected_critical") || c.tags.includes("safety_critical");
+/** The stability selection: the deduplicated union of the critical tags (H7-D0v2a adds language_critical). */
+export const STABILITY_TAGS = ["protected_critical", "safety_critical", "language_critical"] as const;
+export const CRITICAL = (c: { readonly tags: readonly string[] }): boolean => c.tags.some((tag) => (STABILITY_TAGS as readonly string[]).includes(tag));
 const OTHER_PROVIDER_CAUSES = ["provider_auth_failed", "provider_request_rejected", "model_mismatch"];
 
 export interface DiagnosticLog {
@@ -98,9 +101,12 @@ function summary(candidate: BakeoffCandidate, report: EvaluationReport, spentUsd
   };
 }
 
-const sanitizedCases = (cases: readonly CaseResult[], diagnostics: DiagnosticLog) => cases.map((c) => ({
+/** Per-case evidence (contract: `SANITIZED_CASE_FIELDS`): evaluator v2's conclusions, copied — never recomputed. */
+export const sanitizedCases = (cases: readonly CaseResult[], diagnostics: DiagnosticLog) => cases.map((c) => ({
   id: c.id, pass: c.pass, failureClass: c.failureClass, failureCause: c.failureCause, protection: c.protection, needsReview: c.needsReview, criticalFailures: c.criticalFailures,
   labels: Object.fromEntries(Object.entries(c.dimensions).map(([d, v]) => [d, v.predicted])),
+  // H7-D0v2a: informational raw exceedance ≠ effective-cap invariant; protected intent keeps strict and meaning apart.
+  rawLanguageCapExceedance: c.rawLanguageCapExceedance, languageSupport: c.languageSupport, effectiveCapViolation: c.effectiveCapViolation, protectedIntent: c.protectedIntent,
   attempts: c.attempts.map((a) => ({ attempt: a.attemptNumber, kind: a.kind, outcome: a.outcome, modelVersion: a.modelVersion, usage: a.usage, latencyMs: a.completedAt.getTime() - a.startedAt.getTime(),
     issueCodes: a.issueCodes, transportDiagnostic: diagnostics.codeOf(c.id, a.attemptNumber), rejectionDiagnostic: diagnostics.rejectionOf(c.id, a.attemptNumber) })),
 }));
@@ -145,7 +151,7 @@ export async function runBakeoff(input: BakeoffInput) {
   for (const candidate of input.candidates) {
     const first = pass1[candidate.id];
     if (first === undefined || stopped() || !qualifies(first)) continue;
-    const runs: (readonly CaseResult[])[] = [first.cases.filter((c) => c.tags.includes("protected_critical") || c.tags.includes("safety_critical"))];
+    const runs: (readonly CaseResult[])[] = [first.cases.filter(CRITICAL)];
     for (let i = 0; i < STABILITY_EXTRA_RUNS && !stopped(); i += 1) runs.push((await run(candidate, CRITICAL)).cases);
     const extra = runs.slice(1).flat();
     stability[candidate.id] = { casesRun: extra.length, disagreements: stabilityDisagreements(runs), transientFailures: extra.filter((c) => c.failureCause !== null && TRANSPORT_CAUSES.includes(c.failureCause)).length };

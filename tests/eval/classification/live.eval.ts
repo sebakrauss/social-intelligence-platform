@@ -7,10 +7,12 @@
  *   PLAN (default)  the conservative upper-bound cost of pass 1 + pass 2 for the selected candidates; no credential is
  *                   read, no call is made. Over the US$15 cap ⇒ refused.
  *   RUN             requires the exact confirmation phrase AND every selected candidate's credential; pass 1 = all 68
- *                   cases once per candidate (+ only gateway re-asks); pass 2 = the protected_critical / safety_critical
- *                   cases twice more, ONLY for candidates with zero critical failures, no language-cap bypass or effective
- *                   violation (H7-D0k: raw exceedances are informational) and no systemic schema / refusal / provider issue. The spend ledger denies any run whose maximum would
- *                   cross the cap (AI_BUDGET, no call) and the run then stops.
+ *                   cases once per candidate (+ only gateway re-asks); pass 2 = the protected_critical ∪ safety_critical
+ *                   ∪ language_critical cases twice more (H7-D0v2a), ONLY for candidates with zero critical failures, no
+ *                   language-cap bypass or effective violation (H7-D0k: raw exceedances are informational) and no
+ *                   systemic schema / refusal / provider issue. The spend ledger denies any run whose maximum would
+ *                   cross the cap (AI_BUDGET, no call) and the run then stops. Evidence: `classification-live-evidence.v2`
+ *                   (provenance + per-case evaluator-v2 conclusions, live/evidence.ts).
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -18,13 +20,13 @@ import { expect, it } from "vitest";
 import { renderDataBlock } from "@/ai/gateway";
 import { buildUnderstandingInput } from "@/modules/classification";
 import { understandingData } from "@/modules/classification/application/ai/understanding-task";
-import { UNDERSTANDING_PROMPT_HASH, UNDERSTANDING_PROMPT_SYSTEM, UNDERSTANDING_PROMPT_VERSION } from "@/prompts/classification/understanding.v2";
+import { UNDERSTANDING_PROMPT_SYSTEM } from "@/prompts/classification/understanding.v2";
 import { REPOSITORY_ROOT } from "../../support/source-scan";
 import { CORPUS_FILE, CORPUS_VERSION, parseEvalCorpus, type EvalCase, type EvalCorpus } from "./corpus";
-import { EVALUATOR_VERSION } from "./evaluate";
 import { CRITICAL, STABILITY_EXTRA_RUNS, createDiagnosticLog, runBakeoff, type BakeoffCandidate } from "./live/bakeoff";
 import { CANDIDATES, LIVE_CALL_TIMEOUT_MS, MAX_OUTPUT_TOKENS, candidateModel, candidateProvider, isCandidateId, type Candidate } from "./live/candidates";
 import { credentialPresence, readCredential } from "./live/credentials";
+import { liveEvidenceProvenance, sha256Hex } from "./live/evidence";
 import { parsePriceDescriptor, runMaxUsd, type ModelPrice, type PriceDescriptor } from "./live/spend";
 
 export const LIVE_EVAL_CONFIRMATION = "send-synthetic-corpus-to-real-models-h7-d0";
@@ -69,7 +71,9 @@ function plannedUsd(corpus: EvalCorpus, prices: PriceDescriptor, candidates: rea
 
 it("H7-D0 live classification bake-off (operator only)", async () => {
   const { mode, candidates } = settings();
-  const corpus = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, CORPUS_FILE), "utf8")));
+  // The corpus hash in the evidence is the SHA-256 of exactly these bytes (H7-D0v2a).
+  const corpusBytes = readFileSync(path.join(REPOSITORY_ROOT, CORPUS_FILE));
+  const corpus = parseEvalCorpus(JSON.parse(corpusBytes.toString("utf8")));
   if (corpus.corpusVersion !== CORPUS_VERSION) fail(`corpus ${corpus.corpusVersion} is not the current ${CORPUS_VERSION}`);
   const prices = parsePriceDescriptor(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, PRICES_FILE), "utf8")));
   const plan = plannedUsd(corpus, prices, candidates);
@@ -86,7 +90,7 @@ it("H7-D0 live classification bake-off (operator only)", async () => {
     return { id: candidate.id, requestedModel: candidate.settings.model, model: candidateModel(candidate), price: priceOf(prices, candidate), provider: candidateProvider(candidate, key, diagnostics.sink, diagnostics.rejectionSink), diagnostics };
   });
   const result = await runBakeoff({ corpus, candidates: bakeoffCandidates, capUsd: LIVE_EVAL_BUDGET_USD, maxOutputTokens: MAX_OUTPUT_TOKENS, now: () => new Date() });
-  const evidence = { gate: "H7-D0", at: new Date().toISOString(), corpus: corpus.corpusVersion, evaluatorVersion: EVALUATOR_VERSION, promptVersion: UNDERSTANDING_PROMPT_VERSION, promptHash: UNDERSTANDING_PROMPT_HASH, pricingVersion: prices.pricingVersion, budgetUsd: LIVE_EVAL_BUDGET_USD, callTimeoutMs: LIVE_CALL_TIMEOUT_MS, ...result };
+  const evidence = { gate: "H7-D0", at: new Date().toISOString(), ...liveEvidenceProvenance(corpus, sha256Hex(corpusBytes)), pricingVersion: prices.pricingVersion, budgetUsd: LIVE_EVAL_BUDGET_USD, callTimeoutMs: LIVE_CALL_TIMEOUT_MS, ...result };
   const dir = path.join(REPOSITORY_ROOT, ".wrenkind-local/evidence/h7-d0");
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${evidence.at.replace(/[:.]/g, "")}.json`);
