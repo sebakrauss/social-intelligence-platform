@@ -10,8 +10,8 @@ import OpenAI from "openai";
 import type { Response, ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderRequest } from "@/ai/gateway";
-import { createAnthropicProvider, noUpfrontThinkingModeFor, type AnthropicMessagesClient, type AnthropicThinkingMode } from "@/ai/providers/anthropic";
-import { TRANSPORT_DIAGNOSTIC_CODES, normalizeConnectionCause } from "@/ai/providers/diagnostics";
+import { createAnthropicProvider, diagnoseAnthropicRejection, noUpfrontThinkingModeFor, type AnthropicMessagesClient, type AnthropicThinkingMode } from "@/ai/providers/anthropic";
+import { REQUEST_REJECTION_CATEGORIES, REQUEST_REJECTION_FIELDS, TRANSPORT_DIAGNOSTIC_CODES, normalizeConnectionCause, type RequestRejectionDiagnostic } from "@/ai/providers/diagnostics";
 import { createOpenAIProvider, type OpenAIResponsesClient } from "@/ai/providers/openai";
 import { UNDERSTANDING_OUTPUT_JSON_SCHEMA } from "@/modules/classification/application/ai/understanding-output-schema";
 
@@ -237,5 +237,94 @@ describe("H7-D0b: Sonnet 5.5 thinking-mode regression (the 67/67 provider_reques
     expect(JSON.stringify(result)).not.toMatch(/HIDDEN THINKING/);
     const mismatch = { messages: { create: () => Promise.resolve(message({ model: "claude-sonnet-5" })) } };
     expect(await createAnthropicProvider({ client: mismatch, models: models("between_tools"), timeoutMs: 30_000 }).complete(request("anthropic", "claude-sonnet-5-5"), CALL)).toMatchObject({ cause: "model_mismatch" });
+  });
+});
+
+// ── H7-D0c: the remaining Anthropic 400 — static schema audit + sanitized rejection diagnostics ─────────────────
+describe("H7-D0c: the native-output schema stays inside Anthropic's documented structured-output subset", () => {
+  type Node = Readonly<Record<string, unknown>>;
+  const isNode = (v: unknown): v is Node => typeof v === "object" && v !== null && !Array.isArray(v);
+  /** Every node with its path, walking properties, anyOf branches and array items. */
+  const nodes = (node: unknown, at = "$"): [string, Node][] => {
+    if (!isNode(node)) return [];
+    const props = isNode(node["properties"]) ? Object.entries(node["properties"]).flatMap(([k, v]) => nodes(v, `${at}.${k}`)) : [];
+    const branches = Array.isArray(node["anyOf"]) ? (node["anyOf"] as unknown[]).flatMap((b, i) => nodes(b, `${at}|${String(i)}`)) : [];
+    return [[at, node], ...props, ...branches, ...nodes(node["items"], `${at}[]`)];
+  };
+  const ALL = nodes(UNDERSTANDING_OUTPUT_JSON_SCHEMA);
+  const params = ALL.flatMap(([at, node]) => (node["type"] === "object" && isNode(node["properties"]) ? Object.entries(node["properties"]).map(([k, v]) => ({ at: `${at}.${k}`, required: (node["required"] as string[]).includes(k), schema: v as Node })) : []));
+
+  it("no documented-unsupported keyword anywhere (string / numeric / array constraints, recursion, external $ref, oneOf, …)", () => {
+    const UNSUPPORTED = ["minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "maxItems", "uniqueItems", "contains", "prefixItems", "pattern", "patternProperties", "propertyNames", "minProperties", "maxProperties", "oneOf", "not", "if", "then", "else", "$ref", "$defs", "definitions", "allOf", "dependentRequired", "dependentSchemas", "unevaluatedProperties"];
+    for (const [at, node] of ALL) {
+      for (const key of UNSUPPORTED) expect(Object.hasOwn(node, key), `${at}: ${key}`).toBe(false);
+      if (Object.hasOwn(node, "minItems")) expect([0, 1], at).toContain(node["minItems"]);
+      if (Array.isArray(node["enum"])) for (const value of node["enum"] as unknown[]) expect(typeof value === "object" && value !== null, `${at}: complex enum`).toBe(false);
+      if (node["type"] === "object") expect(node["additionalProperties"], at).toBe(false);
+    }
+    expect([...new Set(ALL.flatMap(([, node]) => Object.keys(node)))].sort()).toEqual(["additionalProperties", "anyOf", "enum", "items", "properties", "required", "type"]);
+  });
+
+  it("within the documented complexity limits: ≤ 24 optional parameters, ≤ 16 union-typed parameters (pinned: 0 and 16 — at the union limit)", () => {
+    const optional = params.filter((p) => !p.required);
+    const unions = params.filter((p) => Array.isArray(p.schema["anyOf"]) || Array.isArray(p.schema["type"]));
+    expect(optional).toEqual([]);
+    expect(unions.length).toBeLessThanOrEqual(16);
+    // Pinned so any taxonomy / schema growth is a visible decision: one more union-typed field crosses the documented limit.
+    expect(unions.length).toBe(16);
+  });
+});
+
+describe("H7-D0c: sanitized Anthropic request-rejection diagnostics", () => {
+  const SECRET = "SECRET-PROMPT-TEXT req_011SECRET https://leak.example";
+  const bad = (message: string, type = "invalid_request_error", status = 400) =>
+    Anthropic.APIError.generate(status, { type: "error", error: { type, message: `${message} ${SECRET}` }, request_id: "req_011SECRET" }, undefined, new Headers());
+  const diag = (message: string, type?: string, status?: number) => diagnoseAnthropicRejection(bad(message, type, status));
+
+  it("maps a known field token to a closed category; unknown text ⇒ unknown_invalid_request; never echoes the message", () => {
+    const cases: [string, string, string | null][] = [
+      ["thinking.type: between_tools is not supported at this effort", "invalid_thinking", "thinking"],
+      ["output_config.effort: unexpected value", "invalid_effort", "effort"],
+      ["speed: not available for this model", "invalid_speed", "speed"],
+      ["service_tier: invalid value", "invalid_service_tier", "service_tier"],
+      ["max_tokens: must be at most 64000", "invalid_max_tokens", "max_tokens"],
+      ["output_config.format.schema: invalid JSON schema", "invalid_json_schema", "schema"],
+      ["output_config.format.schema: minLength is not supported", "unsupported_schema_constraint", "schema"],
+      ["Schema is too complex for compilation.", "schema_too_complex", "schema"],
+      ["output_config.format: unknown type", "invalid_output_format", "format"],
+      ["Your credit balance is too low to access the Anthropic API.", "spend_limit", null],
+      ["something entirely different happened", "unknown_invalid_request", null],
+    ];
+    for (const [message, category, field] of cases) {
+      const result = diag(message);
+      expect(result, message).toEqual({ status: 400, errorType: "invalid_request_error", category, field });
+      expect(JSON.stringify(result), message).not.toMatch(/SECRET|req_|leak|https?:|between_tools|minLength|credit|64000/);
+    }
+    expect(REQUEST_REJECTION_CATEGORIES).toContain("unknown_invalid_request");
+    expect([...REQUEST_REJECTION_FIELDS].sort()).toEqual(["effort", "format", "max_tokens", "output_config", "schema", "service_tier", "speed", "thinking"]);
+  });
+
+  it("status and error type are closed: billing_error ⇒ spend_limit; unknown vendor type ⇒ unknown; non-4xx / connection ⇒ null", () => {
+    expect(diag("whatever", "billing_error")).toEqual({ status: 400, errorType: "billing_error", category: "spend_limit", field: null });
+    expect(diag("model: not found", "not_found_error", 404)).toEqual({ status: 404, errorType: "not_found_error", category: "unknown_invalid_request", field: null });
+    expect(diag("thinking bad", "made_up_vendor_type")).toMatchObject({ errorType: "unknown", category: "invalid_thinking" });
+    expect(diagnoseAnthropicRejection(new Anthropic.InternalServerError(500, {}, "thinking", new Headers()))).toBeNull();
+    expect(diagnoseAnthropicRejection(new Anthropic.APIConnectionError({ cause: new Error("thinking") }))).toBeNull();
+    expect(diagnoseAnthropicRejection(new Error("thinking"))).toBeNull();
+  });
+
+  it("the adapter reports it ONLY for provider_request_rejected, with the call identity; the gateway result is unchanged", async () => {
+    const run = async (error: () => Error) => {
+      const seen: RequestRejectionDiagnostic[] = [];
+      const provider = createAnthropicProvider({ client: { messages: { create: () => Promise.reject(error()) } }, models: { "claude-sonnet-5-5": { model: "claude-sonnet-5-5", effort: "low", thinking: "between_tools", maxTokens: 2_000 } }, timeoutMs: 30_000, onRequestRejection: (d) => { seen.push(d); } });
+      return { result: await provider.complete(request("anthropic", "claude-sonnet-5-5"), CALL), seen };
+    };
+    const rejected = await run(() => bad("speed: not supported for this model"));
+    expect(rejected.result).toEqual({ kind: "failed", cause: "provider_request_rejected", retryAfterSeconds: null });
+    expect(rejected.seen).toEqual([{ reference: "case-1", attempt: 1, status: 400, errorType: "invalid_request_error", category: "invalid_speed", field: "speed" }]);
+    for (const error of [() => bad("prompt is too long: 300000 tokens"), () => new Anthropic.AuthenticationError(401, {}, "thinking", new Headers()), () => new Anthropic.RateLimitError(429, {}, "thinking", new Headers()), () => new Anthropic.InternalServerError(529, {}, "thinking", new Headers()), () => new Anthropic.APIConnectionTimeoutError()]) {
+      const { seen } = await run(error);
+      expect(seen).toEqual([]);
+    }
   });
 });

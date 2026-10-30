@@ -20,11 +20,22 @@
  *   errors     429 ⇒ rate_limited (+ retry-after) · timeout ⇒ timeout · 401/403 ⇒ provider_auth_failed · prompt too
  *              long ⇒ provider_input_limit · other 4xx ⇒ provider_request_rejected · 5xx / 529 / connection ⇒
  *              provider_unavailable. Anything that is not an SDK API error is a programming error and is rethrown.
+ *   rejection  H7-D0c: a `provider_request_rejected` 4xx is refined, in memory, into a closed diagnostic (status, error
+ *              type, category, one known field token) for an optional operator sink; the raw message never leaves here
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type { Message, MessageCreateParamsNonStreaming } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { ModelProvider, ProviderCall, ProviderFailureCause, ProviderRequest, ProviderResponse } from "@/ai/gateway";
-import { normalizeConnectionCause, type TransportDiagnosticCode, type TransportDiagnosticSink } from "../diagnostics";
+import {
+  isProviderErrorType,
+  normalizeConnectionCause,
+  type RequestRejectionCategory,
+  type RequestRejectionDiagnostic,
+  type RequestRejectionField,
+  type RequestRejectionSink,
+  type TransportDiagnosticCode,
+  type TransportDiagnosticSink,
+} from "../diagnostics";
 
 export const ANTHROPIC_PROVIDER_KEY = "anthropic";
 
@@ -60,6 +71,8 @@ export interface AnthropicProviderOptions {
   readonly timeoutMs: number;
   /** H7-D0a: operator / evaluation sink for the sanitized transport cause of a failed call (never product data). */
   readonly onTransportDiagnostic?: TransportDiagnosticSink;
+  /** H7-D0c: operator / evaluation sink for the sanitized reason of a rejected request (never product data). */
+  readonly onRequestRejection?: RequestRejectionSink;
 }
 
 /** The real SDK client: no SDK retries, no middleware; the key is passed in by the operator boundary. */
@@ -102,6 +115,39 @@ export function diagnoseAnthropicError(error: unknown): TransportDiagnosticCode 
   return null;
 }
 
+/** Field tokens in precedence order (a message naming `output_config.format.schema` is about the schema). */
+const FIELD_PRECEDENCE: readonly RequestRejectionField[] = ["thinking", "speed", "service_tier", "effort", "max_tokens", "schema", "format", "output_config"];
+const FIELD_CATEGORY: Readonly<Record<RequestRejectionField, RequestRejectionCategory>> = {
+  thinking: "invalid_thinking",
+  speed: "invalid_speed",
+  service_tier: "invalid_service_tier",
+  effort: "invalid_effort",
+  max_tokens: "invalid_max_tokens",
+  schema: "invalid_json_schema",
+  format: "invalid_output_format",
+  output_config: "invalid_output_format",
+};
+const mentions = (text: string, token: string): boolean => new RegExp(`(^|[^a-z0-9_])${token}([^a-z0-9_]|$)`).test(text);
+
+/**
+ * H7-D0c — the sanitized reason of a rejected request: only closed values (status, vendor error type, category, one
+ * allowlisted field token). The SDK message and error body are matched in memory against known tokens and never
+ * returned, stored or logged. Null when the error is not a 4xx API error.
+ */
+export function diagnoseAnthropicRejection(error: unknown): Omit<RequestRejectionDiagnostic, "reference" | "attempt"> | null {
+  if (!(error instanceof Anthropic.APIError) || error instanceof Anthropic.APIConnectionError) return null;
+  const status: number | null = typeof error.status === "number" && error.status >= 400 && error.status < 500 ? error.status : null;
+  if (status === null) return null;
+  const errorType = isProviderErrorType(error.type) ? error.type : "unknown";
+  const text = `${error.message} ${JSON.stringify(error.error ?? null)}`.toLowerCase();
+  if (errorType === "billing_error" || /credit balance|spend limit|spending limit|billing/.test(text)) return { status, errorType, category: "spend_limit", field: null };
+  if (/too complex/.test(text)) return { status, errorType, category: "schema_too_complex", field: "schema" };
+  const field = FIELD_PRECEDENCE.find((token) => mentions(text, token)) ?? null;
+  if (field === null) return { status, errorType, category: "unknown_invalid_request", field: null };
+  const category = field === "schema" && /not supported|unsupported|does not support/.test(text) ? "unsupported_schema_constraint" : FIELD_CATEGORY[field];
+  return { status, errorType, category, field };
+}
+
 export function createAnthropicProvider(options: AnthropicProviderOptions): ModelProvider {
   // A thinking mode the model does not take would be rejected on every call: refuse the configuration up front.
   for (const settings of Object.values(options.models)) {
@@ -130,6 +176,10 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Mode
         const mapped = mapAnthropicError(error);
         const code = diagnoseAnthropicError(error);
         if (code !== null) options.onTransportDiagnostic?.({ reference: call.reference, attempt: call.attempt, code });
+        if (mapped.kind === "failed" && mapped.cause === "provider_request_rejected") {
+          const rejection = diagnoseAnthropicRejection(error);
+          if (rejection !== null) options.onRequestRejection?.({ reference: call.reference, attempt: call.attempt, ...rejection });
+        }
         return mapped;
       }
       if (!isRequestedModel(settings.model, message.model)) return failed("model_mismatch");

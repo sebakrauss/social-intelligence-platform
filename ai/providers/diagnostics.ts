@@ -60,3 +60,46 @@ export function normalizeConnectionCause(error: unknown): TransportDiagnosticCod
 }
 
 export const isTransportDiagnosticCode = (value: unknown): value is TransportDiagnosticCode => typeof value === "string" && (TRANSPORT_DIAGNOSTIC_CODES as readonly string[]).includes(value);
+
+/**
+ * H7-D0c — sanitized REQUEST-REJECTION diagnostics (operator / evaluation metadata only). A rejected request (a 4xx that
+ * maps to `provider_request_rejected`) is refined into a closed category + the ONE known request-field token it names,
+ * plus the HTTP status and the vendor's closed `error.type`. Adapters derive them in memory; the raw provider message,
+ * request id, schema values, prompt and content never leave the adapter. Like the transport codes, this is NOT a product
+ * failure class and never crosses the gateway port.
+ */
+export const REQUEST_REJECTION_CATEGORIES = [
+  "invalid_thinking",
+  "invalid_effort",
+  "invalid_speed",
+  "invalid_service_tier",
+  "invalid_max_tokens",
+  "invalid_output_format",
+  "invalid_json_schema",
+  "unsupported_schema_constraint",
+  "schema_too_complex",
+  "spend_limit",
+  "unknown_invalid_request",
+] as const;
+export type RequestRejectionCategory = (typeof REQUEST_REJECTION_CATEGORIES)[number];
+
+/** The only request-field tokens a diagnostic may name (everything else is not reported). */
+export const REQUEST_REJECTION_FIELDS = ["thinking", "output_config", "effort", "format", "schema", "speed", "service_tier", "max_tokens"] as const;
+export type RequestRejectionField = (typeof REQUEST_REJECTION_FIELDS)[number];
+
+/** The vendors' closed error-type vocabulary as far as a 4xx can carry it; anything else is `unknown`. */
+export const PROVIDER_ERROR_TYPES = ["invalid_request_error", "not_found_error", "request_too_large", "billing_error", "permission_error", "authentication_error", "unknown"] as const;
+export type ProviderErrorType = (typeof PROVIDER_ERROR_TYPES)[number];
+
+export interface RequestRejectionDiagnostic {
+  readonly reference: string;
+  readonly attempt: 1 | 2;
+  /** The HTTP status (a 4xx), or null when it is not one. */
+  readonly status: number | null;
+  readonly errorType: ProviderErrorType;
+  readonly category: RequestRejectionCategory;
+  readonly field: RequestRejectionField | null;
+}
+export type RequestRejectionSink = (diagnostic: RequestRejectionDiagnostic) => void;
+
+export const isProviderErrorType = (value: unknown): value is ProviderErrorType => typeof value === "string" && (PROVIDER_ERROR_TYPES as readonly string[]).includes(value) && value !== "unknown";

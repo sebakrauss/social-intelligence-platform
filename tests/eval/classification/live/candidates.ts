@@ -10,7 +10,7 @@
  * Every candidate gets the same prompt, task, schema, data and output-token cap (2 000) — the same semantic task.
  */
 import type { ModelDescriptor, ModelProvider } from "@/ai/gateway";
-import type { TransportDiagnosticSink } from "@/ai/providers/diagnostics";
+import type { RequestRejectionSink, TransportDiagnosticSink } from "@/ai/providers/diagnostics";
 import { createAnthropicClient, createAnthropicProvider, type AnthropicModelSettings } from "@/ai/providers/anthropic";
 import { createOpenAIClient, createOpenAIProvider, type OpenAIModelSettings } from "@/ai/providers/openai";
 
@@ -50,9 +50,12 @@ export function candidateModel(candidate: Candidate): ModelDescriptor {
   });
 }
 
-/** The real provider for one candidate (the key comes from the operator boundary and goes only to the SDK client). */
-export function candidateProvider(candidate: Candidate, apiKey: string, onTransportDiagnostic: TransportDiagnosticSink): ModelProvider {
+/**
+ * The real provider for one candidate (the key comes from the operator boundary and goes only to the SDK client).
+ * H7-D0c: the Anthropic adapter also reports the sanitized reason of a rejected request.
+ */
+export function candidateProvider(candidate: Candidate, apiKey: string, onTransportDiagnostic: TransportDiagnosticSink, onRequestRejection?: RequestRejectionSink): ModelProvider {
   return candidate.providerKey === "openai"
     ? createOpenAIProvider({ client: createOpenAIClient(apiKey), models: { [candidate.id]: candidate.settings }, timeoutMs: LIVE_CALL_TIMEOUT_MS, onTransportDiagnostic })
-    : createAnthropicProvider({ client: createAnthropicClient(apiKey), models: { [candidate.id]: candidate.settings }, timeoutMs: LIVE_CALL_TIMEOUT_MS, onTransportDiagnostic });
+    : createAnthropicProvider({ client: createAnthropicClient(apiKey), models: { [candidate.id]: candidate.settings }, timeoutMs: LIVE_CALL_TIMEOUT_MS, onTransportDiagnostic, ...(onRequestRejection === undefined ? {} : { onRequestRejection }) });
 }

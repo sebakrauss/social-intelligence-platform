@@ -899,3 +899,25 @@ Decisions and boundaries:
   model mismatch before any call. The Sonnet candidate now uses `between_tools` with effort `low` (unchanged intent: no
   up-front reasoning). Structured output, service tier, speed, prompt, schema, corpus, evaluator, prices, the OpenAI
   adapter and the H7-D0a hardening are unchanged.
+- **Outcome:** the single post-fix live smoke (one call) was still rejected (`provider_request_rejected`, no tokens), so
+  `thinking` was not the only incompatibility. Diagnosis continues in H7-D0c.
+
+## 33. H7-D0c as implemented (static request audit + sanitized rejection diagnostics)
+
+- **Static audit (no network):** the exact Sonnet 5.5 request was rebuilt through the gateway with a capturing client:
+  `model`, `max_tokens` 2000, `system`, one user message, `thinking: {type: "between_tools"}`, `output_config {effort:
+  "low", format: {type: "json_schema", schema}}`, `service_tier: "standard_only"`, `speed: "standard"`; no tools, no
+  sampling, no `display`. Against the official structured-output subset (read 2026-10-30) the schema uses only `type`,
+  `properties`, `required`, `additionalProperties: false`, `enum` (string values), `anyOf` and `items`: no string / numeric
+  / array constraint, no `$ref`, no recursion. Complexity: 0 optional parameters (limit 24) and 16 union-typed parameters
+  (limit 16 — at the limit, not over). A documented schema incompatibility is NOT proven, so no transport projection
+  was added (the canonical schema stays the one sent to every provider). The audit is now a regression test that pins
+  the counts: one more union-typed field would cross the documented limit and must be a deliberate decision.
+- **Diagnostics:** a 4xx mapped to `provider_request_rejected` is refined, in the Anthropic adapter and in memory only,
+  into `{status, errorType, category, field}` — closed vocabularies in `ai/providers/diagnostics.ts`
+  (`REQUEST_REJECTION_CATEGORIES`, `REQUEST_REJECTION_FIELDS`, `PROVIDER_ERROR_TYPES`) — and handed to an optional
+  operator sink (`onRequestRejection`). The raw message, request id, schema values, prompt and content are never
+  returned, stored or logged. It is not a product failure class and never crosses the gateway. The live bake-off
+  evidence carries it per attempt as `rejectionDiagnostic`; the OpenAI adapter is unchanged.
+- **Not changed:** `service_tier` (documented as supported) and `speed` (only `"fast"` is documented as rejected on
+  unsupported models) stay as they are until a sanitized diagnostic names them.

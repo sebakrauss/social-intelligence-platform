@@ -12,7 +12,7 @@
  * The bake-off never recommends a model (`recommendation: null`): the TL decides from a VALID report.
  */
 import type { AttemptRecord, ModelDescriptor, ModelProvider } from "@/ai/gateway";
-import type { TransportDiagnostic, TransportDiagnosticCode, TransportDiagnosticSink } from "@/ai/providers/diagnostics";
+import type { RequestRejectionDiagnostic, RequestRejectionSink, TransportDiagnostic, TransportDiagnosticCode, TransportDiagnosticSink } from "@/ai/providers/diagnostics";
 import type { EvalCase, EvalCorpus } from "../corpus";
 import { evaluateCorpus, type CaseResult, type EvaluationReport } from "../evaluate";
 import { CONSECUTIVE_TRANSPORT_FAILURE_LIMIT, TRANSPORT_CAUSES, createTransportBreaker } from "./breaker";
@@ -26,14 +26,20 @@ const OTHER_PROVIDER_CAUSES = ["provider_auth_failed", "provider_request_rejecte
 export interface DiagnosticLog {
   readonly sink: TransportDiagnosticSink;
   codeOf(reference: string, attempt: 1 | 2): TransportDiagnosticCode | null;
+  /** H7-D0c: the sanitized reason of a rejected request (closed values only; Anthropic adapter). */
+  readonly rejectionSink: RequestRejectionSink;
+  rejectionOf(reference: string, attempt: 1 | 2): Omit<RequestRejectionDiagnostic, "reference" | "attempt"> | null;
 }
 
-/** Per-candidate log of the adapters' sanitized transport codes (keyed by case id + attempt). */
+/** Per-candidate log of the adapters' sanitized transport codes and rejection reasons (keyed by case id + attempt). */
 export function createDiagnosticLog(): DiagnosticLog {
   const codes = new Map<string, TransportDiagnosticCode>();
+  const rejections = new Map<string, Omit<RequestRejectionDiagnostic, "reference" | "attempt">>();
   return {
     sink: (diagnostic: TransportDiagnostic) => { codes.set(`${diagnostic.reference}#${String(diagnostic.attempt)}`, diagnostic.code); },
     codeOf: (reference, attempt) => codes.get(`${reference}#${String(attempt)}`) ?? null,
+    rejectionSink: ({ reference, attempt, status, errorType, category, field }: RequestRejectionDiagnostic) => { rejections.set(`${reference}#${String(attempt)}`, { status, errorType, category, field }); },
+    rejectionOf: (reference, attempt) => rejections.get(`${reference}#${String(attempt)}`) ?? null,
   };
 }
 
@@ -90,7 +96,7 @@ const sanitizedCases = (cases: readonly CaseResult[], diagnostics: DiagnosticLog
   id: c.id, pass: c.pass, failureClass: c.failureClass, failureCause: c.failureCause, protection: c.protection, needsReview: c.needsReview, criticalFailures: c.criticalFailures,
   labels: Object.fromEntries(Object.entries(c.dimensions).map(([d, v]) => [d, v.predicted])),
   attempts: c.attempts.map((a) => ({ attempt: a.attemptNumber, kind: a.kind, outcome: a.outcome, modelVersion: a.modelVersion, usage: a.usage, latencyMs: a.completedAt.getTime() - a.startedAt.getTime(),
-    issueCodes: a.issueCodes, transportDiagnostic: diagnostics.codeOf(c.id, a.attemptNumber) })),
+    issueCodes: a.issueCodes, transportDiagnostic: diagnostics.codeOf(c.id, a.attemptNumber), rejectionDiagnostic: diagnostics.rejectionOf(c.id, a.attemptNumber) })),
 }));
 
 export interface BakeoffInput {

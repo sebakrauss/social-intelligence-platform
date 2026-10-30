@@ -81,7 +81,7 @@ it("H7-D0 live classification bake-off (operator only)", async () => {
   const bakeoffCandidates: BakeoffCandidate[] = candidates.map((candidate) => {
     const diagnostics = createDiagnosticLog();
     const key = readCredential(candidate.credential) ?? fail(`credential absent: ${candidate.credential}`);
-    return { id: candidate.id, requestedModel: candidate.settings.model, model: candidateModel(candidate), price: priceOf(prices, candidate), provider: candidateProvider(candidate, key, diagnostics.sink), diagnostics };
+    return { id: candidate.id, requestedModel: candidate.settings.model, model: candidateModel(candidate), price: priceOf(prices, candidate), provider: candidateProvider(candidate, key, diagnostics.sink, diagnostics.rejectionSink), diagnostics };
   });
   const result = await runBakeoff({ corpus, candidates: bakeoffCandidates, capUsd: LIVE_EVAL_BUDGET_USD, maxOutputTokens: MAX_OUTPUT_TOKENS, now: () => new Date() });
   const evidence = { gate: "H7-D0", at: new Date().toISOString(), corpus: corpus.corpusVersion, pricingVersion: prices.pricingVersion, budgetUsd: LIVE_EVAL_BUDGET_USD, callTimeoutMs: LIVE_CALL_TIMEOUT_MS, ...result };

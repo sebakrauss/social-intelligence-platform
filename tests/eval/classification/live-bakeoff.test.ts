@@ -6,9 +6,11 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
 import { TRANSPORT_DIAGNOSTIC_CODES } from "@/ai/providers/diagnostics";
+import { createAnthropicProvider } from "@/ai/providers/anthropic";
 import { createOpenAIProvider } from "@/ai/providers/openai";
 import { createSimulatorProvider, simulatorModel, type SimulatedResponse } from "@/ai/providers/simulator";
 import { REPOSITORY_ROOT } from "../../support/source-scan";
@@ -119,6 +121,19 @@ describe("bake-off orchestration", () => {
     for (const a of attempts) expect(TRANSPORT_DIAGNOSTIC_CODES).toContain(a.transportDiagnostic);
     expect(JSON.stringify(evidence)).not.toMatch(/10\.9\.8\.7|example-vendor|Bearer|sk-test|fetch failed/);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("H7-D0c: an Anthropic 4xx rejection reaches the evidence only as closed values (no message), does not trip the transport breaker, run INVALID", async () => {
+    const sonnet = CANDIDATES["claude-sonnet-5-5"];
+    if (sonnet.providerKey !== "anthropic") throw new Error("candidate");
+    const create = vi.fn(() => Promise.reject(Anthropic.APIError.generate(400, { type: "error", error: { type: "invalid_request_error", message: "speed: not supported SECRET-TEXT" }, request_id: "req_SECRET" }, undefined, new Headers())));
+    const diagnostics = createDiagnosticLog();
+    const provider = createAnthropicProvider({ client: { messages: { create } }, models: { [sonnet.id]: sonnet.settings }, timeoutMs: LIVE_CALL_TIMEOUT_MS, onTransportDiagnostic: diagnostics.sink, onRequestRejection: diagnostics.rejectionSink });
+    const evidence = await bakeoff([{ id: sonnet.id, requestedModel: sonnet.settings.model, model: candidateModel(sonnet), price: PRICE, provider, diagnostics }]);
+    expect(evidence).toMatchObject({ status: "COMPLETE", comparison: "INVALID_FOR_MODEL_COMPARISON", breaker: { tripped: false } });
+    const first = evidence.cases[sonnet.id]?.[0]?.attempts[0];
+    expect(first).toMatchObject({ outcome: "unavailable", transportDiagnostic: null, rejectionDiagnostic: { status: 400, errorType: "invalid_request_error", category: "invalid_speed", field: "speed" } });
+    expect(JSON.stringify(evidence)).not.toMatch(/SECRET|req_/);
   });
 
   it("the live call timeout is 30 s and is injected only by the live runner", () => {
