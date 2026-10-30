@@ -935,3 +935,25 @@ Decisions and boundaries:
 - **Unchanged:** thinking, effort, service tier, structured output and schema, max tokens, prompt, corpus, evaluator,
   prices, the OpenAI adapter, the H7-D0a hardening and the H7-D0c diagnostics. The only outbound difference from the
   H7-D0d request is the removed `speed` field (pinned by a structural test).
+
+## 35. H7-D0g as implemented (Anthropic transport schema)
+
+- **Cause (isolated, H7-D0f):** the same Sonnet 5.5 request with only `output_config.format.schema` swapped for a
+  trivial schema was accepted (200), while the full schema is rejected: its compiled grammar is too complex although it
+  is inside every documented explicit limit (16/16 union parameters, 0/24 optional).
+- **Three schemas, one authority:** CANONICAL = the task's strict-dialect schema (unchanged, content-pinned; OpenAI still
+  receives it byte for byte); ANTHROPIC TRANSPORT = `projectSchemaForAnthropic` (`ai/providers/anthropic/
+  schema-projection.ts`, `anthropic-transport-schema.v1`), derived deterministically from the canonical one and used only
+  by the Anthropic adapter; A1 = the unchanged validator after JSON.parse and the unchanged strict-dialect bridge.
+- **Projection rules:** (1) a null-only placeholder property is dropped; (2) a nullable property — the strict dialect's
+  spelling of an OPTIONAL field — becomes a non-required property with its non-null schema (exactly the fields the
+  bridge strips: dimensions, summary, evidence, score, reasonCodes); non-nullable properties stay required; (3)
+  multi-value string enums become `string` (value keys, confidence levels, language certainty, reason codes) except the
+  `anyOf` branch discriminators (`status`), which keep theirs; single-value enums stay. Object/array boundaries, types
+  and `additionalProperties: false` are preserved; nothing is added, renamed, mapped or coerced.
+- **Complexity:** union parameters 16 → 7, anyOf branches 39 → 14, enums 31 → 16 (85 → 23 values), null types 21 → 0,
+  depth 7 → 6, bytes 5864 → 4201; optional parameters 0 → 16 (limit 24). A committed guard keeps the projection under
+  ceilings (≤ 8 unions, ≤ 16 branches, ≤ 16 enums, ≤ 6 depth, ≤ 18 optional, no null types).
+- **Authority:** every golden output conforms to the transport schema and passes A1; transport-valid but semantically
+  invalid outputs (unknown values, confidence, score, language tag / certainty, reason code, cardinality, duplicates,
+  exclusive `none`, evidence and summary bounds) are still rejected by A1 with the same issue codes.

@@ -4,7 +4,8 @@
  * nothing else (no routing, no retry, no validation, no fallback).
  *
  *   request    system = the gateway's system text; messages = ONE user message carrying the delimited data block;
- *              output_config.format = the task's JSON Schema (native structured output; the task's validator still
+ *              output_config.format = the ANTHROPIC TRANSPORT projection of the task's JSON Schema (H7-D0g,
+ *              `projectSchemaForAnthropic`: the full schema's compiled grammar was rejected; the task's validator still
  *              decides); output_config.effort and thinking from the model settings — the model's NO-UP-FRONT-THINKING
  *              mode (`noUpfrontThinkingModeFor`: `between_tools` on Claude Sonnet 5.5, which rejects `disabled` with
  *              400; `disabled` elsewhere), validated per model when the provider is built; nothing left to vendor
@@ -37,6 +38,7 @@ import {
   type TransportDiagnosticCode,
   type TransportDiagnosticSink,
 } from "../diagnostics";
+import { projectSchemaForAnthropic } from "./schema-projection";
 
 export const ANTHROPIC_PROVIDER_KEY = "anthropic";
 
@@ -185,7 +187,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Mode
         system: request.system,
         messages: [{ role: "user", content: request.data }],
         thinking: { type: settings.thinking },
-        output_config: { effort: settings.effort, format: { type: "json_schema", schema: { ...request.responseFormat.jsonSchema } } },
+        output_config: { effort: settings.effort, format: { type: "json_schema", schema: { ...projectSchemaForAnthropic(request.responseFormat.jsonSchema) } } },
         service_tier: "standard_only",
         // The key is absent (not undefined / null) when the model takes no speed parameter.
         ...(settings.speed === "standard" ? { speed: "standard" as const } : {}),

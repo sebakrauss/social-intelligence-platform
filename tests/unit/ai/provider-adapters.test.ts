@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProviderRequest } from "@/ai/gateway";
 import { anthropicRequestCapabilitiesFor, createAnthropicProvider, diagnoseAnthropicRejection, noUpfrontThinkingModeFor, type AnthropicMessagesClient, type AnthropicSpeedParameter, type AnthropicThinkingMode } from "@/ai/providers/anthropic";
 import { REQUEST_REJECTION_CATEGORIES, REQUEST_REJECTION_FIELDS, TRANSPORT_DIAGNOSTIC_CODES, normalizeConnectionCause, type RequestRejectionDiagnostic } from "@/ai/providers/diagnostics";
+import { projectSchemaForAnthropic } from "@/ai/providers/anthropic/schema-projection";
 import { createOpenAIProvider, type OpenAIResponsesClient } from "@/ai/providers/openai";
 import { UNDERSTANDING_OUTPUT_JSON_SCHEMA } from "@/modules/classification/application/ai/understanding-output-schema";
 
@@ -25,6 +26,8 @@ const request = (providerKey: string, modelKey: string): ProviderRequest => ({
 /** Tracing-only call identity (an adapter never sends it to a vendor). */
 const CALL = { reference: "case-1", attempt: 1 as const };
 const OUTPUT = '{"schemaVersion":"understanding-output.v1"}';
+/** H7-D0g: what Anthropic receives (OpenAI keeps the canonical schema). */
+const ANTHROPIC_SCHEMA = projectSchemaForAnthropic(UNDERSTANDING_OUTPUT_JSON_SCHEMA);
 
 // ── OpenAI ────────────────────────────────────────────────────────────────────────────────────────────────────
 const openaiResponse = (overrides: Partial<Response> = {}): Response => ({
@@ -119,7 +122,7 @@ describe("Anthropic adapter", () => {
     const [body, options] = create.mock.calls[0] ?? [];
     expect(body).toEqual({
       model: "claude-sonnet-5-5", max_tokens: 2_000, system: "SYSTEM POLICY", messages: [{ role: "user", content: request("anthropic", "claude-sonnet-5-5").data }],
-      thinking: { type: "between_tools" }, output_config: { effort: "low", format: { type: "json_schema", schema: UNDERSTANDING_OUTPUT_JSON_SCHEMA } }, service_tier: "standard_only",
+      thinking: { type: "between_tools" }, output_config: { effort: "low", format: { type: "json_schema", schema: ANTHROPIC_SCHEMA } }, service_tier: "standard_only",
     });
     expect(Object.keys(body ?? {})).not.toEqual(expect.arrayContaining(["tools", "tool_choice", "temperature", "top_p", "top_k"]));
     expect(options).toEqual({ timeout: 60_000, maxRetries: 0 });
@@ -218,7 +221,7 @@ describe("H7-D0b: Sonnet 5.5 thinking-mode regression (the 67/67 provider_reques
     const body = create.mock.calls[0]?.[0];
     expect(body?.thinking).toEqual({ type: "between_tools" });
     expect(JSON.stringify(body)).not.toContain('"disabled"');
-    expect(body?.output_config).toEqual({ effort: "low", format: { type: "json_schema", schema: UNDERSTANDING_OUTPUT_JSON_SCHEMA } });
+    expect(body?.output_config).toEqual({ effort: "low", format: { type: "json_schema", schema: ANTHROPIC_SCHEMA } });
     expect(body?.service_tier).toBe("standard_only");
     expect(body !== undefined && Object.hasOwn(body, "speed")).toBe(false);
     for (const key of ["tools", "tool_choice", "temperature", "top_p", "top_k", "budget_tokens", "display", "block_binding"]) expect(JSON.stringify(body), key).not.toContain(`"${key}"`);
@@ -348,7 +351,7 @@ describe("H7-D0e: Sonnet 5.5 speed omission", () => {
     expect(Object.keys(JSON.parse(JSON.stringify(body)) as object)).not.toContain("speed");
   });
 
-  it("the ONLY outbound difference from the H7-D0d request is the removed speed field (everything else equivalent)", async () => {
+  it("vs the H7-D0d request: speed removed (H7-D0e) and the schema projected (H7-D0g) — nothing else differs", async () => {
     const body = await capture("claude-sonnet-5-5", "omitted", "between_tools");
     const h7d0d = {
       model: "claude-sonnet-5-5", max_tokens: 2_000, system: "SYSTEM POLICY", messages: [{ role: "user", content: request("anthropic", "claude-sonnet-5-5").data }],
@@ -356,7 +359,7 @@ describe("H7-D0e: Sonnet 5.5 speed omission", () => {
     };
     const { speed, ...rest } = h7d0d;
     expect(speed).toBe("standard");
-    expect(body).toEqual(rest);
+    expect(body).toEqual({ ...rest, output_config: { effort: "low", format: { type: "json_schema", schema: ANTHROPIC_SCHEMA } } });
     expect(Object.keys(body).sort()).toEqual(["max_tokens", "messages", "model", "output_config", "service_tier", "system", "thinking"]);
     for (const key of ["tools", "tool_choice", "temperature", "top_p", "top_k", "budget_tokens", "display", "block_binding"]) expect(JSON.stringify(body), key).not.toContain(`"${key}"`);
   });

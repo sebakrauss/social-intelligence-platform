@@ -150,7 +150,7 @@ describe("H7-D0: real provider adapters and the live bake-off", () => {
   it("adapters import only their own SDK and the gateway port; read no environment; disable SDK retries; use no tools, fallback or middleware", () => {
     for (const file of ADAPTERS) {
       const code = strip(codeOf(file));
-      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(openai|openai\/resources\/responses\/responses|@anthropic-ai\/sdk|@anthropic-ai\/sdk\/resources\/messages\/messages|@\/ai\/gateway|\.\.\/diagnostics)$/);
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(openai|openai\/resources\/responses\/responses|@anthropic-ai\/sdk|@anthropic-ai\/sdk\/resources\/messages\/messages|@\/ai\/gateway|\.\.\/diagnostics|\.\/schema-projection)$/);
       expect(code, file).not.toMatch(/process\.env|import\.meta\.env|readFileSync|tools\s*:|tool_choice|middleware|Fallback|background|previous_response_id|temperature|top_p|top_k|"priority"|"fast"|"flex"|"auto"|batch/i);
       expect(code, file).toMatch(/maxRetries: 0/);
       expect(code, file).toMatch(/return failed\("model_mismatch"\)/);
