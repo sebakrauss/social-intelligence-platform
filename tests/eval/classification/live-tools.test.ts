@@ -79,7 +79,7 @@ describe("candidates", () => {
     expect(Object.values(CANDIDATES).map((c) => [c.id, c.settings])).toEqual([
       ["gpt-6-luna", { model: "gpt-6-luna", reasoningEffort: "none", maxOutputTokens: 2_000 }],
       ["gpt-6.1-terra", { model: "gpt-6.1-terra", reasoningEffort: "none", maxOutputTokens: 2_000 }],
-      ["claude-sonnet-5-5", { model: "claude-sonnet-5-5", effort: "low", thinking: "disabled", maxTokens: 2_000 }],
+      ["claude-sonnet-5-5", { model: "claude-sonnet-5-5", effort: "low", thinking: "between_tools", maxTokens: 2_000 }],
     ]);
     for (const candidate of Object.values(CANDIDATES)) expect(candidateModel(candidate)).toMatchObject({ structuredOutput: "native_json_schema", tools: "none" });
   });

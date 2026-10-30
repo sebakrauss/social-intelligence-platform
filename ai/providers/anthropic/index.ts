@@ -5,9 +5,11 @@
  *
  *   request    system = the gateway's system text; messages = ONE user message carrying the delimited data block;
  *              output_config.format = the task's JSON Schema (native structured output; the task's validator still
- *              decides); output_config.effort and thinking from the model settings (thinking `disabled` — the lowest-
- *              cost explicit configuration; nothing left to vendor defaults); service tier `standard_only` and speed
- *              `standard` (never priority / fast); no tools, no temperature / top_p
+ *              decides); output_config.effort and thinking from the model settings — the model's NO-UP-FRONT-THINKING
+ *              mode (`noUpfrontThinkingModeFor`: `between_tools` on Claude Sonnet 5.5, which rejects `disabled` with
+ *              400; `disabled` elsewhere), validated per model when the provider is built; nothing left to vendor
+ *              defaults; service tier `standard_only` and speed `standard` (never priority / fast); no tools, no
+ *              temperature / top_p
  *   client     SDK retries 0 (retries belong to the later runtime); explicit timeout; NO middleware — in particular
  *              never the SDK's refusal-fallback middleware: a refusal counts against the model that produced it and is
  *              never re-run on another model
@@ -26,10 +28,23 @@ import { normalizeConnectionCause, type TransportDiagnosticCode, type TransportD
 
 export const ANTHROPIC_PROVIDER_KEY = "anthropic";
 
+/** The explicit "no up-front thinking" configurations this adapter can send (model-specific, see below). */
+export type AnthropicThinkingMode = "disabled" | "between_tools";
+
+/**
+ * H7-D0b — the no-up-front-thinking mode per model, from the official per-model thinking table (2026-10-30): Claude
+ * Sonnet 5.5 rejects `thinking: {type: "disabled"}` with a 400 at every effort and takes `{type: "between_tools"}`
+ * instead (accepted at effort `high` or below); ONLY Sonnet 5.5 accepts `between_tools`. Models not listed use
+ * `disabled`. Extend this table per model, never with a family-wide rule.
+ */
+const NO_UPFRONT_THINKING: Readonly<Record<string, AnthropicThinkingMode>> = Object.freeze({ "claude-sonnet-5-5": "between_tools" });
+export const noUpfrontThinkingModeFor = (model: string): AnthropicThinkingMode => NO_UPFRONT_THINKING[model] ?? "disabled";
+
 export interface AnthropicModelSettings {
   readonly model: string;
+  /** `between_tools` requires effort `high` or below — the only levels this type admits. */
   readonly effort: "low" | "medium" | "high";
-  readonly thinking: "disabled";
+  readonly thinking: AnthropicThinkingMode;
   readonly maxTokens: number;
 }
 
@@ -88,6 +103,10 @@ export function diagnoseAnthropicError(error: unknown): TransportDiagnosticCode 
 }
 
 export function createAnthropicProvider(options: AnthropicProviderOptions): ModelProvider {
+  // A thinking mode the model does not take would be rejected on every call: refuse the configuration up front.
+  for (const settings of Object.values(options.models)) {
+    if (settings.thinking !== noUpfrontThinkingModeFor(settings.model)) throw new TypeError(`anthropic_thinking_mode_unsupported:${settings.model}:${settings.thinking}`);
+  }
   return {
     providerKey: ANTHROPIC_PROVIDER_KEY,
     // The call reference is tracing-only: it keys the operator diagnostic and is never sent to the vendor.

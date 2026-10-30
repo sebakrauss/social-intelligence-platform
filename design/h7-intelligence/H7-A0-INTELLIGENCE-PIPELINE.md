@@ -887,3 +887,15 @@ Decisions and boundaries:
 - **Unchanged:** prompt (hash pinned), corpus (sha256 pinned), taxonomy, evaluator metrics, candidates, settings, prices.
 - **Restart policy:** the next live run is a fresh, complete bake-off of all three candidates from case 1 (new
   evidence file); a breaker abort or any invalidity ends it, and only the TL can authorize another full rerun.
+
+## 32. H7-D0b as implemented (Sonnet 5.5 thinking mode)
+
+- **Root cause of the rerun's 67/67 `provider_request_rejected`:** the adapter sent `thinking: {type: "disabled"}`, which
+  Claude Sonnet 5.5 rejects with HTTP 400 at every effort (official per-model thinking table, read 2026-10-30). Its
+  no-up-front-thinking mode is `thinking: {type: "between_tools"}`, accepted at effort `high` or below; only Sonnet 5.5
+  accepts it.
+- **Fix:** `AnthropicThinkingMode = "disabled" | "between_tools"` and a per-model table `noUpfrontThinkingModeFor`
+  (`claude-sonnet-5-5` → `between_tools`; unlisted models → `disabled`); `createAnthropicProvider` refuses a settings /
+  model mismatch before any call. The Sonnet candidate now uses `between_tools` with effort `low` (unchanged intent: no
+  up-front reasoning). Structured output, service tier, speed, prompt, schema, corpus, evaluator, prices, the OpenAI
+  adapter and the H7-D0a hardening are unchanged.

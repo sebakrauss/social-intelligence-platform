@@ -4,8 +4,8 @@
  *
  *   gpt-6-luna          OpenAI Responses · reasoning effort `none` · strict JSON schema
  *   gpt-6.1-terra       OpenAI Responses · reasoning effort `none` · strict JSON schema
- *   claude-sonnet-5-5   Anthropic Messages · effort `low` + thinking `disabled` (the lowest-cost explicit configuration) ·
- *                       native JSON-schema output
+ *   claude-sonnet-5-5   Anthropic Messages · effort `low` + thinking `between_tools` (H7-D0b: Sonnet 5.5's no-up-front-
+ *                       thinking mode; it rejects `disabled` with 400) · native JSON-schema output
  *
  * Every candidate gets the same prompt, task, schema, data and output-token cap (2 000) — the same semantic task.
  */
@@ -31,7 +31,7 @@ export type Candidate =
 export const CANDIDATES: Readonly<Record<CandidateId, Candidate>> = Object.freeze({
   "gpt-6-luna": { id: "gpt-6-luna", providerKey: "openai", credential: "OPENAI_API_KEY", settings: { model: "gpt-6-luna", reasoningEffort: "none", maxOutputTokens: MAX_OUTPUT_TOKENS } },
   "gpt-6.1-terra": { id: "gpt-6.1-terra", providerKey: "openai", credential: "OPENAI_API_KEY", settings: { model: "gpt-6.1-terra", reasoningEffort: "none", maxOutputTokens: MAX_OUTPUT_TOKENS } },
-  "claude-sonnet-5-5": { id: "claude-sonnet-5-5", providerKey: "anthropic", credential: "ANTHROPIC_API_KEY", settings: { model: "claude-sonnet-5-5", effort: "low", thinking: "disabled", maxTokens: MAX_OUTPUT_TOKENS } },
+  "claude-sonnet-5-5": { id: "claude-sonnet-5-5", providerKey: "anthropic", credential: "ANTHROPIC_API_KEY", settings: { model: "claude-sonnet-5-5", effort: "low", thinking: "between_tools", maxTokens: MAX_OUTPUT_TOKENS } },
 });
 
 export const isCandidateId = (value: string): value is CandidateId => Object.hasOwn(CANDIDATES, value);
