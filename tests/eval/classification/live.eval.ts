@@ -14,24 +14,21 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { renderDataBlock, type AttemptRecord } from "@/ai/gateway";
+import { renderDataBlock } from "@/ai/gateway";
 import { buildUnderstandingInput } from "@/modules/classification";
 import { understandingData } from "@/modules/classification/application/ai/understanding-task";
 import { UNDERSTANDING_PROMPT_SYSTEM } from "@/prompts/classification/understanding.v1";
 import { REPOSITORY_ROOT } from "../../support/source-scan";
 import { parseEvalCorpus, type EvalCase, type EvalCorpus } from "./corpus";
-import { evaluateCorpus, type CaseResult, type EvaluationReport } from "./evaluate";
-import { CANDIDATES, MAX_OUTPUT_TOKENS, candidateModel, candidateProvider, isCandidateId, type Candidate } from "./live/candidates";
+import { CRITICAL, STABILITY_EXTRA_RUNS, createDiagnosticLog, runBakeoff, type BakeoffCandidate } from "./live/bakeoff";
+import { CANDIDATES, LIVE_CALL_TIMEOUT_MS, MAX_OUTPUT_TOKENS, candidateModel, candidateProvider, isCandidateId, type Candidate } from "./live/candidates";
 import { credentialPresence, readCredential } from "./live/credentials";
-import { createSpendLedger, parsePriceDescriptor, runMaxUsd, type ModelPrice, type PriceDescriptor } from "./live/spend";
-import { percentile, stabilityDisagreements } from "./live/stability";
+import { parsePriceDescriptor, runMaxUsd, type ModelPrice, type PriceDescriptor } from "./live/spend";
 
 export const LIVE_EVAL_CONFIRMATION = "send-synthetic-corpus-to-real-models-h7-d0";
 export const LIVE_EVAL_BUDGET_USD = 15;
 const PRICES_FILE = "fixtures/intelligence/evaluation/model-prices.eval-2026-10-29.json";
 const CORPUS_FILE = "fixtures/intelligence/classification/understanding-eval.v1.json";
-const STABILITY_EXTRA_RUNS = 2;
-const CRITICAL = (c: EvalCase): boolean => c.tags.includes("protected_critical") || c.tags.includes("safety_critical");
 
 const fail = (message: string): never => {
   throw new Error(`live eval refused: ${message}`);
@@ -69,50 +66,6 @@ function plannedUsd(corpus: EvalCorpus, prices: PriceDescriptor, candidates: rea
   return { perCandidate, total: Object.values(perCandidate).reduce((a, b) => a + b, 0) };
 }
 
-const attemptsOf = (report: EvaluationReport): readonly AttemptRecord[] => report.cases.flatMap((c) => c.attempts);
-const latencies = (attempts: readonly AttemptRecord[]): number[] => attempts.map((a) => a.completedAt.getTime() - a.startedAt.getTime());
-
-function summary(candidate: Candidate, report: EvaluationReport, spentUsd: number) {
-  const attempts = attemptsOf(report);
-  const ms = latencies(attempts);
-  const reported = [...new Set(attempts.map((a) => a.modelVersion).filter((v): v is string => v !== null))];
-  const count = (cls: string): number => report.cases.filter((c) => c.failureClass === cls).length;
-  return {
-    candidate: candidate.id,
-    modelRequested: candidate.settings.model,
-    modelsReported: reported,
-    casesCompleted: report.cases.filter((c) => c.attempts.length > 0 || c.failureClass === "AI_INPUT_TOO_LARGE").length,
-    criticalFailures: report.criticalFailures,
-    protectedMeaningRecall: report.protectedMeaningRecall,
-    strictProtectedRecall: report.protectedStrictRecall,
-    safetyRecall: report.safetyRecall,
-    safetyFalsePositiveRate: report.safetyFalsePositiveRate,
-    languageCapViolations: report.languageCapRawViolations,
-    schemaFailures: count("AI_INVALID_OUTPUT"),
-    refusals: count("AI_REFUSED"),
-    reasks: attempts.filter((a) => a.kind === "reask").length,
-    transientFailures: report.cases.filter((c) => c.failureCause === "provider_unavailable" || c.failureCause === "timeout" || c.failureCause === "rate_limited").length,
-    otherProviderFailures: report.cases.filter((c) => c.failureCause === "provider_auth_failed" || c.failureCause === "provider_request_rejected" || c.failureCause === "model_mismatch").map((c) => `${c.id}:${c.failureCause ?? ""}`),
-    budgetDenied: count("AI_BUDGET"),
-    inputTokens: attempts.reduce((s, a) => s + (a.usage?.inputTokens ?? 0), 0),
-    outputTokens: attempts.reduce((s, a) => s + (a.usage?.outputTokens ?? 0), 0),
-    cachedTokens: attempts.reduce((s, a) => s + (a.usage?.cachedInputTokens ?? 0), 0),
-    estimatedCostUsd: spentUsd,
-    latencyMs: { p50: percentile(ms, 50), p90: percentile(ms, 90), p95: percentile(ms, 95), max: ms.length === 0 ? null : Math.max(...ms), samples: ms.length },
-    passRate: report.passRate,
-    perDimension: Object.fromEntries(Object.entries(report.perDimension).map(([d, m]) => [d, { micro: m.micro, macro: m.macro, exactSetRate: m.exactSetRate }])),
-    protectionAccuracy: report.protectionAccuracy,
-    byLanguage: report.byLanguage,
-    failedCases: report.cases.filter((c) => !c.pass).map((c) => c.id),
-  };
-}
-
-const sanitizedCases = (cases: readonly CaseResult[]) => cases.map((c) => ({
-  id: c.id, pass: c.pass, failureClass: c.failureClass, failureCause: c.failureCause, protection: c.protection, needsReview: c.needsReview, criticalFailures: c.criticalFailures,
-  labels: Object.fromEntries(Object.entries(c.dimensions).map(([d, v]) => [d, v.predicted])),
-  attempts: c.attempts.map((a) => ({ kind: a.kind, outcome: a.outcome, modelVersion: a.modelVersion, usage: a.usage, latencyMs: a.completedAt.getTime() - a.startedAt.getTime(), issueCodes: a.issueCodes })),
-}));
-
 it("H7-D0 live classification bake-off (operator only)", async () => {
   const { mode, candidates } = settings();
   const corpus = parseEvalCorpus(JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, CORPUS_FILE), "utf8")));
@@ -125,45 +78,18 @@ it("H7-D0 live classification bake-off (operator only)", async () => {
 
   const missing = candidates.filter((c) => readCredential(c.credential) === undefined).map((c) => c.credential);
   if (missing.length > 0) fail(`credential absent: ${[...new Set(missing)].join(", ")}`);
-  const ledger = createSpendLedger(LIVE_EVAL_BUDGET_USD);
-  const pass1: Record<string, EvaluationReport> = {};
-  const spentBy: Record<string, number> = {};
-  const run = async (candidate: Candidate, include?: (c: EvalCase) => boolean): Promise<EvaluationReport> => {
-    const model = priceOf(prices, candidate);
+  const bakeoffCandidates: BakeoffCandidate[] = candidates.map((candidate) => {
+    const diagnostics = createDiagnosticLog();
     const key = readCredential(candidate.credential) ?? fail(`credential absent: ${candidate.credential}`);
-    const before = ledger.spentUsd();
-    const report = await evaluateCorpus(corpus, {
-      provider: candidateProvider(candidate, key), model: candidateModel(candidate), realModel: true, now: () => new Date(),
-      budget: ledger.budgetFor(model, MAX_OUTPUT_TOKENS), onCase: (result) => { ledger.record(model, result.attempts, MAX_OUTPUT_TOKENS); }, ...(include === undefined ? {} : { include }),
-    });
-    spentBy[candidate.id] = (spentBy[candidate.id] ?? 0) + ledger.spentUsd() - before;
-    return report;
-  };
-  for (const candidate of candidates) {
-    pass1[candidate.id] = await run(candidate);
-    if (ledger.denied() > 0) break;
-  }
-  const qualifies = (report: EvaluationReport): boolean => report.criticalFailures.length === 0 && report.languageCapRawViolations === 0
-    && !report.cases.some((c) => c.failureClass === "AI_REFUSED" || c.failureClass === "AI_INVALID_OUTPUT" || c.failureClass === "AI_UNAVAILABLE" || c.failureClass === "AI_BUDGET");
-  const stability: Record<string, unknown> = {};
-  for (const candidate of candidates) {
-    const first = pass1[candidate.id];
-    if (first === undefined || !qualifies(first) || ledger.denied() > 0) continue;
-    const runs: (readonly CaseResult[])[] = [first.cases.filter((c) => c.tags.includes("protected_critical") || c.tags.includes("safety_critical"))];
-    for (let i = 0; i < STABILITY_EXTRA_RUNS && ledger.denied() === 0; i += 1) runs.push((await run(candidate, CRITICAL)).cases);
-    stability[candidate.id] = { casesRun: runs.slice(1).reduce((s, r) => s + r.length, 0), disagreements: stabilityDisagreements(runs) };
-  }
-  const evidence = {
-    gate: "H7-D0", at: new Date().toISOString(), corpus: corpus.corpusVersion, pricingVersion: prices.pricingVersion, budgetUsd: LIVE_EVAL_BUDGET_USD, spentUsd: ledger.spentUsd(), budgetDenied: ledger.denied(),
-    complete: ledger.denied() === 0 && candidates.every((c) => pass1[c.id] !== undefined),
-    candidates: candidates.map((c) => (pass1[c.id] === undefined ? { candidate: c.id, status: "NOT_RUN" } : { ...summary(c, pass1[c.id] as EvaluationReport, spentBy[c.id] ?? 0), qualifiedForStability: qualifies(pass1[c.id] as EvaluationReport), stability: stability[c.id] ?? null })),
-    cases: Object.fromEntries(candidates.flatMap((c) => (pass1[c.id] === undefined ? [] : [[c.id, sanitizedCases((pass1[c.id] as EvaluationReport).cases)]]))),
-  };
+    return { id: candidate.id, requestedModel: candidate.settings.model, model: candidateModel(candidate), price: priceOf(prices, candidate), provider: candidateProvider(candidate, key, diagnostics.sink), diagnostics };
+  });
+  const result = await runBakeoff({ corpus, candidates: bakeoffCandidates, capUsd: LIVE_EVAL_BUDGET_USD, maxOutputTokens: MAX_OUTPUT_TOKENS, now: () => new Date() });
+  const evidence = { gate: "H7-D0", at: new Date().toISOString(), corpus: corpus.corpusVersion, pricingVersion: prices.pricingVersion, budgetUsd: LIVE_EVAL_BUDGET_USD, callTimeoutMs: LIVE_CALL_TIMEOUT_MS, ...result };
   const dir = path.join(REPOSITORY_ROOT, ".wrenkind-local/evidence/h7-d0");
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${evidence.at.replace(/[:.]/g, "")}.json`);
   writeFileSync(file, `${JSON.stringify(evidence, null, 1)}\n`, { flag: "wx" });
   const printable = Object.fromEntries(Object.entries(evidence).filter(([key]) => key !== "cases"));
   process.stdout.write(`${JSON.stringify({ ...printable, evidenceFile: path.relative(REPOSITORY_ROOT, file) }, null, 1)}\n`);
-  expect(ledger.spentUsd()).toBeLessThanOrEqual(LIVE_EVAL_BUDGET_USD);
+  expect(result.spentUsd).toBeLessThanOrEqual(LIVE_EVAL_BUDGET_USD);
 });

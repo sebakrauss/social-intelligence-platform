@@ -19,7 +19,8 @@
  */
 import OpenAI from "openai";
 import type { Response, ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
-import type { ModelProvider, ProviderFailureCause, ProviderRequest, ProviderResponse } from "@/ai/gateway";
+import type { ModelProvider, ProviderCall, ProviderFailureCause, ProviderRequest, ProviderResponse } from "@/ai/gateway";
+import { normalizeConnectionCause, type TransportDiagnosticCode, type TransportDiagnosticSink } from "../diagnostics";
 
 export const OPENAI_PROVIDER_KEY = "openai";
 
@@ -40,6 +41,8 @@ export interface OpenAIProviderOptions {
   /** modelKey (registry) → settings. */
   readonly models: Readonly<Record<string, OpenAIModelSettings>>;
   readonly timeoutMs: number;
+  /** H7-D0a: operator / evaluation sink for the sanitized transport cause of a failed call (never product data). */
+  readonly onTransportDiagnostic?: TransportDiagnosticSink;
 }
 
 /** The real SDK client: no SDK retries; the key is passed in by the operator boundary (never read here). */
@@ -73,11 +76,20 @@ export function mapOpenAIError(error: unknown): ProviderResponse {
   throw error;
 }
 
+/** The sanitized transport cause of an SDK error (a closed code; null when the failure is not transport-level). */
+export function diagnoseOpenAIError(error: unknown): TransportDiagnosticCode | null {
+  if (error instanceof OpenAI.APIConnectionTimeoutError) return "request_timeout";
+  if (error instanceof OpenAI.APIConnectionError) return normalizeConnectionCause(error);
+  if (error instanceof OpenAI.RateLimitError) return "http_429";
+  if (error instanceof OpenAI.APIError && typeof error.status === "number" && error.status >= 500) return "http_5xx";
+  return null;
+}
+
 export function createOpenAIProvider(options: OpenAIProviderOptions): ModelProvider {
   return {
     providerKey: OPENAI_PROVIDER_KEY,
-    // The call reference is tracing-only and is never sent to the vendor (so it is not taken here at all).
-    async complete(request: ProviderRequest): Promise<ProviderResponse> {
+    // The call reference is tracing-only: it keys the operator diagnostic and is never sent to the vendor.
+    async complete(request: ProviderRequest, call: ProviderCall): Promise<ProviderResponse> {
       const settings = options.models[request.model.modelKey];
       if (settings === undefined || request.model.providerKey !== OPENAI_PROVIDER_KEY) return failed("provider_request_rejected");
       const body: ResponseCreateParamsNonStreaming = {
@@ -95,7 +107,10 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): ModelProvi
       try {
         response = await options.client.responses.create(body, { timeout: options.timeoutMs, maxRetries: 0 });
       } catch (error) {
-        return mapOpenAIError(error);
+        const mapped = mapOpenAIError(error);
+        const code = diagnoseOpenAIError(error);
+        if (code !== null) options.onTransportDiagnostic?.({ reference: call.reference, attempt: call.attempt, code });
+        return mapped;
       }
       if (!isRequestedModel(settings.model, response.model)) return failed("model_mismatch");
       const messages = response.output.flatMap((item) => (item.type === "message" ? [item] : []));

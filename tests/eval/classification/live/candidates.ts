@@ -10,11 +10,17 @@
  * Every candidate gets the same prompt, task, schema, data and output-token cap (2 000) — the same semantic task.
  */
 import type { ModelDescriptor, ModelProvider } from "@/ai/gateway";
+import type { TransportDiagnosticSink } from "@/ai/providers/diagnostics";
 import { createAnthropicClient, createAnthropicProvider, type AnthropicModelSettings } from "@/ai/providers/anthropic";
 import { createOpenAIClient, createOpenAIProvider, type OpenAIModelSettings } from "@/ai/providers/openai";
 
 export const MAX_OUTPUT_TOKENS = 2_000;
-export const CALL_TIMEOUT_MS = 120_000;
+/**
+ * H7-D0a: the live bake-off's per-call request timeout (evaluation only; the adapters take it injected and impose no
+ * default, so product timeout policy is untouched). Was 120 s in the first run; a 2 000-token structured answer needs
+ * a few seconds, so 30 s bounds a hung connection without cutting a healthy call.
+ */
+export const LIVE_CALL_TIMEOUT_MS = 30_000;
 
 export type CandidateId = "gpt-6-luna" | "gpt-6.1-terra" | "claude-sonnet-5-5";
 
@@ -45,8 +51,8 @@ export function candidateModel(candidate: Candidate): ModelDescriptor {
 }
 
 /** The real provider for one candidate (the key comes from the operator boundary and goes only to the SDK client). */
-export function candidateProvider(candidate: Candidate, apiKey: string): ModelProvider {
+export function candidateProvider(candidate: Candidate, apiKey: string, onTransportDiagnostic: TransportDiagnosticSink): ModelProvider {
   return candidate.providerKey === "openai"
-    ? createOpenAIProvider({ client: createOpenAIClient(apiKey), models: { [candidate.id]: candidate.settings }, timeoutMs: CALL_TIMEOUT_MS })
-    : createAnthropicProvider({ client: createAnthropicClient(apiKey), models: { [candidate.id]: candidate.settings }, timeoutMs: CALL_TIMEOUT_MS });
+    ? createOpenAIProvider({ client: createOpenAIClient(apiKey), models: { [candidate.id]: candidate.settings }, timeoutMs: LIVE_CALL_TIMEOUT_MS, onTransportDiagnostic })
+    : createAnthropicProvider({ client: createAnthropicClient(apiKey), models: { [candidate.id]: candidate.settings }, timeoutMs: LIVE_CALL_TIMEOUT_MS, onTransportDiagnostic });
 }

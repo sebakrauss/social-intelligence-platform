@@ -51,6 +51,8 @@ export interface EvaluationSubject {
   readonly now?: () => Date;
   readonly include?: (testCase: EvalCase) => boolean;
   readonly onCase?: (result: CaseResult) => void;
+  /** H7-D0a live runs: checked before each case; false stops the run (the live circuit breaker). */
+  readonly shouldContinue?: () => boolean;
 }
 
 export interface DimensionCaseResult {
@@ -225,12 +227,13 @@ export async function evaluateCorpus(corpus: EvalCorpus, subject: EvaluationSubj
   const cases = corpus.cases.filter((testCase) => subject.include?.(testCase) ?? true);
   const results: CaseResult[] = [];
   for (const testCase of cases) {
+    if (subject.shouldContinue?.() === false) break;
     const result = await evaluateCase(testCase, subject.gatewayFor?.(testCase, standard) ?? standard, "no-attempt");
     results.push(result);
     subject.onCase?.(result);
   }
 
-  const scored = cases.map((testCase, index) => ({ testCase, result: results[index] as CaseResult }));
+  const scored = cases.slice(0, results.length).map((testCase, index) => ({ testCase, result: results[index] as CaseResult }));
   const perDimension: Record<string, EvaluationReport["perDimension"][string]> = {};
   for (const dimension of SEMANTIC) {
     const counts = new Map<string, { tp: number; fp: number; fn: number }>();
@@ -303,7 +306,7 @@ export async function evaluateCorpus(corpus: EvalCorpus, subject: EvaluationSubj
     providerKey: subject.model.providerKey,
     modelKey: subject.model.modelKey,
     realModelBenchmark: subject.realModel,
-    corpus: { id: corpus.corpusId, version: corpus.corpusVersion, cases: cases.length },
+    corpus: { id: corpus.corpusId, version: corpus.corpusVersion, cases: results.length },
     passRate: ratio(results.filter((r) => r.pass).length, results.length),
     weightedPassRate: ratio(scored.filter(({ result }) => result.pass).reduce((sum, { testCase }) => sum + testCase.weight, 0), weight),
     perDimension,

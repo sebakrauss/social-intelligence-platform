@@ -7,6 +7,7 @@
  *   - nothing is wired to a runtime: no task, no plane, no Trigger config, no continuation from DETERMINISTIC_DONE, no
  *     migration after 0024.
  */
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -16,6 +17,8 @@ import { UNDERSTANDING_DATA_FIELDS } from "@/modules/classification/application/
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 
 const strip = (code: string): string => code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+/** eval-corpus.v1 content pin (H7-D0a: the corpus may not change between bake-off runs). */
+const CORPUS_SHA256 = "76b2351b38582cc9538c39c4d9a0c2013ab786ec54088720ad82cc01fda93da5";
 const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1] ?? "");
 const GATEWAY = sourceFiles(["ai/gateway"]);
 const SIMULATOR = sourceFiles(["ai/providers/simulator"]);
@@ -30,7 +33,7 @@ describe("H7-C: vendor-free", () => {
     expect(Object.keys(all).filter((name) => /anthropic|openai|langchain|@ai-sdk|^ai$|cohere|mistral|gemini|@google\/generative|ollama|huggingface|llamaindex/i.test(name)).sort()).toEqual(["@anthropic-ai/sdk", "openai"]);
     for (const name of ["@anthropic-ai/sdk", "openai"]) expect(all[name], name).toMatch(/^\d+\.\d+\.\d+$/);
     const importers = sourceFiles([...PRODUCT, "ai", "tests", "tools"]).filter((file) => importsOf(file).some((s) => /^(openai|@anthropic-ai\/sdk)(\/|$)/.test(s))).sort();
-    expect(importers).toEqual(["ai/providers/anthropic/index.ts", "ai/providers/openai/index.ts", "tests/unit/ai/provider-adapters.test.ts"]);
+    expect(importers).toEqual(["ai/providers/anthropic/index.ts", "ai/providers/openai/index.ts", "tests/eval/classification/live-bakeoff.test.ts", "tests/unit/ai/provider-adapters.test.ts"]);
   });
 
   it("no product code branches on a vendor name (only future ai/providers/<vendor> adapters and registry config may)", () => {
@@ -147,7 +150,7 @@ describe("H7-D0: real provider adapters and the live bake-off", () => {
   it("adapters import only their own SDK and the gateway port; read no environment; disable SDK retries; use no tools, fallback or middleware", () => {
     for (const file of ADAPTERS) {
       const code = strip(codeOf(file));
-      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(openai|openai\/resources\/responses\/responses|@anthropic-ai\/sdk|@anthropic-ai\/sdk\/resources\/messages\/messages|@\/ai\/gateway)$/);
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(openai|openai\/resources\/responses\/responses|@anthropic-ai\/sdk|@anthropic-ai\/sdk\/resources\/messages\/messages|@\/ai\/gateway|\.\.\/diagnostics)$/);
       expect(code, file).not.toMatch(/process\.env|import\.meta\.env|readFileSync|tools\s*:|tool_choice|middleware|Fallback|background|previous_response_id|temperature|top_p|top_k|"priority"|"fast"|"flex"|"auto"|batch/i);
       expect(code, file).toMatch(/maxRetries: 0/);
       expect(code, file).toMatch(/return failed\("model_mismatch"\)/);
@@ -196,5 +199,40 @@ describe("H7-D0: real provider adapters and the live bake-off", () => {
     expect(sourceFiles(["ai", "modules", "tests/eval", "tools"]).filter((file) => /OPENAI_API_KEY|ANTHROPIC_API_KEY/.test(strip(codeOf(file)))).sort())
       .toEqual(["tests/eval/classification/live-tools.test.ts", "tests/eval/classification/live/candidates.ts", "tests/eval/classification/live/credentials.ts"]);
     for (const file of LIVE) expect(strip(codeOf(file)), file).not.toMatch(/console\.log\([^)]*(key|credential)|stdout\.write\([^)]*readCredential/i);
+  });
+});
+
+describe("H7-D0a: transport diagnostics and the live circuit breaker", () => {
+  it("diagnostics are a pure closed vocabulary read from code / name fields only — never a message, stack, URL or header", () => {
+    const code = strip(codeOf("ai/providers/diagnostics.ts"));
+    expect(importsOf("ai/providers/diagnostics.ts")).toEqual([]);
+    expect(code).not.toMatch(/\.message|\.stack|String\(|toString\(|JSON\.stringify|\.headers|\burl\b|\bURL\b|hostname|console\./);
+    expect(code).toMatch(/return "unknown_connection_error";/);
+  });
+
+  it("diagnostics never cross the gateway: no product failure class, cause or attempt field is added; only adapters and the live tooling use them", () => {
+    for (const file of GATEWAY) expect(strip(codeOf(file)), file).not.toMatch(/diagnostic|TransportDiagnostic|ECONNRESET|socket_closed/i);
+    expect(strip(codeOf("ai/gateway/failures.ts"))).toMatch(/export const AI_FAILURE_CLASSES = \["AI_INVALID_OUTPUT", "AI_UNAVAILABLE", "AI_REFUSED", "AI_BUDGET", "AI_INPUT_TOO_LARGE"\] as const;/);
+    const users = sourceFiles([...PRODUCT, "ai", "tools", "tests"]).filter((file) => /@\/ai\/providers\/diagnostics|\.\.\/diagnostics"|onTransportDiagnostic/.test(strip(codeOf(file)))).sort();
+    expect(users.filter((file) => !file.startsWith("tests/"))).toEqual(["ai/providers/anthropic/index.ts", "ai/providers/openai/index.ts"]);
+  });
+
+  it("the consecutive-transport breaker (K = 3) exists only in the live evaluation tooling; the product gateway and runtime never stop on it", () => {
+    expect(strip(codeOf("tests/eval/classification/live/breaker.ts"))).toMatch(/export const CONSECUTIVE_TRANSPORT_FAILURE_LIMIT = 3;/);
+    for (const file of sourceFiles([...PRODUCT, "tools"])) expect(strip(codeOf(file)), file).not.toMatch(/TransportBreaker|CONSECUTIVE_TRANSPORT|shouldContinue|LIVE_EVAL_ABORTED/);
+    const bakeoff = strip(codeOf("tests/eval/classification/live/bakeoff.ts"));
+    expect(bakeoff).toMatch(/shouldContinue: \(\) => !stopped\(\)/);
+    expect(bakeoff).toMatch(/recommendation: null/);
+    expect(bakeoff).not.toMatch(/setTimeout|sleep|retry|resume/i);
+  });
+
+  it("the live timeout is evaluation-only (30 s, injected); adapters impose no default", () => {
+    expect(strip(codeOf("tests/eval/classification/live/candidates.ts"))).toMatch(/export const LIVE_CALL_TIMEOUT_MS = 30_000;/);
+    for (const file of ["ai/providers/openai/index.ts", "ai/providers/anthropic/index.ts"]) expect(strip(codeOf(file)), file).toMatch(/timeout: options\.timeoutMs/);
+  });
+
+  it("prompt and corpus are unchanged (content pins)", () => {
+    expect(createHash("sha256").update(readFileSync(path.join(REPOSITORY_ROOT, "fixtures/intelligence/classification/understanding-eval.v1.json"))).digest("hex")).toBe(CORPUS_SHA256);
+    expect(strip(codeOf("prompts/classification/understanding.v1.ts"))).toMatch(/export const UNDERSTANDING_PROMPT_HASH = "bb354c69fc617761c95823e78c32cc5a55876d0f50206c10bbfeb50645b698a7";/);
   });
 });

@@ -11,6 +11,7 @@ import type { Response, ResponseCreateParamsNonStreaming } from "openai/resource
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderRequest } from "@/ai/gateway";
 import { createAnthropicProvider, type AnthropicMessagesClient } from "@/ai/providers/anthropic";
+import { TRANSPORT_DIAGNOSTIC_CODES, normalizeConnectionCause } from "@/ai/providers/diagnostics";
 import { createOpenAIProvider, type OpenAIResponsesClient } from "@/ai/providers/openai";
 import { UNDERSTANDING_OUTPUT_JSON_SCHEMA } from "@/modules/classification/application/ai/understanding-output-schema";
 
@@ -145,5 +146,60 @@ describe("Anthropic adapter", () => {
     ["529 overloaded", () => new Anthropic.InternalServerError(529, {}, "overloaded", new Headers()), { kind: "failed", cause: "provider_unavailable", retryAfterSeconds: null }],
   ] as const)("maps %s", async (_name, error, expected) => {
     expect(await anthropic(() => Promise.reject(error())).provider.complete(request("anthropic", "claude-sonnet-5-5"), CALL)).toEqual(expected);
+  });
+});
+
+// ── H7-D0a: sanitized transport diagnostics ──────────────────────────────────────────────────────────────────
+describe("transport diagnostics (operator metadata only)", () => {
+  const leaky = (code: string) => Object.assign(new Error("connect ECONNREFUSED 10.1.2.3:443 api.example-vendor.com /v1/responses Authorization: Bearer xyz"), { code });
+  const fetchFailed = (code: string) => Object.assign(new TypeError("fetch failed"), { cause: leaky(code) });
+  const sinkFor = () => {
+    const seen: unknown[] = [];
+    return { seen, sink: (d: unknown) => { seen.push(d); } };
+  };
+
+  it("normalizes a closed vocabulary from the cause chain only; unknown → unknown_connection_error", () => {
+    expect(normalizeConnectionCause(fetchFailed("ECONNRESET"))).toBe("ECONNRESET");
+    expect(normalizeConnectionCause(fetchFailed("UND_ERR_CONNECT_TIMEOUT"))).toBe("UND_ERR_CONNECT_TIMEOUT");
+    expect(normalizeConnectionCause(fetchFailed("UND_ERR_SOCKET"))).toBe("socket_closed");
+    expect(normalizeConnectionCause(Object.assign(new Error("x"), { name: "AbortError" }))).toBe("request_aborted");
+    expect(normalizeConnectionCause(fetchFailed("SOMETHING_NEW"))).toBe("unknown_connection_error");
+    expect(normalizeConnectionCause(new Error("api.example-vendor.com unreachable"))).toBe("unknown_connection_error");
+    expect(normalizeConnectionCause(null)).toBe("unknown_connection_error");
+    for (const code of ["ECONNRESET", "socket_closed", "unknown_connection_error"]) expect(TRANSPORT_DIAGNOSTIC_CODES).toContain(code);
+  });
+
+  it("OpenAI: a connection error reports its normalized cause to the sink (reference + attempt + code only); the response mapping is unchanged", async () => {
+    const { seen, sink } = sinkFor();
+    const create = vi.fn(() => Promise.reject(new OpenAI.APIConnectionError({ cause: fetchFailed("ECONNRESET") })));
+    const provider = createOpenAIProvider({ client: { responses: { create } }, models: { "gpt-6-luna": { model: "gpt-6-luna", reasoningEffort: "none", maxOutputTokens: 2_000 } }, timeoutMs: 30_000, onTransportDiagnostic: sink });
+    expect(await provider.complete(request("openai", "gpt-6-luna"), { reference: "case-7", attempt: 2 })).toEqual({ kind: "failed", cause: "provider_unavailable", retryAfterSeconds: null });
+    expect(seen).toEqual([{ reference: "case-7", attempt: 2, code: "ECONNRESET" }]);
+    expect(JSON.stringify(seen)).not.toMatch(/10\.1\.2\.3|example-vendor|Bearer|v1\/responses|fetch failed/);
+  });
+
+  it("Anthropic: socket / timeout / 429 / 5xx codes; a non-transport error reports nothing", async () => {
+    const cases: [() => Error, string | null][] = [
+      [() => new Anthropic.APIConnectionError({ cause: fetchFailed("UND_ERR_SOCKET") }), "socket_closed"],
+      [() => new Anthropic.APIConnectionTimeoutError(), "request_timeout"],
+      [() => new Anthropic.RateLimitError(429, {}, "slow", new Headers()), "http_429"],
+      [() => new Anthropic.InternalServerError(529, {}, "overloaded", new Headers()), "http_5xx"],
+      [() => new Anthropic.APIConnectionError({ cause: fetchFailed("WHO_KNOWS") }), "unknown_connection_error"],
+      [() => new Anthropic.BadRequestError(400, {}, "bad", new Headers()), null],
+      [() => new Anthropic.AuthenticationError(401, {}, "bad key", new Headers()), null],
+    ];
+    for (const [error, code] of cases) {
+      const { seen, sink } = sinkFor();
+      const provider = createAnthropicProvider({ client: { messages: { create: () => Promise.reject(error()) } }, models: { "claude-sonnet-5-5": { model: "claude-sonnet-5-5", effort: "low", thinking: "disabled", maxTokens: 2_000 } }, timeoutMs: 30_000, onTransportDiagnostic: sink });
+      await provider.complete(request("anthropic", "claude-sonnet-5-5"), CALL);
+      expect(seen, String(code)).toEqual(code === null ? [] : [{ reference: "case-1", attempt: 1, code }]);
+    }
+  });
+
+  it("a provider response never reports a diagnostic; without a sink nothing breaks", async () => {
+    const { seen, sink } = sinkFor();
+    await createOpenAIProvider({ client: { responses: { create: () => Promise.resolve(openaiResponse()) } }, models: { "gpt-6-luna": { model: "gpt-6-luna", reasoningEffort: "none", maxOutputTokens: 2_000 } }, timeoutMs: 30_000, onTransportDiagnostic: sink }).complete(request("openai", "gpt-6-luna"), CALL);
+    expect(seen).toEqual([]);
+    expect(await openai(() => Promise.reject(new OpenAI.APIConnectionError({ cause: fetchFailed("ECONNRESET") }))).provider.complete(request("openai", "gpt-6-luna"), CALL)).toMatchObject({ cause: "provider_unavailable" });
   });
 });

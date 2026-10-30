@@ -21,7 +21,8 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type { Message, MessageCreateParamsNonStreaming } from "@anthropic-ai/sdk/resources/messages/messages";
-import type { ModelProvider, ProviderFailureCause, ProviderRequest, ProviderResponse } from "@/ai/gateway";
+import type { ModelProvider, ProviderCall, ProviderFailureCause, ProviderRequest, ProviderResponse } from "@/ai/gateway";
+import { normalizeConnectionCause, type TransportDiagnosticCode, type TransportDiagnosticSink } from "../diagnostics";
 
 export const ANTHROPIC_PROVIDER_KEY = "anthropic";
 
@@ -42,6 +43,8 @@ export interface AnthropicProviderOptions {
   /** modelKey (registry) → settings. */
   readonly models: Readonly<Record<string, AnthropicModelSettings>>;
   readonly timeoutMs: number;
+  /** H7-D0a: operator / evaluation sink for the sanitized transport cause of a failed call (never product data). */
+  readonly onTransportDiagnostic?: TransportDiagnosticSink;
 }
 
 /** The real SDK client: no SDK retries, no middleware; the key is passed in by the operator boundary. */
@@ -75,11 +78,20 @@ export function mapAnthropicError(error: unknown): ProviderResponse {
   throw error;
 }
 
+/** The sanitized transport cause of an SDK error (a closed code; null when the failure is not transport-level). */
+export function diagnoseAnthropicError(error: unknown): TransportDiagnosticCode | null {
+  if (error instanceof Anthropic.APIConnectionTimeoutError) return "request_timeout";
+  if (error instanceof Anthropic.APIConnectionError) return normalizeConnectionCause(error);
+  if (error instanceof Anthropic.RateLimitError) return "http_429";
+  if (error instanceof Anthropic.APIError && typeof error.status === "number" && error.status >= 500) return "http_5xx";
+  return null;
+}
+
 export function createAnthropicProvider(options: AnthropicProviderOptions): ModelProvider {
   return {
     providerKey: ANTHROPIC_PROVIDER_KEY,
-    // The call reference is tracing-only and is never sent to the vendor (so it is not taken here at all).
-    async complete(request: ProviderRequest): Promise<ProviderResponse> {
+    // The call reference is tracing-only: it keys the operator diagnostic and is never sent to the vendor.
+    async complete(request: ProviderRequest, call: ProviderCall): Promise<ProviderResponse> {
       const settings = options.models[request.model.modelKey];
       if (settings === undefined || request.model.providerKey !== ANTHROPIC_PROVIDER_KEY) return failed("provider_request_rejected");
       const body: MessageCreateParamsNonStreaming = {
@@ -96,7 +108,10 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Mode
       try {
         message = await options.client.messages.create(body, { timeout: options.timeoutMs, maxRetries: 0 });
       } catch (error) {
-        return mapAnthropicError(error);
+        const mapped = mapAnthropicError(error);
+        const code = diagnoseAnthropicError(error);
+        if (code !== null) options.onTransportDiagnostic?.({ reference: call.reference, attempt: call.attempt, code });
+        return mapped;
       }
       if (!isRequestedModel(settings.model, message.model)) return failed("model_mismatch");
       if (message.stop_reason === "refusal") return { kind: "refused" };

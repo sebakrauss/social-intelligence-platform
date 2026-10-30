@@ -862,3 +862,28 @@ Decisions and boundaries:
   `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are absent from the operator environment. No comparison, no recommendation.
 - **Before any customer content (not decided here):** provider data retention and training defaults, ZDR eligibility,
   data residency / region, DPA and subprocessor posture (TA-Q-06, TA-Q-15, TA §22.3).
+
+## 31. H7-D0a as implemented (live-run transport hardening; no live call)
+
+- **Why:** the first live run (2026-10-30, evidence `…/h7-d0/2026-10-30T105836569Z.json`) is INVALID for comparison:
+  after Luna's 60th case one connection hung ~70 s and every later call — two SDKs, two vendors — failed in 1–7 ms; Terra
+  and Sonnet got 0 observations. Its observations are never reused or merged.
+- **Transport diagnostics** (`ai/providers/diagnostics.ts`): a closed code vocabulary (ECONNRESET, ETIMEDOUT, ENOTFOUND,
+  ECONNREFUSED, EAI_AGAIN, ENETUNREACH, EHOSTUNREACH, EPIPE, UND_ERR_CONNECT/HEADERS/BODY_TIMEOUT, socket_closed,
+  request_timeout, request_aborted, http_429, http_5xx, unknown_connection_error) read only from `code` / `name` fields
+  of the cause chain — never a message, URL, host, IP, header, body or stack. Adapters hand it to an OPTIONAL operator
+  sink keyed by call reference + attempt; the gateway port, failure classes (still five), causes, attempt records and
+  product runtime are unchanged.
+- **Circuit breaker** (live tooling only, `tests/eval/classification/live/breaker.ts`): K = 3 consecutive retryable
+  transport failures (provider_unavailable · timeout · rate_limited) ⇒ the WHOLE bake-off stops
+  (`LIVE_EVAL_ABORTED_CONSECUTIVE_TRANSPORT_FAILURES`): no later case, candidate or stability run, no sleep, no resume.
+  Any provider response resets it; semantic / schema / refusal / language-cap outcomes never count; no-call cases
+  (input too large, budget) neither count nor reset.
+- **Validity:** `runBakeoff` (`live/bakeoff.ts`) reports `VALID_FOR_MODEL_COMPARISON` only for a complete run with zero
+  transport and zero other provider failures; otherwise `INVALID_FOR_MODEL_COMPARISON` with reasons. It never
+  recommends (`recommendation: null`). Qualification for stability is the unchanged H7-D0 rule.
+- **Timeout:** SDK defaults are 10 min; adapters impose none (injected per request). The live runner now injects 30 s
+  (was 120 s; the 70 s hang ended as a connection error, not a timeout). Product timeout policy is not decided here.
+- **Unchanged:** prompt (hash pinned), corpus (sha256 pinned), taxonomy, evaluator metrics, candidates, settings, prices.
+- **Restart policy:** the next live run is a fresh, complete bake-off of all three candidates from case 1 (new
+  evidence file); a breaker abort or any invalidity ends it, and only the TL can authorize another full rerun.
