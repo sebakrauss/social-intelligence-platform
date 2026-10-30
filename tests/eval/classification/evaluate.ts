@@ -22,6 +22,10 @@
  *   intent      critical only when an expected PROTECTED MEANING is lost (or Protection is wrong); an exact protected
  *               sibling mismatch (same meaning, Protection right) stays visible in the strict protected-intent recall
  *               and the intent metrics, never critical by itself
+ *
+ * classification-evaluator.v3 (H7-D0v2d, TL policy BAR_B_FAIL_SAFE): every v2 metric and diagnostic is unchanged
+ * (`criticalFailures` keeps its v2 meaning); each case additionally carries its SEVERITY (`severity.ts`): blocking /
+ * reviewable / noncritical / informational. Promotion v2 qualifies on blocking failures, not on v2 critical checks.
  */
 import { createAiGateway, createModelRegistry, type AiGateway, type AttemptRecord, type BudgetPort, type ModelDescriptor, type ModelProvider } from "@/ai/gateway";
 import { parseInstant } from "@/domain/instant";
@@ -53,18 +57,22 @@ import {
 import { understandInteraction } from "@/modules/classification/application/ai/understand-interaction";
 import { UNDERSTANDING_TASK_ID } from "@/modules/classification/application/ai/understanding-task";
 import type { EvalCase, EvalCorpus, LanguageGroup } from "./corpus";
+import { SEVERITY_VERSION, classifySeverity, type CaseSeverity, type LanguageSupportOutcome } from "./severity";
 
 const TARGET = parseAnalysisTarget({ workspaceId: "e7a10000-0000-4000-8000-000000000001", interactionId: "e7a10000-0000-4000-8000-000000000002", sourceTextVersionId: "e7a10000-0000-4000-8000-000000000003" });
 const ASSESSED_AT = parseInstant("2026-10-29T12:00:00.000Z");
 const NOW = new Date("2026-10-29T12:00:00.000Z");
 const SEMANTIC = CLOSED_DIMENSIONS;
 
-/** H7-D0k: v2 = deterministic language cap + protected-meaning criticality (v1: H7-D0 FINAL, unversioned). */
-export const EVALUATOR_VERSION = "classification-evaluator.v2" as const;
+/**
+ * H7-D0k: v2 = deterministic language cap + protected-meaning criticality (v1: H7-D0 FINAL, unversioned).
+ * H7-D0v2d: v3 = v2 scoring + the BAR_B severity of every case (semantic scoring unchanged).
+ */
+export const EVALUATOR_VERSION = "classification-evaluator.v3" as const;
 const CRITICAL_TAGS: readonly string[] = ["protected_critical", "safety_critical", "language_critical"];
 
 /** How the model's language support group compares with the gold one, for the deterministic cap. */
-export type LanguageSupportOutcome = "correct" | "same_cap_other_group" | "over_capped" | "bypass" | "not_assessed";
+export type { LanguageSupportOutcome } from "./severity";
 
 /** The gold language support group of a case (same domain functions as the product). */
 export function goldLanguageSupport(testCase: EvalCase): LanguageSupport {
@@ -131,6 +139,8 @@ export interface CaseResult {
   readonly effectiveCapViolation: boolean;
   /** Expected protected intents vs predicted: exact labels and protected meanings (null when none is expected). */
   readonly protectedIntent: { readonly strictMatch: boolean; readonly meaningPreserved: boolean } | null;
+  /** v3: the BAR_B severity derived from the v2 conclusions above (pure, `severity.ts`). */
+  readonly severity: CaseSeverity;
   readonly fingerprint: string;
   readonly criticalFailures: readonly string[];
   readonly pass: boolean;
@@ -171,6 +181,12 @@ export interface EvaluationReport {
   readonly rawLanguageCapExceedances: number;
   readonly languageSupport: { readonly cases: number; readonly correct: number; readonly sameCapOtherGroup: number; readonly overCapped: number; readonly bypasses: number; readonly notAssessed: number };
   readonly effectiveCapViolations: number;
+  /** v3 (BAR_B): cases per severity class with their reasons; promotion v2 qualifies on `blockingCriticalFailures`. */
+  readonly severityVersion: typeof SEVERITY_VERSION;
+  readonly blockingCriticalFailures: readonly { readonly id: string; readonly reasons: readonly string[] }[];
+  readonly reviewableDegradations: readonly { readonly id: string; readonly reasons: readonly string[] }[];
+  readonly noncriticalAccuracy: readonly { readonly id: string; readonly reasons: readonly string[] }[];
+  readonly informational: number;
   readonly unsupportedLanguage: { readonly cases: number; readonly protectionUncertainRate: Ratio };
   readonly byLanguage: Readonly<Record<string, { readonly passRate: Ratio; readonly protectionAccuracy: Ratio }>>;
   readonly failures: Readonly<Record<string, number>>;
@@ -270,6 +286,10 @@ async function evaluateCase(testCase: EvalCase, gateway: AiGateway, routeFingerp
   if (effectiveViolation) critical.push("language_cap:effective_violation");
   const languagePass = supportOutcome !== "bypass" && supportOutcome !== "over_capped";
   const pass = Object.values(dimensions).every((d) => d.pass) && protectionPass && needsReviewPass && failurePass && languagePass && !effectiveViolation;
+  const protectionResult = { expected: testCase.expectedProtection, actual: protection.result, pass: protectionPass };
+  const needsReviewResult = { expected: testCase.expectedNeedsReview, actual: review.needsReview, pass: needsReviewPass };
+  const languageSupportResult = { expected: expectedSupport, actual: actualSupport, outcome: supportOutcome };
+  const severity = classifySeverity({ pass, criticalFailures: critical, protection: protectionResult, needsReview: needsReviewResult, failureClass, languageSupport: languageSupportResult, effectiveCapViolation: effectiveViolation, protectedIntent, rawLanguageCapExceedance: capViolation });
   return Object.freeze({
     id: testCase.id,
     group: testCase.language.group,
@@ -280,17 +300,24 @@ async function evaluateCase(testCase: EvalCase, gateway: AiGateway, routeFingerp
     failureCause,
     attempts,
     dimensions,
-    protection: { expected: testCase.expectedProtection, actual: protection.result, pass: protectionPass },
-    needsReview: { expected: testCase.expectedNeedsReview, actual: review.needsReview, pass: needsReviewPass },
+    protection: protectionResult,
+    needsReview: needsReviewResult,
     failurePass,
     rawLanguageCapExceedance: capViolation,
-    languageSupport: { expected: expectedSupport, actual: actualSupport, outcome: supportOutcome },
+    languageSupport: languageSupportResult,
     effectiveCapViolation: effectiveViolation,
     protectedIntent,
+    severity,
     fingerprint: fingerprintOf(attempts, routeFingerprint),
     criticalFailures: Object.freeze(critical),
     pass,
   });
+}
+
+/** The per-class case lists of a set of severities (shared with the offline re-classification of stored evidence). */
+export function severitySummary(results: readonly { readonly id: string; readonly severity: CaseSeverity }[]) {
+  const of = (key: "blocking" | "reviewable" | "noncritical") => Object.freeze(results.filter((r) => r.severity[key].length > 0).map((r) => Object.freeze({ id: r.id, reasons: r.severity[key] })));
+  return { blockingCriticalFailures: of("blocking"), reviewableDegradations: of("reviewable"), noncriticalAccuracy: of("noncritical"), informational: results.filter((r) => r.severity.informational.length > 0).length };
 }
 
 export async function evaluateCorpus(corpus: EvalCorpus, subject: EvaluationSubject): Promise<EvaluationReport> {
@@ -407,6 +434,8 @@ export async function evaluateCorpus(corpus: EvalCorpus, subject: EvaluationSubj
       notAssessed: results.filter((r) => r.languageSupport.outcome === "not_assessed").length,
     },
     effectiveCapViolations: results.filter((r) => r.effectiveCapViolation).length,
+    severityVersion: SEVERITY_VERSION,
+    ...severitySummary(results),
     unsupportedLanguage: { cases: unsupported.length, protectionUncertainRate: ratio(unsupported.filter(({ result }) => result.protection.actual === "uncertain").length, unsupported.length) },
     byLanguage,
     failures,

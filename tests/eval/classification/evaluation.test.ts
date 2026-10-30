@@ -80,13 +80,14 @@ describe("golden simulator run (machinery check, NOT a model benchmark)", () => 
     expect(golden.languageSupport).toMatchObject({ bypasses: 0, overCapped: 0 });
     expect(golden.protectedIntentMeaningRecall.value).toBe(1);
     expect(golden.protectedIntentStrictRecall.value).toBe(1);
-    expect(golden.evaluatorVersion).toBe("classification-evaluator.v2");
+    expect(golden.evaluatorVersion).toBe("classification-evaluator.v3");
+    expect(golden).toMatchObject({ blockingCriticalFailures: [], reviewableDegradations: [], noncriticalAccuracy: [] });
   });
 
   it("labels itself honestly: provider simulator, not a real model benchmark; promotion can never pass on it", () => {
     expect(golden).toMatchObject({ providerKey: "simulator", realModelBenchmark: false });
     expect(golden.notice).toMatch(/NOT a real model benchmark/);
-    expect(evaluatePromotion(golden, null)).toEqual({ verdict: "BLOCKED", reasons: ["not_a_real_model"] });
+    expect(evaluatePromotion(golden, null)).toEqual({ verdict: "BLOCKED", reasons: ["not_a_real_model"], secondary: { reviewableDegradations: 0, noncriticalAccuracy: 0 } });
   });
 
   it("unsupported / uncertain languages end UNCERTAIN; the over-bound text is AI_INPUT_TOO_LARGE without a call; emoji-only abstains", () => {
@@ -110,7 +111,7 @@ describe("negative evaluator tests: bad behavior is caught", () => {
   const blocked = (report: EvaluationReport, id: string): void => {
     const verdict = evaluatePromotion(report, golden);
     expect(verdict.verdict).toBe("BLOCKED");
-    expect(verdict.reasons).toContain(`critical_regression:${id}`);
+    expect(verdict.reasons).toContain(`blocking_regression:${id}`);
   };
 
   it("a missed protected complaint", async () => {
@@ -206,16 +207,16 @@ describe("negative evaluator tests: bad behavior is caught", () => {
   it("a critical case that also failed in the baseline is not re-reported as a regression; a new one is", async () => {
     const id = "pt-br-complaint-01";
     const regressed = await evaluate(transformCase(GOLDEN, CORPUS, id, (b) => { b.dimensions["intent"] = values(["neutral_conversation", "high"]); }));
-    expect(evaluatePromotion(regressed, regressed).reasons).not.toContain(`critical_regression:${id}`);
-    expect(evaluatePromotion(regressed, golden).reasons).toContain(`critical_regression:${id}`);
+    expect(evaluatePromotion(regressed, regressed).reasons).not.toContain(`blocking_regression:${id}`);
+    expect(evaluatePromotion(regressed, golden).reasons).toContain(`blocking_regression:${id}`);
   });
 });
 
 describe("H7-D0k: language policy — deterministic cap, support-group scoring (classification-evaluator.v2)", () => {
   const language = (languages: string[], certainty: "certain" | "uncertain", confidence = "high") => ({ status: "assessed", languages, certainty, confidence });
 
-  it("versions: evaluator v2, prompt v2, corpus v2; promotion v1", () => {
-    expect([EVALUATOR_VERSION, UNDERSTANDING_PROMPT_VERSION, CORPUS_VERSION, CORPUS.corpusVersion, PROMOTION_POLICY.version]).toEqual(["classification-evaluator.v2", "understanding-prompt.v2", "eval-corpus.v2", "eval-corpus.v2", "understanding-promotion.v1"]);
+  it("versions: evaluator v3 (v2 scoring + BAR_B severity), prompt v2, corpus v2; promotion v2", () => {
+    expect([EVALUATOR_VERSION, UNDERSTANDING_PROMPT_VERSION, CORPUS_VERSION, CORPUS.corpusVersion, PROMOTION_POLICY.version]).toEqual(["classification-evaluator.v3", "understanding-prompt.v2", "eval-corpus.v2", "eval-corpus.v2", "understanding-promotion.v2"]);
   });
 
   it("uncertain and unknown languages: raw high is recorded, the cap applies, nothing critical", async () => {
@@ -242,7 +243,7 @@ describe("H7-D0k: language policy — deterministic cap, support-group scoring (
     expect(result.criticalFailures).toContain("language_support:validated_bypass:unsupported->validated");
     expect(result.pass).toBe(false);
     expect(report.languageSupport.bypasses).toBe(1);
-    expect(evaluatePromotion(report, golden).reasons).toEqual(expect.arrayContaining([`critical_regression:${id}`, "language_cap_bypasses:1"]));
+    expect(evaluatePromotion(report, golden).reasons).toEqual(expect.arrayContaining([`blocking_regression:${id}`, "language_cap_bypasses:1"]));
   });
 
   it("a validated language treated as non-validated OVER-CAPS: an accuracy error (the case fails), not critical", async () => {

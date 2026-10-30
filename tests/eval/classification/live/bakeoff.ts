@@ -21,6 +21,12 @@ import { createSpendLedger, type ModelPrice } from "./spend";
 import { percentile, stabilityDisagreements } from "./stability";
 
 export const STABILITY_EXTRA_RUNS = 2;
+/** BAR_B qualification (promotion v2): 0 blocking, 0 bypass, 0 effective violation, and the unchanged reliability rule. */
+export const DISQUALIFYING_FAILURES: readonly string[] = ["AI_REFUSED", "AI_INVALID_OUTPUT", "AI_UNAVAILABLE", "AI_BUDGET"];
+export function qualifiesForStability(blocking: number, bypasses: number, effectiveViolations: number, failureClasses: readonly (string | null)[]): boolean {
+  return blocking === 0 && bypasses === 0 && effectiveViolations === 0 && !failureClasses.some((f) => f !== null && DISQUALIFYING_FAILURES.includes(f));
+}
+
 /** The stability selection: the deduplicated union of the critical tags (H7-D0v2a adds language_critical). */
 export const STABILITY_TAGS = ["protected_critical", "safety_critical", "language_critical"] as const;
 export const CRITICAL = (c: { readonly tags: readonly string[] }): boolean => c.tags.some((tag) => (STABILITY_TAGS as readonly string[]).includes(tag));
@@ -82,6 +88,11 @@ function summary(candidate: BakeoffCandidate, report: EvaluationReport, spentUsd
     effectiveCapViolations: report.effectiveCapViolations,
     protectedIntentMeaningRecall: report.protectedIntentMeaningRecall,
     protectedIntentStrictRecall: report.protectedIntentStrictRecall,
+    // H7-D0v2d (evaluator v3, BAR_B): severity classes; qualification reads `blockingCriticalFailures`.
+    severityVersion: report.severityVersion,
+    blockingCriticalFailures: report.blockingCriticalFailures,
+    reviewableDegradations: report.reviewableDegradations,
+    noncriticalAccuracy: report.noncriticalAccuracy.map((f) => f.id),
     schemaFailures: count("AI_INVALID_OUTPUT"),
     refusals: count("AI_REFUSED"),
     reasks: attempts.filter((a) => a.kind === "reask").length,
@@ -107,6 +118,7 @@ export const sanitizedCases = (cases: readonly CaseResult[], diagnostics: Diagno
   labels: Object.fromEntries(Object.entries(c.dimensions).map(([d, v]) => [d, v.predicted])),
   // H7-D0v2a: informational raw exceedance ≠ effective-cap invariant; protected intent keeps strict and meaning apart.
   rawLanguageCapExceedance: c.rawLanguageCapExceedance, languageSupport: c.languageSupport, effectiveCapViolation: c.effectiveCapViolation, protectedIntent: c.protectedIntent,
+  severity: c.severity,
   attempts: c.attempts.map((a) => ({ attempt: a.attemptNumber, kind: a.kind, outcome: a.outcome, modelVersion: a.modelVersion, usage: a.usage, latencyMs: a.completedAt.getTime() - a.startedAt.getTime(),
     issueCodes: a.issueCodes, transportDiagnostic: diagnostics.codeOf(c.id, a.attemptNumber), rejectionDiagnostic: diagnostics.rejectionOf(c.id, a.attemptNumber) })),
 }));
@@ -143,10 +155,10 @@ export async function runBakeoff(input: BakeoffInput) {
     pass1[candidate.id] = await run(candidate);
   }
   // The H7-D0 qualification rule, unchanged.
-  // H7-D0k: the language condition is the deterministic cap's (no bypass, no effective violation — both critical);
-  // a raw exceedance no longer disqualifies.
-  const qualifies = (report: EvaluationReport): boolean => report.criticalFailures.length === 0 && report.languageSupport.bypasses === 0 && report.effectiveCapViolations === 0
-    && !report.cases.some((c) => c.failureClass === "AI_REFUSED" || c.failureClass === "AI_INVALID_OUTPUT" || c.failureClass === "AI_UNAVAILABLE" || c.failureClass === "AI_BUDGET");
+  // H7-D0k: the language condition is the deterministic cap's (no bypass, no effective violation); a raw exceedance
+  // no longer disqualifies. H7-D0v2d (promotion v2, BAR_B): zero BLOCKING failures — reviewable degradations and
+  // noncritical accuracy do not disqualify; the reliability rule (no refusal / invalid / unavailable / budget) is unchanged.
+  const qualifies = (report: EvaluationReport): boolean => qualifiesForStability(report.blockingCriticalFailures.length, report.languageSupport.bypasses, report.effectiveCapViolations, report.cases.map((c) => c.failureClass));
   const stability: Record<string, { casesRun: number; disagreements: ReturnType<typeof stabilityDisagreements>; transientFailures: number }> = {};
   for (const candidate of input.candidates) {
     const first = pass1[candidate.id];

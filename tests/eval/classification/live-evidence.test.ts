@@ -62,19 +62,21 @@ describe("H7-D0v2a: per-case evidence carries evaluator v2's conclusions", () =>
 });
 
 describe("H7-D0v2a: provenance = exactly the current benchmark stack (no v1 fallback)", () => {
-  it("evidence identity v2; evaluator v2, prompt v2 + pinned hash, corpus v2 + SHA-256 of the parsed bytes, promotion v1, transport schemas", () => {
+  it("evidence identity v3; evaluator v3, prompt v2 + pinned hash, corpus v2 + SHA-256 of the parsed bytes, promotion v2, transport schemas, candidate fingerprints", () => {
     const provenance = liveEvidenceProvenance(CORPUS, sha256Hex(BYTES));
     expect(provenance).toEqual({
-      evidenceVersion: "classification-live-evidence.v2",
-      evaluatorVersion: "classification-evaluator.v2",
+      taxonomyVersion: "taxonomy.v1",
+      evidenceVersion: "classification-live-evidence.v3",
+      evaluatorVersion: "classification-evaluator.v3",
       promptVersion: "understanding-prompt.v2",
       promptHash: "c177c6f36c77337645d2cc9f45628f80bd2fbeddd8f5ac2a418ac97ae2c9b7bf",
       corpusVersion: "eval-corpus.v2",
       corpusSha256: "8dc159ffb74c70acd90a30b00fe35dc9f290ae5502acefb0f0f2c59cd527c989",
-      promotionVersion: "understanding-promotion.v1",
+      promotionVersion: "understanding-promotion.v2",
       transportSchemas: { openai: "canonical-strict", anthropic: "anthropic-transport-schema.v2" },
+      candidateConfig: {},
     });
-    expect(LIVE_EVIDENCE_VERSION).toBe("classification-live-evidence.v2");
+    expect(LIVE_EVIDENCE_VERSION).toBe("classification-live-evidence.v3");
     expect(sha256Hex(BYTES)).toBe(createHash("sha256").update(BYTES).digest("hex"));
   });
 });

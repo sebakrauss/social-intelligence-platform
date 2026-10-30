@@ -1024,3 +1024,32 @@ Decisions and boundaries:
   language_critical (`STABILITY_TAGS`, `CRITICAL`), used by pass 2 and by PLAN; repetitions unchanged (pass 1 + 2). The
   stability signature additionally compares the language-support outcome and the effective-cap status, so a change such
   as correct → bypass is a disagreement. PLAN upper bound: US$11.74 (was 11.28) ≤ US$15.
+
+## 39. H7-D0v2d as implemented (BAR_B fail-safe promotion + stability-only execution)
+
+- **Policy (TL-approved BAR_B_FAIL_SAFE, from M-07 / H7-A0 §16 / TA §25):** `tests/eval/classification/severity.ts`
+  classifies every case result into BLOCKING_CRITICAL (protected meaning lost — whatever Protection became —,
+  `not_protected` where protection is expected, missed safety value / missed review on a safety_critical case, a
+  forbidden non-safety value, language-cap bypass, effective-cap violation, any unrecognized check), REVIEWABLE (meaning
+  preserved + uncertain + Needs review from below-high confidence; over-capped validated language; extra review — incl.
+  a safety false positive that routes to review —; an isolated schema / refusal failure), NONCRITICAL (protected sibling
+  intent, unrouted safety false positive, other misses) and INFORMATIONAL (raw cap exceedance, same-cap group, run
+  integrity). Pure and model-independent; it reads only evaluator-v2 conclusions.
+- **Versions:** `classification-evaluator.v3` (v2 scoring and diagnostics unchanged + per-case `severity` + report
+  `blockingCriticalFailures` / `reviewableDegradations` / `noncriticalAccuracy`); `understanding-promotion.v2`
+  (`no_blocking_regression`; reviewable / noncritical counts reported as `secondary`; `compareCandidates` = the frozen
+  10-step lexicographic hierarchy — an ordering, never a selection); `classification-live-evidence.v3` (+ `severity`,
+  + per-candidate configuration fingerprints, + taxonomy version). Stability qualification = 0 blocking, 0 bypass, 0
+  effective violation and the unchanged reliability rule (no refusal / invalid / unavailable / budget).
+- **Stability-only (`live/stability-only.ts`, CLI `--stability-only --parent <file> --parent-sha256 <hex>`):** the
+  parent pass-1 evidence must match the given SHA-256, be COMPLETE + VALID, be a v2/v3 evidence scored by evaluator v2/v3
+  (the documented severity-only exception), and match the current prompt (version + hash), corpus (version + SHA-256 of
+  the current bytes, which also pins the taxonomy), transport schemas, served model ids and candidate configuration
+  fingerprints (a v2 parent records none ⇒ it must be registered in `KNOWN_PARENT_EVIDENCE`, pinned by a test to the
+  current settings). Eligibility is recomputed offline with the same `classifySeverity`; only eligible candidates run the
+  critical set (protected ∪ safety ∪ language critical) twice; with the stored pass-1 signature that is three
+  observations; any difference (labels, Protection — protected ↔ uncertain included —, Needs review, failure class,
+  language-support outcome, effective cap) is a disagreement; no majority vote. Budget US$5; own confirmation phrase;
+  evidence `classification-stability-evidence.v1` under `.wrenkind-local/evidence/h7-d0-stability/`.
+- **Applied offline to the H7-D0 v2 FINAL pass 1 (sha256 a27052b4…):** blocking Luna 3, Terra 1, Sonnet 0; reviewable
+  3 / 6 / 9; eligible: Sonnet only; stability PLAN 43 cases × 2 = 86 calls ≤ US$4.22.

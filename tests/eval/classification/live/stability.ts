@@ -6,15 +6,29 @@
  */
 import type { CaseResult } from "../evaluate";
 
-export const caseSignature = (result: CaseResult): string =>
+/** The observation a signature is built from: a live CaseResult or a stored (sanitized) case carry the same values. */
+export interface SignatureFields {
+  readonly labels: Readonly<Record<string, readonly string[]>>;
+  readonly protection: { readonly actual: string };
+  readonly needsReview: { readonly actual: boolean };
+  readonly failureClass: string | null;
+  readonly languageSupport: { readonly outcome: string };
+  readonly effectiveCapViolation: boolean;
+}
+
+/** H7-D0v2d: one signature for live and stored observations (a protected ↔ uncertain flip changes `protection`). */
+export const signatureOf = (fields: SignatureFields): string =>
   JSON.stringify({
-    dimensions: Object.fromEntries(Object.entries(result.dimensions).map(([dimension, value]) => [dimension, [...value.predicted].sort()])),
-    protection: result.protection.actual,
-    needsReview: result.needsReview.actual,
-    failure: result.failureClass,
-    languageSupport: result.languageSupport.outcome,
-    effectiveCapViolation: result.effectiveCapViolation,
+    dimensions: Object.fromEntries(Object.entries(fields.labels).map(([dimension, values]) => [dimension, [...values].sort()])),
+    protection: fields.protection.actual,
+    needsReview: fields.needsReview.actual,
+    failure: fields.failureClass,
+    languageSupport: fields.languageSupport.outcome,
+    effectiveCapViolation: fields.effectiveCapViolation,
   });
+
+export const caseSignature = (result: CaseResult): string =>
+  signatureOf({ ...result, labels: Object.fromEntries(Object.entries(result.dimensions).map(([dimension, value]) => [dimension, value.predicted])) });
 
 export interface StabilityFinding {
   readonly id: string;

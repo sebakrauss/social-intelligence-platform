@@ -188,7 +188,10 @@ describe("H7-D0: real provider adapters and the live bake-off", () => {
     expect(cli).toMatch(/--confirm-real-model-calls/);
     const runner = strip(codeOf("tests/eval/classification/live.eval.ts"));
     expect(runner).toMatch(/process\.env\["CI"\] !== undefined \|\| process\.env\["GITHUB_ACTIONS"\] !== undefined/);
-    expect(runner.indexOf("LIVE_EVAL_BUDGET_USD) fail(")).toBeLessThan(runner.indexOf("readCredential(c.credential)"));
+    // Each mode checks its budget before it reads a credential (H7-D0v2d: the stability-only mode has its own).
+    expect(runner.indexOf("LIVE_EVAL_BUDGET_USD) fail(")).toBeLessThan(runner.indexOf("candidates.filter((c) => readCredential(c.credential)"));
+    expect(runner.indexOf("STABILITY_BUDGET_USD) fail(")).toBeLessThan(runner.indexOf("eligible.filter((c) => readCredential(c.credential)"));
+    expect(runner.indexOf("eligible.filter((c) => readCredential(c.credential)")).toBeGreaterThan(-1);
     expect((JSON.parse(codeOf("package.json")) as { scripts: Record<string, string> }).scripts["test"]).toBe("vitest run");
   });
 
