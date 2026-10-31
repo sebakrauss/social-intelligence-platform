@@ -1084,3 +1084,49 @@ Decisions and boundaries:
   0, review routing 1, semantic precision 3, informational 0, systemic 0 ⇒ qualified; Luna and Terra stay unqualified
   (pass-1 blocking 3 / 1; stability not run). The historical H7-D0v2e result stays FAIL under the previous (v1) policy.
   Provisional recommendation: Claude Sonnet 5.5. No production model is selected by this step.
+
+## 41. H7-D1b as implemented (INTELLIGENCE runtime contracts and plane boundary; source only)
+
+H7-D1 = the H7-A0 §24 stage "H7-E" (INTELLIGENCE plane + `classification.understand_ai` + shadow first). H7-D1b adds only
+pure, source-level contracts: no migration, DB writer, task registration, Trigger project, release, model call or real
+data. The H7-D0 recommendation stays PROVISIONAL (`PRODUCTION_MODEL_SELECTED = NO`).
+
+- **Planes:** `EXECUTION_PLANES` = main · integration · **intelligence** (declared). `DELIVERY_PLANES` = main ·
+  integration — the planes the 0011 `outbox_execution_plane_known` check admits. Every delivery seam (task registry,
+  runtimes map, outbox binding / claim / observation, relay wake-up, retirement readiness) takes `DeliveryPlane`, and the
+  registry refuses a task declared on a non-delivery plane, so the declared plane can't be routed before 0025 + H7-D1d.
+- **Environment (D-H7-1, D-H7-6):** the one model credential is the vendor-neutral `INTELLIGENCE_MODEL_API_KEY`
+  (INTELLIGENCE only). It is handed explicitly to the adapter's client (`createAnthropicClient(apiKey)`; adapters read no
+  environment), and product code may not name a vendor, so no parallel convention exists: the vendor-named
+  `ANTHROPIC_API_KEY` remains operator-only eval tooling. MAIN, INTEGRATION and WEB refuse it. Every runtime (INTELLIGENCE
+  included) refuses the SDK-ambient variables in `domain/model-provider-variables.ts`: credentials, endpoint, profile,
+  header, log and telemetry overrides read by the pinned SDKs' reached client paths (a test re-reads the SDK files;
+  Azure / Bedrock / Vertex / environment-worker entry points are excluded). INTELLIGENCE refuses Meta, the integration
+  KMS/AWS identity and AWS chain, the system DB credential and the main / integration / intelligence-operator Trigger
+  keys. As for the other planes, the web / migration DB credentials, the service-role key and the keyring configuration
+  are kept out of `jobs/` by static guards. MAIN may later hold `TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY` (H7-D1d).
+- **Qualified registry entry** (`ai/providers/anthropic/qualified.ts`): the H7-D0 candidate exactly — `claude-sonnet-5-5`,
+  effort low, thinking `between_tools`, no `speed`, 2 000 output tokens, transport schema v2, taxonomy.v1, 30 s call
+  timeout; fingerprint `76e0ca1f…` recomputed by a test against `candidateConfigFingerprint`; descriptor DISABLED.
+  Evaluator / promotion / stability-policy versions and evidence hashes are route-qualification provenance only.
+- **Timeout decision (A):** 30 s is frozen for the qualified route. It is part of the fingerprinted configuration, and
+  every qualifying H7-D0 run (pass 1 and the stability-only run) completed under it with zero transport failures.
+- **Runtime contract** (`modules/classification/application/ai/understand-ai-contract.ts`): topic
+  `classification.understand_ai` (typed; registered nowhere; DB inventory in 0025); pipeline
+  `classification.intelligence.v1` (the runtime continues only its own requests; `classification.deterministic.v1`
+  requests are never continued); dispatch key `classification.understand_ai:{request}:a{generation}`; IDs-only payload
+  (workspace, interaction, source text version, request, correlation; closed validation; envelope subjects
+  `interaction` / `source_text_version` / `understanding_request`); route policy deny-by-default (disabled, sampling 0,
+  kill switch active, no model / timeout, budget `deny_all`, `realDataEligible: false`, acceptance `shadow`);
+  `prepareUnderstandingInput` = the frozen A1 builder, analyzed text over its bound ⇒ AI_INPUT_TOO_LARGE before any call;
+  closed failure vocabulary (the five A1 classes); attempt-ledger and result records (ids, versions, counts, classes;
+  cost estimate null while TA-Q-23 is open; no prompt, model input, response, reasoning or secret).
+- **Derived outcome** (`modules/classification/domain/understanding-outcome.ts`): pure composition of `toAiAssessments`
+  (language cap), `acceptInterpretation`, `evaluateProtection` and `deriveNeedsReview`. Protection and Needs review are
+  never model output; a failure yields zero AI assessments, Protection UNCERTAIN, Needs review. A test proves parity with
+  the frozen evaluator on every golden corpus case.
+- **Gateway:** `DENY_ALL_BUDGET`; a budget port that denies, answers anything but "allowed", or throws ⇒ AI_BUDGET with
+  no provider call.
+- **Guards:** no intelligence → mutations / integrations / moderation / replies / automation / persistence / job-runtime
+  path; no consumer of the contract, outcome or qualified entry; only the contract names `accepting`; the frozen semantic
+  artifacts are byte-pinned to 31d0b0a.

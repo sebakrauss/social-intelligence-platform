@@ -48,7 +48,7 @@ import {
   laneLabel,
   parseTenantJobPayload,
   payloadMatchesTask,
-  type ExecutionPlane,
+  type DeliveryPlane,
   type ExecutionPlaneRuntimes,
   type TaskRegistry,
   type TenantJobPayload,
@@ -335,7 +335,7 @@ export interface RetirementReadiness {
  * can still require a run of it. Bound work never follows a later route change, so the old plane must keep serving it
  * until then; terminal deliveries (an outcome, or OBSERVATION_EXHAUSTED) never run again and do not block.
  */
-export async function retirementReadiness(system: RuntimeDatabase<"system">, options: { readonly topic: string; readonly plane: ExecutionPlane }): Promise<RetirementReadiness> {
+export async function retirementReadiness(system: RuntimeDatabase<"system">, options: { readonly topic: string; readonly plane: DeliveryPlane }): Promise<RetirementReadiness> {
   const executionCapable = await withSystemScope(system, (tx) => countExecutionCapableBound(tx, options));
   return { executionCapable, ready: executionCapable === 0 };
 }

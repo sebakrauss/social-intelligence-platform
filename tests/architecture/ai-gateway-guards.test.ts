@@ -40,7 +40,8 @@ describe("H7-C: vendor-free", () => {
 
   it("no product code branches on a vendor name (only future ai/providers/<vendor> adapters and registry config may)", () => {
     // domain/secret-patterns.ts names vendor KEY formats to detect leaked secrets — detection, not product behavior.
-    for (const file of sourceFiles(PRODUCT).filter((f) => f !== "domain/secret-patterns.ts")) expect(strip(codeOf(file)), file).not.toMatch(/["'`](openai|anthropic|claude|gpt-[0-9])/i);
+    // domain/model-provider-variables.ts (H7-D1b) names the SDK-ambient variables every runtime REFUSES — refusal data.
+    for (const file of sourceFiles(PRODUCT).filter((f) => f !== "domain/secret-patterns.ts" && f !== "domain/model-provider-variables.ts")) expect(strip(codeOf(file)), file).not.toMatch(/["'`](openai|anthropic|claude|gpt-[0-9])/i);
   });
 
   it("no environment or credential reader in the gateway, the simulator, the binding or the prompt", () => {

@@ -5,7 +5,7 @@
  * current route never overrides it, and a NOT FOUND in the owning plane is never retried in the other one.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { EnqueueRequest, ExecutionPlane, JobRuntime, RunStatus } from "@/platform/jobs";
+import type { EnqueueRequest, DeliveryPlane, JobRuntime, RunStatus } from "@/platform/jobs";
 
 const store = vi.hoisted(() => ({
   claimed: [] as Record<string, unknown>[],
@@ -49,7 +49,7 @@ const WS = "0b5d5f4e-8f43-4c55-9a51-6a3c0f2a7e10";
 const MAIN_TASK = "connections.move.release_source";
 const INTEGRATION_TASK = "connections.discover_assets";
 
-const registry = (planes: Readonly<Record<string, ExecutionPlane>> = { [MAIN_TASK]: "main", [INTEGRATION_TASK]: "integration" }) =>
+const registry = (planes: Readonly<Record<string, DeliveryPlane>> = { [MAIN_TASK]: "main", [INTEGRATION_TASK]: "integration" }) =>
   defineTaskRegistry([
     { name: "outbox.relay", scope: "system", executionPlane: "main", retry: RETRY_POLICIES.transient },
     ...Object.entries(planes).map(([name, executionPlane]) => ({
@@ -60,9 +60,9 @@ const registry = (planes: Readonly<Record<string, ExecutionPlane>> = { [MAIN_TAS
 class RecordingRuntime implements JobRuntime {
   readonly enqueued: EnqueueRequest[] = [];
   readonly lookups: string[] = [];
-  private readonly plane: ExecutionPlane;
+  private readonly plane: DeliveryPlane;
   private readonly status: RunStatus;
-  constructor(plane: ExecutionPlane, status: RunStatus = "EXECUTING") {
+  constructor(plane: DeliveryPlane, status: RunStatus = "EXECUTING") {
     this.plane = plane;
     this.status = status;
   }
@@ -76,15 +76,15 @@ class RecordingRuntime implements JobRuntime {
   }
 }
 
-const claimedRow = (topic: string, executionPlane: ExecutionPlane, id = crypto.randomUUID()) => ({
+const claimedRow = (topic: string, executionPlane: DeliveryPlane, id = crypto.randomUUID()) => ({
   id, topic, organizationId: null, workspaceId: WS, subjectIds: {}, correlationId: `corr-planes-${id.slice(0, 8)}`, initiatorType: "system",
   initiatorUserId: null, dispatchKey: `${topic}:${id}`, createdAt: new Date(), dispatchAttempts: 0, recoveryCount: 0, executionPlane,
 });
-const awaitingRow = (topic: string, executionPlane: ExecutionPlane, runId: string) => ({
+const awaitingRow = (topic: string, executionPlane: DeliveryPlane, runId: string) => ({
   id: crypto.randomUUID(), topic, workspaceId: WS, correlationId: "corr-planes-await", recoveryCount: 0, dispatchedAt: new Date(), runId, executionPlane,
 });
 
-const deps = (runtimes: { main: JobRuntime; integration: JobRuntime }, planes?: Readonly<Record<string, ExecutionPlane>>) => ({
+const deps = (runtimes: { main: JobRuntime; integration: JobRuntime }, planes?: Readonly<Record<string, DeliveryPlane>>) => ({
   system: {} as never, runtimes, registry: registry(planes), logger: createLogger({ sink: () => undefined }), clock: () => new Date(),
 });
 

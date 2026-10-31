@@ -25,6 +25,25 @@
  *                                                (server/connections/meta-app-config.ts). With "Require App Secret"
  *                                                OFF no jobs plane needs any of it, so BOTH planes refuse all three
  *
+ *   INTELLIGENCE_MODEL_API_KEY                   the ONE model-provider credential (Step H7-D1b; H7-A0 D-H7-1): the
+ *                                                INTELLIGENCE plane only; MAIN, INTEGRATION and the web refuse it.
+ *                                                Vendor-neutral by design (the provider is a routing decision, TA-Q-06)
+ *   TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY       main → intelligence: the future named intelligence-project key that
+ *                                                lets MAIN dispatch `classification.understand_ai` (read by H7-D1d, not
+ *                                                yet); refused by INTEGRATION, INTELLIGENCE and the web
+ *   model-provider SDK ambient variables         (domain/model-provider-variables.ts) refused by EVERY plane, the
+ *                                                intelligence plane included: its SDK client receives the key
+ *                                                explicitly, so no ambient credential, endpoint redirect, header,
+ *                                                log or telemetry override can apply
+ *
+ * The INTELLIGENCE plane (declared, not yet deployed) may hold only its own project's TRIGGER_SECRET_KEY, the worker DB
+ * credential (tenant analysis authority, D-H7-1) with its TLS root, and INTELLIGENCE_MODEL_API_KEY. It refuses every
+ * other plane's capability: Meta app configuration, the integration KMS/AWS identity and the AWS credential chain, the
+ * system DB credential, the main and integration Trigger keys and every SDK-ambient model variable. As for MAIN and
+ * INTEGRATION, the web / migration DB credentials, the service-role key and the KMS keyring configuration are kept out
+ * of every jobs plane by the static guards (no jobs file may even name them), not by this runtime list. It writes no
+ * outbox row (no `classification.understood` consumer exists), so it needs no relay wake-up key.
+ *
  * The two Trigger keys are orchestration credentials — never AWS identity — and neither ever falls back to
  * TRIGGER_SECRET_KEY (the project's own key that Trigger.dev injects into each run). Partial DB separation: the
  * integration plane never holds the system database credential; the main plane still needs the worker one (Move saga).
@@ -33,10 +52,14 @@
  * AWS credential-chain variables: its one AWS identity source is the workload certificate above. Local development runs
  * share one .env file across both `trigger dev` sessions, so the check applies to deployed runs only.
  */
+import { MODEL_PROVIDER_AMBIENT_VARIABLES } from "@/domain/model-provider-variables";
 import { NonRetryableJobError, type ExecutionPlane, type JobRelease } from "@/platform/jobs";
 
 export const INTEGRATION_TASK_OPERATOR_KEY_ENV = "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY";
 export const MAIN_RELAY_TRIGGER_KEY_ENV = "TRIGGER_MAIN_RELAY_TRIGGER_KEY";
+export const INTELLIGENCE_TASK_OPERATOR_KEY_ENV = "TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY";
+/** The one model-provider credential (Step H7-D1b): INTELLIGENCE plane only. */
+export const INTELLIGENCE_MODEL_API_KEY_ENV = "INTELLIGENCE_MODEL_API_KEY";
 export const INTEGRATION_AWS_WORKER_ROLE_ARN_ENV = "INTEGRATION_AWS_WORKER_ROLE_ARN";
 export const INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN_ENV = "INTEGRATION_AWS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN";
 export const INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN_ENV = "INTEGRATION_AWS_ROLES_ANYWHERE_PROFILE_ARN";
@@ -62,6 +85,9 @@ const AWS_CREDENTIAL_CHAIN_VARIABLES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_
 /** The hosted web's Meta app and webhook configuration (Steps 7G-C, H6-F3): never a jobs-plane variable. */
 const PROVIDER_META_APP_VARIABLES = ["PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET", "PROVIDER_META_WEBHOOK_VERIFY_TOKEN"];
 
+/** What a deployed INTELLIGENCE run may hold (documentation of the contract; enforcement is the refusal list below). */
+export const INTELLIGENCE_PLANE_VARIABLES: readonly string[] = Object.freeze(["TRIGGER_SECRET_KEY", "DATABASE_WORKER_URL", "DATABASE_SSL_ROOT_CERT", "DATABASE_SSL_ROOT_CERT_PEM", INTELLIGENCE_MODEL_API_KEY_ENV]);
+
 /** Variables a deployed run of each plane must NOT hold. */
 export const PLANE_FORBIDDEN_VARIABLES: Readonly<Record<ExecutionPlane, readonly string[]>> = Object.freeze({
   main: Object.freeze([
@@ -70,6 +96,8 @@ export const PLANE_FORBIDDEN_VARIABLES: Readonly<Record<ExecutionPlane, readonly
     ...RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES,
     INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV,
     ...PROVIDER_META_APP_VARIABLES,
+    INTELLIGENCE_MODEL_API_KEY_ENV,
+    ...MODEL_PROVIDER_AMBIENT_VARIABLES,
   ]),
   integration: Object.freeze([
     "DATABASE_SYSTEM_URL",
@@ -77,6 +105,21 @@ export const PLANE_FORBIDDEN_VARIABLES: Readonly<Record<ExecutionPlane, readonly
     ...AWS_CREDENTIAL_CHAIN_VARIABLES,
     ...RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES,
     ...PROVIDER_META_APP_VARIABLES,
+    INTELLIGENCE_TASK_OPERATOR_KEY_ENV,
+    INTELLIGENCE_MODEL_API_KEY_ENV,
+    ...MODEL_PROVIDER_AMBIENT_VARIABLES,
+  ]),
+  intelligence: Object.freeze([
+    "DATABASE_SYSTEM_URL",
+    INTEGRATION_TASK_OPERATOR_KEY_ENV,
+    MAIN_RELAY_TRIGGER_KEY_ENV,
+    INTELLIGENCE_TASK_OPERATOR_KEY_ENV,
+    ...INTEGRATION_AWS_IDENTITY_VARIABLES,
+    ...RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES,
+    INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV,
+    ...AWS_CREDENTIAL_CHAIN_VARIABLES,
+    ...PROVIDER_META_APP_VARIABLES,
+    ...MODEL_PROVIDER_AMBIENT_VARIABLES,
   ]),
 });
 

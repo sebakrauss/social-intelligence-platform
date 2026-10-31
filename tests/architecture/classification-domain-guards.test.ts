@@ -39,12 +39,14 @@ describe("H7-A1: the classification domain is pure", () => {
       "taxonomy.ts",
       "text-segments.ts",
       "understanding-input.ts",
+      "understanding-outcome.ts",
       "understanding-output.ts",
       "value-inputs.ts",
       "versions.ts",
       "watch-terms.ts",
     ]);
     expect(MODULE_FILES.filter((f) => !f.startsWith(`${MODULE}/domain/`))).toEqual([
+      `${MODULE}/application/ai/understand-ai-contract.ts`,
       `${MODULE}/application/ai/understand-interaction.ts`,
       `${MODULE}/application/ai/understanding-output-schema.ts`,
       `${MODULE}/application/ai/understanding-task.ts`,
@@ -65,9 +67,9 @@ describe("H7-A1: the classification domain is pure", () => {
       for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/domain\/[a-z-]+|@\/modules\/interactions)$/);
     }
     // H7-C: the gateway binding sees its own files, the pure domain, the gateway PORT and the versioned prompt only
-    // (H7-D0k: prompt v2).
+    // (H7-D0k: prompt v2). H7-D1b: the runtime contract also uses the shared kernel's id / correlation parsers.
     for (const file of AI_APPLICATION_FILES) {
-      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/\.\.\/domain\/[a-z-]+|@\/ai\/gateway|@\/prompts\/classification\/understanding\.v2)$/);
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/\.\.\/domain\/[a-z-]+|@\/ai\/gateway|@\/prompts\/classification\/understanding\.v2|@\/domain\/(ids|correlation))$/);
     }
   });
 
@@ -102,7 +104,7 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
   it("registers no classification / intelligence task; `ai/` is only H7-C's gateway + simulator, imported by no runtime; only the MAIN consumer and its composition use the module", () => {
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).filter((name) => /^(classification|intelligence|ai)\./.test(name))).toEqual([]);
     expect(sourceFiles(["ai"])).toEqual(["ai/gateway/attempt.ts", "ai/gateway/failures.ts", "ai/gateway/gateway.ts", "ai/gateway/index.ts", "ai/gateway/provider-port.ts", "ai/gateway/registry.ts", "ai/gateway/task.ts",
-      "ai/providers/anthropic/index.ts", "ai/providers/anthropic/schema-projection.ts", "ai/providers/diagnostics.ts", "ai/providers/openai/index.ts", "ai/providers/simulator/index.ts"]);
+      "ai/providers/anthropic/index.ts", "ai/providers/anthropic/qualified.ts", "ai/providers/anthropic/schema-projection.ts", "ai/providers/diagnostics.ts", "ai/providers/openai/index.ts", "ai/providers/simulator/index.ts"]);
     expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations", "db"]).filter((file) => /@\/ai\/|@\/prompts\/|application\/ai\//.test(codeOf(file)))).toEqual([]);
     expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual(["jobs/reconciliation.ts", "server/persistence/classification.ts"]);
   });

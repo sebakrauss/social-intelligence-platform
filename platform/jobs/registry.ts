@@ -12,7 +12,7 @@
  * binds it, migration 0011); a bound delivery keeps its persisted plane even if this declaration later changes.
  */
 import { LANE_DEFINITIONS, SYSTEM_QUEUE, isLane, type Lane } from "./lanes";
-import { isExecutionPlane, type ExecutionPlane } from "./planes";
+import { isDeliveryPlane, isExecutionPlane, type DeliveryPlane } from "./planes";
 import type { JobPayload, TenantJobPayload } from "./payload";
 
 export interface RetryPolicy {
@@ -46,7 +46,7 @@ export interface TenantTaskDefinition {
   readonly name: string;
   readonly scope: "workspace";
   /** The plane NEW (unbound) work for this task is bound to. */
-  readonly executionPlane: ExecutionPlane;
+  readonly executionPlane: DeliveryPlane;
   readonly lane: Lane;
   readonly retry: RetryPolicy;
   readonly concurrency: ConcurrencyRule;
@@ -89,7 +89,7 @@ export interface TaskRegistry {
    * Outbox topic → execution plane for UNBOUND work: every registered tenant task, nothing else. The claim binds a
    * row to this plane; it never overrides a plane already persisted on the row.
    */
-  readonly unboundRoutes: Readonly<Record<string, ExecutionPlane>>;
+  readonly unboundRoutes: Readonly<Record<string, DeliveryPlane>>;
 }
 
 /** Builds and validates a registry. Throws TaskRegistryError on any unsafe or ambiguous declaration. */
@@ -102,6 +102,8 @@ export function defineTaskRegistry(definitions: readonly TaskDefinition[]): Task
     // Checked at runtime too: a declaration built outside the type system must not slip through without a plane.
     const plane: unknown = definition.executionPlane;
     if (!isExecutionPlane(plane)) throw new TaskRegistryError(`${definition.name}: missing or unknown execution plane`);
+    // H7-D1b: a declared-only plane (intelligence) has no outbox binding (0011) and no runtime client yet.
+    if (!isDeliveryPlane(plane)) throw new TaskRegistryError(`${definition.name}: execution plane ${plane} is not a delivery plane yet`);
     if (definition.scope === "system") {
       if (plane !== "main") throw new TaskRegistryError(`${definition.name}: system tasks run in the main plane`);
       if (!(SYSTEM_TASKS as readonly string[]).includes(definition.name)) {
@@ -121,7 +123,7 @@ export function defineTaskRegistry(definitions: readonly TaskDefinition[]): Task
     byName.set(definition.name, definition);
   }
   const frozen = Object.freeze([...definitions]);
-  const unboundRoutes: Record<string, ExecutionPlane> = {};
+  const unboundRoutes: Record<string, DeliveryPlane> = {};
   for (const definition of frozen) if (definition.scope === "workspace") unboundRoutes[definition.name] = definition.executionPlane;
   return {
     tasks: frozen,

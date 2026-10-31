@@ -176,7 +176,9 @@ describe("H7-D0g: provider boundaries — only Anthropic projects", () => {
 
   it("only the Anthropic adapter uses the projection (OpenAI, simulator, gateway and modules never do)", () => {
     const users = sourceFiles(["app", "ui", "server", "domain", "modules", "platform", "integrations", "jobs", "mutations", "prompts", "ai", "tools"]).filter((file) => /schema-projection|projectSchemaForAnthropic/.test(codeOf(file)));
-    expect(users.sort()).toEqual(["ai/providers/anthropic/index.ts", "ai/providers/anthropic/schema-projection.ts"]);
+    expect(users.sort()).toEqual(["ai/providers/anthropic/index.ts", "ai/providers/anthropic/qualified.ts", "ai/providers/anthropic/schema-projection.ts"]);
+    // H7-D1b: the qualified registry entry reads only the transport schema VERSION (it is fingerprinted), never the projection.
+    expect(codeOf("ai/providers/anthropic/qualified.ts")).not.toMatch(/projectSchemaForAnthropic/);
   });
 });
 

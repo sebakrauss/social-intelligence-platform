@@ -33,6 +33,7 @@ const { mainRemoteFromIntegration, mainSelfRuntime, relayWakeRuntime } = await i
 const { deliveryRuntimes, integrationRemoteFromMain } = await import("@/jobs/main-runtime");
 const { INTEGRATION_AWS_IDENTITY_VARIABLES, PLANE_FORBIDDEN_VARIABLES, RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES, assertPlaneEnvironment, planeEnvironmentProblems } = await import("@/jobs/plane-environment");
 const { wakeRelay } = await import("@/jobs/trigger/define");
+const { MODEL_PROVIDER_AMBIENT_VARIABLES } = await import("@/domain/model-provider-variables");
 
 const PINNED = { kind: "pinned", releaseId: "commit-synthetic-1" } as const;
 const DEVELOPMENT = { kind: "development" } as const;
@@ -127,6 +128,7 @@ describe("per-plane environment contract (deployed runs)", () => {
       "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
       "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY",
       "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET", "PROVIDER_META_WEBHOOK_VERIFY_TOKEN",
+      "TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY", "INTELLIGENCE_MODEL_API_KEY", ...MODEL_PROVIDER_AMBIENT_VARIABLES,
     ]);
     // Step 7G-H5.6B: the retired bootstrap key can never come back unnoticed; the Roles Anywhere identity belongs here.
     expect(planeEnvironmentProblems("integration", PINNED, { AWS_ACCESS_KEY_ID: "synthetic", INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID: "synthetic" })).toEqual(["AWS_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID"]);
@@ -144,6 +146,7 @@ describe("per-plane environment contract (deployed runs)", () => {
       "INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID", "INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY",
       "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
       "PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET", "PROVIDER_META_WEBHOOK_VERIFY_TOKEN",
+      "INTELLIGENCE_MODEL_API_KEY", ...MODEL_PROVIDER_AMBIENT_VARIABLES,
     ]);
     for (const name of [...INTEGRATION_AWS_IDENTITY_VARIABLES, ...RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES]) {
       expect(() => { assertPlaneEnvironment("main", PINNED, { [name]: "synthetic" }); }, name).toThrow(NonRetryableJobError);

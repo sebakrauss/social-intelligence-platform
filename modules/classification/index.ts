@@ -17,6 +17,7 @@ export * from "./domain/understanding-input";
 export * from "./domain/understanding-output";
 export * from "./domain/value-inputs";
 export * from "./domain/human-correction";
+export * from "./domain/understanding-outcome";
 export * from "./domain/versions";
 export * from "./application/ports";
 export * from "./application/understand-deterministic";

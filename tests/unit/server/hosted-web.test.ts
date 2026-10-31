@@ -20,6 +20,7 @@ import nextConfig from "@/next.config";
 import { createSupabaseAuth, readSupabaseAuthConfig } from "@/platform/auth";
 import { ConnectionConfigError, createRuntimeDatabaseFromEnv, type RuntimeDatabase } from "@/platform/db";
 import { CONTENT_SECURITY_POLICY, SECURITY_HEADERS } from "@/server/http/security-headers";
+import { MODEL_PROVIDER_AMBIENT_VARIABLES } from "@/domain/model-provider-variables";
 import { FORBIDDEN_WEB_VARIABLES, WebEnvironmentError, assertWebEnvironment, forbiddenWebVariables, rejectForbiddenWebEnvironment } from "@/server/http/web-environment";
 import { HEALTHY, UNHEALTHY, webHealth } from "@/server/http/health";
 import { createWebDatabase, webPoolMax } from "@/server/persistence/runtime";
@@ -135,6 +136,9 @@ describe("6B.4 · forbidden configuration in the hosted web runtime", () => {
       "INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM",
       "INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM",
       "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
+      "INTELLIGENCE_MODEL_API_KEY",
+      "TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY",
+      ...MODEL_PROVIDER_AMBIENT_VARIABLES,
     ]);
     expect(FORBIDDEN_WEB_VARIABLES).not.toContain("TRIGGER_SECRET_KEY");
     expect(FORBIDDEN_WEB_VARIABLES).not.toContain("TRIGGER_PREVIEW_BRANCH");

@@ -16,7 +16,7 @@ import {
   jobRelease,
   runTenantJob,
   runTenantStepJob,
-  type ExecutionPlane,
+  type DeliveryPlane,
   type JobRelease,
   type RetryPolicy,
   type TaskRegistry,
@@ -49,7 +49,7 @@ export function releaseOf(ctx: TaskRunContext): JobRelease {
 }
 
 /** Post-commit wake-up of the system relay from a task in `plane` (best effort; the runner logs a failure, never fails the run). */
-export function wakeRelay(plane: ExecutionPlane, release: JobRelease): (notices: readonly OutboxNotice[]) => Promise<void> {
+export function wakeRelay(plane: DeliveryPlane, release: JobRelease): (notices: readonly OutboxNotice[]) => Promise<void> {
   return async (notices) => {
     const first = notices[0];
     if (first !== undefined) await nudgeRelay(relayWakeRuntime(plane, release), { outboxId: first.id, correlationId: first.correlationId });
@@ -57,7 +57,7 @@ export function wakeRelay(plane: ExecutionPlane, release: JobRelease): (notices:
 }
 
 /** Refuses a deployed run whose environment carries another plane's capability, then builds the tenant dependencies. */
-function tenantDeps(registry: TaskRegistry, plane: ExecutionPlane, ctx: TaskRunContext) {
+function tenantDeps(registry: TaskRegistry, plane: DeliveryPlane, ctx: TaskRunContext) {
   const release = releaseOf(ctx);
   assertPlaneEnvironment(plane, release, process.env);
   return { registry, worker: workerDatabase(), logger: jobLogger, outboxCommitted: wakeRelay(plane, release) };

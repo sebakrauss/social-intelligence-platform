@@ -7,7 +7,7 @@
  *   2. switch  kill switch ⇒ AI_UNAVAILABLE, no call
  *   3. model   registered, enabled, structured output, provider composed ⇒ otherwise AI_UNAVAILABLE, no call
  *   4. size    system + data over the model's input bound ⇒ AI_INPUT_TOO_LARGE, no call (never truncated)
- *   5. budget  the budget port denies ⇒ AI_BUDGET, no call
+ *   5. budget  the budget port denies, answers anything but "allowed", or throws ⇒ AI_BUDGET, no call
  *   6. call    refusal ⇒ AI_REFUSED · transport ⇒ AI_UNAVAILABLE (retryable, by the LATER runtime only) ·
  *              provider input limit ⇒ AI_INPUT_TOO_LARGE
  *   7. parse   strict JSON.parse of the output text, then the task's validator; the FIRST invalid output gets ONE
@@ -22,9 +22,23 @@ import type { ModelDescriptor, ModelRegistry, RouteTable } from "./registry";
 import { renderCorrection, renderDataBlock, type GatewayTask } from "./task";
 
 export interface BudgetPort {
-  /** Whether one call of this size may be made now (numbers are a later policy; OPEN). */
+  /**
+   * Whether one call of this size may be made now (numbers are a later policy; OPEN). Only an explicit "allowed" permits
+   * the call: "denied", any other answer, or a port that throws ⇒ AI_BUDGET, no provider call (fail closed, H7-D1b).
+   */
   reserve(request: { readonly workspaceId: string; readonly taskId: string; readonly inputChars: number }): Promise<"allowed" | "denied">;
 }
+
+/** The default budget (H7-D1b): denies every call. No amount, price or plan limit is decided (PD OQ-14, TA-Q-23). */
+export const DENY_ALL_BUDGET: BudgetPort = Object.freeze({ reserve: () => Promise.resolve("denied" as const) });
+
+const reserveBudget = async (budget: BudgetPort, request: Parameters<BudgetPort["reserve"]>[0]): Promise<boolean> => {
+  try {
+    return (await budget.reserve(request)) === "allowed";
+  } catch {
+    return false;
+  }
+};
 
 export interface GatewayDependencies {
   readonly registry: ModelRegistry;
@@ -93,7 +107,7 @@ export function createAiGateway(deps: GatewayDependencies): AiGateway {
       const initial: ProviderRequest = { ...base, system: task.prompt.system };
       const inputChars = initial.system.length + initial.data.length;
       if (inputChars > model.maxInputChars) return failed("input_limit");
-      if ((await deps.budget.reserve({ workspaceId: context.workspaceId, taskId: task.taskId, inputChars })) !== "allowed") return failed("budget_exhausted");
+      if (!(await reserveBudget(deps.budget, { workspaceId: context.workspaceId, taskId: task.taskId, inputChars }))) return failed("budget_exhausted");
 
       const attempts: AttemptRecord[] = [];
       const record = (attemptNumber: 1 | 2, request: ProviderRequest, startedAt: Date, response: ProviderResponse, outcome: AttemptOutcome, issueCodes: readonly string[]): void => {

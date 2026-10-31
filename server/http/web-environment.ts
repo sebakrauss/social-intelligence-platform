@@ -25,6 +25,11 @@
  *   INTEGRATION_AWS_BOOTSTRAP_SECRET_ACCESS_KEY
  *   INTEGRATION_KMS_DIAGNOSTIC_FIXTURE             the integration-only KMS worker-auth diagnostic's synthetic
  *                                                  envelope (Step 7E.7-B)
+ *   INTELLIGENCE_MODEL_API_KEY                     the model-provider credential: INTELLIGENCE plane only (H7-A0 D-H7-6,
+ *                                                  Step H7-D1b) — the web never holds model credentials
+ *   TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY         MAIN's future key to dispatch intelligence tasks
+ *   model-provider SDK ambient variables           every credential / endpoint / header / log / telemetry variable the
+ *                                                  model SDKs read on their own (domain/model-provider-variables.ts)
  *
  * Provider app configuration belongs to the web: the Meta app configuration PROVIDER_META_CLIENT_ID,
  * PROVIDER_META_CONFIG_ID and PROVIDER_META_CLIENT_SECRET (Step 7G-C; server/connections/meta-app-config.ts) is
@@ -37,6 +42,7 @@
  * CREDENTIAL_KMS_WEB_ROLE_ARN (Step 7E.2).
  */
 import { NextResponse } from "next/server";
+import { MODEL_PROVIDER_AMBIENT_VARIABLES } from "@/domain/model-provider-variables";
 import { createLogger, stdoutSink } from "@/platform/observability";
 
 export const FORBIDDEN_WEB_VARIABLES = [
@@ -65,6 +71,9 @@ export const FORBIDDEN_WEB_VARIABLES = [
   "INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM",
   "INTEGRATION_AWS_WORKLOAD_PRIVATE_KEY_PEM",
   "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
+  "INTELLIGENCE_MODEL_API_KEY",
+  "TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY",
+  ...MODEL_PROVIDER_AMBIENT_VARIABLES,
 ] as const;
 
 const LOCAL_NODE_ENVS: readonly string[] = ["development", "test"];

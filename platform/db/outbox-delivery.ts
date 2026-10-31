@@ -8,7 +8,7 @@
  * delivery state.
  */
 import { sql } from "drizzle-orm";
-import { isExecutionPlane, type ExecutionPlane, type RunStatus } from "@/platform/jobs";
+import { isDeliveryPlane, type DeliveryPlane, type RunStatus } from "@/platform/jobs";
 import type { DatabaseTransaction } from "./scopes";
 
 export const DELIVERY_FAILURE_CLASSES = [
@@ -50,7 +50,7 @@ export interface ClaimedOutboxRow {
   readonly dispatchAttempts: number;
   readonly recoveryCount: number;
   /** The plane this delivery is bound to, as PERSISTED by the claim (0011): the only plane it may be dispatched on. */
-  readonly executionPlane: ExecutionPlane;
+  readonly executionPlane: DeliveryPlane;
 }
 
 interface ClaimedRowRecord extends Record<string, unknown> {
@@ -72,8 +72,8 @@ interface ClaimedRowRecord extends Record<string, unknown> {
 const date = (value: Date | string): Date => (value instanceof Date ? value : new Date(value));
 
 /** A claimed or dispatched row is always bound (0011 constraints); anything else aborts the pass (fail closed). */
-function boundPlane(value: unknown, outboxId: string): ExecutionPlane {
-  if (!isExecutionPlane(value)) throw new Error(`outbox ${outboxId}: delivery is not bound to an execution plane`);
+function boundPlane(value: unknown, outboxId: string): DeliveryPlane {
+  if (!isDeliveryPlane(value)) throw new Error(`outbox ${outboxId}: delivery is not bound to an execution plane`);
   return value;
 }
 
@@ -92,7 +92,7 @@ export async function claimDueRows(
     readonly minAgeSeconds: number;
     readonly leaseSeconds: number;
     readonly limit: number;
-    readonly unboundRoutes: Readonly<Record<string, ExecutionPlane>>;
+    readonly unboundRoutes: Readonly<Record<string, DeliveryPlane>>;
   },
 ): Promise<readonly ClaimedOutboxRow[]> {
   const routes = JSON.stringify(options.unboundRoutes);
@@ -171,7 +171,7 @@ export interface AwaitingOutcomeRow {
   readonly dispatchedAt: Date;
   readonly runId: string;
   /** The persisted plane of the delivery (0011): the only project its runs may be looked up in. */
-  readonly executionPlane: ExecutionPlane;
+  readonly executionPlane: DeliveryPlane;
 }
 
 /** DISPATCHED rows without a terminal outcome or a diagnostic, each with its current (latest) run. */
@@ -312,7 +312,7 @@ export async function oldestPendingAgeSeconds(tx: DatabaseTransaction, now: Date
  * final, and OBSERVATION_EXHAUSTED (run_diagnostic) is never claimed, polled, recovered or re-dispatched again by any
  * runtime path. A task's implementation may be removed from a plane only when this count is zero.
  */
-export async function countExecutionCapableBound(tx: DatabaseTransaction, options: { readonly topic: string; readonly plane: ExecutionPlane }): Promise<number> {
+export async function countExecutionCapableBound(tx: DatabaseTransaction, options: { readonly topic: string; readonly plane: DeliveryPlane }): Promise<number> {
   const result = await tx.execute<{ n: number }>(sql`
     select count(*)::int as n from system.outbox
      where topic = ${options.topic} and execution_plane = ${options.plane} and run_outcome is null

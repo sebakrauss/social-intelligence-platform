@@ -1,5 +1,5 @@
 /** Vendor-neutral job foundation. The Trigger.dev adapter is imported separately (platform/jobs/trigger-dev). */
-export { EXECUTION_PLANES, isExecutionPlane, type ExecutionPlane } from "./planes";
+export { DELIVERY_PLANES, EXECUTION_PLANES, isDeliveryPlane, isExecutionPlane, type DeliveryPlane, type ExecutionPlane } from "./planes";
 export { crossPlanePin, jobRelease, samePlanePin, type JobRelease } from "./release";
 export { LANES, LANE_DEFINITIONS, SYSTEM_QUEUE, isLane, laneLabel, type Lane, type LaneDefinition } from "./lanes";
 export {

@@ -57,7 +57,9 @@ describe("H7-B: MAIN only, no new task or topic", () => {
     const planes = PRODUCTION_TASKS.tasks.reduce<Record<string, number>>((acc, task) => ({ ...acc, [task.executionPlane]: (acc[task.executionPlane] ?? 0) + 1 }), {});
     expect(planes["main"]).toBe(11);
     expect(PRODUCTION_TASKS.tasks.some((task) => task.name.startsWith("classification."))).toBe(false);
-    expect(users(/classification\.understood|classification\.understand["`]|classification\.understand_ai/)).toEqual([]);
+    expect(users(/classification\.understood|classification\.understand["`]/)).toEqual([]);
+    // H7-D1b: the future intelligence topic is NAMED only by its pure runtime contract — registered nowhere.
+    expect(users(/classification\.understand_ai/)).toEqual(["modules/classification/application/ai/understand-ai-contract.ts"]);
   });
 
   it("no migration after 0024", () => {

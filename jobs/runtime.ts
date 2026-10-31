@@ -6,7 +6,7 @@
  * integration-only (jobs/connections.ts). Never the web URL, the migration credential or a service-role key.
  */
 import { createRuntimeDatabaseFromEnv, type RuntimeDatabase } from "@/platform/db";
-import { crossPlanePin, samePlanePin, type ExecutionPlane, type JobRelease, type JobRuntime } from "@/platform/jobs";
+import { crossPlanePin, samePlanePin, type DeliveryPlane, type JobRelease, type JobRuntime } from "@/platform/jobs";
 import { createTriggerDevRuntime, unreachableJobRuntime } from "@/platform/jobs/trigger-dev";
 import { createLogger, stdoutSink, type Logger } from "@/platform/observability";
 import { MAIN_RELAY_TRIGGER_KEY_ENV } from "./plane-environment";
@@ -47,6 +47,6 @@ export function mainRemoteFromIntegration(release: JobRelease, environment: Envi
 }
 
 /** The runtime that wakes MAIN's outbox.relay after a commit, from a task running in `plane`. */
-export function relayWakeRuntime(plane: ExecutionPlane, release: JobRelease, environment: Environment = process.env): JobRuntime {
+export function relayWakeRuntime(plane: DeliveryPlane, release: JobRelease, environment: Environment = process.env): JobRuntime {
   return plane === "main" ? mainSelfRuntime(release, environment) : mainRemoteFromIntegration(release, environment);
 }
