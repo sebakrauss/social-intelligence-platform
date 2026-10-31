@@ -40,8 +40,10 @@ jobs:
       - name: Secret scan
         run: npm run secret-scan
 
+      # Full npm audit through the exact-exception policy (H7-D1b-sec1): fails on any advisory not listed in
+      # tools/audit-policy/exceptions.ts, on any production finding, and on an expired or stale exception.
       - name: Dependency audit
-        run: npm run audit
+        run: node tools/audit-policy/cli.ts
 
       - name: Lint
         run: npm run lint
