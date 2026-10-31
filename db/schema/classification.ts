@@ -157,6 +157,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "owner_signal_dispatch INSERT app_owner",
       // 0022 (H6-F2): RESTRICTIVE — neither members nor workers append ingestion.process_signals themselves.
       "no_direct_signal_routing INSERT app_worker,authenticated",
+      // 0025 (H7-D1c): RESTRICTIVE — members never append classification.understand_ai (the job runtime does).
+      "no_direct_intelligence_routing INSERT authenticated",
     ],
     privileges: {
       authenticated: ["INSERT"],
@@ -445,17 +447,37 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   },
   // Step H7-A2 (0024): the analysis idempotency anchor — the bound worker only (state, completion and time are the only
   // updatable columns; a terminal request is final).
+  // Step H7-D1c (0025): + the AI generation (the `a{n}` of the dispatch key) and the AI failure class.
   "classification.understanding_requests": {
     class: "workspace_tenant",
     policies: ["worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
-    privileges: { app_worker: ["INSERT", "SELECT", "UPDATE(completed_at)", "UPDATE(state)", "UPDATE(updated_at)"] },
+    privileges: { app_worker: ["INSERT", "SELECT", "UPDATE(ai_failure_class)", "UPDATE(ai_generation)", "UPDATE(completed_at)", "UPDATE(state)", "UPDATE(updated_at)"] },
   },
   // Step H7-A2 (0024): append-only assessments. Machine origins: the bound worker; human corrections: members with
   // workflow.internal (TA §10.3 "correct labels"), as themselves. Guests read nothing.
+  // Step H7-D1c (0025): RESTRICTIVE — members never read SHADOW (AI) assessments; the worker does.
   "classification.assessments": {
     class: "append_only_history",
-    policies: ["member_correct INSERT authenticated", "member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    policies: ["member_correct INSERT authenticated", "member_read SELECT authenticated", "no_shadow_member_reads SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
     privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
+  // Step H7-D1c (0025): the append-only AI attempt ledger and the validated results — the bound worker only (no member,
+  // guest or web access: internal cost telemetry and shadow output).
+  "classification.ai_attempts": {
+    class: "append_only_history",
+    policies: ["worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { app_worker: ["INSERT", "SELECT"] },
+  },
+  "classification.ai_results": {
+    class: "append_only_history",
+    policies: ["worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { app_worker: ["INSERT", "SELECT"] },
+  },
+  // Step H7-D1c (0025): the pre-call budget counters (workspace × task × UTC day), never decreasing; the bound worker only.
+  "classification.ai_budget_reservations": {
+    class: "workspace_tenant",
+    policies: ["worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: { app_worker: ["INSERT", "SELECT", "UPDATE(reserved_calls)", "UPDATE(reserved_input_chars)", "UPDATE(updated_at)"] },
   },
   // Step H7-A2 (0024): append-only watch-term revisions and terms. No runtime writer until the authoring permission is
   // decided (watch-term management is not in the TA §10.3 catalog).
@@ -496,7 +518,11 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
  * The only RESTRICTIVE policies (every other policy is permissive). A restrictive policy narrows what the listed roles'
  * permissive policies allow; flipping one either way changes isolation, so the set is pinned exactly.
  */
-export const RESTRICTIVE_POLICIES: readonly string[] = ["system.outbox no_direct_move_routing", "system.outbox no_direct_reconciliation_routing", "system.outbox no_direct_internal_topics", "system.outbox no_direct_signal_routing"];
+export const RESTRICTIVE_POLICIES: readonly string[] = [
+  "system.outbox no_direct_move_routing", "system.outbox no_direct_reconciliation_routing", "system.outbox no_direct_internal_topics", "system.outbox no_direct_signal_routing",
+  // Step H7-D1c (0025)
+  "system.outbox no_direct_intelligence_routing", "classification.assessments no_shadow_member_reads",
+];
 
 /** EXECUTE grants per function (non-owner grantees). Every function in an application schema is listed. */
 export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]>> = {
@@ -562,4 +588,7 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "classification.source_spans_valid(integer[],integer[],integer)": ["app_worker"],
   "classification.watch_phrases_valid(text[],integer)": ["app_worker"],
   "classification.understanding_request_guard()": [],
+  // Step H7-D1c (0025): the atomic budget reservation (bound workspace, invoker) and the never-decreasing counter guard.
+  "classification.reserve_ai_budget(text,date,integer,bigint,integer,bigint)": ["app_worker"],
+  "classification.ai_budget_reservation_guard()": [],
 };

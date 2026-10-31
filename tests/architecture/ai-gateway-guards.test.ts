@@ -140,9 +140,9 @@ describe("H7-C: nothing is wired to a runtime", () => {
     expect(strip(codeOf("modules/classification/application/understand-deterministic.ts"))).not.toMatch(/understandInteraction|gateway/i);
   });
 
-  it("no migration after 0024", () => {
+  it("no migration after 0025 (H7-D1c: intelligence persistence)", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toBe("0024_classification_persistence.sql");
+    expect(migrations.at(-1)).toBe("0025_intelligence_persistence.sql");
   });
 });
 

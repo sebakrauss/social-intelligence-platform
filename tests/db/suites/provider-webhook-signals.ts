@@ -544,11 +544,12 @@ export function defineProviderWebhookSignalsSuite(getTarget: () => DbTarget): vo
       await privileged.query("delete from system.outbox where workspace_id = $1", [t.workspaceId]);
     });
 
-    it("45. the four restrictive member policies coexist; process_signals is covered, member topics are not", async () => {
+    it("45. the restrictive member policies coexist (four, + 0025's intelligence topic); process_signals is covered, member topics are not", async () => {
       const restrictive = await oracle<{ name: string; roles: string[]; with_check: string }>(
         `select p.polname as name, array(select pg_get_userbyid(r)::text from unnest(p.polroles) r order by 1) as roles, pg_get_expr(p.polwithcheck, p.polrelid) as with_check
            from pg_policy p where p.polrelid = 'system.outbox'::regclass and not p.polpermissive and p.polcmd = 'a' order by 1`);
       expect(restrictive.map((p) => [p.name, p.roles])).toEqual([
+        ["no_direct_intelligence_routing", ["authenticated"]],
         ["no_direct_internal_topics", ["authenticated"]],
         ["no_direct_move_routing", ["app_worker", "authenticated"]],
         ["no_direct_reconciliation_routing", ["authenticated"]],

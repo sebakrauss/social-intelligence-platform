@@ -194,10 +194,13 @@ describe("H6-F4d: confirm marks", () => {
     expect(PRODUCTION_TASKS.tasks.find((task) => task.name === "ingestion.purge_provider_events")?.executionPlane).toBe("main");
   });
 
-  it("no H6 migration after 0023: the only later one is H7-A2's classification persistence, which names no ingestion object", () => {
+  it("no H6 migration after 0023: the later ones are H7's classification (0024) and intelligence (0025) persistence, which name no ingestion object", () => {
     const migrations = readdirSync("db/migrations").filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql"]);
+    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql"]);
     const later = readFileSync("db/migrations/0024_classification_persistence.sql", "utf8").replace(/--[^\n]*/g, " ");
     expect(later).not.toMatch(/ingestion\.|system\.|signal_marks|outbox/);
+    // 0025's only system object is system.outbox (the pinned intelligence plane; execution-plane-guards pins the statements).
+    const intelligence = readFileSync("db/migrations/0025_intelligence_persistence.sql", "utf8").replace(/--[^\n]*/g, " ");
+    expect(intelligence).not.toMatch(/ingestion\.|signal_marks|process_signals|system\.(?!outbox\b)/);
   });
 });

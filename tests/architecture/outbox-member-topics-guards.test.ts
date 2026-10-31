@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import { RESTRICTIVE_POLICIES, TABLE_CLASSIFICATION } from "@/db/schema/classification";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { readMigrations } from "@/tools/db/migrations";
-import { INTERNAL_TOPICS, INTERNAL_TOPICS_POLICY, MEMBER_TOPICS, SIGNAL_INTERNAL_TOPICS } from "../db/suites/outbox-member-topics";
+import { INTELLIGENCE_INTERNAL_TOPICS, INTERNAL_TOPICS, INTERNAL_TOPICS_POLICY, MEMBER_TOPICS, SIGNAL_INTERNAL_TOPICS } from "../db/suites/outbox-member-topics";
 import { codeOf, sourceFiles } from "../support/source-scan";
 
 const MIGRATION = "0021_outbox_internal_topics.sql";
@@ -105,7 +105,9 @@ describe("H6-E1: migration 0021", () => {
         if (roles.includes("authenticated")) policies.set(match[1] ?? "", { migration: m.name, roles, topics: topicsOf(match[3] ?? "") });
       }
     }
-    expect([...policies.keys()].sort()).toEqual(["no_direct_internal_topics", "no_direct_move_routing", "no_direct_reconciliation_routing", "no_direct_signal_routing"]);
+    expect([...policies.keys()].sort()).toEqual(["no_direct_intelligence_routing", "no_direct_internal_topics", "no_direct_move_routing", "no_direct_reconciliation_routing", "no_direct_signal_routing"]);
+    // H7-D1c (0025): the intelligence topic has its own restrictive policy for members (the worker appends it).
+    expect(policies.get("no_direct_intelligence_routing")).toEqual({ migration: "0025_intelligence_persistence.sql", roles: ["authenticated"], topics: [...INTELLIGENCE_INTERNAL_TOPICS] });
     // H6-F2 (0022): the webhook-signal topic has its own restrictive policy (members AND workers) — 0021 stays
     // forward-only; the union is the inventory. H6-F4 registered its task without touching either policy.
     expect(policies.get("no_direct_signal_routing")).toEqual({ migration: "0022_provider_webhook_signals.sql", roles: ["app_worker", "authenticated"], topics: [...SIGNAL_INTERNAL_TOPICS] });

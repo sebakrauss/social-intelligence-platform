@@ -150,6 +150,9 @@ function withVerifiedWideningsRemoved(sources: readonly { name: string; sql: str
  *   cursor of its next unread page; every other terminal state still holds none.
  *   signal_marks_target (0023, Step H6-F4b, TL D-F4B-3): the closed target shape per kind, adding `confirm`
  *   (content + interaction) while account (none) and relist (content only) keep exactly their 0022 shape.
+ *   outbox_execution_plane_known (0025, Step H7-D1c; H7-A0 D-H7-1): the declared intelligence plane joins main and
+ *   integration. 0011 added this CHECK with ALTER TABLE (system.outbox predates it), so its original is read from that
+ *   earlier top-level `alter table … add constraint <name> check (…)` statement of the same table.
  */
 const PINNED_CHECK_REWRITES: Readonly<Record<string, { readonly table: string; readonly column?: string; readonly from: string; readonly to: string }>> = {
   connect_attempts_closed_recorded: {
@@ -179,6 +182,10 @@ const PINNED_CHECK_REWRITES: Readonly<Record<string, { readonly table: string; r
     to:
       "(((kind = 'account' and content_item_id is null and interaction_id is null) or (kind = 'relist' and content_item_id is not null" +
       " and interaction_id is null) or (kind = 'confirm' and content_item_id is not null and interaction_id is not null)))",
+  },  outbox_execution_plane_known: {
+    table: "system.outbox",
+    from: "(execution_plane is null or execution_plane in ('main', 'integration'))",
+    to: "(execution_plane is null or execution_plane in ('main', 'integration', 'intelligence'))",
   },
 };
 
@@ -220,6 +227,12 @@ function withPinnedRewritesRemoved(sources: readonly { name: string; sql: string
       const body = createTableBody(top, table);
       if (body !== undefined && !current.has(name)) {
         const defined = pinnedDefinition(body, name, table, column);
+        if (defined !== undefined) current.set(name, defined);
+      }
+      // A CHECK an earlier migration ADDED to an existing table (top-level ALTER TABLE of the same table, plain re-add-less).
+      if (!current.has(name) && column === undefined) {
+        const added = statements(top, new RegExp(`alter table ${t} [^;]*?add constraint ${name} check `)).find((match) => !/ not valid;/.test(top.slice(match.index, top.indexOf(";", match.index + 1) + 1)));
+        const defined = added === undefined ? undefined : balanced(top, added.index + added[0].length);
         if (defined !== undefined) current.set(name, defined);
       }
       const drops = statements(top, new RegExp(`alter table ${t} drop constraint ${name};`));
@@ -449,7 +462,17 @@ describe("migration lint", () => {
     });
 
     it("pins exactly the reviewed rewrites", () => {
-      expect(Object.keys(PINNED_CHECK_REWRITES)).toEqual(["connect_attempts_closed_recorded", "asset_moves_reason_code_check", "reconciliation_slices_cursor_open", "signal_marks_target"]);
+      expect(Object.keys(PINNED_CHECK_REWRITES)).toEqual(["connect_attempts_closed_recorded", "asset_moves_reason_code_check", "reconciliation_slices_cursor_open", "signal_marks_target", "outbox_execution_plane_known"]);
+    });
+
+    it("the 0025 plane widening reads its original from 0011's ALTER TABLE and admits exactly the pinned rewrite (adversarial)", () => {
+      const base = { name: "0011_m.sql", sql: normalize("alter table system.outbox add column execution_plane text, add constraint outbox_execution_plane_known check (execution_plane is null or execution_plane in ('main', 'integration'));") };
+      const rewrite = (to: string): string => normalize(`alter table system.outbox drop constraint outbox_execution_plane_known; alter table system.outbox add constraint outbox_execution_plane_known check ${to} not valid; alter table system.outbox validate constraint outbox_execution_plane_known;`);
+      const lint = (sql: string): string[] => lintMigrations([base, { name: "0025_m.sql", sql }]);
+      expect(lint(rewrite("(execution_plane is null or execution_plane in ('main', 'integration', 'intelligence'))"))).toEqual([]);
+      expect(lint(rewrite("(execution_plane is null or execution_plane in ('main', 'intelligence'))"))[0]).toMatch(/other than the pinned rewrite/);
+      expect(lint(rewrite("(true)"))[0]).toMatch(/other than the pinned rewrite/);
+      expect(lintMigrations([{ name: "0025_m.sql", sql: rewrite("(execution_plane is null or execution_plane in ('main', 'integration', 'intelligence'))") }])[0]).toMatch(/other than the pinned original/);
     });
   });
 

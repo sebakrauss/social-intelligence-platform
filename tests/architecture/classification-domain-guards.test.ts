@@ -96,9 +96,9 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
     expect(names.filter((name) => /anthropic|openai|langchain|@ai-sdk|^ai$|cohere|mistral|gemini|@google\/generative|ollama|huggingface|franc|cld|langdetect/i.test(name)).sort()).toEqual(["@anthropic-ai/sdk", "openai"]);
   });
 
-  it("the only migration after 0023 is H7-A2's classification persistence (0024)", () => {
+  it("the only migrations after 0023 are H7-A2's classification persistence (0024) and H7-D1c's intelligence persistence (0025)", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql"]);
+    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql"]);
   });
 
   it("registers no classification / intelligence task; `ai/` is only H7-C's gateway + simulator, imported by no runtime; only the MAIN consumer and its composition use the module", () => {

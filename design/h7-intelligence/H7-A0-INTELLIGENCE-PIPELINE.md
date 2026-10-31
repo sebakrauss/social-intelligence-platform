@@ -1130,3 +1130,43 @@ data. The H7-D0 recommendation stays PROVISIONAL (`PRODUCTION_MODEL_SELECTED = N
 - **Guards:** no intelligence → mutations / integrations / moderation / replies / automation / persistence / job-runtime
   path; no consumer of the contract, outcome or qualified entry; only the contract names `accepting`; the frozen semantic
   artifacts are byte-pinned to 31d0b0a.
+
+## 42. H7-D1c as implemented (migration 0025: intelligence persistence; authored, NOT applied)
+
+`db/migrations/0025_intelligence_persistence.sql` — forward-only, expand-only, no backfill; nothing writes it yet
+(H7-D1d). The operational rollback is feature disablement (route disabled ⇒ no row). Applying it to dev-v2 is H7-D1c2.
+
+- **Outbox:** `outbox_execution_plane_known` widened to main · integration · intelligence (the pinned drop / NOT VALID
+  re-add / VALIDATE shape, database-guards `PINNED_CHECK_REWRITES`); `outbox_intelligence_routing` — an intelligence
+  binding only for `classification.understand_ai`, and that topic only to intelligence; members can't append the topic
+  (`no_direct_intelligence_routing`, its own RESTRICTIVE policy — 0021 stays forward-only); no other topic
+  (`classification.understood` stays deferred). The source `DELIVERY_PLANES` stay main · integration until H7-D1d.
+- **Requests:** `ai_generation` (1..1000, the dispatch key's `a{n}`, never decreasing) and `ai_failure_class` (the frozen
+  five, iff AI_FAILED). AI states carry a generation and belong to `classification.intelligence.v1` only, so a
+  `classification.deterministic.v1` request can never be continued. Worker UPDATE gains exactly those two columns.
+- **`classification.ai_attempts`** (append-only ledger, worker only): one row per provider call — ids, versions
+  (task, prompt + hash, output / transport schema, taxonomy, confidence, language policy, input contract), provider,
+  model requested / reported, times, latency, chars, tokens, cost estimate + pricing version (both NULL: TA-Q-23),
+  outcome ⇔ failure class (exact gateway mapping), closed issue codes, correlation and run ids. Idempotent per
+  (request, generation, attempt). No text, prompt, response, reasoning or secret column; identifiers are bounded tokens.
+- **`classification.ai_results`** (append-only, worker only): one validated output per request — the accepted attempt
+  of the same request and generation, route provenance (incl. the qualified configuration fingerprint), summary
+  ≤ 240 plain characters, ≤ 3 verified evidence spans as offsets. Failures live on the request and the ledger only.
+  SHADOW only (`ai_results_shadow_only`; a promotion gate replaces it).
+- **Assessments:** `acceptance_mode` (shadow | accepting; existing and non-AI rows accepting), `pipeline_version`,
+  `language_policy_version`, `ai_result_id`. Every AI row is SHADOW and names its result (same text version, pipeline
+  and language policy, composite FK); members never read shadow rows (`no_shadow_member_reads`, RESTRICTIVE). 0025
+  fails closed over a pre-0025 AI assessment (none exists: dev-v2 census 0). The machine identity index is unchanged —
+  an accepting AI assessment needs a later promotion gate (new method identity or index change).
+- **Budget (Option A):** `classification.ai_budget_reservations` (workspace × task × UTC day counters, never
+  decreasing) + `classification.reserve_ai_budget(task, day, calls, chars, max_calls, max_chars)` — SECURITY INVOKER,
+  bound workspace from context (never a parameter), one conditional `insert … on conflict do update … where` statement:
+  concurrent reservations serialize on the row and re-check the latest totals (proven: 20 concurrent against a cap of
+  5 ⇒ exactly 5). Caps come from the caller; no amount, price or plan limit is decided. Ledger-derived accounting was
+  rejected: it can't reserve atomically before the call.
+- **Isolation and grants:** composite workspace FKs everywhere; RLS enabled and forced; app_worker only (no new role);
+  authenticated: nothing on the new tables. Retention: cascade with the workspace only (durations PD OQ-21).
+- **Tests:** `tests/db/suites/intelligence-persistence.ts` (schema, plane / topic rules, generation, ledger / result
+  bounds and idempotency, shadow invisibility, least privilege, cross-workspace, budget atomicity and race) and
+  `tests/db/local/migration-0025-upgrade.test.ts` (a cluster migrated through 0024 with 0024-era rows, then the real
+  runner: exactly 0025, rows unchanged, fail-closed probe).

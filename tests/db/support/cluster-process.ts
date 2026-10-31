@@ -6,8 +6,11 @@
  */
 import { startLocalCluster } from "./local-cluster.ts";
 
+// Step H7-D1c: an upgrade test may stop the migrations at one exact repository migration (validated by the cluster).
+const migrateThrough = process.env["SIP_LOCAL_CLUSTER_MIGRATE_THROUGH"];
+
 try {
-  const cluster = await startLocalCluster();
+  const cluster = await startLocalCluster(migrateThrough === undefined ? {} : { migrateThrough });
   process.stdout.write(`${JSON.stringify({ target: cluster.target })}\n`);
   process.stdin.on("end", () => {
     void cluster.stop().finally(() => process.exit(0));

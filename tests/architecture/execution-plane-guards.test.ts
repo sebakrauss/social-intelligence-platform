@@ -148,9 +148,23 @@ describe("the persisted plane selects the runtime; no cross-plane fallback", () 
     const later = readdirSync(path.join(root, "db/migrations")).filter((file) => file.endsWith(".sql") && file >= "0012");
     for (const file of later) {
       const text = readFileSync(path.join(root, "db/migrations", file), "utf8");
-      expect(text, file).not.toMatch(/outbox_runs|execution_plane/);
+      if (file !== "0025_intelligence_persistence.sql") expect(text, file).not.toMatch(/outbox_runs|execution_plane/);
       const uses = [...text.matchAll(/^.*\bsystem\.outbox\b.*$/gm)].map((match) => match[0].trim()).filter((line) => !line.startsWith("--"));
       // H6-F2 (0022), like 0019: insert policies and definer INSERTs only (never an UPDATE, a grant or the plane).
+      // H7-D1c (0025): the ONE reviewed plane change — the pinned widening of 0011's CHECK (database-guards), the routing
+      // rule tying the intelligence plane to its one topic, and the members' restrictive policy. Never outbox_runs.
+      if (file === "0025_intelligence_persistence.sql") {
+        const statements = text.replace(/--[^\n]*/g, " ").split(";").map((s) => s.replace(/\s+/g, " ").trim()).filter((s) => /\bsystem\.outbox\b|execution_plane/.test(s));
+        expect(statements, file).toEqual([
+          "alter table system.outbox drop constraint outbox_execution_plane_known",
+          "alter table system.outbox add constraint outbox_execution_plane_known check (execution_plane is null or execution_plane in ('main', 'integration', 'intelligence')) not valid",
+          "alter table system.outbox validate constraint outbox_execution_plane_known",
+          "alter table system.outbox add constraint outbox_intelligence_routing check (execution_plane is null or ((execution_plane = 'intelligence') = (topic = 'classification.understand_ai')))",
+          "create policy no_direct_intelligence_routing on system.outbox as restrictive for insert to authenticated with check (topic not in ('classification.understand_ai'))",
+        ]);
+        expect(text, file).not.toMatch(/outbox_runs/);
+        continue;
+      }
       if (file === "0019_reconciliation_request.sql" || file === "0022_provider_webhook_signals.sql") for (const use of uses) expect(use, file).toMatch(/^(create policy [a-z_]+ on system\.outbox (as restrictive )?for insert to (app_owner|authenticated)|insert into system\.outbox \()/);
       else if (file === "0021_outbox_internal_topics.sql") expect(uses, file).toEqual(["create policy no_direct_internal_topics on system.outbox as restrictive for insert to authenticated"]);
       else expect(uses, file).toEqual([]);

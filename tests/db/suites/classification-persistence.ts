@@ -4,6 +4,9 @@
  * target, append-only assessments/signals/watch terms, the domain vocabulary (round-tripped from the pure domain's
  * exported keys), the machine identity / request idempotency boundaries, human corrections by workflow.internal
  * members as themselves, tenant isolation (read, insert, cross-workspace references) and that no canonical row moves.
+ * Step H7-D1c (0025): every AI row is a SHADOW assessment naming its validated result, so AI rows here reference a
+ * synthetic intelligence chain (intelligence-fixtures.ts); the 0025 objects themselves are proven by
+ * intelligence-persistence.ts.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
@@ -25,6 +28,7 @@ import { withUserScope, withWorkspaceJobScope, type DatabaseTransaction, type Ru
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld } from "../support/world";
 import { sqlState } from "./helpers";
+import { INTELLIGENCE_PIPELINE, LANGUAGE_POLICY, insertAiChain } from "./intelligence-fixtures";
 
 interface Tenant {
   readonly organizationId: string;
@@ -63,6 +67,8 @@ interface AssessmentRow {
   readonly hint?: { readonly kind: string; readonly version: string } | null;
   readonly actor?: string | null;
   readonly corrects?: string | null;
+  /** 0025: the validated result an AI row names (set by `machine` for AI rows). */
+  readonly aiResult?: string | null;
 }
 
 const textArray = (values: readonly (string | null)[] | null | undefined) => (values === null || values === undefined ? null : `{${values.map((v) => (v === null ? "NULL" : `"${v.replace(/(["\\])/g, "\\$1")}"`)).join(",")}}`);
@@ -140,10 +146,12 @@ export function defineClassificationPersistenceSuite(getTarget: () => DbTarget):
     // The default AI identity for AI rows; explicit AI fields on any other origin are sent as given (to prove the shape check).
     const ai = row.ai === null ? null : origin === "ai" ? { ...AI, ...(row.ai ?? {}) } : (row.ai ?? null);
     const values = row.abstention !== undefined && row.abstention !== null ? null : (row.keys ?? []);
+    const shadow = origin === "ai" && ai !== null;
     return sql`
       insert into classification.assessments (id, organization_id, workspace_id, interaction_id, source_text_version_id, dimension, origin, outcome, value_keys, confidence_levels,
         confidence_scores, reason_codes, abstention, language_certainty, taxonomy_version, rule_kind, rule_version, provider, model, model_version, task_id, task_version,
-        prompt_version, prompt_hash, schema_version, confidence_policy_version, hint_kind, adapter_version, actor_user_id, corrects_assessment_id, assessed_at, created_at)
+        prompt_version, prompt_hash, schema_version, confidence_policy_version, hint_kind, adapter_version, actor_user_id, corrects_assessment_id, assessed_at, created_at,
+        acceptance_mode, pipeline_version, language_policy_version, ai_result_id)
       values (${row.id ?? randomUUID()}::uuid, ${t.organizationId}::uuid, ${row.workspaceId ?? t.workspaceId}::uuid, ${row.interaction ?? t.interaction}::uuid, ${row.version ?? t.version}::uuid,
         ${row.dimension}, ${origin}, ${values === null ? "abstained" : "values"},
         ${textArray(values === null ? null : row.keys)}::text[], ${textArray(values === null ? null : (row.levels ?? (row.keys ?? []).map(() => "high")))}::text[],
@@ -152,10 +160,26 @@ export function defineClassificationPersistenceSuite(getTarget: () => DbTarget):
         ${row.rule?.kind ?? null}, ${row.rule?.version ?? null},
         ${ai?.provider ?? null}, ${ai?.model ?? null}, ${ai?.model_version ?? null}, ${ai?.task_id ?? null}, ${ai?.task_version ?? null}, ${ai?.prompt_version ?? null},
         ${ai?.prompt_hash ?? null}, ${ai?.schema_version ?? null}, ${ai?.confidence_policy_version ?? null},
-        ${row.hint?.kind ?? null}, ${row.hint?.version ?? null}, ${row.actor ?? null}::uuid, ${row.corrects ?? null}::uuid, now(), now())
+        ${row.hint?.kind ?? null}, ${row.hint?.version ?? null}, ${row.actor ?? null}::uuid, ${row.corrects ?? null}::uuid, now(), now(),
+        ${shadow ? "shadow" : "accepting"}, ${shadow ? INTELLIGENCE_PIPELINE : null}, ${shadow ? LANGUAGE_POLICY : null}, ${shadow ? (row.aiResult ?? null) : null}::uuid)
       returning id`;
   };
-  const machine = (t: Tenant, row: AssessmentRow) => asWorker(t, (tx) => tx.execute<{ id: string }>(insertSql(t, row))).then((r) => r.rows[0]?.id ?? "");
+  /** 0025: one synthetic intelligence chain (request → attempt → result) per text version an AI row assesses. */
+  const results = new Map<string, Promise<string>>();
+  const resultFor = (t: Tenant, row: AssessmentRow): Promise<string> => {
+    const target = { organizationId: t.organizationId, workspaceId: row.workspaceId ?? t.workspaceId, interaction: row.interaction ?? t.interaction, version: row.version ?? t.version };
+    const key = `${target.workspaceId}:${target.interaction}:${target.version}`;
+    let result = results.get(key);
+    if (result === undefined) {
+      result = insertAiChain(privileged, target).then((chain) => chain.resultId);
+      results.set(key, result);
+    }
+    return result;
+  };
+  const machine = async (t: Tenant, row: AssessmentRow) => {
+    const aiResult = (row.origin ?? "ai") === "ai" && row.ai !== null ? await resultFor(t, row) : null;
+    return asWorker(t, (tx) => tx.execute<{ id: string }>(insertSql(t, { ...row, aiResult }))).then((r) => r.rows[0]?.id ?? "");
+  };
   const human = (t: Tenant, role: Role, row: AssessmentRow, workspaceId = t.workspaceId) =>
     asMember(t, role, workspaceId, (tx) => tx.execute<{ id: string }>(insertSql(t, { origin: "human", actor: t.users[role], ...row }))).then((r) => r.rows[0]?.id ?? "");
 
@@ -202,11 +226,12 @@ export function defineClassificationPersistenceSuite(getTarget: () => DbTarget):
   });
 
   describe("schema", () => {
-    it("1. 0024 created the classification schema (owned by app_owner) with its five tables, RLS enabled and forced", async () => {
+    it("1. 0024 created the classification schema (owned by app_owner) with its five tables (0025 adds three), RLS enabled and forced", async () => {
       const tables = await oracle<{ t: string; owner: string; rls: boolean; forced: boolean }>(
         `select c.relname as t, pg_get_userbyid(c.relowner) as owner, c.relrowsecurity as rls, c.relforcerowsecurity as forced
            from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'classification' and c.relkind = 'r' order by 1`);
-      expect(tables).toEqual(["assessments", "signals", "understanding_requests", "watch_term_revisions", "watch_terms"].map((t) => ({ t, owner: "app_owner", rls: true, forced: true })));
+      expect(tables).toEqual(["ai_attempts", "ai_budget_reservations", "ai_results", "assessments", "signals", "understanding_requests", "watch_term_revisions", "watch_terms"]
+        .map((t) => ({ t, owner: "app_owner", rls: true, forced: true })));
       expect(await oracle("select pg_get_userbyid(nspowner) as owner from pg_namespace where nspname = 'classification'")).toEqual([{ owner: "app_owner" }]);
     });
 
@@ -444,7 +469,9 @@ export function defineClassificationPersistenceSuite(getTarget: () => DbTarget):
       const id = await request(A, A.version, "pipeline.v4");
       await move(A, id, "DETERMINISTIC_DONE", false);
       expect(await sqlState(move(A, id, "PENDING", false))).toMatchObject({ code: "23514" });
-      expect(await sqlState(move(A, id, "COMPLETED", false))).toMatchObject({ code: "23514", constraint: "understanding_requests_completion" });
+      expect(await sqlState(move(A, id, "DETERMINISTIC_ONLY", false))).toMatchObject({ code: "23514", constraint: "understanding_requests_completion" });
+      // 0025: COMPLETED is an AI state — only an intelligence-pipeline request with a generation may reach it.
+      expect(await sqlState(move(A, id, "COMPLETED", true))).toMatchObject({ code: "23514", constraint: "understanding_requests_ai_state" });
       await move(A, id, "DETERMINISTIC_ONLY", true);
       expect(await sqlState(move(A, id, "AI_PENDING", false))).toMatchObject({ code: "23514" });
       expect(await sqlState(asWorker(A, (tx) => tx.execute(sql`update classification.understanding_requests set pipeline_version = 'x' where id = ${id}::uuid`)))).toMatchObject({ code: "42501" });

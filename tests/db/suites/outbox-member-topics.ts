@@ -39,6 +39,12 @@ export const INTERNAL_TOPICS_POLICY = "no_direct_internal_topics";
  * `no_direct_signal_routing` (members AND workers), registered as a tenant task since H6-F4.
  */
 export const SIGNAL_INTERNAL_TOPICS = ["ingestion.process_signals"] as const;
+/**
+ * Step H7-D1c (0025): the INTELLIGENCE model-execution topic, blocked for members by its OWN restrictive policy
+ * `no_direct_intelligence_routing` (workers append it). Not a registered task yet: the intelligence plane isn't a
+ * delivery plane in source until the H7-D1d runtime, so it is outside the registry closure until then.
+ */
+export const INTELLIGENCE_INTERNAL_TOPICS = ["classification.understand_ai"] as const;
 const CONFIRM = "ingestion.confirm_interaction";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CONFIG: DeliveryConfig = {
@@ -166,6 +172,8 @@ export function defineOutboxMemberTopicsSuite(getTarget: () => DbTarget): void {
         `select p.polname as name, array(select pg_get_userbyid(r)::text from unnest(p.polroles) r order by 1) as roles, pg_get_expr(p.polwithcheck, p.polrelid) as with_check
            from pg_policy p where p.polrelid = 'system.outbox'::regclass and not p.polpermissive and p.polcmd = 'a' order by 1`);
       expect(restrictive.map((p) => [p.name, p.roles])).toEqual([
+        // 0025 (H7-D1c): the intelligence topic, for members only.
+        ["no_direct_intelligence_routing", ["authenticated"]],
         ["no_direct_internal_topics", ["authenticated"]],
         ["no_direct_move_routing", ["app_worker", "authenticated"]],
         ["no_direct_reconciliation_routing", ["authenticated"]],
@@ -174,7 +182,7 @@ export function defineOutboxMemberTopicsSuite(getTarget: () => DbTarget): void {
       ]);
       // Union closure on the live catalog: every internal topic is removed from the member by at least one policy.
       const union = new Set(restrictive.flatMap((p) => [...p.with_check.matchAll(/'([a-z_]+(?:\.[a-z_]+)+)'::text/g)].map((m) => m[1])));
-      for (const topic of [...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS]) expect(union.has(topic), topic).toBe(true);
+      for (const topic of [...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS, ...INTELLIGENCE_INTERNAL_TOPICS]) expect(union.has(topic), topic).toBe(true);
       for (const topic of MEMBER_TOPICS) expect(union.has(topic), topic).toBe(false);
     });
   });

@@ -93,7 +93,9 @@ describe("H7-A2: scope of 0024", () => {
   it("creates exactly the five classification tables, all classified", () => {
     expect(created).toEqual(["classification.understanding_requests", "classification.assessments", "classification.watch_term_revisions", "classification.watch_terms", "classification.signals"]);
     for (const table of created) expect(TABLE_CLASSIFICATION[table ?? ""], table).toBeDefined();
-    for (const fn of Object.keys(FUNCTION_EXECUTE).filter((name) => name.startsWith("classification."))) expect(CODE, fn).toContain(`create function ${fn.slice(0, fn.indexOf("("))}(`);
+    // H7-D1c (0025) adds the budget reservation function and its counter guard; every other classification function is 0024's.
+    const later = ["classification.reserve_ai_budget(text,date,integer,bigint,integer,bigint)", "classification.ai_budget_reservation_guard()"];
+    for (const fn of Object.keys(FUNCTION_EXECUTE).filter((name) => name.startsWith("classification.") && !later.includes(name))) expect(CODE, fn).toContain(`create function ${fn.slice(0, fn.indexOf("("))}(`);
   });
 
   it("no accepted-interpretation, protection, topic, priority/value, ledger or attempt persistence (derived or later-owned)", () => {

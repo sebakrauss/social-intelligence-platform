@@ -48,7 +48,12 @@ export interface LocalCluster {
   stop(): Promise<void>;
 }
 
-export async function startLocalCluster(): Promise<LocalCluster> {
+/** `migrateThrough`: apply the repository migrations only up to (and including) that exact migration file. */
+export async function startLocalCluster(options: { readonly migrateThrough?: string } = {}): Promise<LocalCluster> {
+  const all = readMigrations();
+  const through = options.migrateThrough;
+  if (through !== undefined && !all.some((migration) => migration.name === through)) throw new Error("migrateThrough names no repository migration");
+  const migrations = through === undefined ? all : all.filter((migration) => migration.name <= through);
   const port = await freePort();
   const directory = await mkdtemp(path.join(os.tmpdir(), "sip-pg-"));
   const superPassword = password();
@@ -83,7 +88,7 @@ export async function startLocalCluster(): Promise<LocalCluster> {
     const migrator = new pg.Client({ host: "127.0.0.1", port, user: "postgres", password: migrationPassword, database: DATABASE });
     await migrator.connect();
     try {
-      await applyMigrations(migrator, readMigrations());
+      await applyMigrations(migrator, migrations);
       const states = await provisionLoginRoles(migrator, passwords);
       const problems = states.flatMap((state) => state.problems.map((problem) => `${state.login}: ${problem}`));
       if (problems.length > 0) throw new Error(`login role provisioning: ${problems.join("; ")}`);
