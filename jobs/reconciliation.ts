@@ -10,14 +10,30 @@
  * payload, in the same transaction (request + signals commit together; a retry re-runs both idempotently). Ingestion
  * itself stays independent of classification: the composition lives here. Logs carry ids, counts and outcome classes
  * only — never text.
+ *
+ * Step H7-D1d: after a DETERMINISTIC_DONE outcome the same transaction asks the intelligence pipeline to continue
+ * (dispatchUnderstanding: request AI_PENDING + its `classification.understand_ai` outbox row, atomically — only when
+ * the route policy, the kill switches and every pre-model check allow it; by default nothing is read or written), and
+ * every delivery runs one bounded recovery pass over the workspace's stale in-flight intelligence requests.
  */
 import { randomUUID } from "node:crypto";
-import { ARRIVALS, understandDeterministically, type Arrival, type DeterministicOutcome } from "@/modules/classification";
+import {
+  ARRIVALS,
+  dispatchUnderstanding,
+  recoverStaleUnderstanding,
+  understandDeterministically,
+  type Arrival,
+  type DeterministicOutcome,
+  type DispatchOutcome,
+  type RecoveryOutcome,
+  type UnderstandAiRoutePolicy,
+} from "@/modules/classification";
 import { acceptObservedInteraction, planReconciliation, type ObservedOutcome, type PlanOutcome } from "@/modules/ingestion";
 import { NonRetryableJobError, type TenantJobContext } from "@/platform/jobs";
 import type { Logger } from "@/platform/observability";
-import { classificationScope } from "@/server/persistence/classification";
+import { classificationScope, intelligenceScope } from "@/server/persistence/classification";
 import { ingestionStores, reconciliationScope } from "@/server/persistence/ingestion";
+import { INTELLIGENCE_ROUTE_POLICY } from "./intelligence-policy";
 import { jobLogger } from "./runtime";
 
 const systemClock = { newId: randomUUID, now: () => new Date() };
@@ -32,7 +48,12 @@ export async function runReconcileAccount(context: TenantJobContext, clock: { re
   return outcome;
 }
 
-export type InteractionsObservedResult = ObservedOutcome & { readonly classification: DeterministicOutcome | null };
+export type InteractionsObservedResult = ObservedOutcome & {
+  readonly classification: DeterministicOutcome | null;
+  /** Step H7-D1d: the intelligence continuation of a DETERMINISTIC_DONE request (null when none was considered). */
+  readonly intelligence: DispatchOutcome | null;
+  readonly recovery: RecoveryOutcome;
+};
 
 /**
  * interactions.observed: the IDs-only event names one canonical event of this workspace. Ingestion verifies it; then a
@@ -42,6 +63,7 @@ export async function runInteractionsObserved(
   context: TenantJobContext,
   clock: { readonly newId: () => string; readonly now: () => Date } = systemClock,
   log: Logger = jobLogger,
+  policy: UnderstandAiRoutePolicy = INTELLIGENCE_ROUTE_POLICY,
 ): Promise<InteractionsObservedResult> {
   const subjects = context.payload.subjectIds;
   const eventId = subjects["ingestion_event_id"];
@@ -56,11 +78,16 @@ export async function runInteractionsObserved(
   });
   if (outcome.kind === "rejected") throw new NonRetryableJobError(outcome.reason);
   // Only an event that ESTABLISHED a text version is analyzed — by that version's id, never the current pointer.
-  if ((outcome.change !== "created" && outcome.change !== "text_changed") || sourceTextVersionId === null) return { ...outcome, classification: null };
+  const fields = { workspaceId: context.payload.workspaceId, task: "interactions.observed" } as const;
+  const recover = async (): Promise<RecoveryOutcome> => {
+    const recovery = await recoverStaleUnderstanding(intelligenceScope(context), clock, policy, { correlationId: context.payload.correlationId });
+    if (recovery.redispatched + recovery.failed > 0) log.info("classification.intelligence.recovered", { ...fields, outcome: "ok", count: recovery.redispatched + recovery.failed, operation: `redispatched.${String(recovery.redispatched)}` });
+    return recovery;
+  };
+  if ((outcome.change !== "created" && outcome.change !== "text_changed") || sourceTextVersionId === null) return { ...outcome, classification: null, intelligence: null, recovery: await recover() };
   if (!(ARRIVALS as readonly string[]).includes(outcome.arrival)) throw new NonRetryableJobError("invalid_arrival");
   const started = Date.now();
   const classification = await understandDeterministically(classificationScope(context), clock, { interactionId, sourceTextVersionId, arrival: outcome.arrival as Arrival });
-  const fields = { workspaceId: context.payload.workspaceId, task: "interactions.observed" } as const;
   if (classification.kind !== "recorded") {
     log.warn(`classification.deterministic.${classification.kind}`, { ...fields, outcome: "error", count: 1 });
     throw new NonRetryableJobError(`classification_${classification.kind}`);
@@ -68,5 +95,10 @@ export async function runInteractionsObserved(
   log.info("classification.deterministic.recorded", { ...fields, outcome: "ok", operation: `request.${classification.state.toLowerCase()}`, durationMs: Date.now() - started, count: classification.signalsInserted });
   for (const [kind, n] of Object.entries(classification.signals)) if (n > 0) log.info(`classification.signal.${kind}`, { ...fields, count: n });
   if (classification.signalsEquivalent > 0) log.info("classification.signal.equivalent", { ...fields, count: classification.signalsEquivalent });
-  return { ...outcome, classification };
+  // Own-brand text (SKIPPED_OWN_BRAND) and a request a later stage already owns are never continued.
+  const intelligence = classification.state === "DETERMINISTIC_DONE"
+    ? await dispatchUnderstanding(intelligenceScope(context), clock, policy, { workspaceId: context.payload.workspaceId, interactionId, sourceTextVersionId, arrival: outcome.arrival as Arrival, correlationId: context.payload.correlationId })
+    : null;
+  if (intelligence !== null) log.info("classification.intelligence.dispatch", { ...fields, outcome: "ok", operation: intelligence.kind === "skipped" ? `skipped.${intelligence.reason}` : intelligence.kind });
+  return { ...outcome, classification, intelligence, recovery: await recover() };
 }

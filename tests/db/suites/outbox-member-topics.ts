@@ -41,8 +41,8 @@ export const INTERNAL_TOPICS_POLICY = "no_direct_internal_topics";
 export const SIGNAL_INTERNAL_TOPICS = ["ingestion.process_signals"] as const;
 /**
  * Step H7-D1c (0025): the INTELLIGENCE model-execution topic, blocked for members by its OWN restrictive policy
- * `no_direct_intelligence_routing` (workers append it). Not a registered task yet: the intelligence plane isn't a
- * delivery plane in source until the H7-D1d runtime, so it is outside the registry closure until then.
+ * `no_direct_intelligence_routing` (workers append it). Registered as a tenant task since H7-D1d, so it joins the
+ * registry closure.
  */
 export const INTELLIGENCE_INTERNAL_TOPICS = ["classification.understand_ai"] as const;
 const CONFIRM = "ingestion.confirm_interaction";
@@ -160,7 +160,7 @@ export function defineOutboxMemberTopicsSuite(getTarget: () => DbTarget): void {
     it("the inventory is closed over the registry: every tenant task that is not a member topic, and nothing else", () => {
       const tenantTasks = PRODUCTION_TASKS.tasks.filter((task) => task.scope === "workspace").map((task) => task.name);
       const internal = tenantTasks.filter((name) => !(MEMBER_TOPICS as readonly string[]).includes(name));
-      expect(internal.sort()).toEqual([...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS].sort());
+      expect(internal.sort()).toEqual([...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS, ...INTELLIGENCE_INTERNAL_TOPICS].sort());
       expect(INTERNAL_TOPICS).toContain(CONFIRM);
       for (const topic of MEMBER_TOPICS) expect(PRODUCTION_TASKS.tenant(topic), topic).toBeDefined();
     });
@@ -270,7 +270,7 @@ export function defineOutboxMemberTopicsSuite(getTarget: () => DbTarget): void {
         return Promise.resolve(undefined);
       };
       const runtime = new FakeJobRuntime(new Map([[CONFIRM, handler]]), (task) => PRODUCTION_TASKS.get(task)?.retry ?? { maxAttempts: 1, factor: 2, minDelayMs: 100, maxDelayMs: 1_000, randomize: false });
-      const deps: DeliveryDependencies = { system, runtimes: { main: runtime, integration: runtime }, registry: PRODUCTION_TASKS, logger: createLogger({ sink: () => undefined, now: () => new Date() }), clock: () => new Date(), config: CONFIG };
+      const deps: DeliveryDependencies = { system, runtimes: { main: runtime, integration: runtime, intelligence: runtime }, registry: PRODUCTION_TASKS, logger: createLogger({ sink: () => undefined, now: () => new Date() }), clock: () => new Date(), config: CONFIG };
       await relayPass(deps);
       const [after] = await rows(world.A1);
       expect(after).toMatchObject({ id: row.id, status: "DISPATCHED", execution_plane: "integration" });

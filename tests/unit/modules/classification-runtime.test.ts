@@ -58,7 +58,7 @@ function world(bound = WS): World {
   };
   // The reader sees only the bound workspace (RLS) and only a version of the SAME interaction.
   const scope: ClassificationScope = {
-    texts: { analysisText: (interactionId, versionId) => { const r = texts.get(`${interactionId}|${versionId}`); return Promise.resolve(r?.workspaceId === bound ? r : undefined); } },
+    texts: { analysisText: (interactionId, versionId) => { const r = texts.get(`${interactionId}|${versionId}`); return Promise.resolve(r?.workspaceId === bound ? r : undefined); }, understandingContext: () => Promise.resolve(undefined) },
     store,
   };
   return { texts, requests, signals, scope, bound };

@@ -6,7 +6,7 @@
 import { createRuntimeDatabaseFromEnv, type RuntimeDatabase } from "@/platform/db";
 import { crossPlanePin, type ExecutionPlaneRuntimes, type JobRelease, type JobRuntime } from "@/platform/jobs";
 import { createTriggerDevRuntime, unreachableJobRuntime } from "@/platform/jobs/trigger-dev";
-import { INTEGRATION_TASK_OPERATOR_KEY_ENV } from "./plane-environment";
+import { INTEGRATION_TASK_OPERATOR_KEY_ENV, INTELLIGENCE_TASK_OPERATOR_KEY_ENV } from "./plane-environment";
 import { mainSelfRuntime } from "./runtime";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -31,7 +31,23 @@ export function integrationRemoteFromMain(release: JobRelease, environment: Envi
   return createTriggerDevRuntime({ accessToken, branch: "none", externalDeploymentId: pin.externalDeploymentId });
 }
 
+/**
+ * The intelligence plane's project, from the main plane (Step H7-D1d): only the named intelligence-project key (Task
+ * operator, restricted to `classification.understand_ai`) — never TRIGGER_SECRET_KEY. Same pinning as integration. The
+ * key is not installed yet (H7-D1e): absent → unreachable, so nothing can be enqueued there.
+ */
+export function intelligenceRemoteFromMain(release: JobRelease, environment: Environment = process.env): JobRuntime {
+  const accessToken = environment[INTELLIGENCE_TASK_OPERATOR_KEY_ENV];
+  const pin = crossPlanePin(release);
+  if (accessToken === undefined || accessToken === "" || !pin.allowed) return unreachableJobRuntime();
+  return createTriggerDevRuntime({ accessToken, branch: "none", externalDeploymentId: pin.externalDeploymentId });
+}
+
 /** The job runtime of each plane, for the outbox relay and sweepers running in the main plane. */
 export function deliveryRuntimes(release: JobRelease, environment: Environment = process.env): ExecutionPlaneRuntimes {
-  return Object.freeze({ main: mainSelfRuntime(release, environment), integration: integrationRemoteFromMain(release, environment) });
+  return Object.freeze({
+    main: mainSelfRuntime(release, environment),
+    integration: integrationRemoteFromMain(release, environment),
+    intelligence: intelligenceRemoteFromMain(release, environment),
+  });
 }

@@ -9,6 +9,8 @@
  *     outbox plane list equals the 0011 database check;
  *   - the SDK-ambient refusal list is used only by the two refusal guards;
  *   - the frozen semantic artifacts are byte-identical to the H7-D0 closure (31d0b0a).
+ * Step H7-D1d: the INTELLIGENCE runner and its composition are now the contract's only consumers (no product consumer);
+ * the intelligence plane is a delivery plane (0025); every writer is shadow-only; no runtime file reaches an action.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -22,6 +24,19 @@ const strip = (code: string): string => code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]
 const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1] ?? "");
 
 const CONTRACT = "modules/classification/application/ai/understand-ai-contract.ts";
+const ROUTING = "modules/classification/domain/intelligence-routing.ts";
+/** H7-D1d: the runtime around the model call — MAIN dispatch / recovery, the runner, its writers, its composition. */
+const INTELLIGENCE_RUNTIME = [
+  "modules/classification/application/intelligence-dispatch.ts",
+  "modules/classification/application/ai/run-understanding.ts",
+  "modules/classification/domain/understanding-eligibility.ts",
+  "modules/classification/intelligence-runtime.ts",
+  "modules/classification/persistence/intelligence-store.ts",
+  "server/persistence/classification.ts",
+  "jobs/intelligence.ts",
+  "jobs/intelligence-policy.ts",
+  "jobs/trigger/intelligence/classification.ts",
+];
 const OUTCOME = "modules/classification/domain/understanding-outcome.ts";
 const QUALIFIED = "ai/providers/anthropic/qualified.ts";
 const INTELLIGENCE_FILES = [...sourceFiles(["ai"]), ...sourceFiles(["modules/classification/application/ai"]), OUTCOME, "prompts/classification/understanding.v2.ts"];
@@ -48,19 +63,46 @@ describe("H7-D1b: no path from intelligence to an action", () => {
 });
 
 describe("H7-D1b: no consumer, no promotion, shadow only", () => {
-  it("no runtime, product or Trigger config imports the runtime contract, the qualified entry or the derived outcome", () => {
+  it("H7-D1d: only the INTELLIGENCE runner, its entry and its composition consume the contract, the qualified entry and the derived outcome", () => {
     const consumers = sourceFiles([...RUNTIME, "modules", "domain"]).filter((file) => /understand-ai-contract|anthropic\/qualified|understanding-outcome|deriveUnderstandingOutcome/.test(strip(codeOf(file))));
-    expect(consumers.sort()).toEqual(["modules/classification/domain/understanding-outcome.ts", "modules/classification/index.ts"]);
+    expect(consumers.sort()).toEqual([
+      "jobs/intelligence.ts",
+      "modules/classification/application/ai/run-understanding.ts",
+      "modules/classification/domain/understanding-outcome.ts",
+      "modules/classification/index.ts",
+      "modules/classification/intelligence-runtime.ts",
+    ]);
     for (const config of ["trigger.config.ts", "trigger.integration.config.ts", "trigger.managed-test.config.ts"]) expect(strip(codeOf(config)), config).not.toMatch(/intelligence|understand_ai|@\/ai\//i);
   });
 
-  it("only the runtime contract names the `accepting` mode, and its default and H7-D1 mode are `shadow`", () => {
+  it("only the routing contract names the `accepting` mode (its vocabulary), and its default and H7-D1 mode are `shadow`", () => {
     const namers = sourceFiles(["ai", "modules", "domain", ...RUNTIME]).filter((file) => /["']accepting["']/.test(strip(codeOf(file))));
-    expect(namers).toEqual([CONTRACT]);
-    const code = strip(codeOf(CONTRACT));
+    expect(namers).toEqual([ROUTING]);
+    const code = strip(codeOf(ROUTING));
     expect(code).toMatch(/export const H7_D1_ACCEPTANCE_MODE = "shadow" as const satisfies AcceptanceMode;/);
     expect(code).toMatch(/readonly acceptanceMode: typeof H7_D1_ACCEPTANCE_MODE;/);
     expect(code).toMatch(/readonly realDataEligible: false;/);
+  });
+
+  it("H7-D1d: every writer is SHADOW-only — results and AI assessments are written `shadow`, nothing writes `accepting`", () => {
+    const store = strip(codeOf("modules/classification/persistence/intelligence-store.ts"));
+    expect(store).toMatch(/created_at, acceptance_mode, pipeline_version, language_policy_version, ai_result_id\)/);
+    expect(store).toMatch(/\$\{row\.createdAt\}, 'shadow', \$\{row\.pipelineVersion\}/);
+    expect(store).not.toMatch(/accepting/);
+    expect(strip(codeOf("modules/classification/application/ports.ts"))).toMatch(/readonly acceptanceMode: "shadow";/);
+    expect(strip(codeOf("modules/classification/application/ai/run-understanding.ts"))).toMatch(/acceptanceMode: "shadow",/);
+    // No product reader of the shadow rows: only the intelligence store touches ai_results / AI assessments, and it reads
+    // assessments back for RULE candidates only.
+    const readers = sourceFiles(["app", "ui", "server", "modules", "platform", "integrations", "jobs"]).filter((file) => /classification\.ai_results|classification\.ai_attempts|classification\.assessments/.test(strip(codeOf(file))));
+    expect(readers).toEqual(["modules/classification/persistence/intelligence-store.ts"]);
+    expect(store).toMatch(/from classification\.assessments\s+where source_text_version_id = \$\{target\.sourceTextVersionId\}::uuid and interaction_id = \$\{target\.interactionId\}::uuid and origin = 'rule'/);
+  });
+
+  it("H7-D1d (25): no intelligence runtime file reaches an executor, a provider integration, moderation, replies, automation or alerts, or names an action", () => {
+    for (const file of INTELLIGENCE_RUNTIME) {
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).not.toMatch(/(^|\/)(mutations|integrations|moderation|replies|automation|alerts|attention|executor|connections)(\/|$)/);
+      expect(strip(codeOf(file)), file).not.toMatch(/MutationRequest|mutationPort|hideComment|deleteComment|blockAuthor|sendReply|privateReply|executeMutation|classification\.understood/);
+    }
   });
 
   it("the qualified descriptor is disabled and nothing reads the environment or a credential in the new files", () => {
@@ -70,10 +112,13 @@ describe("H7-D1b: no consumer, no promotion, shadow only", () => {
 });
 
 describe("H7-D1b: the declared-only plane can't reach the delivery path before 0025", () => {
-  it("the outbox plane list equals DELIVERY_PLANES and the 0011 database check", () => {
+  it("the outbox plane list equals DELIVERY_PLANES and the 0025 database check (H7-D1d: intelligence is a delivery plane)", () => {
     expect([...OUTBOX_EXECUTION_PLANES]).toEqual([...DELIVERY_PLANES]);
-    const sql = codeOf("db/migrations/0011_outbox_execution_plane.sql");
-    expect(sql).toMatch(/execution_plane is null or execution_plane in \('main', 'integration'\)/);
+    expect([...DELIVERY_PLANES]).toEqual(["main", "integration", "intelligence"]);
+    expect(codeOf("db/migrations/0011_outbox_execution_plane.sql")).toMatch(/execution_plane is null or execution_plane in \('main', 'integration'\)/);
+    const sql = codeOf("db/migrations/0025_intelligence_persistence.sql");
+    expect(sql).toMatch(/execution_plane is null or execution_plane in \('main', 'integration', 'intelligence'\)/);
+    expect(sql).toMatch(/\(execution_plane = 'intelligence'\) = \(topic = 'classification\.understand_ai'\)/);
   });
 
   it("every delivery seam takes DeliveryPlane, never the declared ExecutionPlane", () => {

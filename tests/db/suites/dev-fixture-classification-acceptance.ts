@@ -204,7 +204,7 @@ export function defineDevFixtureClassificationAcceptanceSuite(getTarget: () => D
       const deps = { registry: PRODUCTION_TASKS, worker, logger };
       const handlers = new Map<string, FakeHandler>([["interactions.observed", (payload, run) => runTenantJob(deps, "interactions.observed", payload, run, (context) => runInteractionsObserved(context))]]);
       const runtime = new FakeJobRuntime(handlers, (task) => PRODUCTION_TASKS.get(task)?.retry ?? { maxAttempts: 1, factor: 2, minDelayMs: 100, maxDelayMs: 1_000, randomize: false });
-      const delivery = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime }, registry: PRODUCTION_TASKS, logger, clock: () => new Date(), config: CONFIG });
+      const delivery = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime, intelligence: runtime }, registry: PRODUCTION_TASKS, logger, clock: () => new Date(), config: CONFIG });
       for (let pass = 0; pass < 5; pass += 1) {
         await relayPass(delivery());
         await runtime.drain();

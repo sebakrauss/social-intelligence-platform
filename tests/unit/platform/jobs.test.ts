@@ -125,6 +125,8 @@ describe("task registry", () => {
       "ingestion.confirm_interaction",
       // Step H6-F4: the tenant half of webhook signals (MAIN).
       "ingestion.process_signals",
+      // Step H7-D1d: the one INTELLIGENCE task.
+      "classification.understand_ai",
     ];
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS, ...tenantTasks].sort());
     expect(PRODUCTION_TASKS.tasks.filter((task) => task.scope === "system").map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS].sort());

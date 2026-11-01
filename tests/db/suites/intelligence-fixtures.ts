@@ -1,7 +1,8 @@
 /**
  * Step H7-D1c — synthetic intelligence-persistence rows for the database suites (0025): one understanding request of the
  * `classification.intelligence.v1` pipeline in an AI state, one accepted attempt and one validated result for a text
- * version. Written by the privileged test login (no runtime writer exists yet); identifiers and versions only.
+ * version. Written by the privileged test login (the H7-D1d runtime writers are tested in intelligence-runtime.ts);
+ * identifiers and versions only.
  */
 import { randomUUID } from "node:crypto";
 import type pg from "pg";

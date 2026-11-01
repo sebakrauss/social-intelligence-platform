@@ -114,7 +114,7 @@ export function defineT27Suite(getTarget: () => DbTarget): void {
   const handlers = (): ReadonlyMap<string, FakeHandler> =>
     new Map(TEST_TASK_NAMES.map((name) => [name, (payload: unknown, run) => runTenantJob({ registry: TASKS, worker, logger }, name, payload, run, effectHandlers[name])]));
 
-  const deliveryDeps = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime }, registry: TASKS, logger, clock: () => now, config: CONFIG });
+  const deliveryDeps = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime, intelligence: runtime }, registry: TASKS, logger, clock: () => now, config: CONFIG });
 
   /** A workspace command that appends one outbox row (and optionally fails after appending). */
   const enqueueCommand: WorkspaceCommand<{ readonly task: TestTask; readonly itemId: string; readonly fail: "yes" | "no" }, string, string> = {
@@ -248,7 +248,7 @@ export function defineT27Suite(getTarget: () => DbTarget): void {
           throw new Error("relay process crashed after enqueue");
         },
       });
-      await expect(relayPass({ ...deliveryDeps(), runtimes: { main: crashing, integration: crashing } })).rejects.toThrow("relay process crashed");
+      await expect(relayPass({ ...deliveryDeps(), runtimes: { main: crashing, integration: crashing, intelligence: crashing } })).rejects.toThrow("relay process crashed");
       expect(await row(work.outboxId)).toMatchObject({ status: "PENDING" });
       expect((await row(work.outboxId))?.claimed_until).not.toBeNull();
       // Leased: another relay right now skips it; after the lease the same dispatch key returns the same run.

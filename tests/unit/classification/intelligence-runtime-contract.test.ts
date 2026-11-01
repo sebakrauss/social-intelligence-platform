@@ -47,6 +47,7 @@ import {
   RESULT_FIELDS,
   UNDERSTAND_AI_PAYLOAD_FIELDS,
   UNDERSTAND_AI_PLANE,
+  UNDERSTAND_AI_SUBJECTS,
   UNDERSTAND_AI_TOPIC,
   decideUnderstandAiRoute,
   isIntelligencePipelineRequest,
@@ -92,7 +93,7 @@ const REQUEST = "5a5e0000-0000-4000-8000-0000000000d4";
 const TARGET = parseAnalysisTarget({ workspaceId: WORKSPACE, interactionId: INTERACTION, sourceTextVersionId: VERSION }) ?? (() => { throw new Error("target"); })();
 const AT = parseInstant("2026-10-31T12:00:00.000Z") ?? (() => { throw new Error("instant"); })();
 const SIM_REF = { providerKey: "simulator", modelKey: "sim" } as const;
-const COMPLETE_POLICY: UnderstandAiRoutePolicy = { ...DEFAULT_UNDERSTAND_AI_ROUTE_POLICY, enabled: true, killSwitch: "inactive", model: SIM_REF, timeoutMs: 30_000, budget: { kind: "policy", policyRef: "synthetic-budget" }, samplingPercentage: 100 };
+const COMPLETE_POLICY: UnderstandAiRoutePolicy = { ...DEFAULT_UNDERSTAND_AI_ROUTE_POLICY, enabled: true, killSwitch: "inactive", model: SIM_REF, timeoutMs: 30_000, budget: { kind: "caps", maxCallsPerDay: 100, maxInputCharsPerDay: 1_000_000 }, samplingPercentage: 100 };
 const ALLOW: BudgetPort = { reserve: () => Promise.resolve("allowed" as const) };
 
 const caseInput = (id: string): UnderstandingInput => {
@@ -114,18 +115,25 @@ const recordingGateway = (overrides: Partial<GatewayDependencies> = {}, model = 
 const CONTEXT: IntelligenceRecordContext = { target: TARGET, understandingRequestId: REQUEST, pipelineVersion: INTELLIGENCE_PIPELINE_VERSION, dispatchGeneration: 1, correlationId: "corr-h7-d1b-contract", triggerRunId: "run_synthetic_h7d1b", modelRequested: "sim", transportSchemaVersion: "canonical-strict" };
 const callContext = (reference: string) => ({ workspaceId: WORKSPACE, interactionId: INTERACTION, sourceTextVersionId: VERSION, pipelineVersion: INTELLIGENCE_PIPELINE_VERSION, reference });
 
-describe("1 · the intelligence plane is a declared SOURCE plane, not yet a delivery plane", () => {
-  it("execution planes are main / integration / intelligence; only main / integration can carry a delivery", () => {
+describe("1 · the intelligence plane (H7-D1d: a delivery plane with exactly one task)", () => {
+  it("H7-D1d: execution planes are main / integration / intelligence, and all three carry a delivery (0025 admits intelligence)", () => {
     expect([...EXECUTION_PLANES]).toEqual(["main", "integration", "intelligence"]);
-    expect([...DELIVERY_PLANES]).toEqual(["main", "integration"]);
-    expect(isExecutionPlane("intelligence") && !isDeliveryPlane("intelligence")).toBe(true);
+    expect([...DELIVERY_PLANES]).toEqual(["main", "integration", "intelligence"]);
+    expect(isExecutionPlane("intelligence") && isDeliveryPlane("intelligence")).toBe(true);
     expect(UNDERSTAND_AI_PLANE).toBe("intelligence");
   });
 
-  it("the task registry refuses an intelligence task (no outbox binding before 0025), and none is registered", () => {
-    const declaration = { name: "classification.understand_ai", scope: "workspace", executionPlane: "intelligence", lane: 4, retry: RETRY_POLICIES.transient, concurrency: { by: "workspace" }, subjects: [] };
+  it("H7-D1d: exactly `classification.understand_ai` is registered on the intelligence plane — IDs only, single attempt, serial per request", () => {
+    const onIntelligence = PRODUCTION_TASKS.tasks.filter((task) => task.executionPlane === "intelligence");
+    expect(onIntelligence.map((task) => task.name)).toEqual([UNDERSTAND_AI_TOPIC]);
+    const task = PRODUCTION_TASKS.tenant(UNDERSTAND_AI_TOPIC);
+    expect(task?.subjects).toEqual(Object.values(UNDERSTAND_AI_SUBJECTS));
+    expect(task?.retry).toEqual(RETRY_POLICIES.singleAttempt);
+    expect(task?.concurrency).toEqual({ by: "subject", subject: "understanding_request" });
+    expect(task?.lane).toBe(2);
+    // The registry still validates any declaration on it (an unknown subject is refused).
+    const declaration = { name: "classification.other_ai", scope: "workspace", executionPlane: "intelligence", lane: 2, retry: RETRY_POLICIES.singleAttempt, concurrency: { by: "subject", subject: "missing" }, subjects: ["interaction"] };
     expect(() => defineTaskRegistry([declaration as never])).toThrow(TaskRegistryError);
-    expect(PRODUCTION_TASKS.tasks.some((task) => (task.executionPlane as string) === "intelligence" || task.name === UNDERSTAND_AI_TOPIC)).toBe(false);
   });
 });
 
@@ -214,7 +222,7 @@ describe("8–10 · the qualified registry entry and the fail-safe route", () =>
   });
 
   it("10 · the default policy is deny-by-default; every missing piece skips; a complete synthetic policy calls in SHADOW", () => {
-    expect(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY).toEqual({ enabled: false, samplingPercentage: 0, killSwitch: "active", model: null, timeoutMs: null, budget: { kind: "deny_all" }, acceptanceMode: "shadow", realDataEligible: false });
+    expect(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY).toEqual({ enabled: false, samplingPercentage: 0, killSwitch: "active", model: null, timeoutMs: null, budget: { kind: "deny_all" }, acceptanceMode: "shadow", realDataEligible: false, fixtureWorkspaceIds: [], includeBackfill: false });
     const request = { samplingBucket: 0, realData: false };
     expect(decideUnderstandAiRoute(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY, request)).toEqual({ kind: "skip", reason: "route_disabled" });
     const steps: [Partial<UnderstandAiRoutePolicy>, string][] = [
@@ -224,7 +232,9 @@ describe("8–10 · the qualified registry entry and the fail-safe route", () =>
     for (const [change, reason] of steps) expect(decideUnderstandAiRoute({ ...COMPLETE_POLICY, ...change }, request), reason).toEqual({ kind: "skip", reason });
     expect(decideUnderstandAiRoute({ ...COMPLETE_POLICY, samplingPercentage: 50 }, { samplingBucket: 50, realData: false })).toEqual({ kind: "skip", reason: "not_sampled" });
     expect(decideUnderstandAiRoute(COMPLETE_POLICY, { samplingBucket: 0, realData: true })).toEqual({ kind: "skip", reason: "real_data_not_eligible" });
-    expect(decideUnderstandAiRoute(COMPLETE_POLICY, request)).toEqual({ kind: "call", model: SIM_REF, timeoutMs: 30_000, budgetPolicyRef: "synthetic-budget", acceptanceMode: "shadow" });
+    expect(decideUnderstandAiRoute(COMPLETE_POLICY, request)).toEqual({ kind: "call", model: SIM_REF, timeoutMs: 30_000, budget: { kind: "caps", maxCallsPerDay: 100, maxInputCharsPerDay: 1_000_000 }, acceptanceMode: "shadow" });
+    expect(decideUnderstandAiRoute(COMPLETE_POLICY, { ...request, arrival: "backfill" })).toEqual({ kind: "skip", reason: "backfill_excluded" });
+    expect(decideUnderstandAiRoute({ ...COMPLETE_POLICY, budget: { kind: "caps", maxCallsPerDay: 0, maxInputCharsPerDay: 10 } }, request)).toEqual({ kind: "skip", reason: "no_budget" });
     expect(understandAiRouteTable({ ...COMPLETE_POLICY, killSwitch: "active" })).toEqual({ [UNDERSTANDING_TASK_ID]: { kind: "disabled" } });
   });
 });

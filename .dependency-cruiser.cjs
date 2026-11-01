@@ -529,8 +529,29 @@ module.exports = {
       name: "plane-task-directories-disjoint",
       severity: "error",
       comment: "Each Trigger.dev config discovers exactly one plane's task directory; task files never import the other plane's task files.",
-      from: { path: "^jobs/trigger/(main|integration)/" },
-      to: { path: "^jobs/trigger/(main|integration)/", pathNot: "^jobs/trigger/$1/" },
+      from: { path: "^jobs/trigger/(main|integration|intelligence)/" },
+      to: { path: "^jobs/trigger/(main|integration|intelligence)/", pathNot: "^jobs/trigger/$1/" },
+    },
+    {
+      name: "plane-intelligence-isolated",
+      severity: "error",
+      comment: "Step H7-D1d: the INTELLIGENCE plane (its task directory and jobs/intelligence.ts) runs one task: no outbox delivery, system scope, Move saga, MAIN runtime or reconciliation; no credential opener, provider integration or mutation; no other plane's task files.",
+      from: { path: "^jobs/(trigger/intelligence/|intelligence\\.ts$)" },
+      to: { path: "^(platform/outbox/delivery\\.ts|platform/db/(system-scope|outbox-delivery)\\.ts|jobs/(moves|main-runtime|reconciliation|reconciliation-slice|confirm-interaction|connections|process-signals|provider-events)\\.ts|jobs/trigger/(main|integration)/|integrations/|mutations/|platform/crypto/)" },
+    },
+    {
+      name: "model-provider-intelligence-composition-only",
+      severity: "error",
+      comment: "Step H7-D1d: the model-provider adapters (and with them the model credential) are composed only by the INTELLIGENCE plane's composition (jobs/intelligence.ts) and tests — never by MAIN, INTEGRATION, the web (server/, app/, ui/) or any module.",
+      from: { pathNot: "^(jobs/intelligence\\.ts$|ai/providers/|tests/)" },
+      to: { path: "^ai/providers/" },
+    },
+    {
+      name: "intelligence-runtime-entry-composition-only",
+      severity: "error",
+      comment: "Step H7-D1d: the classification module's INTELLIGENCE entry (the runner, its gateway task and prompt) is reached only by the INTELLIGENCE composition and tests; MAIN uses the module index (dispatch, recovery) only.",
+      from: { pathNot: "^(jobs/intelligence\\.ts$|modules/classification/|tests/)" },
+      to: { path: "^modules/classification/(intelligence-runtime\\.ts$|application/ai/)" },
     },
 
     // ── Credential crypto boundary (Step 5A; TA §39, ADR-64) ─────────────────────────────────

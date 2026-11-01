@@ -703,7 +703,7 @@ export function defineCapabilityReevaluationSuite(getTarget: () => DbTarget): vo
         return runEvaluateAccountCapabilities(wrapped, { access, providers });
       });
     let runtime: FakeJobRuntime;
-    const deliveryDeps = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime }, registry: PRODUCTION_TASKS, logger, clock, config: CONFIG });
+    const deliveryDeps = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime, intelligence: runtime }, registry: PRODUCTION_TASKS, logger, clock, config: CONFIG });
     /** Relay → execute → sweep, until the row has an outcome (bounded). */
     const deliver = async (outboxId: string): Promise<void> => {
       for (let pass = 0; pass < 6; pass += 1) {

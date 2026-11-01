@@ -862,7 +862,7 @@ export function defineMovesSuite(getTarget: () => DbTarget): void {
       ]);
       const runtime = new FakeJobRuntime(handlers, (task) => PRODUCTION_TASKS.get(task)?.retry ?? (() => { throw new Error("unknown task"); })());
       // One fake runtime stands for both planes here (the saga hand-off to capability.evaluate_account is under test).
-      const deps: DeliveryDependencies = { system, runtimes: { main: runtime, integration: runtime }, registry: PRODUCTION_TASKS, logger, clock: () => now, config: DEFAULT_DELIVERY_CONFIG };
+      const deps: DeliveryDependencies = { system, runtimes: { main: runtime, integration: runtime, intelligence: runtime }, registry: PRODUCTION_TASKS, logger, clock: () => now, config: DEFAULT_DELIVERY_CONFIG };
 
       // 1 · The release run commits its effect (and routes the activation row), then the worker process dies.
       runtime.fault = (run, attempt) => (run.request.task === RELEASE && attempt === 1 && run.id === [...runtime.runs.keys()][0] ? "crash_after" : undefined);
@@ -1046,7 +1046,7 @@ export function defineMovesSuite(getTarget: () => DbTarget): void {
         [EVALUATE, () => Promise.resolve("evaluation not under test")],
       ]);
       const runtime = new FakeJobRuntime(handlers, (task) => PRODUCTION_TASKS.get(task)?.retry ?? (() => { throw new Error("unknown task"); })());
-      const deps = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime }, registry: PRODUCTION_TASKS, logger, clock: () => now, config: DEFAULT_DELIVERY_CONFIG });
+      const deps = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime, intelligence: runtime }, registry: PRODUCTION_TASKS, logger, clock: () => now, config: DEFAULT_DELIVERY_CONFIG });
       const kickingPipeline = createActionPipeline({ identity, unitOfWork: createPostgresUnitOfWork(web), clock, newId: randomUUID, logger, outboxCommitted: kick });
       /** What the woken relay does (outbox.relay task): one relay pass, then the runtime executes what it dispatched. */
       const wake = async (): Promise<void> => {

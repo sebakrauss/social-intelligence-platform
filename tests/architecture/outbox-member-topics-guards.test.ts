@@ -46,7 +46,8 @@ describe("H6-E1: the member-topic inventory is derived from the web producers", 
     expect(codeOf("server/pipeline/pipeline.ts")).toMatch(/return base\.outbox\.append\(message\);/);
     // The other appends (appendOutboxOnce) are the job runtime's: capability requests, ingestion events, slices, confirmations.
     const once = sourceFiles(PRODUCTION).filter((file) => /appendOutboxOnce\(/.test(codeOf(file)) && file !== "platform/db/outbox.ts");
-    expect(once.sort()).toEqual(["modules/ingestion/persistence/reconciliation-store.ts", "modules/ingestion/persistence/store.ts", "server/persistence/connections.ts"]);
+    // H7-D1d: the intelligence writers append the job runtime's `classification.understand_ai` dispatches.
+    expect(once.sort()).toEqual(["modules/classification/persistence/intelligence-store.ts", "modules/ingestion/persistence/reconciliation-store.ts", "modules/ingestion/persistence/store.ts", "server/persistence/connections.ts"]);
   });
 
   it("the two builders' topics are exactly MEMBER_TOPICS, and both are registered tenant tasks", () => {
@@ -62,8 +63,9 @@ describe("H6-E1: the member-topic inventory is derived from the web producers", 
 describe("H6-E1: the internal inventory is closed over the registry", () => {
   it("every tenant task that is not a member topic is an internal topic, and vice versa; the confirmation is one of them", () => {
     const tenantTasks = PRODUCTION_TASKS.tasks.filter((task) => task.scope === "workspace").map((task) => task.name);
-    // 0021's inventory plus the topics blocked by their own later restrictive policy (0022, registered in H6-F4).
-    expect(sorted(tenantTasks.filter((name) => !(MEMBER_TOPICS as readonly string[]).includes(name)))).toEqual(sorted([...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS]));
+    // 0021's inventory plus the topics blocked by their own later restrictive policy (0022, registered in H6-F4; 0025,
+    // registered in H7-D1d).
+    expect(sorted(tenantTasks.filter((name) => !(MEMBER_TOPICS as readonly string[]).includes(name)))).toEqual(sorted([...INTERNAL_TOPICS, ...SIGNAL_INTERNAL_TOPICS, ...INTELLIGENCE_INTERNAL_TOPICS]));
     expect(INTERNAL_TOPICS).toContain(CONFIRM);
     expect(new Set([...MEMBER_TOPICS, ...INTERNAL_TOPICS]).size).toBe(MEMBER_TOPICS.length + INTERNAL_TOPICS.length);
   });

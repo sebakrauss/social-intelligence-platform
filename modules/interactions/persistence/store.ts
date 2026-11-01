@@ -224,5 +224,45 @@ export function createPostgresInteractionTextReader(tx: DatabaseTransaction): In
         .limit(1);
       return rows[0];
     },
+
+    async understandingContext(interactionId, sourceTextVersionId) {
+      const target = (await tx.execute<{ organization_id: string; workspace_id: string; interaction_id: string; source_text_version_id: string; observed: boolean; kind: string | null;
+        author_role: string | null; source_text: string; platform: string; content_item_id: string | null; current_source_text_version_id: string | null; parent_interaction_id: string | null }>(sql`
+        select i.organization_id, i.workspace_id, i.id as interaction_id, v.id as source_text_version_id, i.observed, i.kind, i.author_role, v.source_text, i.platform,
+               i.content_item_id, i.current_source_text_version_id, i.parent_interaction_id
+          from interactions.source_text_versions v
+          join interactions.interactions i on i.workspace_id = v.workspace_id and i.id = v.interaction_id
+         where v.id = ${sourceTextVersionId}::uuid and v.interaction_id = ${interactionId}::uuid
+         limit 1`)).rows[0];
+      if (target === undefined) return undefined;
+      const item = async (id: string): Promise<{ readonly record: { readonly sourceText: string | null; readonly authorRole: string | null }; readonly parentId: string | null } | undefined> => {
+        const row = (await tx.execute<{ source_text: string | null; author_role: string | null; parent_interaction_id: string | null }>(sql`
+          select v.source_text, i.author_role, i.parent_interaction_id
+            from interactions.interactions i
+            left join interactions.source_text_versions v on v.workspace_id = i.workspace_id and v.interaction_id = i.id and v.id = i.current_source_text_version_id
+           where i.id = ${id}::uuid
+           limit 1`)).rows[0];
+        return row === undefined ? undefined : { record: Object.freeze({ sourceText: row.source_text, authorRole: row.author_role }), parentId: row.parent_interaction_id };
+      };
+      let parent: { readonly sourceText: string | null; readonly authorRole: string | null } | null = null;
+      let root: { readonly sourceText: string | null; readonly authorRole: string | null } | null = null;
+      if (target.parent_interaction_id !== null) {
+        const first = await item(target.parent_interaction_id);
+        parent = first?.record ?? null;
+        // The thread root: the top of the ancestry (bounded), only when it isn't the parent itself.
+        let next = first?.parentId ?? null;
+        for (let depth = 1; next !== null && depth < ANCESTRY_MAX_DEPTH; depth += 1) {
+          const ancestor = await item(next);
+          if (ancestor === undefined) break;
+          root = ancestor.record;
+          next = ancestor.parentId;
+        }
+      }
+      return Object.freeze({
+        organizationId: target.organization_id, workspaceId: target.workspace_id, interactionId: target.interaction_id, sourceTextVersionId: target.source_text_version_id,
+        observed: target.observed, kind: target.kind, authorRole: target.author_role, sourceText: target.source_text, platform: target.platform,
+        contentItemId: target.content_item_id, currentSourceTextVersionId: target.current_source_text_version_id, parent, root,
+      });
+    },
   };
 }

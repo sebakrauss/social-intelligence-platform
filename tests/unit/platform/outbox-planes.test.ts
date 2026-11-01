@@ -84,8 +84,8 @@ const awaitingRow = (topic: string, executionPlane: DeliveryPlane, runId: string
   id: crypto.randomUUID(), topic, workspaceId: WS, correlationId: "corr-planes-await", recoveryCount: 0, dispatchedAt: new Date(), runId, executionPlane,
 });
 
-const deps = (runtimes: { main: JobRuntime; integration: JobRuntime }, planes?: Readonly<Record<string, DeliveryPlane>>) => ({
-  system: {} as never, runtimes, registry: registry(planes), logger: createLogger({ sink: () => undefined }), clock: () => new Date(),
+const deps = (runtimes: { main: JobRuntime; integration: JobRuntime; intelligence?: JobRuntime }, planes?: Readonly<Record<string, DeliveryPlane>>) => ({
+  system: {} as never, runtimes: { intelligence: runtimes.integration, ...runtimes }, registry: registry(planes), logger: createLogger({ sink: () => undefined }), clock: () => new Date(),
 });
 
 beforeEach(() => {

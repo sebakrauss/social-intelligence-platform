@@ -32,7 +32,7 @@ export const managedRelay = task({
     try {
       return await runSystemJob({ registry: PRODUCTION_TASKS, system: systemDatabase(), logger: jobLogger }, relayDefinition.name, payload, { runId: ctx.run.id, attempt: ctx.attempt.number }, (context) =>
         // Historical single-project DEVELOPMENT leg (TA-Q-31): both planes are this one dev project and its own key.
-        relayPass({ system: context.system, runtimes: { main: mainSelfRuntime({ kind: "development" }), integration: mainSelfRuntime({ kind: "development" }) }, registry: PRODUCTION_TASKS, logger: jobLogger, clock: () => new Date() }),
+        relayPass({ system: context.system, runtimes: { main: mainSelfRuntime({ kind: "development" }), integration: mainSelfRuntime({ kind: "development" }), intelligence: mainSelfRuntime({ kind: "development" }) }, registry: PRODUCTION_TASKS, logger: jobLogger, clock: () => new Date() }),
       );
     } catch (error) {
       throw toVendorError(error);

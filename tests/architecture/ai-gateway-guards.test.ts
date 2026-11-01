@@ -6,9 +6,12 @@
  *   - data minimization and the untrusted-text boundary are pinned; no chain-of-thought field exists;
  *   - nothing is wired to a runtime: no task, no plane, no Trigger config, no continuation from DETERMINISTIC_DONE, no
  *     migration after 0024.
+ * Step H7-D1d supersedes the last point, narrowly: the ONE intelligence task and its composition (jobs/intelligence.ts)
+ * are the only runtime that reaches the gateway, the qualified adapter or the prompt; no Trigger config discovers the
+ * intelligence plane yet (its project is H7-D1e); MAIN only dispatches (AI_PENDING + outbox) and recovers.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
@@ -92,8 +95,9 @@ describe("H7-C: the simulator is deterministic, offline and test-only", () => {
     expect(strip(codeOf("ai/providers/simulator/index.ts"))).not.toMatch(/_request\.|request\.(system|data)/);
   });
 
-  it("only tests compose it: no product or runtime code imports ai/providers", () => {
-    for (const file of sourceFiles([...PRODUCT, "tools"])) expect(importsOf(file).filter((s) => /@\/ai\/providers|ai\/providers\//.test(s)), file).toEqual([]);
+  it("only tests compose it: no product or runtime code imports the simulator; only the INTELLIGENCE composition imports ai/providers (H7-D1d)", () => {
+    for (const file of sourceFiles([...PRODUCT, "tools"])) expect(importsOf(file).filter((s) => /ai\/providers\/simulator/.test(s)), file).toEqual([]);
+    expect(sourceFiles([...PRODUCT, "tools"]).filter((file) => importsOf(file).some((s) => /@\/ai\/providers|ai\/providers\//.test(s)))).toEqual(["jobs/intelligence.ts"]);
   });
 });
 
@@ -114,30 +118,27 @@ describe("H7-C: data minimization and the untrusted boundary", () => {
 });
 
 describe("H7-C: nothing is wired to a runtime", () => {
-  it("no task, plane or Trigger config change: MAIN 11 / INTEGRATION 7, no intelligence plane, no AI task", () => {
+  it("H7-D1d: exactly one AI task, on the intelligence plane; no Trigger config discovers it yet; MAIN 11 / INTEGRATION 7 releases unchanged", () => {
     const planes = PRODUCTION_TASKS.tasks.reduce<Record<string, number>>((acc, task) => ({ ...acc, [task.executionPlane]: (acc[task.executionPlane] ?? 0) + 1 }), {});
     // Registry tenant/system tasks per plane (the deployed INTEGRATION 7 = these 4 + 3 diagnostic/validation tasks).
-    expect(planes).toEqual({ main: 11, integration: 4 });
+    expect(planes).toEqual({ main: 11, integration: 4, intelligence: 1 });
     expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", 7], ["main", 11]]);
-    expect(PRODUCTION_TASKS.tasks.some((task) => /understand|intelligence|^ai\./.test(task.name))).toBe(false);
+    expect(PRODUCTION_TASKS.tasks.filter((task) => /understand|intelligence|^ai\./.test(task.name)).map((task) => [task.name, task.executionPlane])).toEqual([["classification.understand_ai", "intelligence"]]);
     const configs = ["trigger.config.ts", "trigger.integration.config.ts", "trigger.managed-test.config.ts"];
     expect(readdirSync(REPOSITORY_ROOT).filter((name) => /^trigger\..*config\.ts$/.test(name)).sort()).toEqual(configs);
     for (const config of configs) expect(strip(codeOf(config)), config).not.toMatch(/intelligence|@\/ai\/|ai\/gateway/i);
-    expect(existsSync(path.join(REPOSITORY_ROOT, "jobs/trigger/intelligence"))).toBe(false);
+    expect(readdirSync(path.join(REPOSITORY_ROOT, "jobs/trigger/intelligence"))).toEqual(["classification.ts"]);
   });
 
-  it("no runtime imports the gateway, the binding or the prompt; the module index does not export the binding", () => {
-    for (const file of sourceFiles(RUNTIME)) expect(codeOf(file), file).not.toMatch(/@\/ai\/|@\/prompts\/|application\/ai\//);
-    expect(codeOf("modules/classification/index.ts")).not.toMatch(/application\/ai/);
+  it("only the INTELLIGENCE composition imports the gateway, the binding entry or the prompt; the module index does not export the binding", () => {
+    expect(sourceFiles(RUNTIME).filter((file) => /@\/ai\/|@\/prompts\/|application\/ai\/|classification\/intelligence-runtime/.test(codeOf(file)))).toEqual(["jobs/intelligence.ts"]);
+    expect(codeOf("modules/classification/index.ts")).not.toMatch(/application\/ai|intelligence-runtime/);
   });
 
-  it("no continuation from DETERMINISTIC_DONE: nothing transitions a request to AI_PENDING", () => {
-    for (const file of sourceFiles(["modules", "jobs", "server", "platform", "ai"])) {
-      const code = strip(codeOf(file));
-      if (file === "modules/classification/application/ports.ts") continue; // the 0024 state vocabulary itself
-      expect(code, file).not.toMatch(/"AI_PENDING"|"AI_RUNNING"/);
-    }
-    expect(strip(codeOf("modules/classification/application/understand-deterministic.ts"))).not.toMatch(/understandInteraction|gateway/i);
+  it("H7-D1d: only the MAIN dispatch / recovery and the INTELLIGENCE runner name the AI states; the deterministic stage never continues", () => {
+    const users = sourceFiles(["modules", "jobs", "server", "platform", "ai"]).filter((file) => file !== "modules/classification/application/ports.ts" && /"AI_PENDING"|"AI_RUNNING"/.test(strip(codeOf(file))));
+    expect(users).toEqual(["modules/classification/application/ai/run-understanding.ts", "modules/classification/application/intelligence-dispatch.ts"]);
+    expect(strip(codeOf("modules/classification/application/understand-deterministic.ts"))).not.toMatch(/understandInteraction|gateway|AI_PENDING|intelligence/i);
   });
 
   it("no migration after 0025 (H7-D1c: intelligence persistence)", () => {
@@ -174,8 +175,10 @@ describe("H7-D0: real provider adapters and the live bake-off", () => {
     }
   });
 
-  it("no product or runtime code composes a real provider; only the live bake-off does", () => {
-    for (const file of sourceFiles([...PRODUCT, "tools"])) expect(importsOf(file).filter((s) => /ai\/providers\/(openai|anthropic)/.test(s)), file).toEqual([]);
+  it("only the INTELLIGENCE composition composes a real provider (the qualified Anthropic adapter, never OpenAI); otherwise only the live bake-off does", () => {
+    const composers = sourceFiles([...PRODUCT, "tools"]).filter((file) => importsOf(file).some((s) => /ai\/providers\/(openai|anthropic)/.test(s)));
+    expect(composers).toEqual(["jobs/intelligence.ts"]);
+    expect(importsOf("jobs/intelligence.ts").filter((s) => /ai\/providers\//.test(s)).sort()).toEqual(["@/ai/providers/anthropic", "@/ai/providers/anthropic/qualified", "@/ai/providers/anthropic/schema-projection"]);
     expect(sourceFiles(["tests"]).filter((file) => /candidateProvider\(/.test(strip(codeOf(file)))).sort()).toEqual(["tests/eval/classification/live.eval.ts", "tests/eval/classification/live/candidates.ts"]);
   });
 

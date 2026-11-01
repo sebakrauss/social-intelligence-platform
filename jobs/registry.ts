@@ -16,10 +16,13 @@
  *                                          a confirmation request (DB only), lane 2; internal topic (0022 definers only)
  *   ingestion.confirm_interaction (H6-E)   INTEGRATION: ONE direct re-read of one canonical interaction from its STORED
  *                                          provenance (the only removal authority besides a verified signal), lane 3
+ *   classification.understand_ai (H7-D1d)  INTELLIGENCE: one understanding request — the model call through the AI
+ *                                          gateway, then the shadow ledger / result / assessments, lane 2 (ids only)
  *
  * Execution planes (Step 7E.4B.3), declared explicitly per task — drawn by credential-opening capability, never by
  * name, directory or scope: the two tasks that open a provider credential run in the integration plane; the relay, the
- * sweepers and the Move saga steps run in the main plane.
+ * sweepers and the Move saga steps run in the main plane; the one task that holds the model credential (H7-D1d) runs in
+ * the intelligence plane.
  */
 import { RETRY_POLICIES, defineTaskRegistry } from "@/platform/jobs";
 
@@ -136,5 +139,17 @@ export const PRODUCTION_TASKS = defineTaskRegistry([
     retry: RETRY_POLICIES.transient,
     concurrency: { by: "none" },
     subjects: ["ingestion_event_id", "interaction_id", "conversation_id", "source_text_version_id"],
+  },
+  // Step H7-D1d: the ONLY intelligence-plane task (0025 outbox_intelligence_routing: plane intelligence ⇔ this topic).
+  // Single attempt: the runtime owns transport retries as new dispatch generations, the gateway owns the one re-ask, and
+  // MAIN's stale-request recovery owns a crashed or lost run — no Trigger.dev retry multiplies them. Serial per request.
+  {
+    name: "classification.understand_ai",
+    scope: "workspace",
+    executionPlane: "intelligence",
+    lane: 2,
+    retry: RETRY_POLICIES.singleAttempt,
+    concurrency: { by: "subject", subject: "understanding_request" },
+    subjects: ["interaction", "source_text_version", "understanding_request"],
   },
 ]);

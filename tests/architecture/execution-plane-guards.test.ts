@@ -6,6 +6,9 @@
  *   INTEGRATION   trigger.integration.config.ts → jobs/trigger/integration   the only opener tasks (3 product tasks +
  *                                                                             3 operator-only diagnostics = 6 tasks)
  *
+ *   INTELLIGENCE  (H7-D1d) jobs/trigger/intelligence — `classification.understand_ai` only; NO Trigger config discovers it
+ *                 yet (its project and config are H7-D1e), so it is source-only and the release planes stay MAIN / INTEGRATION
+ *
  * These prove the split statically: explicit planes in the registry, disjoint discovery, the TRANSITIVE import graph of
  * each plane (the opener never reachable from main; the system database and delivery never reachable from integration),
  * the persisted plane — never the registry — selecting the runtime, and the cross-project credentials' confinement.
@@ -35,7 +38,11 @@ const MAIN_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_swe
 const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account", "ingestion.reconcile_slice", "ingestion.confirm_interaction"];
 /** Step 7E.7-B / 7G-H5.5-P5-B / 7G-H5.5-P12-B2: integration-only, operator-triggered diagnostics — discovered by the integration config, never registered. */
 const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic", "integration.read_content_validation", "integration.read_interactions_validation"];
-const PLANE_DIRS = { main: "jobs/trigger/main", integration: "jobs/trigger/integration" } as const;
+/** Step H7-D1d: the one task that holds the model credential. */
+const INTELLIGENCE_TASKS = ["classification.understand_ai"];
+const PLANE_DIRS = { main: "jobs/trigger/main", integration: "jobs/trigger/integration", intelligence: "jobs/trigger/intelligence" } as const;
+/** The model side: the gateway, the provider adapters, the prompt, the INTELLIGENCE composition and the runner entry. */
+const MODEL_SIDE = /^(ai\/|prompts\/|jobs\/intelligence\.ts$|modules\/classification\/(intelligence-runtime\.ts$|application\/ai\/))/;
 const OPENER = /^(jobs\/connections\.ts|platform\/crypto\/credentials\/(open|local-opener|local-keyring|aead|aws-kms-unwrapper|aws-kms-opener)\.ts)$/;
 const MAIN_ONLY = /^(jobs\/main-runtime\.ts|jobs\/moves\.ts|jobs\/reconciliation\.ts|platform\/outbox\/delivery\.ts|platform\/db\/(system-scope|outbox-delivery)\.ts)$/;
 
@@ -57,12 +64,13 @@ async function reachable(dir: string): Promise<string[]> {
 }
 
 describe("registry: every task declares its plane explicitly", () => {
-  it("exactly the nine main and the four integration tasks, by explicit declaration", () => {
-    expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...MAIN_TASKS, ...INTEGRATION_TASKS].sort());
-    for (const task of PRODUCTION_TASKS.tasks) expect(task.executionPlane, task.name).toBe(INTEGRATION_TASKS.includes(task.name) ? "integration" : "main");
+  it("exactly the main, the four integration and the one intelligence task, by explicit declaration", () => {
+    expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...MAIN_TASKS, ...INTEGRATION_TASKS, ...INTELLIGENCE_TASKS].sort());
+    for (const task of PRODUCTION_TASKS.tasks) expect(task.executionPlane, task.name).toBe(INTEGRATION_TASKS.includes(task.name) ? "integration" : INTELLIGENCE_TASKS.includes(task.name) ? "intelligence" : "main");
     expect(Object.entries(PRODUCTION_TASKS.unboundRoutes).filter(([, plane]) => plane === "integration").map(([name]) => name).sort()).toEqual([...INTEGRATION_TASKS].sort());
+    expect(Object.entries(PRODUCTION_TASKS.unboundRoutes).filter(([, plane]) => plane === "intelligence").map(([name]) => name)).toEqual(INTELLIGENCE_TASKS);
     // Declared literally, once per task — never inferred from a name, directory or scope.
-    expect(codeOf("jobs/registry.ts").match(/executionPlane: "(main|integration)"/g)).toHaveLength(PRODUCTION_TASKS.tasks.length);
+    expect(codeOf("jobs/registry.ts").match(/executionPlane: "(main|integration|intelligence)"/g)).toHaveLength(PRODUCTION_TASKS.tasks.length);
   });
 
   it("no routing by string prefix anywhere in the routing path", () => {
@@ -79,6 +87,8 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     expect(main.match(/dirs:\s*\[([^\]]*)\]/)?.[1]).toBe('"./jobs/trigger/main"');
     expect(integration.match(/dirs:\s*\[([^\]]*)\]/)?.[1]).toBe('"./jobs/trigger/integration"');
     for (const config of [main, integration]) expect(config).toMatch(/runtime: "node-22",/);
+    // H7-D1d: no config discovers the intelligence directory yet (its Trigger project is H7-D1e).
+    for (const config of readdirSync(root).filter((name) => /^trigger\..*config\.ts$/.test(name))) expect(codeOf(config), config).not.toMatch(/jobs\/trigger\/intelligence/);
   });
 
   it("the plane directories declare disjoint task sets whose union is exactly the registry", () => {
@@ -92,6 +102,9 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     expect(main).toHaveLength(11);
     expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", integration.length], ["main", main.length]]);
     expect(main.filter((task) => integration.includes(task))).toEqual([]);
+    const intelligence = discoveredTasks(PLANE_DIRS.intelligence);
+    expect(intelligence).toEqual(INTELLIGENCE_TASKS);
+    for (const task of intelligence) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("intelligence");
     for (const task of main) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("main");
     for (const task of INTEGRATION_TASKS) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("integration");
     // NOT_IN_NORMAL_PRODUCT_REGISTRY: the diagnostic is no registry task and no outbox route (its guards, not this, are
@@ -106,12 +119,27 @@ describe("discovery: one config per plane, disjoint task directories", () => {
   });
 });
 
-describe("transitive import graphs of the two planes", () => {
+describe("transitive import graphs of the three planes", () => {
   it("the main plane never reaches the CredentialOpener composition or any opening primitive", async () => {
     const modules = await reachable(PLANE_DIRS.main);
     expect(modules).toContain("jobs/moves.ts");
     expect(modules).toContain("platform/outbox/delivery.ts");
     expect(modules.filter((source) => OPENER.test(source))).toEqual([]);
+    // H7-D1d: MAIN dispatches and recovers, but never reaches the gateway, an adapter, the prompt or the runner.
+    expect(modules).toContain("modules/classification/application/intelligence-dispatch.ts");
+    expect(modules.filter((source) => MODEL_SIDE.test(source))).toEqual([]);
+  }, 60_000);
+
+  it("H7-D1d: the intelligence plane reaches the model side but never the opener, the system DB, delivery, the Move saga, providers or mutations", async () => {
+    const modules = await reachable(PLANE_DIRS.intelligence);
+    expect(modules).toContain("jobs/intelligence.ts");
+    expect(modules).toContain("ai/gateway/gateway.ts");
+    expect(modules).toContain("ai/providers/anthropic/qualified.ts");
+    expect(modules).toContain("modules/classification/persistence/intelligence-store.ts");
+    expect(modules.filter((source) => OPENER.test(source) || MAIN_ONLY.test(source))).toEqual([]);
+    expect(modules.filter((source) => /^(integrations|mutations|platform\/crypto)\/|^jobs\/(connections|integration-[a-z-]+|reconciliation-slice|confirm-interaction|provider-events|process-signals)\.ts$|^jobs\/trigger\/(main|integration)\/|^ai\/providers\/(openai|simulator)\//.test(source))).toEqual([]);
+    const code = modules.filter((source) => /^(jobs|platform|server|modules)\//.test(source)).map((source) => codeOf(source)).join("\n");
+    expect(code).not.toMatch(/createRuntimeDatabaseFromEnv\(\s*"system"/);
   }, 60_000);
 
   it("the integration plane reaches the opener only through jobs/connections.ts and never the system DB, delivery or Move saga", async () => {
@@ -121,6 +149,7 @@ describe("transitive import graphs of the two planes", () => {
     expect(modules.filter((source) => MAIN_ONLY.test(source))).toEqual([]);
     const code = modules.filter((source) => /^(jobs|platform|server|modules)\//.test(source)).map((source) => codeOf(source)).join("\n");
     expect(code).not.toMatch(/createRuntimeDatabaseFromEnv\(\s*"system"/);
+    expect(modules.filter((source) => MODEL_SIDE.test(source))).toEqual([]);
   }, 60_000);
 });
 

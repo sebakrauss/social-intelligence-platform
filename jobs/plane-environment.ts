@@ -41,8 +41,9 @@
  * other plane's capability: Meta app configuration, the integration KMS/AWS identity and the AWS credential chain, the
  * system DB credential, the main and integration Trigger keys and every SDK-ambient model variable. As for MAIN and
  * INTEGRATION, the web / migration DB credentials, the service-role key and the KMS keyring configuration are kept out
- * of every jobs plane by the static guards (no jobs file may even name them), not by this runtime list. It writes no
- * outbox row (no `classification.understood` consumer exists), so it needs no relay wake-up key.
+ * of every jobs plane by the static guards (no jobs file may even name them), not by this runtime list. Its only
+ * outbox rows are its own transport-retry dispatches (no `classification.understood` event exists), delivered by MAIN's
+ * dispatch sweeper — so it needs no relay wake-up key (H7-D1d).
  *
  * The two Trigger keys are orchestration credentials — never AWS identity — and neither ever falls back to
  * TRIGGER_SECRET_KEY (the project's own key that Trigger.dev injects into each run). Partial DB separation: the

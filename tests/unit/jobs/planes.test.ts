@@ -30,7 +30,7 @@ vi.mock("@/platform/jobs/trigger-dev", async () => {
 
 const { JobRuntimeRejectedError, JobRuntimeUnavailableError, NonRetryableJobError, crossPlanePin, jobRelease, samePlanePin } = await import("@/platform/jobs");
 const { mainRemoteFromIntegration, mainSelfRuntime, relayWakeRuntime } = await import("@/jobs/runtime");
-const { deliveryRuntimes, integrationRemoteFromMain } = await import("@/jobs/main-runtime");
+const { deliveryRuntimes, intelligenceRemoteFromMain, integrationRemoteFromMain } = await import("@/jobs/main-runtime");
 const { INTEGRATION_AWS_IDENTITY_VARIABLES, PLANE_FORBIDDEN_VARIABLES, RETIRED_INTEGRATION_AWS_BOOTSTRAP_VARIABLES, assertPlaneEnvironment, planeEnvironmentProblems } = await import("@/jobs/plane-environment");
 const { wakeRelay } = await import("@/jobs/trigger/define");
 const { MODEL_PROVIDER_AMBIENT_VARIABLES } = await import("@/domain/model-provider-variables");
@@ -41,6 +41,7 @@ const UNIDENTIFIED = { kind: "unidentified" } as const;
 const OWN = "tr_stg_synthetic_own_key";
 const OPERATOR = "tr_stg_sk_synthetic_integration_operator";
 const RELAY = "tr_stg_sk_synthetic_main_relay";
+const INTELLIGENCE_OPERATOR = "tr_stg_sk_synthetic_intelligence_operator";
 
 const unreachable = async (runtime: { enqueue: (request: never) => Promise<unknown>; getRun: (id: string) => Promise<unknown> }) => {
   await expect(runtime.enqueue({ task: "outbox.relay", payload: {}, dispatchKey: "outbox.relay:1", lane: "system" } as never)).rejects.toBeInstanceOf(JobRuntimeRejectedError);
@@ -97,16 +98,32 @@ describe("plane runtimes: explicit credentials, no fallback, no inherited branch
     expect(adapter.built).toEqual([]);
   });
 
-  it("the relay wake-up path follows the task's plane", () => {
+  it("the relay wake-up path follows the task's plane; the intelligence plane has none (H7-D1d: the dispatch sweeper delivers its rows)", async () => {
     relayWakeRuntime("main", PINNED, { TRIGGER_SECRET_KEY: OWN, TRIGGER_MAIN_RELAY_TRIGGER_KEY: RELAY });
     relayWakeRuntime("integration", PINNED, { TRIGGER_SECRET_KEY: OWN, TRIGGER_MAIN_RELAY_TRIGGER_KEY: RELAY });
     expect(adapter.built.map((options) => options["accessToken"])).toEqual([OWN, RELAY]);
+    adapter.built.length = 0;
+    await unreachable(relayWakeRuntime("intelligence", PINNED, { TRIGGER_SECRET_KEY: OWN, TRIGGER_MAIN_RELAY_TRIGGER_KEY: RELAY }));
+    expect(adapter.built).toEqual([]);
   });
 
-  it("the delivery runtimes are two distinct clients with their own credentials", () => {
+  it("main → intelligence (H7-D1d): only the intelligence task-operator key, no branch, pinned; absent (until H7-D1e) ⇒ unreachable", async () => {
+    intelligenceRemoteFromMain(PINNED, { TRIGGER_SECRET_KEY: OWN, TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY: INTELLIGENCE_OPERATOR });
+    expect(adapter.built).toEqual([{ accessToken: INTELLIGENCE_OPERATOR, branch: "none", externalDeploymentId: "commit-synthetic-1" }]);
+    adapter.built.length = 0;
+    await unreachable(intelligenceRemoteFromMain(PINNED, { TRIGGER_SECRET_KEY: OWN, TRIGGER_INTEGRATION_TASK_OPERATOR_KEY: OPERATOR }));
+    await unreachable(intelligenceRemoteFromMain(UNIDENTIFIED, { TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY: INTELLIGENCE_OPERATOR }));
+    expect(adapter.built).toEqual([]);
+  });
+
+  it("the delivery runtimes are three distinct clients with their own credentials (intelligence unreachable without its key)", async () => {
     const runtimes = deliveryRuntimes(PINNED, { TRIGGER_SECRET_KEY: OWN, TRIGGER_INTEGRATION_TASK_OPERATOR_KEY: OPERATOR });
     expect(runtimes.main).not.toBe(runtimes.integration);
     expect(adapter.built.map((options) => [options["accessToken"], options["branch"]])).toEqual([[OWN, "inherit"], [OPERATOR, "none"]]);
+    await unreachable(runtimes.intelligence);
+    adapter.built.length = 0;
+    deliveryRuntimes(PINNED, { TRIGGER_SECRET_KEY: OWN, TRIGGER_INTEGRATION_TASK_OPERATOR_KEY: OPERATOR, TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY: INTELLIGENCE_OPERATOR });
+    expect(adapter.built.map((options) => options["accessToken"])).toEqual([OWN, OPERATOR, INTELLIGENCE_OPERATOR]);
   });
 
   it("an integration task's post-commit wake-up triggers MAIN's outbox.relay through the restricted relay key", async () => {

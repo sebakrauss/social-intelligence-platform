@@ -1170,3 +1170,58 @@ data. The H7-D0 recommendation stays PROVISIONAL (`PRODUCTION_MODEL_SELECTED = N
   bounds and idempotency, shadow invisibility, least privilege, cross-workspace, budget atomicity and race) and
   `tests/db/local/migration-0025-upgrade.test.ts` (a cluster migrated through 0024 with 0024-era rows, then the real
   runner: exactly 0025, rows unchanged, fail-closed probe).
+
+## 43. H7-D1d as implemented (the intelligence runtime; source only, not deployed)
+
+Nothing runs remotely: no INTELLIGENCE Trigger project or config exists (H7-D1e), the task-operator key is not
+installed (MAIN's intelligence runtime is unreachable), the qualified descriptor is still `enabled: false`, and the
+source policy is the deny-by-default one (route disabled, sampling 0, kill switch active, budget deny-all, no real
+data, no backfill). Tests use the simulator only.
+
+- **Planes:** `DELIVERY_PLANES = main · integration · intelligence` (0025 admits the binding). The registry holds
+  exactly one intelligence task, `classification.understand_ai` (lane 2, single attempt, serial per
+  `understanding_request`, subjects interaction · source_text_version · understanding_request — identifiers only). Its
+  task file is `jobs/trigger/intelligence/classification.ts`; no Trigger config discovers it yet, so the release planes
+  stay MAIN 11 / INTEGRATION 7. MAIN reaches the intelligence project only through
+  `TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY` (absent ⇒ unreachable). The intelligence plane has no relay wake-up path:
+  its own transport-retry rows are delivered by MAIN's dispatch sweeper. Depcruise and the execution-plane guards keep
+  the INTELLIGENCE graph away from the opener, system DB, delivery, Move saga, providers and mutations, and the MAIN
+  graph away from the gateway, the adapters, the prompt and the runner.
+- **MAIN dispatch** (`application/intelligence-dispatch.ts`, in the `interactions.observed` transaction after a
+  DETERMINISTIC_DONE outcome): route policy first (a disabled route reads and writes nothing) → `ai.task_kill`
+  (unreadable ⇒ killed) → canonical reload (`understandingContext`: the version by id AND interaction, its current
+  pointer, parent / root current text and author roles) → checks 1–5 (`understanding-eligibility.ts`: supported event,
+  current version, not own brand, not empty, not emoji-only — the deterministic detectors, never a watch term) → the A1
+  input (check 10) → the ONE request of (version, `classification.intelligence.v1`): PENDING → AI_PENDING(1) plus its
+  IDs-only outbox row (dispatch key `classification.understand_ai:{request}:a1`) in the same transaction; too large ⇒
+  AI_FAILED(AI_INPUT_TOO_LARGE)(1), no row. The canonical text bound equals the A1 bound (32 768), so the A1-size branch
+  is defense in depth. The brand display name and the caption have no approved canonical source yet: both stay null.
+- **INTELLIGENCE task** (`application/ai/run-understanding.ts`, composed by `jobs/intelligence.ts`): tx1 locks the
+  request and checks the payload identity, pipeline, terminality, AI_PENDING + generation, the R6 effect claim of the
+  generation's dispatch key, then reloads and re-runs every pre-model check (a refusal ⇒ AI_FAILED, no call) and
+  commits AI_RUNNING; the gateway run (route → kill → model → input bound → budget → provider → ≤ 1 re-ask); tx2 appends
+  the ledger and — only while the request is still AI_RUNNING at that generation — the SHADOW result, the canonical A1
+  composition (`deriveUnderstandingOutcome`: accepted interpretation, language cap, Protection, Needs review) and its
+  SHADOW assessments ⇒ COMPLETED; a failure ⇒ AI_FAILED with its class, or (transient transport, below 3 generations)
+  AI_PENDING(n+1) plus the next dispatch. Protection and Needs review are returned, not persisted (no table; no
+  consumer). Nothing emits `classification.understood`.
+- **Retry authority:** transport retries = new dispatch generations owned by this runtime (≤ `MAX_TRANSPORT_GENERATIONS`
+  = 3, each re-checked and re-budgeted); schema re-ask = the gateway (exactly one); task retries = none (Trigger
+  single attempt); a crashed or lost run = MAIN's stale-request recovery (R6/R7), counted in the same bound.
+- **Budget:** before any call, its own committed transaction: `reserve_ai_budget(task, UTC day, 2 calls, 2 × input
+  chars, caps)` — the worst case of one gateway run (initial + re-ask). Denied, throwing or anything but `true` ⇒
+  AI_BUDGET, zero provider calls. Caps come from the route policy; no amount is decided (TA-Q-23, PD OQ-14).
+- **Credential:** `INTELLIGENCE_MODEL_API_KEY`, read only by `jobs/intelligence.ts` and passed explicitly to the
+  qualified Anthropic adapter's client; absent ⇒ no provider (model_unavailable). `ANTHROPIC_API_KEY` and every
+  SDK-ambient variable are never read and are refused by the plane environment guard.
+- **Recovery** (on every MAIN `interactions.observed` delivery, ≤ 5 per pass, `for update skip locked`): an in-flight
+  intelligence request untouched for 15 min gets the next generation, or AI_FAILED(AI_UNAVAILABLE) at the bound, when
+  the route no longer calls, or under `ai.task_kill`. Never a result, never `accepting`.
+- **Known limitations (reported):** a supersession after dispatch ends AI_FAILED(AI_UNAVAILABLE) — 0025 has no
+  superseded terminal for AI states; if tx2 fails after a provider call its ledger rows are lost and recovery
+  re-dispatches; recovery latency depends on MAIN traffic in the workspace; at-least-once delivery leaves a window in
+  which a stale run and its recovered successor both call the provider (both in the ledger), but only one result can be
+  accepted (`ai_results_once`, generation checks under the row lock).
+- **Tests:** `tests/db/suites/intelligence-runtime.ts` (28 cases on schema 0025: defaults, atomic dispatch, relay
+  binding to the intelligence runtime, success, the five failures, safety, ten concurrency cases, recovery, tenancy,
+  logs) and `tests/unit/classification/intelligence-dispatch.test.ts`, plus the updated architecture guards.

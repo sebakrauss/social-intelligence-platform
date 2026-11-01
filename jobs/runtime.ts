@@ -46,7 +46,13 @@ export function mainRemoteFromIntegration(release: JobRelease, environment: Envi
   return createTriggerDevRuntime({ accessToken, branch: "none", externalDeploymentId: pin.externalDeploymentId });
 }
 
-/** The runtime that wakes MAIN's outbox.relay after a commit, from a task running in `plane`. */
+/**
+ * The runtime that wakes MAIN's outbox.relay after a commit, from a task running in `plane`. The intelligence plane
+ * holds no MAIN key (it refuses it): its only outbox rows are its own transport-retry dispatches, which the dispatch
+ * sweeper delivers (≥ 60 s later — the retry backoff), so it has no wake-up path at all.
+ */
 export function relayWakeRuntime(plane: DeliveryPlane, release: JobRelease, environment: Environment = process.env): JobRuntime {
-  return plane === "main" ? mainSelfRuntime(release, environment) : mainRemoteFromIntegration(release, environment);
+  if (plane === "main") return mainSelfRuntime(release, environment);
+  if (plane === "integration") return mainRemoteFromIntegration(release, environment);
+  return unreachableJobRuntime();
 }

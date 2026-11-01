@@ -134,9 +134,30 @@ export interface AnalysisTextRecord {
   readonly sourceText: string;
 }
 
+/** A context item of an analysis target (its parent, or its thread root): its CURRENT text, if observed, and author role. */
+export interface ContextItemRecord {
+  readonly sourceText: string | null;
+  readonly authorRole: string | null;
+}
+
+/**
+ * The analysis target WITH the canonical context the understanding input contract admits (Step H7-D1d; H7-A0 §13):
+ * the interaction's platform, content and current-text pointer (to tell a superseded version), its parent and — when it
+ * differs from the parent — its thread root, each with its current text and author role. Never an author name, handle,
+ * profile or provider id.
+ */
+export interface UnderstandingContextRecord extends AnalysisTextRecord {
+  readonly platform: string;
+  readonly contentItemId: string | null;
+  readonly currentSourceTextVersionId: string | null;
+  readonly parent: ContextItemRecord | null;
+  readonly root: ContextItemRecord | null;
+}
+
 /** Read-only access to analysis targets for downstream modules (classification). No write path. */
 export interface InteractionTextReader {
   analysisText(interactionId: string, sourceTextVersionId: string): Promise<AnalysisTextRecord | undefined>;
+  understandingContext(interactionId: string, sourceTextVersionId: string): Promise<UnderstandingContextRecord | undefined>;
 }
 
 export interface InteractionStore {

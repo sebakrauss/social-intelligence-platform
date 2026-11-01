@@ -31,6 +31,7 @@ describe("H7-A1: the classification domain is pure", () => {
       "assessment.ts",
       "confidence.ts",
       "human-correction.ts",
+      "intelligence-routing.ts",
       "language.ts",
       "needs-review.ts",
       "precedence.ts",
@@ -38,6 +39,7 @@ describe("H7-A1: the classification domain is pure", () => {
       "signals.ts",
       "taxonomy.ts",
       "text-segments.ts",
+      "understanding-eligibility.ts",
       "understanding-input.ts",
       "understanding-outcome.ts",
       "understanding-output.ts",
@@ -45,15 +47,20 @@ describe("H7-A1: the classification domain is pure", () => {
       "versions.ts",
       "watch-terms.ts",
     ]);
+    // H7-D1d: the MAIN dispatch / recovery, the INTELLIGENCE runner + its separate entry, and the intelligence writers.
     expect(MODULE_FILES.filter((f) => !f.startsWith(`${MODULE}/domain/`))).toEqual([
+      `${MODULE}/application/ai/run-understanding.ts`,
       `${MODULE}/application/ai/understand-ai-contract.ts`,
       `${MODULE}/application/ai/understand-interaction.ts`,
       `${MODULE}/application/ai/understanding-output-schema.ts`,
       `${MODULE}/application/ai/understanding-task.ts`,
+      `${MODULE}/application/intelligence-dispatch.ts`,
       `${MODULE}/application/ports.ts`,
       `${MODULE}/application/understand-deterministic.ts`,
       `${MODULE}/index.ts`,
+      `${MODULE}/intelligence-runtime.ts`,
       `${MODULE}/persistence/index.ts`,
+      `${MODULE}/persistence/intelligence-store.ts`,
       `${MODULE}/persistence/store.ts`,
     ]);
   });
@@ -63,13 +70,16 @@ describe("H7-A1: the classification domain is pure", () => {
       for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|@\/domain\/[a-z-]+)$/);
     }
     for (const specifier of importsOf(`${MODULE}/index.ts`)) expect(specifier).toMatch(/^\.\/(domain|application)\/[a-z-]+$/);
+    // H7-D1d: the INTELLIGENCE entry re-exports the gateway binding only (never the persistence).
+    for (const specifier of importsOf(`${MODULE}/intelligence-runtime.ts`)) expect(specifier).toMatch(/^\.\/application\/ai\/[a-z-]+$/);
     for (const file of DETERMINISTIC_APPLICATION_FILES) {
       for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/domain\/[a-z-]+|@\/modules\/interactions)$/);
     }
     // H7-C: the gateway binding sees its own files, the pure domain, the gateway PORT and the versioned prompt only
     // (H7-D0k: prompt v2). H7-D1b: the runtime contract also uses the shared kernel's id / correlation parsers.
     for (const file of AI_APPLICATION_FILES) {
-      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/\.\.\/domain\/[a-z-]+|@\/ai\/gateway|@\/prompts\/classification\/understanding\.v2|@\/domain\/(ids|correlation))$/);
+      // H7-D1d: the runner also reaches the MAIN dispatch's route decision, the ports and the shared kernel's instants.
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(\.\/[a-z-]+|\.\.\/\.\.\/domain\/[a-z-]+|\.\.\/(intelligence-dispatch|ports)|@\/ai\/gateway|@\/prompts\/classification\/understanding\.v2|@\/domain\/(ids|correlation|instant))$/);
     }
   });
 
@@ -79,7 +89,9 @@ describe("H7-A1: the classification domain is pure", () => {
     for (const file of AI_APPLICATION_FILES) expect(codeOf(file), file).not.toMatch(/@\/(platform|server|jobs|db|integrations|mutations|app|ui)\b|@\/ai\/providers|from ["'](next|@trigger\.dev|pg|postgres|drizzle-orm|openai|@anthropic-ai|node:)|process\.env|\bfetch\(|ANTHROPIC|OPENAI|API_KEY/);
     // The persistence adapter is the only DB code: drizzle + platform/db, nothing else.
     for (const file of sourceFiles([`${MODULE}/persistence`])) {
-      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(drizzle-orm|@\/platform\/db|\.\/[a-z-]+|\.\.\/application\/[a-z-]+)$/);
+      // H7-D1d: the intelligence writers also append the outbox row (platform/db), report it (platform/outbox type),
+      // and read the domain identity / assessment shapes.
+      for (const specifier of importsOf(file)) expect(specifier, `${file} → ${specifier}`).toMatch(/^(drizzle-orm|@\/platform\/(db|outbox)|@\/domain\/instant|\.\/[a-z-]+|\.\.\/(application|domain)\/[a-z-]+)$/);
     }
   });
 
@@ -101,17 +113,24 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
     expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql"]);
   });
 
-  it("registers no classification / intelligence task; `ai/` is only H7-C's gateway + simulator, imported by no runtime; only the MAIN consumer and its composition use the module", () => {
-    expect(PRODUCTION_TASKS.tasks.map((task) => task.name).filter((name) => /^(classification|intelligence|ai)\./.test(name))).toEqual([]);
+  it("registers exactly one classification task (H7-D1d, intelligence plane); `ai/` is unchanged and reached only by the INTELLIGENCE composition; the module is used by the two planes' compositions only", () => {
+    expect(PRODUCTION_TASKS.tasks.filter((task) => /^(classification|intelligence|ai)\./.test(task.name)).map((task) => [task.name, task.executionPlane])).toEqual([["classification.understand_ai", "intelligence"]]);
     expect(sourceFiles(["ai"])).toEqual(["ai/gateway/attempt.ts", "ai/gateway/failures.ts", "ai/gateway/gateway.ts", "ai/gateway/index.ts", "ai/gateway/provider-port.ts", "ai/gateway/registry.ts", "ai/gateway/task.ts",
       "ai/providers/anthropic/index.ts", "ai/providers/anthropic/qualified.ts", "ai/providers/anthropic/schema-projection.ts", "ai/providers/diagnostics.ts", "ai/providers/openai/index.ts", "ai/providers/simulator/index.ts"]);
-    expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations", "db"]).filter((file) => /@\/ai\/|@\/prompts\/|application\/ai\//.test(codeOf(file)))).toEqual([]);
-    expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual(["jobs/reconciliation.ts", "server/persistence/classification.ts"]);
+    expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations", "db"]).filter((file) => /@\/ai\/|@\/prompts\/|application\/ai\//.test(codeOf(file)))).toEqual(["jobs/intelligence.ts"]);
+    expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual(["jobs/intelligence-policy.ts", "jobs/intelligence.ts", "jobs/reconciliation.ts", "server/persistence/classification.ts"]);
   });
 });
 
 describe("H7-A1: watch terms can never become meaning (D-H7-3, S19)", () => {
   const SEMANTIC = ["assessment.ts", "precedence.ts", "protection.ts", "needs-review.ts", "value-inputs.ts", "understanding-input.ts", "understanding-output.ts", "human-correction.ts", "taxonomy.ts"];
+
+  it("H7-D1d: pre-model eligibility uses the deterministic text detectors only — never the watch-term matcher", () => {
+    expect(importsOf(`${MODULE}/domain/understanding-eligibility.ts`).filter((s) => /watch-terms/.test(s))).toEqual([]);
+    for (const file of [`${MODULE}/domain/understanding-eligibility.ts`, `${MODULE}/application/intelligence-dispatch.ts`, `${MODULE}/application/ai/run-understanding.ts`]) {
+      expect(codeOf(file).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ""), file).not.toMatch(/watch|matchWatchTerms|WatchTerm/i);
+    }
+  });
 
   it("no semantic file imports the matcher or the signals", () => {
     for (const name of SEMANTIC) {

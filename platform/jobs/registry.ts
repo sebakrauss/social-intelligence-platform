@@ -102,8 +102,9 @@ export function defineTaskRegistry(definitions: readonly TaskDefinition[]): Task
     // Checked at runtime too: a declaration built outside the type system must not slip through without a plane.
     const plane: unknown = definition.executionPlane;
     if (!isExecutionPlane(plane)) throw new TaskRegistryError(`${definition.name}: missing or unknown execution plane`);
-    // H7-D1b: a declared-only plane (intelligence) has no outbox binding (0011) and no runtime client yet.
-    if (!isDeliveryPlane(plane)) throw new TaskRegistryError(`${definition.name}: execution plane ${plane} is not a delivery plane yet`);
+    // A declared-only plane (no outbox binding admitted by the database) can't carry work (H7-D1b). Since 0025 (H7-D1d)
+    // every execution plane is a delivery plane; the check stays so a future declared-only plane is refused again.
+    if (!isDeliveryPlane(plane)) throw new TaskRegistryError(`${definition.name}: execution plane ${String(plane)} is not a delivery plane yet`);
     if (definition.scope === "system") {
       if (plane !== "main") throw new TaskRegistryError(`${definition.name}: system tasks run in the main plane`);
       if (!(SYSTEM_TASKS as readonly string[]).includes(definition.name)) {

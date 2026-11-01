@@ -68,6 +68,8 @@ export {
 } from "./domain/stored-authority";
 export type {
   AnalysisTextRecord,
+  ContextItemRecord,
+  UnderstandingContextRecord,
   CurrentStateUpdate,
   InteractionRecord,
   InteractionStore,

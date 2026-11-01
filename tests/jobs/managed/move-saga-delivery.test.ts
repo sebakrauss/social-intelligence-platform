@@ -71,7 +71,7 @@ describe("Step 5H managed · Move saga post-commit relay wake-up (G5, TA-Q-31)",
     createActionPipeline({ identity, unitOfWork: createPostgresUnitOfWork(web), clock: () => new Date(), newId: randomUUID, logger, ...(outboxCommitted === undefined ? {} : { outboxCommitted }) });
   /** Delivery dependencies of this test acting as the dispatch sweeper (real job runtime, real clock). */
   // Historical single-project DEVELOPMENT leg: both execution planes are the one dev project.
-  const sweeperDeps = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime }, registry: PRODUCTION_TASKS, logger, clock: () => new Date(), config: DEFAULT_DELIVERY_CONFIG });
+  const sweeperDeps = (): DeliveryDependencies => ({ system, runtimes: { main: runtime, integration: runtime, intelligence: runtime }, registry: PRODUCTION_TASKS, logger, clock: () => new Date(), config: DEFAULT_DELIVERY_CONFIG });
 
   /** Only this world's rows may ever be pending while this leg runs. */
   // A claim binds the execution plane (0011); then the rows are marked DISPATCHED, as the relay would.
