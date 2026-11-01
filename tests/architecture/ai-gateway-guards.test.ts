@@ -118,15 +118,17 @@ describe("H7-C: data minimization and the untrusted boundary", () => {
 });
 
 describe("H7-C: nothing is wired to a runtime", () => {
-  it("H7-D1d: exactly one AI task, on the intelligence plane; no Trigger config discovers it yet; MAIN 11 / INTEGRATION 7 releases unchanged", () => {
+  it("H7-D1e: exactly one AI task, on the intelligence plane, discovered by its own config only; the release unit is INTEGRATION 7 / INTELLIGENCE 1 / MAIN 11", () => {
     const planes = PRODUCTION_TASKS.tasks.reduce<Record<string, number>>((acc, task) => ({ ...acc, [task.executionPlane]: (acc[task.executionPlane] ?? 0) + 1 }), {});
     // Registry tenant/system tasks per plane (the deployed INTEGRATION 7 = these 4 + 3 diagnostic/validation tasks).
     expect(planes).toEqual({ main: 11, integration: 4, intelligence: 1 });
-    expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", 7], ["main", 11]]);
+    expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", 7], ["intelligence", 1], ["main", 11]]);
     expect(PRODUCTION_TASKS.tasks.filter((task) => /understand|intelligence|^ai\./.test(task.name)).map((task) => [task.name, task.executionPlane])).toEqual([["classification.understand_ai", "intelligence"]]);
     const configs = ["trigger.config.ts", "trigger.integration.config.ts", "trigger.managed-test.config.ts"];
-    expect(readdirSync(REPOSITORY_ROOT).filter((name) => /^trigger\..*config\.ts$/.test(name)).sort()).toEqual(configs);
+    expect(readdirSync(REPOSITORY_ROOT).filter((name) => /^trigger\..*config\.ts$/.test(name)).sort()).toEqual([...configs, "trigger.intelligence.config.ts"].sort());
     for (const config of configs) expect(strip(codeOf(config)), config).not.toMatch(/intelligence|@\/ai\/|ai\/gateway/i);
+    // The intelligence config itself imports no gateway, adapter or prompt (only its task graph does).
+    expect(strip(codeOf("trigger.intelligence.config.ts"))).not.toMatch(/@\/ai\/|ai\/gateway|ai\/providers|prompts/);
     expect(readdirSync(path.join(REPOSITORY_ROOT, "jobs/trigger/intelligence"))).toEqual(["classification.ts"]);
   });
 

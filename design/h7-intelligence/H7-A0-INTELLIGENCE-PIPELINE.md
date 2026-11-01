@@ -1225,3 +1225,26 @@ data, no backfill). Tests use the simulator only.
 - **Tests:** `tests/db/suites/intelligence-runtime.ts` (28 cases on schema 0025: defaults, atomic dispatch, relay
   binding to the intelligence runtime, success, the five failures, safety, ten concurrency cases, recovery, tenancy,
   logs) and `tests/unit/classification/intelligence-dispatch.test.ts`, plus the updated architecture guards.
+
+## 44. H7-D1e as implemented (the INTELLIGENCE deployment plane; no model credential)
+
+- **Config:** `trigger.intelligence.config.ts` discovers exactly `jobs/trigger/intelligence` (`classification.understand_ai`),
+  Node 22, `maxDuration` 300, project default retry = single attempt, no build extension; the project reference comes from
+  `TRIGGER_INTELLIGENCE_PROJECT_REF` (never committed; refused by the hosted web).
+- **Release unit:** three planes from one commit and one `--external-id`, because MAIN pins its triggers into INTEGRATION
+  and INTELLIGENCE to its own release: INTEGRATION (7) → INTELLIGENCE (1) → MAIN (11), MAIN last so the deployments its
+  pinned triggers name already exist. `npm run trigger:release` gained `--intelligence-project-ref` and
+  `STOP_INTELLIGENCE_FAILED`; evidence schema `wrenkind.trigger-release-pair.v2`. INTEGRATION is redeployed for pin
+  parity (a MAIN release at a new SHA would otherwise pin INTEGRATION triggers to a deployment that does not exist).
+- **Environment:** INTELLIGENCE holds only `DATABASE_WORKER_URL` and the TLS root (its own `TRIGGER_SECRET_KEY` is
+  injected by Trigger.dev); MAIN gains `TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY` (restricted to the intelligence task).
+  `INTELLIGENCE_MODEL_API_KEY` is NOT installed in this gate (TL: defense in depth; installed only in H7-D1f, right
+  before the bounded synthetic live test). With the qualified descriptor disabled, the route disabled, sampling 0 and the
+  kill switch active, no provider call is possible.
+- **Guards:** exactly one config discovers the intelligence directory and imports only the SDK and the registry; the
+  web's transitive graph reaches no model adapter, runner or `jobs/` file; MAIN's and INTEGRATION's graphs reach no model
+  side; the INTELLIGENCE graph reaches no opener, system DB, delivery, Move saga, provider integration, mutation,
+  moderation, replies, automation or alerts.
+- **Carried to H7-D1f (not changed here):** the at-least-once provider-call window, the post-call ledger window
+  (TL decision `ACCEPT_FOR_SYNTHETIC_LIVE_TEST` or `REPAIR_BEFORE_FIRST_REAL_PROVIDER_CALL` required), and recovery
+  latency depending on MAIN traffic.

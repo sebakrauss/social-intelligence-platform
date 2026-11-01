@@ -1,6 +1,6 @@
 /**
- * Step 7G-H5.5-P2-F2: the paired Trigger.dev release plan (pure). Exactly two planes, INTEGRATION then MAIN, one
- * release SHA in both argv, prod only, the common safety flags, nothing forbidden; deploy-output parsing, the exact
+ * Step 7G-H5.5-P2-F2: the Trigger.dev release unit plan (pure). Exactly three planes (Step H7-D1e), INTEGRATION, then
+ * INTELLIGENCE, then MAIN, one release SHA in every argv, prod only, the common safety flags, nothing forbidden; deploy-output parsing, the exact
  * task counts, redaction, and the signing-helper precheck. No process, network or Trigger.dev.
  */
 import { createHash } from "node:crypto";
@@ -26,9 +26,10 @@ import {
 const SHA = "1b3fbbe2f651ca64bbf228e4e49b0f344a109a95";
 const INTEGRATION_REF = "proj_integrationtestref01";
 const MAIN_REF = "proj_maintestrefabcdefghij";
+const INTELLIGENCE_REF = "proj_intelligencetestref1";
 const ENV_FILE = "/tmp/trigger-release-pair-x/empty-env-file";
 const plan = (overrides: Partial<Parameters<typeof buildReleasePlan>[0]> = {}): ReleasePlan =>
-  buildReleasePlan({ releaseSha: SHA, integrationProjectRef: INTEGRATION_REF, mainProjectRef: MAIN_REF, emptyEnvFile: ENV_FILE, ...overrides });
+  buildReleasePlan({ releaseSha: SHA, integrationProjectRef: INTEGRATION_REF, intelligenceProjectRef: INTELLIGENCE_REF, mainProjectRef: MAIN_REF, emptyEnvFile: ENV_FILE, ...overrides });
 const flagValue = (argv: readonly string[], flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
 
 /** Synthetic credential shapes assembled at runtime: this file never contains a literal secret. */
@@ -43,11 +44,13 @@ const synthetic = {
 };
 
 describe("the closed release table", () => {
-  it("is exactly INTEGRATION then MAIN, with their configs and exact task counts", () => {
+  it("is exactly INTEGRATION, INTELLIGENCE, then MAIN, with their configs and exact task counts", () => {
     expect(RELEASE_PLANES.map((definition) => [definition.plane, definition.config, definition.expectedTasks])).toEqual([
       // Step H6-C3: + ingestion.reconcile_slice (INTEGRATION); + ingestion.reconcile_account, interactions.observed (MAIN).
       // Step H6-E: + ingestion.confirm_interaction (INTEGRATION).
       ["integration", "trigger.integration.config.ts", 7],
+      // Step H7-D1e: classification.understand_ai, alone.
+      ["intelligence", "trigger.intelligence.config.ts", 1],
       ["main", "trigger.config.ts", 11],
     ]);
     expect(Object.isFrozen(RELEASE_PLANES)).toBe(true);
@@ -55,11 +58,15 @@ describe("the closed release table", () => {
 });
 
 describe("buildReleasePlan", () => {
-  it("both planes, in order, from ONE release SHA, with the exact argv", () => {
+  it("every plane, in order, from ONE release SHA, with the exact argv", () => {
     const built = plan();
     expect(built.environment).toBe("prod");
-    expect(built.steps.map((step) => step.plane)).toEqual(["integration", "main"]);
-    const [integration, main] = built.steps;
+    expect(built.steps.map((step) => step.plane)).toEqual(["integration", "intelligence", "main"]);
+    const [integration, intelligence, main] = built.steps;
+    expect(intelligence?.argv).toEqual([
+      "deploy", "--config", "trigger.intelligence.config.ts", "--project-ref", INTELLIGENCE_REF, "--env", "prod", "--external-id", SHA,
+      "--env-file", ENV_FILE, "--depot-build", "--skip-update-check", "--skip-sync-env-vars", "--skip-telemetry",
+    ]);
     expect(integration?.argv).toEqual([
       "deploy", "--config", "trigger.integration.config.ts", "--project-ref", INTEGRATION_REF, "--env", "prod", "--external-id", SHA,
       "--env-file", ENV_FILE, "--depot-build", "--skip-update-check", "--skip-sync-env-vars", "--skip-telemetry",
@@ -86,26 +93,34 @@ describe("buildReleasePlan", () => {
     ["malformed main ref", { mainProjectRef: "proj_" }],
     ["ref with injection", { mainProjectRef: "proj_abc --force" }],
     ["missing main ref", { mainProjectRef: undefined }],
+    ["missing intelligence ref", { intelligenceProjectRef: undefined }],
+    ["malformed intelligence ref", { intelligenceProjectRef: "intelligence" }],
     ["equal refs", { mainProjectRef: INTEGRATION_REF }],
+    ["intelligence ref equal to main", { intelligenceProjectRef: MAIN_REF }],
+    ["intelligence ref equal to integration", { intelligenceProjectRef: INTEGRATION_REF }],
     ["empty env file", { emptyEnvFile: " " }],
   ])("refuses %s", (_label, overrides) => {
     expect(() => plan(overrides as Partial<Parameters<typeof buildReleasePlan>[0]>)).toThrow(ReleasePlanError);
   });
 
-  it("the invariant check rejects reordered, single-plane, mixed-SHA, non-prod or flag-stripped plans", () => {
+  it("the invariant check rejects reordered, partial, mixed-SHA, non-prod or flag-stripped plans", () => {
     const built = plan();
-    const [integration, main] = built.steps;
-    if (integration === undefined || main === undefined) throw new Error("plan");
+    const [integration, intelligence, main] = built.steps;
+    if (integration === undefined || intelligence === undefined || main === undefined) throw new Error("plan");
     const withArgv = (step: typeof main, argv: readonly string[]) => ({ ...step, argv });
     const variants: ReleasePlan[] = [
-      { ...built, steps: [main, integration] },
+      { ...built, steps: [main, intelligence, integration] },
+      { ...built, steps: [integration, main, intelligence] },
+      { ...built, steps: [integration, main] },
       { ...built, steps: [integration] },
-      { ...built, steps: [integration, withArgv(main, main.argv.map((token) => (token === SHA ? "0".repeat(40) : token)))] },
-      { ...built, steps: [integration, withArgv(main, main.argv.map((token) => (token === "prod" ? "preview" : token)))] },
-      { ...built, steps: [integration, withArgv(main, main.argv.filter((token) => token !== "--depot-build"))] },
-      { ...built, steps: [integration, withArgv(main, [...main.argv, "--force"])] },
-      { ...built, steps: [integration, withArgv(main, [...main.argv, "--external-id", SHA])] },
-      { ...built, steps: [integration, { ...main, projectRef: INTEGRATION_REF, argv: main.argv.map((token) => (token === MAIN_REF ? INTEGRATION_REF : token)) }] },
+      { ...built, steps: [integration, intelligence, withArgv(main, main.argv.map((token) => (token === SHA ? "0".repeat(40) : token)))] },
+      { ...built, steps: [integration, withArgv(intelligence, intelligence.argv.map((token) => (token === SHA ? "0".repeat(40) : token))), main] },
+      { ...built, steps: [integration, intelligence, withArgv(main, main.argv.map((token) => (token === "prod" ? "preview" : token)))] },
+      { ...built, steps: [integration, intelligence, withArgv(main, main.argv.filter((token) => token !== "--depot-build"))] },
+      { ...built, steps: [integration, withArgv(intelligence, [...intelligence.argv, "--force"]), main] },
+      { ...built, steps: [integration, intelligence, withArgv(main, [...main.argv, "--external-id", SHA])] },
+      { ...built, steps: [integration, intelligence, { ...main, projectRef: INTEGRATION_REF, argv: main.argv.map((token) => (token === MAIN_REF ? INTEGRATION_REF : token)) }] },
+      { ...built, steps: [integration, { ...intelligence, projectRef: MAIN_REF, argv: intelligence.argv.map((token) => (token === INTELLIGENCE_REF ? MAIN_REF : token)) }, main] },
     ];
     for (const variant of variants) {
       expect(() => {

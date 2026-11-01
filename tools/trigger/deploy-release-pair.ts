@@ -1,14 +1,16 @@
 /**
- * The ONLY supported Trigger.dev production release path (Step 7G-H5.5-P2-F2): both execution planes, as one release
- * unit, from one captured commit. Plan: tools/trigger/release-pair.ts. Run from the repository root:
+ * The ONLY supported Trigger.dev production release path (Step 7G-H5.5-P2-F2; Step H7-D1e: three planes): every
+ * execution plane, as one release unit, from one captured commit. Plan: tools/trigger/release-pair.ts. Run from the
+ * repository root:
  *
  *   npm run trigger:release -- --cli <absolute path to the pinned trigger CLI> \
- *     --integration-project-ref <proj_…> --main-project-ref <proj_…>                       DRY RUN (default): no deploy
- *   … --execute --confirm-paired-release                                                     deploys INTEGRATION, then MAIN
+ *     --integration-project-ref <proj_…> --intelligence-project-ref <proj_…> --main-project-ref <proj_…>
+ *                                                                                            DRY RUN (default): no deploy
+ *   … --execute --confirm-paired-release                                  deploys INTEGRATION, INTELLIGENCE, then MAIN
  *
  * Git identity: repository root, clean worktree, HEAD captured, `git fetch origin main`, HEAD unchanged and equal to
  * origin/main → RELEASE_SHA, frozen for the whole run. Before EACH plane the identity is re-checked (fresh fetch); any
- * drift stops the release. INTEGRATION must pass (exit 0, version, exactly its task count) before MAIN starts.
+ * drift stops the release. Each plane must pass (exit 0, version, exactly its task count) before the next starts.
  *
  * Never: an automatic retry, rollback or redeploy; reading `.env*` or any environment loader; passing environment
  * variables to the CLI beyond PATH and HOME (the CLI's own login lives under HOME) plus TERM=dumb, CI=1, NO_COLOR=1;
@@ -48,6 +50,7 @@ const TOOL = "tools/trigger/deploy-release-pair.ts";
 export interface ReleaseOptions {
   readonly cli: string;
   readonly integrationProjectRef: string;
+  readonly intelligenceProjectRef: string;
   readonly mainProjectRef: string;
   readonly execute: boolean;
   readonly timeoutMs: number;
@@ -96,7 +99,7 @@ export const exitCodeFor = (result: RunResult): number =>
 
 // ── Arguments ───────────────────────────────────────────────────────────────────────────────────────────────
 
-const VALUE_FLAGS = new Set(["--cli", "--integration-project-ref", "--main-project-ref", "--timeout-minutes"]);
+const VALUE_FLAGS = new Set(["--cli", "--integration-project-ref", "--intelligence-project-ref", "--main-project-ref", "--timeout-minutes"]);
 const BOOLEAN_FLAGS = new Set(["--execute", "--confirm-paired-release"]);
 
 export function parseArguments(args: readonly string[]): ReleaseOptions | { readonly error: string } {
@@ -118,16 +121,17 @@ export function parseArguments(args: readonly string[]): ReleaseOptions | { read
   }
   const cli = values.get("--cli");
   const integrationProjectRef = values.get("--integration-project-ref");
+  const intelligenceProjectRef = values.get("--intelligence-project-ref");
   const mainProjectRef = values.get("--main-project-ref");
-  if (cli === undefined || integrationProjectRef === undefined || mainProjectRef === undefined) {
-    return { error: "required: --cli <absolute path> --integration-project-ref <proj_…> --main-project-ref <proj_…>" };
+  if (cli === undefined || integrationProjectRef === undefined || intelligenceProjectRef === undefined || mainProjectRef === undefined) {
+    return { error: "required: --cli <absolute path> --integration-project-ref <proj_…> --intelligence-project-ref <proj_…> --main-project-ref <proj_…>" };
   }
   const execute = booleans.has("--execute");
   if (execute !== booleans.has("--confirm-paired-release")) return { error: "--execute and --confirm-paired-release must be given together" };
   const minutes = values.get("--timeout-minutes");
   const timeoutMs = minutes === undefined ? DEFAULT_PLANE_TIMEOUT_MS : Number(minutes) * 60 * 1000;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 60_000 || timeoutMs > 120 * 60 * 1000) return { error: "--timeout-minutes must be an integer from 1 to 120" };
-  return { cli, integrationProjectRef, mainProjectRef, execute, timeoutMs };
+  return { cli, integrationProjectRef, intelligenceProjectRef, mainProjectRef, execute, timeoutMs };
 }
 
 // ── Git identity ────────────────────────────────────────────────────────────────────────────────────────────
@@ -189,7 +193,9 @@ export async function runPairedRelease(options: ReleaseOptions, deps: ReleaseDep
   try {
     let plan: ReleasePlan;
     try {
-      plan = buildReleasePlan({ releaseSha, integrationProjectRef: options.integrationProjectRef, mainProjectRef: options.mainProjectRef, emptyEnvFile: envFile.path });
+      plan = buildReleasePlan({
+        releaseSha, integrationProjectRef: options.integrationProjectRef, intelligenceProjectRef: options.intelligenceProjectRef, mainProjectRef: options.mainProjectRef, emptyEnvFile: envFile.path,
+      });
     } catch (error) {
       if (error instanceof ReleasePlanError) return { kind: "refused", reason: error.message };
       throw error;
@@ -199,7 +205,7 @@ export async function runPairedRelease(options: ReleaseOptions, deps: ReleaseDep
       deps.log(`plan ${String(index + 1)}/${String(plan.steps.length)} ${step.plane}: trigger ${sanitizeArgv(step.argv).join(" ")}  [expects ${String(step.expectedTasks)} tasks]`);
     });
     if (!options.execute) {
-      deps.log("DRY RUN: nothing deployed. Re-run with --execute --confirm-paired-release to release both planes.");
+      deps.log("DRY RUN: nothing deployed. Re-run with --execute --confirm-paired-release to release every plane.");
       return { kind: "dry_run", plan };
     }
     if (!deps.evidenceLocationIsLocalOnly()) return { kind: "refused", reason: `${EVIDENCE_DIRECTORY} must be git-ignored and Vercel-excluded` };
@@ -235,7 +241,7 @@ async function deployPlan(plan: ReleasePlan, options: ReleaseOptions, deps: Rele
     records.push(record(step, startedAt, deps.now().toISOString(), result, outcome));
     deps.log(`${step.plane}: ${describe(outcome)}`);
     if (outcome.state === "PASS") continue;
-    finalState = result.interrupted || deps.interrupted() ? "INTERRUPTED" : outcome.state === "UNKNOWN" ? "STOP_VERIFICATION_UNKNOWN" : step.plane === "integration" ? "STOP_INTEGRATION_FAILED" : "STOP_MAIN_FAILED";
+    finalState = result.interrupted || deps.interrupted() ? "INTERRUPTED" : outcome.state === "UNKNOWN" ? "STOP_VERIFICATION_UNKNOWN" : FAILED_STATE[step.plane];
     break;
   }
   if (finalState === "ALIGNED") {
@@ -245,7 +251,7 @@ async function deployPlan(plan: ReleasePlan, options: ReleaseOptions, deps: Rele
   }
 
   const evidence = {
-    schema: "wrenkind.trigger-release-pair.v1",
+    schema: "wrenkind.trigger-release-pair.v2",
     tool: TOOL,
     startedAt: started.toISOString(),
     finishedAt: deps.now().toISOString(),
@@ -257,8 +263,8 @@ async function deployPlan(plan: ReleasePlan, options: ReleaseOptions, deps: Rele
     planes: records,
     planesNotStarted: plan.steps.filter((step) => !records.some((entry) => entry.plane === step.plane)).map((step) => step.plane),
     finalState,
-    limitation: "The external id Trigger.dev stored is not re-readable with this tooling (getWorkerByTag returns none); ALIGNED rests on one captured SHA, identical argv, both planes PASS and unchanged git identity.",
-    policy: "No automatic retry, rollback or redeploy. After STOP_MAIN_FAILED, INTEGRATION may already run the new release while MAIN still pins the old one: re-run this tool for the same commit once the cause is fixed.",
+    limitation: "The external id Trigger.dev stored is not re-readable with this tooling (getWorkerByTag returns none); ALIGNED rests on one captured SHA, identical argv, every plane PASS and unchanged git identity.",
+    policy: "No automatic retry, rollback or redeploy. After a later plane fails, the earlier planes may already run the new release while MAIN still pins the old one: re-run this tool for the same commit once the cause is fixed.",
   };
   // Defense in depth: the record is redacted as a whole, even though every field is already non-secret.
   const contents = redactReleaseOutput(JSON.stringify(evidence, null, 2));
@@ -288,6 +294,8 @@ function describe(outcome: PlaneOutcome): string {
   if (outcome.state === "FAILED") return "FAILED (non-zero exit)";
   return `UNKNOWN (${outcome.reason}${outcome.taskCount === undefined ? "" : `: ${String(outcome.taskCount)} tasks`})`;
 }
+
+const FAILED_STATE: Readonly<Record<PlannedDeploy["plane"], FinalState>> = Object.freeze({ integration: "STOP_INTEGRATION_FAILED", intelligence: "STOP_INTELLIGENCE_FAILED", main: "STOP_MAIN_FAILED" });
 
 // ── Real dependencies ───────────────────────────────────────────────────────────────────────────────────────
 

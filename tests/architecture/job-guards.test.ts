@@ -71,10 +71,13 @@ describe("job runtime credentials", () => {
     const integration = codeOf("trigger.integration.config.ts");
     expect(integration).toMatch(/process\.env\["TRIGGER_INTEGRATION_PROJECT_REF"\]/);
     expect(integration).toMatch(/dirs:\s*\["\.\/jobs\/trigger\/integration"\]/);
-    for (const config of [main, integration]) expect(config).not.toMatch(/proj_[A-Za-z0-9]/);
+    const intelligence = codeOf("trigger.intelligence.config.ts");
+    expect(intelligence).toMatch(/process\.env\["TRIGGER_INTELLIGENCE_PROJECT_REF"\]/);
+    expect(intelligence).toMatch(/dirs:\s*\["\.\/jobs\/trigger\/intelligence"\]/);
+    for (const config of [main, integration, intelligence]) expect(config).not.toMatch(/proj_[A-Za-z0-9]/);
     expect(findReferences(sourceFiles(PRODUCTION_ROOTS), [/tr_(dev|prod|stg|preview)_[A-Za-z0-9]/])).toEqual([]);
     const example = readFileSync(path.join(root, ".env.example"), "utf8");
-    for (const name of ["TRIGGER_SECRET_KEY", "TRIGGER_PROJECT_REF", "TRIGGER_INTEGRATION_PROJECT_REF", "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY", "TRIGGER_MAIN_RELAY_TRIGGER_KEY"]) {
+    for (const name of ["TRIGGER_SECRET_KEY", "TRIGGER_PROJECT_REF", "TRIGGER_INTEGRATION_PROJECT_REF", "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY", "TRIGGER_MAIN_RELAY_TRIGGER_KEY", "TRIGGER_INTELLIGENCE_PROJECT_REF", "TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY"]) {
       expect(example, name).toMatch(new RegExp(`^${name}=$`, "m"));
     }
   });

@@ -27,7 +27,8 @@
  *                                                  envelope (Step 7E.7-B)
  *   INTELLIGENCE_MODEL_API_KEY                     the model-provider credential: INTELLIGENCE plane only (H7-A0 D-H7-6,
  *                                                  Step H7-D1b) — the web never holds model credentials
- *   TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY         MAIN's future key to dispatch intelligence tasks
+ *   TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY         MAIN's key to dispatch intelligence tasks (Step H7-D1d)
+ *   TRIGGER_INTELLIGENCE_PROJECT_REF               the intelligence plane's deploy/CLI configuration (Step H7-D1e)
  *   model-provider SDK ambient variables           every credential / endpoint / header / log / telemetry variable the
  *                                                  model SDKs read on their own (domain/model-provider-variables.ts)
  *
@@ -73,6 +74,7 @@ export const FORBIDDEN_WEB_VARIABLES = [
   "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
   "INTELLIGENCE_MODEL_API_KEY",
   "TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY",
+  "TRIGGER_INTELLIGENCE_PROJECT_REF",
   ...MODEL_PROVIDER_AMBIENT_VARIABLES,
 ] as const;
 

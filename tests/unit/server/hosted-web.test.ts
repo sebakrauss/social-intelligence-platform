@@ -138,6 +138,7 @@ describe("6B.4 · forbidden configuration in the hosted web runtime", () => {
       "INTEGRATION_KMS_DIAGNOSTIC_FIXTURE",
       "INTELLIGENCE_MODEL_API_KEY",
       "TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY",
+      "TRIGGER_INTELLIGENCE_PROJECT_REF",
       ...MODEL_PROVIDER_AMBIENT_VARIABLES,
     ]);
     expect(FORBIDDEN_WEB_VARIABLES).not.toContain("TRIGGER_SECRET_KEY");

@@ -110,6 +110,9 @@ describe("auth configuration", () => {
       "TRIGGER_INTEGRATION_PROJECT_REF=",
       "TRIGGER_INTEGRATION_TASK_OPERATOR_KEY=",
       "TRIGGER_MAIN_RELAY_TRIGGER_KEY=",
+      // Step H7-D1e: the intelligence project's reference and MAIN's restricted key into it.
+      "TRIGGER_INTELLIGENCE_PROJECT_REF=",
+      "TRIGGER_INTELLIGENCE_TASK_OPERATOR_KEY=",
       // Step 7G-H5.6B integration worker AWS identity (DEV/non-prod): IAM Roles Anywhere — role, trust anchor, profile,
       // workload certificate and its private key (names only; the retired Step 7E.4C bootstrap key is gone).
       "INTEGRATION_AWS_WORKER_ROLE_ARN=",

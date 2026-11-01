@@ -1,21 +1,23 @@
 /**
- * The paired Trigger.dev release (Step 7G-H5.5-P2-F2): PURE planning, parsing and redaction for
+ * The Trigger.dev release unit (Step 7G-H5.5-P2-F2; Step H7-D1e: three planes): PURE planning, parsing and redaction for
  * tools/trigger/deploy-release-pair.ts. No I/O, no process, no network, no Trigger.dev SDK.
  *
- * The two execution planes are ONE release unit. MAIN pins every cross-plane trigger to its own external deployment id
- * (platform/jobs/release.ts `crossPlanePin`, jobs/main-runtime.ts) and INTEGRATION pins its relay wake-ups the same way
- * (jobs/runtime.ts), so both planes must be deployed from the SAME source commit with the SAME `--external-id`.
- * A release is therefore exactly:
+ * The execution planes are ONE release unit. MAIN pins every cross-plane trigger to its own external deployment id
+ * (platform/jobs/release.ts `crossPlanePin`, jobs/main-runtime.ts) — into INTEGRATION and, since H7-D1e, into
+ * INTELLIGENCE — and INTEGRATION pins its relay wake-ups the same way (jobs/runtime.ts), so every plane must be deployed
+ * from the SAME source commit with the SAME `--external-id`. A release is therefore exactly:
  *
- *   1. INTEGRATION   deploy --config trigger.integration.config.ts …   (the credential-opening tasks; the helper image)
- *   2. MAIN          deploy --config trigger.config.ts …               (relay, sweepers, Move saga)
+ *   1. INTEGRATION    deploy --config trigger.integration.config.ts …    (the credential-opening tasks; the helper image)
+ *   2. INTELLIGENCE   deploy --config trigger.intelligence.config.ts …   (classification.understand_ai only)
+ *   3. MAIN           deploy --config trigger.config.ts …                (relay, sweepers, Move saga) — LAST, so the
+ *                                                                        deployments its pinned triggers name exist
  *
- * both with `--env prod --external-id <RELEASE_SHA> --depot-build --env-file <empty> --skip-update-check
+ * all with `--env prod --external-id <RELEASE_SHA> --depot-build --env-file <empty> --skip-update-check
  * --skip-sync-env-vars --skip-telemetry`, where RELEASE_SHA is captured ONCE by the executor and never recalculated.
  * Project references are operator input (flags), never committed and never read from an env file.
  *
- * What a successful run proves, and what it does not: both deploy invocations received the identical captured SHA,
- * both CLIs exited 0 and reported a version and the expected number of detected tasks, and the git identity did not
+ * What a successful run proves, and what it does not: every deploy invocation received the identical captured SHA,
+ * every CLI exited 0 and reported a version and the expected number of detected tasks, and the git identity did not
  * change in between. The external id Trigger.dev stored is NOT re-readable with the tooling this project uses
  * (`getWorkerByTag` returns no external id), so the tool never claims to have read it back.
  */
@@ -23,20 +25,21 @@ import { createHash } from "node:crypto";
 import { SECRET_PATTERNS } from "../../domain/secret-patterns.ts";
 import { AWS_SIGNING_HELPER_ARTIFACTS, awsSigningHelperRelativePath, type AwsSigningHelperArtifact } from "../../jobs/aws-signing-helper.ts";
 
-export type ReleasePlane = "integration" | "main";
+export type ReleasePlane = "integration" | "intelligence" | "main";
 
 export interface PlaneDefinition {
   readonly plane: ReleasePlane;
   readonly config: string;
   /** The executor flag that supplies this plane's project reference. */
-  readonly projectRefFlag: "--integration-project-ref" | "--main-project-ref";
+  readonly projectRefFlag: "--integration-project-ref" | "--intelligence-project-ref" | "--main-project-ref";
   /** Detected tasks the CLI must report for this plane (task files under jobs/trigger/<plane>); anything else fails closed. */
   readonly expectedTasks: number;
 }
 
-/** The closed release table, in deploy order. INTEGRATION first, then MAIN — never reordered, never one alone. */
+/** The closed release table, in deploy order: INTEGRATION, INTELLIGENCE, then MAIN — never reordered, never one alone. */
 export const RELEASE_PLANES: readonly PlaneDefinition[] = Object.freeze([
   Object.freeze({ plane: "integration", config: "trigger.integration.config.ts", projectRefFlag: "--integration-project-ref", expectedTasks: 7 }),
+  Object.freeze({ plane: "intelligence", config: "trigger.intelligence.config.ts", projectRefFlag: "--intelligence-project-ref", expectedTasks: 1 }),
   Object.freeze({ plane: "main", config: "trigger.config.ts", projectRefFlag: "--main-project-ref", expectedTasks: 11 }),
 ] as const);
 
@@ -96,22 +99,24 @@ export function deployArgv(definition: PlaneDefinition, input: { readonly projec
 }
 
 /**
- * The release plan: both planes, in order, built from ONE release SHA. Fails closed on an invalid SHA, a missing,
+ * The release plan: every plane, in order, built from ONE release SHA. Fails closed on an invalid SHA, a missing,
  * malformed or shared project reference, or an empty env-file path.
  */
 export function buildReleasePlan(input: {
   readonly releaseSha: unknown;
   readonly integrationProjectRef: unknown;
+  readonly intelligenceProjectRef: unknown;
   readonly mainProjectRef: unknown;
   readonly emptyEnvFile: string;
 }): ReleasePlan {
   if (!isReleaseSha(input.releaseSha)) throw new ReleasePlanError("release SHA must be 40 lower-case hex characters");
   if (!isProjectRef(input.integrationProjectRef)) throw new ReleasePlanError("--integration-project-ref must be a project reference (proj_…)");
+  if (!isProjectRef(input.intelligenceProjectRef)) throw new ReleasePlanError("--intelligence-project-ref must be a project reference (proj_…)");
   if (!isProjectRef(input.mainProjectRef)) throw new ReleasePlanError("--main-project-ref must be a project reference (proj_…)");
-  if (input.integrationProjectRef === input.mainProjectRef) throw new ReleasePlanError("the two planes must be different projects");
+  if (new Set([input.integrationProjectRef, input.intelligenceProjectRef, input.mainProjectRef]).size !== 3) throw new ReleasePlanError("the three planes must be different projects");
   if (input.emptyEnvFile.trim() === "") throw new ReleasePlanError("an empty env file controlled by the tool is required");
   const releaseSha = input.releaseSha;
-  const refs: Readonly<Record<ReleasePlane, string>> = { integration: input.integrationProjectRef, main: input.mainProjectRef };
+  const refs: Readonly<Record<ReleasePlane, string>> = { integration: input.integrationProjectRef, intelligence: input.intelligenceProjectRef, main: input.mainProjectRef };
   const steps = RELEASE_PLANES.map((definition): PlannedDeploy => ({
     plane: definition.plane,
     config: definition.config,
@@ -123,15 +128,15 @@ export function buildReleasePlan(input: {
   return Object.freeze({ releaseSha, environment: RELEASE_ENVIRONMENT, steps: Object.freeze(steps) });
 }
 
-/** Re-checks a plan before it is executed: order, one SHA in both argv, prod only, safety flags present, nothing forbidden. */
+/** Re-checks a plan before it is executed: order, one SHA in every argv, prod only, safety flags present, nothing forbidden. */
 export function assertPlanInvariants(plan: ReleasePlan): void {
   const fail = (reason: string): never => {
     throw new ReleasePlanError(`release plan invariant violated: ${reason}`);
   };
-  if (plan.steps.length !== RELEASE_PLANES.length) fail("exactly two planes");
+  if (plan.steps.length !== RELEASE_PLANES.length) fail("exactly three planes");
   plan.steps.forEach((step, index) => {
     const definition = RELEASE_PLANES[index] ?? fail("unknown plane");
-    if (step.plane !== definition.plane || step.config !== definition.config) fail("plane order is INTEGRATION then MAIN");
+    if (step.plane !== definition.plane || step.config !== definition.config) fail("plane order is INTEGRATION, INTELLIGENCE, then MAIN");
     const value = (flag: string): string | undefined => {
       const at = step.argv.indexOf(flag);
       return at < 0 ? undefined : step.argv[at + 1];
@@ -146,8 +151,7 @@ export function assertPlanInvariants(plan: ReleasePlan): void {
     for (const flag of FORBIDDEN_FLAGS) if (step.argv.includes(flag)) fail(`${step.plane} contains ${flag}`);
     if (step.argv.filter((token) => token === "--external-id").length !== 1) fail(`${step.plane} exactly one external id`);
   });
-  const [integration, main] = plan.steps;
-  if (integration?.projectRef === main?.projectRef) fail("distinct project references");
+  if (new Set(plan.steps.map((step) => step.projectRef)).size !== plan.steps.length) fail("distinct project references");
 }
 
 /** The argv as it may be shown or recorded: the temporary file path is replaced by a label. */
@@ -199,7 +203,7 @@ export function evaluatePlaneResult(step: Pick<PlannedDeploy, "expectedTasks">, 
   return { state: "PASS", version: parsed.version, taskCount: parsed.taskCount };
 }
 
-export const FINAL_STATES = ["ALIGNED", "STOP_INTEGRATION_FAILED", "STOP_MAIN_FAILED", "STOP_VERIFICATION_UNKNOWN", "STOP_GIT_DRIFT", "INTERRUPTED"] as const;
+export const FINAL_STATES = ["ALIGNED", "STOP_INTEGRATION_FAILED", "STOP_INTELLIGENCE_FAILED", "STOP_MAIN_FAILED", "STOP_VERIFICATION_UNKNOWN", "STOP_GIT_DRIFT", "INTERRUPTED"] as const;
 export type FinalState = (typeof FINAL_STATES)[number];
 
 // ── Redaction ───────────────────────────────────────────────────────────────────────────────────────────────

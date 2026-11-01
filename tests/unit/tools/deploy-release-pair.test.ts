@@ -1,7 +1,7 @@
 /**
- * Step 7G-H5.5-P2-F2: the paired-release executor with every effect faked (git, CLI spawn, files, evidence). Proves the
+ * Step 7G-H5.5-P2-F2: the release-unit executor with every effect faked (git, CLI spawn, files, evidence). Proves the
  * git identity contract (clean, fetch, HEAD unchanged, HEAD == origin/main, one frozen SHA, re-checked before each plane),
- * dry-run spawning nothing, INTEGRATION strictly before MAIN, every STOP state, interruption and timeout, create-exclusive
+ * dry-run spawning nothing, INTEGRATION strictly before INTELLIGENCE strictly before MAIN (Step H7-D1e), every STOP state, interruption and timeout, create-exclusive
  * evidence with no secret in it, and that nothing here contacts Trigger.dev unless the executor is invoked.
  */
 import { createHash } from "node:crypto";
@@ -22,7 +22,7 @@ import {
 const ROOT = "/repo/social-intelligence-platform";
 const SHA = "8d6fdf56bf90e9934b913f5dc64302b419740bf3";
 const OTHER = "1b3fbbe2f651ca64bbf228e4e49b0f344a109a95";
-const OPTIONS: ReleaseOptions = { cli: "/opt/trigger-cli/bin/trigger", integrationProjectRef: "proj_integrationtestref01", mainProjectRef: "proj_maintestrefabcdefghij", execute: true, timeoutMs: 60_000 };
+const OPTIONS: ReleaseOptions = { cli: "/opt/trigger-cli/bin/trigger", integrationProjectRef: "proj_integrationtestref01", intelligenceProjectRef: "proj_intelligencetestref1", mainProjectRef: "proj_maintestrefabcdefghij", execute: true, timeoutMs: 60_000 };
 const SECRET = "tr_" + "prod_" + "L".repeat(24);
 
 const deployed = (version: string, tasks: number, extra = ""): DeployResult => ({
@@ -60,7 +60,7 @@ function harness(overrides: Partial<FakeState> = {}) {
     fetches: 0,
     calls: [],
     spawns: [],
-    results: [deployed("20261022.1", 7), deployed("20261022.1", 11)],
+    results: [deployed("20261022.1", 7), deployed("20261022.1", 1), deployed("20261022.1", 11)],
     interrupted: false,
     evidence: new Map(),
     logs: [],
@@ -86,7 +86,7 @@ function harness(overrides: Partial<FakeState> = {}) {
       }
       return { ok: false, stdout: "" };
     },
-    fileExists: (relative) => relative === "trigger.config.ts" || relative === "trigger.integration.config.ts",
+    fileExists: (relative) => ["trigger.config.ts", "trigger.integration.config.ts", "trigger.intelligence.config.ts"].includes(relative),
     readFile: () => undefined,
     cliIsExecutable: (cli) => cli === OPTIONS.cli,
     createEmptyEnvFile: () => {
@@ -137,19 +137,20 @@ const evidenceOf = (h: ReturnType<typeof harness>) => {
 };
 
 describe("arguments", () => {
-  it("requires the CLI and both project refs; --execute needs --confirm-paired-release; unknown flags refused", () => {
-    expect(parseArguments(["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567"])).toMatchObject({ execute: false });
-    expect(parseArguments(["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567", "--execute", "--confirm-paired-release"])).toMatchObject({ execute: true });
+  it("requires the CLI and all three project refs; --execute needs --confirm-paired-release; unknown flags refused", () => {
+    expect(parseArguments(["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--intelligence-project-ref", "proj_c1234567", "--main-project-ref", "proj_b1234567"])).toMatchObject({ execute: false });
+    expect(parseArguments(["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--intelligence-project-ref", "proj_c1234567", "--main-project-ref", "proj_b1234567", "--execute", "--confirm-paired-release"])).toMatchObject({ execute: true });
     for (const args of [
       [],
       ["--cli", "/x", "--integration-project-ref", "proj_a1234567"],
-      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567", "--execute"],
-      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567", "--confirm-paired-release"],
-      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567", "--only", "main"],
-      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567", "--resume-sha", SHA],
-      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567", "--external-id", SHA],
-      ["--cli", "/x", "--cli", "/y", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567"],
-      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567", "--timeout-minutes", "0"],
+      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--main-project-ref", "proj_b1234567"],
+      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--intelligence-project-ref", "proj_c1234567", "--main-project-ref", "proj_b1234567", "--execute"],
+      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--intelligence-project-ref", "proj_c1234567", "--main-project-ref", "proj_b1234567", "--confirm-paired-release"],
+      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--intelligence-project-ref", "proj_c1234567", "--main-project-ref", "proj_b1234567", "--only", "main"],
+      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--intelligence-project-ref", "proj_c1234567", "--main-project-ref", "proj_b1234567", "--resume-sha", SHA],
+      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--intelligence-project-ref", "proj_c1234567", "--main-project-ref", "proj_b1234567", "--external-id", SHA],
+      ["--cli", "/x", "--cli", "/y", "--integration-project-ref", "proj_a1234567", "--intelligence-project-ref", "proj_c1234567", "--main-project-ref", "proj_b1234567"],
+      ["--cli", "/x", "--integration-project-ref", "proj_a1234567", "--intelligence-project-ref", "proj_c1234567", "--main-project-ref", "proj_b1234567", "--timeout-minutes", "0"],
     ]) {
       expect(parseArguments(args), args.join(" ")).toHaveProperty("error");
     }
@@ -194,7 +195,7 @@ describe("git identity and RELEASE_SHA", () => {
   });
 
   it("refuses invalid or equal project refs at plan time (no deploy)", async () => {
-    for (const options of [{ mainProjectRef: "main" }, { integrationProjectRef: "proj_maintestrefabcdefghij" }]) {
+    for (const options of [{ mainProjectRef: "main" }, { integrationProjectRef: "proj_maintestrefabcdefghij" }, { intelligenceProjectRef: "proj_maintestrefabcdefghij" }, { intelligenceProjectRef: "intelligence" }]) {
       const h = ready();
       expect(await run(h, options)).toMatchObject({ kind: "refused" });
       expect(h.state.spawns).toEqual([]);
@@ -213,20 +214,21 @@ describe("dry run (the default)", () => {
     expect(h.state.envFiles.every((entry) => entry.cleaned)).toBe(true);
     const plan = h.state.logs.join("\n");
     expect(plan).toContain(`RELEASE_SHA ${SHA}`);
-    expect(plan).toMatch(/plan 1\/2 integration: trigger deploy --config trigger\.integration\.config\.ts/);
-    expect(plan).toMatch(/plan 2\/2 main: trigger deploy --config trigger\.config\.ts/);
+    expect(plan).toMatch(/plan 1\/3 integration: trigger deploy --config trigger\.integration\.config\.ts/);
+    expect(plan).toMatch(/plan 2\/3 intelligence: trigger deploy --config trigger\.intelligence\.config\.ts/);
+    expect(plan).toMatch(/plan 3\/3 main: trigger deploy --config trigger\.config\.ts/);
     expect(plan).not.toContain("/tmp/fake-");
     expect(plan).toContain("<tool-empty-env-file>");
   });
 });
 
-describe("execute: INTEGRATION first, then MAIN, one SHA", () => {
-  it("ALIGNED: identity re-checked before each plane, INTEGRATION then MAIN, identical external id, evidence written once", async () => {
+describe("execute: INTEGRATION, then INTELLIGENCE, then MAIN, one SHA", () => {
+  it("ALIGNED: identity re-checked before each plane, INTEGRATION → INTELLIGENCE → MAIN, identical external id, evidence written once", async () => {
     const h = ready();
     const result = await run(h);
     expect(result).toMatchObject({ kind: "released", finalState: "ALIGNED" });
     expect(exitCodeFor(result)).toBe(0);
-    expect(h.state.spawns.map((spawn) => spawn.argv[2])).toEqual(["trigger.integration.config.ts", "trigger.config.ts"]);
+    expect(h.state.spawns.map((spawn) => spawn.argv[2])).toEqual(["trigger.integration.config.ts", "trigger.intelligence.config.ts", "trigger.config.ts"]);
     for (const spawn of h.state.spawns) {
       expect(spawn.cli).toBe(OPTIONS.cli);
       expect(spawn.argv[spawn.argv.indexOf("--external-id") + 1]).toBe(SHA);
@@ -235,14 +237,15 @@ describe("execute: INTEGRATION first, then MAIN, one SHA", () => {
       expect(spawn.argv[spawn.argv.indexOf("--env") + 1]).toBe("prod");
     }
     expect(h.state.spawns[0]?.argv[h.state.spawns[0].argv.indexOf("--project-ref") + 1]).toBe(OPTIONS.integrationProjectRef);
-    expect(h.state.spawns[1]?.argv[h.state.spawns[1].argv.indexOf("--project-ref") + 1]).toBe(OPTIONS.mainProjectRef);
-    // fetch: initial + before INTEGRATION + before MAIN + final
-    expect(h.state.fetches).toBe(4);
+    expect(h.state.spawns[1]?.argv[h.state.spawns[1].argv.indexOf("--project-ref") + 1]).toBe(OPTIONS.intelligenceProjectRef);
+    expect(h.state.spawns[2]?.argv[h.state.spawns[2].argv.indexOf("--project-ref") + 1]).toBe(OPTIONS.mainProjectRef);
+    // fetch: initial + before INTEGRATION + before INTELLIGENCE + before MAIN + final
+    expect(h.state.fetches).toBe(5);
     const order = h.state.calls.filter((call) => call.startsWith("spawn") || call === "git fetch origin main");
-    expect(order).toEqual(["git fetch origin main", "git fetch origin main", "spawn trigger.integration.config.ts", "git fetch origin main", "spawn trigger.config.ts", "git fetch origin main"]);
+    expect(order).toEqual(["git fetch origin main", "git fetch origin main", "spawn trigger.integration.config.ts", "git fetch origin main", "spawn trigger.intelligence.config.ts", "git fetch origin main", "spawn trigger.config.ts", "git fetch origin main"]);
     const evidence = evidenceOf(h);
-    expect(evidence).toMatchObject({ releaseSha: SHA, environment: "prod", planeOrder: ["integration", "main"], sameReleaseShaInEveryArgv: true, finalState: "ALIGNED", planesNotStarted: [] });
-    expect(evidence.planes.map((plane) => plane.outcome.state)).toEqual(["PASS", "PASS"]);
+    expect(evidence).toMatchObject({ schema: "wrenkind.trigger-release-pair.v2", releaseSha: SHA, environment: "prod", planeOrder: ["integration", "intelligence", "main"], sameReleaseShaInEveryArgv: true, finalState: "ALIGNED", planesNotStarted: [] });
+    expect(evidence.planes.map((plane) => plane.outcome.state)).toEqual(["PASS", "PASS", "PASS"]);
     expect(String(evidence["limitation"])).toMatch(/not re-readable/);
     expect([...h.state.evidence.keys()][0]).toMatch(new RegExp(`-${SHA.slice(0, 12)}\\.json$`));
     expect(h.state.envFiles.every((entry) => entry.cleaned)).toBe(true);
@@ -254,13 +257,28 @@ describe("execute: INTEGRATION first, then MAIN, one SHA", () => {
     expect(h.state.spawns).toEqual([]);
   });
 
-  it("INTEGRATION non-zero exit → STOP_INTEGRATION_FAILED, MAIN never runs", async () => {
-    const h = ready({ results: [{ exitCode: 1, output: "error", timedOut: false, interrupted: false }, deployed("20261022.1", 11)] });
+  it("INTEGRATION non-zero exit → STOP_INTEGRATION_FAILED, INTELLIGENCE and MAIN never run", async () => {
+    const h = ready({ results: [{ exitCode: 1, output: "error", timedOut: false, interrupted: false }, deployed("20261022.1", 1), deployed("20261022.1", 11)] });
     const result = await run(h);
     expect(result).toMatchObject({ finalState: "STOP_INTEGRATION_FAILED" });
     expect(exitCodeFor(result)).toBe(1);
     expect(h.state.spawns).toHaveLength(1);
-    expect(evidenceOf(h)).toMatchObject({ finalState: "STOP_INTEGRATION_FAILED", planesNotStarted: ["main"] });
+    expect(evidenceOf(h)).toMatchObject({ finalState: "STOP_INTEGRATION_FAILED", planesNotStarted: ["intelligence", "main"] });
+  });
+
+  it("INTELLIGENCE non-zero exit → STOP_INTELLIGENCE_FAILED, MAIN never runs (it would pin a missing deployment)", async () => {
+    const h = ready({ results: [deployed("20261022.1", 7), { exitCode: 1, output: "error", timedOut: false, interrupted: false }, deployed("20261022.1", 11)] });
+    const result = await run(h);
+    expect(result).toMatchObject({ finalState: "STOP_INTELLIGENCE_FAILED" });
+    expect(exitCodeFor(result)).toBe(1);
+    expect(h.state.spawns.map((spawn) => spawn.argv[2])).toEqual(["trigger.integration.config.ts", "trigger.intelligence.config.ts"]);
+    expect(evidenceOf(h)).toMatchObject({ finalState: "STOP_INTELLIGENCE_FAILED", planesNotStarted: ["main"] });
+  });
+
+  it("INTELLIGENCE with any task count but exactly 1 → STOP_VERIFICATION_UNKNOWN, MAIN never runs", async () => {
+    const h = ready({ results: [deployed("20261022.1", 7), deployed("20261022.1", 2), deployed("20261022.1", 11)] });
+    expect(await run(h)).toMatchObject({ finalState: "STOP_VERIFICATION_UNKNOWN" });
+    expect(h.state.spawns).toHaveLength(2);
   });
 
   it.each([
@@ -268,10 +286,10 @@ describe("execute: INTEGRATION first, then MAIN, one SHA", () => {
     ["wrong task count", deployed("20261022.1", 2)],
     ["timeout", { exitCode: null, output: "building…", timedOut: true, interrupted: false }],
   ])("INTEGRATION %s → STOP_VERIFICATION_UNKNOWN, MAIN never runs", async (_label, integration) => {
-    const h = ready({ results: [integration, deployed("20261022.1", 11)] });
+    const h = ready({ results: [integration, deployed("20261022.1", 1), deployed("20261022.1", 11)] });
     expect(await run(h)).toMatchObject({ finalState: "STOP_VERIFICATION_UNKNOWN" });
     expect(h.state.spawns).toHaveLength(1);
-    expect(evidenceOf(h)["planesNotStarted"]).toEqual(["main"]);
+    expect(evidenceOf(h)["planesNotStarted"]).toEqual(["intelligence", "main"]);
   });
 
   it.each([
@@ -291,7 +309,7 @@ describe("execute: INTEGRATION first, then MAIN, one SHA", () => {
     };
     expect(await runPairedRelease(OPTIONS, deps)).toMatchObject({ kind: "released", finalState: "STOP_GIT_DRIFT" });
     expect(h.state.spawns.map((spawn) => spawn.argv[2])).toEqual(["trigger.integration.config.ts"]);
-    expect(evidenceOf(h)).toMatchObject({ finalState: "STOP_GIT_DRIFT", planesNotStarted: ["main"] });
+    expect(evidenceOf(h)).toMatchObject({ finalState: "STOP_GIT_DRIFT", planesNotStarted: ["intelligence", "main"] });
   });
 
   it("git drift after MAIN is reported as STOP_GIT_DRIFT by the final identity check (never ALIGNED)", async () => {
@@ -305,33 +323,33 @@ describe("execute: INTEGRATION first, then MAIN, one SHA", () => {
       },
     };
     expect(await runPairedRelease(OPTIONS, deps)).toMatchObject({ finalState: "STOP_GIT_DRIFT" });
-    expect(h.state.spawns).toHaveLength(2);
+    expect(h.state.spawns).toHaveLength(3);
   });
 
-  it("MAIN failure → STOP_MAIN_FAILED: no retry, no rollback, INTEGRATION not redeployed", async () => {
-    const h = ready({ results: [deployed("20261022.1", 7), { exitCode: 1, output: "boom", timedOut: false, interrupted: false }] });
+  it("MAIN failure → STOP_MAIN_FAILED: no retry, no rollback, earlier planes not redeployed", async () => {
+    const h = ready({ results: [deployed("20261022.1", 7), deployed("20261022.1", 1), { exitCode: 1, output: "boom", timedOut: false, interrupted: false }] });
     const result = await run(h);
     expect(result).toMatchObject({ finalState: "STOP_MAIN_FAILED" });
-    expect(h.state.spawns.map((spawn) => spawn.argv[2])).toEqual(["trigger.integration.config.ts", "trigger.config.ts"]);
+    expect(h.state.spawns.map((spawn) => spawn.argv[2])).toEqual(["trigger.integration.config.ts", "trigger.intelligence.config.ts", "trigger.config.ts"]);
     const evidence = evidenceOf(h);
-    expect(evidence.planes.map((plane) => plane.outcome.state)).toEqual(["PASS", "FAILED"]);
+    expect(evidence.planes.map((plane) => plane.outcome.state)).toEqual(["PASS", "PASS", "FAILED"]);
     expect(String(evidence["policy"])).toMatch(/No automatic retry, rollback or redeploy/);
   });
 
   it("MAIN with the wrong task count → STOP_VERIFICATION_UNKNOWN (fail closed)", async () => {
-    const h = ready({ results: [deployed("20261022.1", 7), deployed("20261022.1", 6)] });
+    const h = ready({ results: [deployed("20261022.1", 7), deployed("20261022.1", 1), deployed("20261022.1", 6)] });
     expect(await run(h)).toMatchObject({ finalState: "STOP_VERIFICATION_UNKNOWN" });
   });
 
-  it("operator interrupt during INTEGRATION → INTERRUPTED, MAIN never starts, env file cleaned", async () => {
+  it("operator interrupt during INTEGRATION → INTERRUPTED, no later plane starts, env file cleaned", async () => {
     const h = ready({ results: [{ exitCode: null, output: "", timedOut: false, interrupted: true }] });
     expect(await run(h)).toMatchObject({ finalState: "INTERRUPTED" });
     expect(h.state.spawns).toHaveLength(1);
     expect(h.state.envFiles.every((entry) => entry.cleaned)).toBe(true);
-    expect(evidenceOf(h)).toMatchObject({ finalState: "INTERRUPTED", planesNotStarted: ["main"] });
+    expect(evidenceOf(h)).toMatchObject({ finalState: "INTERRUPTED", planesNotStarted: ["intelligence", "main"] });
   });
 
-  it("operator interrupt between the planes → INTERRUPTED before MAIN", async () => {
+  it("operator interrupt between the planes → INTERRUPTED before the next plane", async () => {
     const h = ready();
     const original = h.deps.spawnDeploy;
     const deps: ReleaseDependencies = {

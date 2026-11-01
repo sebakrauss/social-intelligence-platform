@@ -84,11 +84,19 @@ describe("discovery: one config per plane, disjoint task directories", () => {
   it("each config discovers exactly its plane's directory and pins Node 22", () => {
     const main = codeOf("trigger.config.ts");
     const integration = codeOf("trigger.integration.config.ts");
+    const intelligence = codeOf("trigger.intelligence.config.ts");
     expect(main.match(/dirs:\s*\[([^\]]*)\]/)?.[1]).toBe('"./jobs/trigger/main"');
     expect(integration.match(/dirs:\s*\[([^\]]*)\]/)?.[1]).toBe('"./jobs/trigger/integration"');
-    for (const config of [main, integration]) expect(config).toMatch(/runtime: "node-22",/);
-    // H7-D1d: no config discovers the intelligence directory yet (its Trigger project is H7-D1e).
-    for (const config of readdirSync(root).filter((name) => /^trigger\..*config\.ts$/.test(name))) expect(codeOf(config), config).not.toMatch(/jobs\/trigger\/intelligence/);
+    expect(intelligence.match(/dirs:\s*\[([^\]]*)\]/)?.[1]).toBe('"./jobs/trigger/intelligence"');
+    for (const config of [main, integration, intelligence]) expect(config).toMatch(/runtime: "node-22",/);
+    // H7-D1e: exactly one config discovers the intelligence directory; it has no build extension (no AWS helper) and its
+    // project reference comes from its own variable.
+    const configs = readdirSync(root).filter((name) => /^trigger\..*config\.ts$/.test(name)).sort();
+    expect(configs).toEqual(["trigger.config.ts", "trigger.integration.config.ts", "trigger.intelligence.config.ts", "trigger.managed-test.config.ts"]);
+    expect(configs.filter((config) => /jobs\/trigger\/intelligence/.test(codeOf(config)))).toEqual(["trigger.intelligence.config.ts"]);
+    expect(intelligence).toMatch(/project: process\.env\["TRIGGER_INTELLIGENCE_PROJECT_REF"\] \?\? "",/);
+    expect(intelligence).not.toMatch(/extensions|awsSigningHelper|build:/);
+    expect([...intelligence.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])).toEqual(["@trigger.dev/sdk", "./platform/jobs/registry"]);
   });
 
   it("the plane directories declare disjoint task sets whose union is exactly the registry", () => {
@@ -96,13 +104,15 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     const integration = discoveredTasks(PLANE_DIRS.integration);
     expect(main).toEqual([...MAIN_TASKS].sort());
     expect(integration).toEqual([...INTEGRATION_TASKS, ...INTEGRATION_DIAGNOSTIC_TASKS].sort());
-    // The paired release expects exactly the discovered counts: INTEGRATION 7, MAIN 11 (H6-C3 adds 1 + 2; H6-E 1 + 0;
-    // H6-F3 0 + 2; H6-F4 0 + 1 — ingestion.process_signals).
-    expect(integration).toHaveLength(7);
-    expect(main).toHaveLength(11);
-    expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", integration.length], ["main", main.length]]);
-    expect(main.filter((task) => integration.includes(task))).toEqual([]);
     const intelligence = discoveredTasks(PLANE_DIRS.intelligence);
+    // The release unit expects exactly the discovered counts: INTEGRATION 7, INTELLIGENCE 1, MAIN 11 (H6-C3 adds 1 + 2;
+    // H6-E 1 + 0; H6-F3 0 + 2; H6-F4 0 + 1 — ingestion.process_signals; H7-D1e: the intelligence plane, 1).
+    expect(integration).toHaveLength(7);
+    expect(intelligence).toHaveLength(1);
+    expect(main).toHaveLength(11);
+    expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", integration.length], ["intelligence", intelligence.length], ["main", main.length]]);
+    expect(main.filter((task) => integration.includes(task) || intelligence.includes(task))).toEqual([]);
+    expect(intelligence.filter((task) => integration.includes(task))).toEqual([]);
     expect(intelligence).toEqual(INTELLIGENCE_TASKS);
     for (const task of intelligence) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("intelligence");
     for (const task of main) expect(PRODUCTION_TASKS.get(task)?.executionPlane, task).toBe("main");
@@ -137,7 +147,7 @@ describe("transitive import graphs of the three planes", () => {
     expect(modules).toContain("ai/providers/anthropic/qualified.ts");
     expect(modules).toContain("modules/classification/persistence/intelligence-store.ts");
     expect(modules.filter((source) => OPENER.test(source) || MAIN_ONLY.test(source))).toEqual([]);
-    expect(modules.filter((source) => /^(integrations|mutations|platform\/crypto)\/|^jobs\/(connections|integration-[a-z-]+|reconciliation-slice|confirm-interaction|provider-events|process-signals)\.ts$|^jobs\/trigger\/(main|integration)\/|^ai\/providers\/(openai|simulator)\//.test(source))).toEqual([]);
+    expect(modules.filter((source) => /^(integrations|mutations|platform\/crypto)\/|^modules\/(moderation|replies|automation|alerts|connections)\/|^jobs\/(connections|integration-[a-z-]+|reconciliation-slice|confirm-interaction|provider-events|process-signals)\.ts$|^jobs\/trigger\/(main|integration)\/|^ai\/providers\/(openai|simulator)\//.test(source))).toEqual([]);
     const code = modules.filter((source) => /^(jobs|platform|server|modules)\//.test(source)).map((source) => codeOf(source)).join("\n");
     expect(code).not.toMatch(/createRuntimeDatabaseFromEnv\(\s*"system"/);
   }, 60_000);
@@ -151,6 +161,15 @@ describe("transitive import graphs of the three planes", () => {
     expect(code).not.toMatch(/createRuntimeDatabaseFromEnv\(\s*"system"/);
     expect(modules.filter((source) => MODEL_SIDE.test(source))).toEqual([]);
   }, 60_000);
+});
+
+describe("H7-D1e: the web never loads the model side", () => {
+  it("the hosted web's import graph (app/, server/, proxy.ts) reaches no model adapter, gateway composition, runner or jobs/ file", async () => {
+    const modules = await reachable("app");
+    const server = await reachable("server");
+    const all = [...new Set([...modules, ...server, ...(await reachable("proxy.ts"))])];
+    expect(all.filter((source) => /^ai\/providers\/|^jobs\/|^modules\/classification\/(intelligence-runtime\.ts$|application\/ai\/)/.test(source))).toEqual([]);
+  }, 120_000);
 });
 
 describe("the persisted plane selects the runtime; no cross-plane fallback", () => {

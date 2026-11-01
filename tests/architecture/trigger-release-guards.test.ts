@@ -1,7 +1,7 @@
 /**
  * Paired Trigger.dev release guards (Step 7G-H5.5-P2-F2). Every SUPPORTED production release path in this repository is
- * the paired tool (`npm run trigger:release` → tools/trigger/deploy-release-pair.ts): both planes, INTEGRATION then MAIN,
- * one captured commit as the external id of both. No package script, operator document, workflow or config comment
+ * the paired tool (`npm run trigger:release` → tools/trigger/deploy-release-pair.ts): every plane, INTEGRATION, then
+ * INTELLIGENCE (Step H7-D1e), then MAIN, one captured commit as the external id of all three. No package script, operator document, workflow or config comment
  * teaches a single-plane production deploy; the TA-Q-31 Preview deploy stays the one documented exception and can never
  * name `prod` or an external id. The tool itself reads no env file, syncs or shows no variable, never forces, imports no
  * Trigger.dev runtime, holds no project ref or secret, and gives the CLI a sterile environment.
@@ -43,6 +43,7 @@ const releaseSurfaces = (): string[] => [
   "package.json",
   "trigger.config.ts",
   "trigger.integration.config.ts",
+  "trigger.intelligence.config.ts",
   ...documentsUnder("design"),
   ...documentsUnder(".github"),
   ...sourceFiles(["tools"]).filter((file) => !TOOL_FILES.includes(file)),
@@ -78,21 +79,21 @@ describe("the only supported Trigger.dev production release path is the paired t
 
   it("the production release documents point to the paired tool", () => {
     const readme = raw("README.md");
-    for (const phrase of ["npm run trigger:release", "INTEGRATION first, then MAIN", "dry run by default", "--execute --confirm-paired-release", ".wrenkind-local/evidence/trigger-release-pair/", "STOP_MAIN_FAILED", "web-only commit"]) {
+    for (const phrase of ["npm run trigger:release", "INTEGRATION first, then INTELLIGENCE, then MAIN", "--intelligence-project-ref", "dry run by default", "--execute --confirm-paired-release", ".wrenkind-local/evidence/trigger-release-pair/", "STOP_INTELLIGENCE_FAILED", "STOP_MAIN_FAILED", "web-only commit"]) {
       expect(readme, phrase).toContain(phrase);
     }
     expect(raw("design/phase-7e/aws-authorization/README.md")).toContain("npm run trigger:release");
-    for (const config of ["trigger.config.ts", "trigger.integration.config.ts", RELEASE_DOCUMENTING_JOBS_FILE]) expect(raw(config), config).toContain("npm run trigger:release");
+    for (const config of ["trigger.config.ts", "trigger.integration.config.ts", "trigger.intelligence.config.ts", RELEASE_DOCUMENTING_JOBS_FILE]) expect(raw(config), config).toContain("npm run trigger:release");
   });
 });
 
-describe("the paired plan", () => {
-  it("is exactly INTEGRATION then MAIN, each with its config, both with ONE external id", () => {
-    expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.config])).toEqual([["integration", "trigger.integration.config.ts"], ["main", "trigger.config.ts"]]);
+describe("the release unit plan", () => {
+  it("is exactly INTEGRATION, INTELLIGENCE, then MAIN, each with its config, all with ONE external id", () => {
+    expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.config])).toEqual([["integration", "trigger.integration.config.ts"], ["intelligence", "trigger.intelligence.config.ts"], ["main", "trigger.config.ts"]]);
     const sha = "a".repeat(40);
-    const plan = buildReleasePlan({ releaseSha: sha, integrationProjectRef: "proj_aaaaaaaa1", mainProjectRef: "proj_bbbbbbbb2", emptyEnvFile: "/tmp/x" });
+    const plan = buildReleasePlan({ releaseSha: sha, integrationProjectRef: "proj_aaaaaaaa1", intelligenceProjectRef: "proj_cccccccc3", mainProjectRef: "proj_bbbbbbbb2", emptyEnvFile: "/tmp/x" });
     const ids = plan.steps.map((step) => step.argv[step.argv.indexOf("--external-id") + 1]);
-    expect(ids).toEqual([sha, sha]);
+    expect(ids).toEqual([sha, sha, sha]);
     for (const step of plan.steps) expect(step.argv).toEqual(expect.arrayContaining(["--env", "prod", "--depot-build", "--skip-sync-env-vars", "--skip-update-check", "--skip-telemetry", "--env-file"]));
   });
 });
