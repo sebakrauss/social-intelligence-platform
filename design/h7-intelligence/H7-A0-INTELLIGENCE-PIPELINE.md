@@ -1248,3 +1248,35 @@ data, no backfill). Tests use the simulator only.
 - **Carried to H7-D1f (not changed here):** the at-least-once provider-call window, the post-call ledger window
   (TL decision `ACCEPT_FOR_SYNTHETIC_LIVE_TEST` or `REPAIR_BEFORE_FIRST_REAL_PROVIDER_CALL` required), and recovery
   latency depending on MAIN traffic.
+
+## 45. H7-D1e2b as implemented (durable provider-call intents; migration 0026, NOT applied)
+
+TL decision `POST_CALL_LEDGER_DECISION = REPAIR_BEFORE_FIRST_REAL_PROVIDER_CALL`; design H7-D1e2a Option B. Invariant:
+**every authorized provider call has a durable identity committed before egress.**
+
+- **0026** (`db/migrations/0026_ai_call_intents.sql`, expand-only): `classification.ai_call_intents`, append-only — one row
+  per (workspace, request, dispatch generation, attempt 1 | 2; `ai_call_intents_once`), composite FK to the request's
+  0025 AI target, ids / versions / counts / times only; RLS enabled and forced, `app_worker` SELECT + INSERT only,
+  nothing for `authenticated`. `ai_attempts_intent`: every attempt row names its intent (same request, generation,
+  attempt number). The FK is added AFTER `reset role`: as `app_owner` (owner of a FORCE-RLS table without an owner
+  policy) PostgreSQL's initial FK check sees no rows and validates vacuously — proven, and the four earlier FKs added as
+  `app_owner` (0007, 0017 ×2, 0023, 0025) were checked: each covered a new table or a new all-NULL column.
+- **Gateway:** `createLedgeredAiGateway` (product runtime; its `EgressPort` is required) and `createAiGateway` (the
+  offline evaluation gateway the frozen evaluator uses; confined to tests/ by a guard). Before EACH `provider.complete`
+  (initial and re-ask) `egress.authorize` must return "authorized" (a throw or anything else ⇒ AI_UNAVAILABLE, new cause
+  `egress_unrecorded`, not retryable, zero calls); right after each call `egress.recorded` makes its final attempt durable
+  (a failed record stops further egress). `DENY_ALL_EGRESS` is the fail-closed default.
+- **Runner fence:** `authorize` = its own committed transaction: lock the request, require same workspace / request,
+  AI_RUNNING, exactly this generation; insert the intent; only an inserted intent authorizes. A superseded generation can
+  make neither its initial call nor its re-ask. Attempt ids are stable per run, so tx2's re-assertion is a no-op.
+- **Accounting (derived, never stored):** RECORDED (attempt row exists) · IN_FLIGHT (no attempt, request AI_RUNNING at that
+  generation, intent younger than the stale threshold) · UNKNOWN_PROVIDER_OUTCOME (otherwise: potentially billable, never
+  "not called"). Read-only operator tool `tools/db/ai-call-reconciliation.ts` over `tools/db/ai-call-accounting.ts`.
+- **Unchanged:** the budget (worst-case 2 calls / 2× chars reserved before any intent, never refunded — unknown outcomes
+  stay spent), recovery (15 min, ≤ 3 generations; unknown intents count), `ai_results_once`, the R6 claim, shadow only.
+  At-least-once remains (a late run and its successor can both call), but every call has a distinct durable identity:
+  `DUPLICATE_CALLS_IF_ANY_ARE_FULLY_ACCOUNTED = YES`.
+- **Tests:** crash windows A, B, C, C′, D, E, F/G, H, the re-ask fence, event ordering, duplicate accounting
+  (tests/db/suites/intelligence-runtime.ts); 0026 schema / RLS / grants / linkage (intelligence-persistence.ts); the
+  0025 → 0026 upgrade incl. its fail-closed probe (tests/db/local/migration-0026-upgrade.test.ts); gateway ordering and
+  denial (tests/unit/ai/gateway.test.ts); invariant guards (intelligence-boundary-guards).

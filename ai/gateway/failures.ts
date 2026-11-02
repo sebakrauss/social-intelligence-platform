@@ -11,6 +11,9 @@
  *                       provider_auth_failed ·             (H7-D0: a provider refused the credential, rejected the
  *                       provider_request_rejected ·        request, or served a model other than the one requested —
  *                       model_mismatch                     never retried, never re-routed)
+ *                       egress_unrecorded                  (H7-D1e2b: the call's durable egress identity could not be
+ *                                                          committed — or the request/generation fence refused it — so
+ *                                                          the provider was NOT called; never retried by this run)
  *   AI_INVALID_OUTPUT   invalid_output (after ONE re-ask)  no          no assessment (TA §23.2)
  *   AI_REFUSED          refused                            no          same as invalid (no retry loop)
  *   AI_BUDGET           budget_exhausted                   no          no call until the budget policy allows
@@ -32,6 +35,7 @@ export const AI_FAILURE_CAUSES = [
   "provider_auth_failed",
   "provider_request_rejected",
   "model_mismatch",
+  "egress_unrecorded",
   "invalid_output",
   "refused",
   "budget_exhausted",
@@ -50,6 +54,7 @@ const CLASS_OF: Readonly<Record<AiFailureCause, AiFailureClass>> = Object.freeze
   provider_auth_failed: "AI_UNAVAILABLE",
   provider_request_rejected: "AI_UNAVAILABLE",
   model_mismatch: "AI_UNAVAILABLE",
+  egress_unrecorded: "AI_UNAVAILABLE",
   invalid_output: "AI_INVALID_OUTPUT",
   refused: "AI_REFUSED",
   budget_exhausted: "AI_BUDGET",

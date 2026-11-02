@@ -9,8 +9,12 @@
  *        canonical target and re-run every pre-model check (canonical, route, A1 input): a refusal ends the request
  *        AI_FAILED without any provider call. Otherwise commit AI_PENDING → AI_RUNNING (before the call, R6)
  *   call the gateway (understandInteraction): route → kill switch → model → input bound → budget (the reservation is its
- *        own committed transaction: classification.reserve_ai_budget()) → provider → at most ONE re-ask
- *   tx2  append the ledger rows (ai_attempts) of the calls made; then, only if the request is STILL AI_RUNNING at this
+ *        own committed transaction: classification.reserve_ai_budget()) → provider → at most ONE re-ask. Step H7-D1e2b:
+ *        BEFORE EACH provider call (initial and re-ask) the egress fence commits the call's durable identity
+ *        (classification.ai_call_intents) in its own transaction, under the request's row lock, only while the request
+ *        is still AI_RUNNING at this generation — otherwise no call; and right AFTER each call its final attempt row
+ *        (ai_attempts) is committed in its own transaction, so no completed call waits for tx2 to become durable
+ *   tx2  re-assert the ledger rows idempotently (same ids); then, only if the request is STILL AI_RUNNING at this
  *        generation: a validated output ⇒ the shadow result (ai_results) + the canonical A1 composition
  *        (deriveUnderstandingOutcome) + its AI assessments, all SHADOW ⇒ COMPLETED; a failure ⇒ AI_FAILED with its
  *        class, or — transient transport only, below MAX_TRANSPORT_GENERATIONS — the next generation's dispatch
@@ -21,7 +25,7 @@
  * the same generation bound. Protection and Needs review are derived by code here and returned, never model output and
  * never an action: nothing in this file hides, deletes, replies, blocks, moderates or alerts.
  */
-import type { AiGateway, BudgetPort } from "@/ai/gateway";
+import type { AiGateway, AttemptRecord, BudgetPort, EgressPort } from "@/ai/gateway";
 import { parseInstant, type Instant } from "@/domain/instant";
 import { parseAnalysisTarget } from "../../domain/assessment";
 import {
@@ -63,8 +67,11 @@ export interface UnderstandingModelBinding {
 export interface UnderstandingRunDependencies {
   readonly inScope: <T>(work: (scope: IntelligenceRunScope) => Promise<T>) => Promise<T>;
   readonly policy: UnderstandAiRoutePolicy;
-  /** The gateway of this run, bound to its budget port (the composition supplies registry, routes, providers, kill switch). */
-  readonly gatewayFor: (budget: BudgetPort) => AiGateway;
+  /**
+   * The gateway of this run, bound to its budget and egress ports (the composition supplies registry, routes, providers,
+   * kill switch). Step H7-D1e2b: it must be the ledgered gateway — every provider call goes through `egress`.
+   */
+  readonly gatewayFor: (budget: BudgetPort, egress: EgressPort) => AiGateway;
   readonly binding: UnderstandingModelBinding;
   readonly clock: ClassificationClock;
 }
@@ -204,7 +211,59 @@ export async function runUnderstanding(deps: UnderstandingRunDependencies, paylo
   };
   const target = parseAnalysisTarget({ workspaceId: request.workspaceId, interactionId: request.interactionId, sourceTextVersionId: request.sourceTextVersionId });
   if (target === undefined) throw new TypeError("classification_target_invalid");
-  const result = await understandInteraction(deps.gatewayFor(budget), pre.input, {
+  const context: IntelligenceRecordContext = {
+    target,
+    understandingRequestId: request.id,
+    pipelineVersion: INTELLIGENCE_PIPELINE_VERSION,
+    dispatchGeneration: generation,
+    correlationId: payload.correlationId,
+    triggerRunId: run.runId,
+    modelRequested: binding.modelRequested,
+    transportSchemaVersion: binding.transportSchemaVersion,
+  };
+  // Stable ids for this run's two possible calls: the per-call write and tx2's re-assertion name the SAME rows.
+  const intentIds: Readonly<Record<1 | 2, string>> = { 1: clock.newId(), 2: clock.newId() };
+  const attemptIds: Readonly<Record<1 | 2, string>> = { 1: clock.newId(), 2: clock.newId() };
+  const ledgerRows = (attempts: readonly AttemptRecord[], createdAt: Date): readonly AiAttemptRow[] =>
+    toAttemptLedgerEntries(attempts, context).map((entry) => attemptRow(entry, { id: attemptIds[entry.attemptNumber], organizationId: request.organizationId, createdAt }));
+
+  // ── egress: the durable identity of each provider call, committed BEFORE the call (fence under the row lock) ──
+  const egress: EgressPort = {
+    authorize: async (call) => {
+      if (call.workspaceId !== request.workspaceId || call.taskId !== UNDERSTANDING_TASK_ID) return "denied";
+      return deps.inScope(async (scope) => {
+        const current = await scope.intelligence.lockRequest(request.id);
+        // The fence: same workspace and request, still AI_RUNNING, still exactly this generation (never superseded).
+        if (current === undefined || current.workspaceId !== request.workspaceId || current.state !== "AI_RUNNING" || current.aiGeneration !== generation) return "denied" as const;
+        const written = await scope.intelligence.recordCallIntent({
+          id: intentIds[call.attemptNumber],
+          organizationId: request.organizationId,
+          workspaceId: request.workspaceId,
+          understandingRequestId: request.id,
+          interactionId: request.interactionId,
+          sourceTextVersionId: request.sourceTextVersionId,
+          pipelineVersion: INTELLIGENCE_PIPELINE_VERSION,
+          dispatchGeneration: generation,
+          attemptNumber: call.attemptNumber,
+          attemptKind: call.kind,
+          taskId: call.taskId,
+          provider: call.providerKey,
+          modelRequested: binding.modelRequested,
+          routeFingerprint: binding.routeFingerprint,
+          inputChars: call.inputChars,
+          correlationId: payload.correlationId,
+          triggerRunId: run.runId,
+          createdAt: clock.now(),
+        });
+        // A second authorization of the same egress identity is refused (exactly one intent per call).
+        return written === "inserted" ? ("authorized" as const) : ("denied" as const);
+      });
+    },
+    recorded: async (attempt) => {
+      await deps.inScope((scope) => scope.intelligence.recordAttempts(ledgerRows([attempt], clock.now())));
+    },
+  };
+  const result = await understandInteraction(deps.gatewayFor(budget, egress), pre.input, {
     workspaceId: request.workspaceId,
     interactionId: request.interactionId,
     sourceTextVersionId: request.sourceTextVersionId,
@@ -215,17 +274,8 @@ export async function runUnderstanding(deps: UnderstandingRunDependencies, paylo
   // ── tx2: ledger, then (still this generation) result + shadow assessments, or the failure / next generation ──
   return deps.inScope(async (scope) => {
     const now = clock.now();
-    const context: IntelligenceRecordContext = {
-      target,
-      understandingRequestId: request.id,
-      pipelineVersion: INTELLIGENCE_PIPELINE_VERSION,
-      dispatchGeneration: generation,
-      correlationId: payload.correlationId,
-      triggerRunId: run.runId,
-      modelRequested: binding.modelRequested,
-      transportSchemaVersion: binding.transportSchemaVersion,
-    };
-    const rows = toAttemptLedgerEntries(result.attempts, context).map((entry) => attemptRow(entry, { id: clock.newId(), organizationId: request.organizationId, createdAt: now }));
+    // Already durable per call (egress.recorded); re-asserted idempotently with the SAME ids (a no-op when present).
+    const rows = ledgerRows(result.attempts, now);
     const current = await scope.intelligence.lockRequest(request.id);
     await scope.intelligence.recordAttempts(rows);
     if (current === undefined || current.state !== "AI_RUNNING" || current.aiGeneration !== generation) return { kind: "generation_superseded" as const, generation, attempts: rows.length };

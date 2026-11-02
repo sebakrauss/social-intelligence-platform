@@ -473,6 +473,12 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     policies: ["worker_append INSERT app_worker", "worker_read SELECT app_worker"],
     privileges: { app_worker: ["INSERT", "SELECT"] },
   },
+  // Step H7-D1e2b (0026): the append-only provider-egress identities, committed before every call — the bound worker only.
+  "classification.ai_call_intents": {
+    class: "append_only_history",
+    policies: ["worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { app_worker: ["INSERT", "SELECT"] },
+  },
   // Step H7-D1c (0025): the pre-call budget counters (workspace × task × UTC day), never decreasing; the bound worker only.
   "classification.ai_budget_reservations": {
     class: "workspace_tenant",

@@ -60,6 +60,7 @@ function fakeScope(context: Partial<UnderstandingContextRecord> = {}, options: {
     intelligence: {
       lockRequest: () => Promise.resolve(record),
       transition: (t) => { transitions.push(t); return Promise.resolve(true); },
+      recordCallIntent: () => Promise.resolve("inserted"),
       appendDispatch: ({ generation }) => { dispatches.push(generation); return Promise.resolve("appended"); },
       recordAttempts: () => Promise.resolve(0),
       recordResult: () => Promise.resolve("inserted"),

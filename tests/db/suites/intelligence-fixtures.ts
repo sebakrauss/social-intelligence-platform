@@ -1,7 +1,7 @@
 /**
  * Step H7-D1c — synthetic intelligence-persistence rows for the database suites (0025): one understanding request of the
  * `classification.intelligence.v1` pipeline in an AI state, one accepted attempt and one validated result for a text
- * version. Written by the privileged test login (the H7-D1d runtime writers are tested in intelligence-runtime.ts);
+ * version (and, since 0026, the call intent the attempt names). Written by the privileged test login (the H7-D1d runtime writers are tested in intelligence-runtime.ts);
  * identifiers and versions only.
  */
 import { randomUUID } from "node:crypto";
@@ -49,6 +49,22 @@ export const resultColumns = (t: AiTarget, requestId: string, attemptId: string,
   created_at: "2026-10-31T12:00:02Z", ...overrides,
 });
 
+/**
+ * Step H7-D1e2b (0026): the durable egress identity every attempt row must name — one per (request, generation,
+ * attempt). Written by the privileged test login, like the other fixtures.
+ */
+export const intentColumns = (t: AiTarget, requestId: string, overrides: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> => ({
+  id: randomUUID(), organization_id: t.organizationId, workspace_id: t.workspaceId, understanding_request_id: requestId, interaction_id: t.interaction,
+  source_text_version_id: t.version, pipeline_version: INTELLIGENCE_PIPELINE, dispatch_generation: 1, attempt_number: 1, attempt_kind: "initial",
+  task_id: "classification.understanding", provider: "anthropic", model_requested: "claude-sonnet-5-5", route_fingerprint: FINGERPRINT, input_chars: 4200,
+  correlation_id: "corr-h7-d1c-fixture", trigger_run_id: "run_h7d1c_fixture", created_at: "2026-10-31T11:59:59Z", ...overrides,
+});
+
+export async function insertIntent(privileged: pg.Pool, t: AiTarget, requestId: string, generation = 1, attemptNumber: 1 | 2 = 1): Promise<string> {
+  const row = insertRow("classification.ai_call_intents", intentColumns(t, requestId, { dispatch_generation: generation, attempt_number: attemptNumber, attempt_kind: attemptNumber === 1 ? "initial" : "reask" }));
+  return (await privileged.query<{ id: string }>(row.text, row.values)).rows[0]?.id ?? "";
+}
+
 /** A parameterized INSERT of one row (column order from the object). */
 export function insertRow(table: string, row: Readonly<Record<string, unknown>>): { readonly text: string; readonly values: unknown[] } {
   const columns = Object.keys(row);
@@ -69,6 +85,7 @@ export async function insertAiRequest(privileged: pg.Pool, t: AiTarget, state = 
 /** Request → accepted attempt → validated (shadow) result for one text version. */
 export async function insertAiChain(privileged: pg.Pool, t: AiTarget): Promise<AiChain> {
   const requestId = await insertAiRequest(privileged, t);
+  await insertIntent(privileged, t, requestId);
   const attempt = insertRow("classification.ai_attempts", attemptColumns(t, requestId));
   const attemptId = (await privileged.query<{ id: string }>(attempt.text, attempt.values)).rows[0]?.id ?? "";
   const result = insertRow("classification.ai_results", resultColumns(t, requestId, attemptId));

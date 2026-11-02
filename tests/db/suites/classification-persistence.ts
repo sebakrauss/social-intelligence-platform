@@ -226,11 +226,11 @@ export function defineClassificationPersistenceSuite(getTarget: () => DbTarget):
   });
 
   describe("schema", () => {
-    it("1. 0024 created the classification schema (owned by app_owner) with its five tables (0025 adds three), RLS enabled and forced", async () => {
+    it("1. 0024 created the classification schema (owned by app_owner) with its five tables (0025 adds three, 0026 one), RLS enabled and forced", async () => {
       const tables = await oracle<{ t: string; owner: string; rls: boolean; forced: boolean }>(
         `select c.relname as t, pg_get_userbyid(c.relowner) as owner, c.relrowsecurity as rls, c.relforcerowsecurity as forced
            from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'classification' and c.relkind = 'r' order by 1`);
-      expect(tables).toEqual(["ai_attempts", "ai_budget_reservations", "ai_results", "assessments", "signals", "understanding_requests", "watch_term_revisions", "watch_terms"]
+      expect(tables).toEqual(["ai_attempts", "ai_budget_reservations", "ai_call_intents", "ai_results", "assessments", "signals", "understanding_requests", "watch_term_revisions", "watch_terms"]
         .map((t) => ({ t, owner: "app_owner", rls: true, forced: true })));
       expect(await oracle("select pg_get_userbyid(nspowner) as owner from pg_namespace where nspname = 'classification'")).toEqual([{ owner: "app_owner" }]);
     });

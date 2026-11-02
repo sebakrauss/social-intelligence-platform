@@ -136,6 +136,53 @@ describe("H7-D1b: the declared-only plane can't reach the delivery path before 0
   });
 });
 
+describe("H7-D1e2b: every provider call has a durable identity committed before egress", () => {
+  const gateway = strip(codeOf("ai/gateway/gateway.ts"));
+
+  it("only tests construct the unledgered (evaluation) gateway; the runtime composes the ledgered one only", () => {
+    const builders = sourceFiles(["app", "ui", "server", "domain", "modules", "platform", "integrations", "jobs", "db", "mutations", "ai", "prompts", "tools"])
+      .filter((file) => file !== "ai/gateway/gateway.ts" && /\bcreateAiGateway\(/.test(strip(codeOf(file))));
+    expect(builders).toEqual([]);
+    const ledgered = sourceFiles(["app", "ui", "server", "domain", "modules", "platform", "integrations", "jobs", "db", "mutations", "ai", "prompts", "tools"])
+      .filter((file) => file !== "ai/gateway/gateway.ts" && /\bcreateLedgeredAiGateway\(/.test(strip(codeOf(file))));
+    expect(ledgered).toEqual(["jobs/intelligence.ts"]);
+    expect(strip(codeOf("jobs/intelligence.ts"))).toMatch(/gatewayFor: \(budget, egress\) => createLedgeredAiGateway\(\{ registry, routes, providers: composition\.providers\(\), budget, egress,/);
+  });
+
+  it("the gateway has ONE provider call, preceded in the same loop by the egress authorization, followed by the durable record", () => {
+    expect(gateway.match(/provider\.complete\(/g)).toHaveLength(1);
+    const authorize = gateway.indexOf("if (egress !== undefined && !(await authorizeEgress(egress, call))) return failed(\"egress_unrecorded\", attempts);");
+    const call = gateway.indexOf("const response = await provider.complete(");
+    expect(authorize).toBeGreaterThan(-1);
+    expect(authorize).toBeLessThan(call);
+    expect(gateway.slice(gateway.indexOf("for (const attemptNumber of [1, 2] as const) {"), call)).toContain("authorizeEgress(egress, call)");
+    // Every outcome after a call is recorded durably before the gateway returns or re-asks.
+    expect(gateway.match(/if \(!\(await durable\(\)\)\) return failed\("egress_unrecorded", attempts\);/g)).toHaveLength(4);
+    expect(strip(codeOf("ai/gateway/failures.ts"))).toMatch(/egress_unrecorded: "AI_UNAVAILABLE",/);
+    expect(strip(codeOf("ai/gateway/failures.ts"))).toMatch(/const RETRYABLE: readonly AiFailureCause\[\] = Object\.freeze\(\["provider_unavailable", "timeout", "rate_limited"\]\);/);
+  });
+
+  it("the runner's egress fence locks the request, re-checks AI_RUNNING at its generation, and authorizes only an inserted intent", () => {
+    const runner = strip(codeOf("modules/classification/application/ai/run-understanding.ts"));
+    const fence = runner.slice(runner.indexOf("authorize: async (call) => {"), runner.indexOf("recorded: async (attempt) => {"));
+    expect(fence).toMatch(/const current = await scope\.intelligence\.lockRequest\(request\.id\);/);
+    expect(fence).toMatch(/current\.state !== "AI_RUNNING" \|\| current\.aiGeneration !== generation\) return "denied" as const;/);
+    expect(fence.indexOf("lockRequest(")).toBeLessThan(fence.indexOf("recordCallIntent("));
+    expect(fence).toMatch(/return written === "inserted" \? \("authorized" as const\) : \("denied" as const\);/);
+    expect(runner).toMatch(/recorded: async \(attempt\) => \{\s+await deps\.inScope\(\(scope\) => scope\.intelligence\.recordAttempts\(ledgerRows\(\[attempt\], clock\.now\(\)\)\)\);/);
+  });
+
+  it("no source updates or deletes a call intent or an attempt (append-only by grant AND by code)", () => {
+    for (const file of sourceFiles(["modules", "server", "jobs", "platform", "tools", "ai"])) {
+      expect(strip(codeOf(file)).toLowerCase(), file).not.toMatch(/update classification\.ai_(call_intents|attempts)|delete from classification\.ai_(call_intents|attempts)/);
+    }
+    const sql = codeOf("db/migrations/0026_ai_call_intents.sql").replace(/--[^\n]*/g, " ").toLowerCase();
+    expect([...sql.matchAll(/grant [^;]*;/g)].map((m) => m[0].replace(/\s+/g, " "))).toEqual(["grant select, insert on classification.ai_call_intents to app_worker;"]);
+    // No DML, no drop, no definer (the only "delete" is the workspace cascade of the composite foreign key).
+    expect(sql.replace(/on delete cascade/g, "")).not.toMatch(/\b(update|delete|drop|truncate|insert into)\b|security definer/);
+  });
+});
+
 describe("27 · the frozen semantic artifacts are unchanged (H7-D0 closure, 31d0b0a)", () => {
   const FROZEN: Readonly<Record<string, string>> = {
     "prompts/classification/understanding.v2.ts": "60e7eeef3002c8a68c7db49007012226e376a3a449fe0acc9f19f727648ae8af",

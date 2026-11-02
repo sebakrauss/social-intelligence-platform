@@ -11,7 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ModelProvider, ProviderCall, ProviderRequest, ProviderResponse } from "@/ai/gateway";
+import { createLedgeredAiGateway, createModelRegistry, type ModelProvider, type ProviderCall, type ProviderRequest, type ProviderResponse } from "@/ai/gateway";
 import { QUALIFIED_UNDERSTANDING_DESCRIPTOR } from "@/ai/providers/anthropic/qualified";
 import { createSimulatorProvider, simulatorModel, type SimulatedResponse } from "@/ai/providers/simulator";
 import { PRODUCTION_INTELLIGENCE, QUALIFIED_UNDERSTANDING_BINDING, runUnderstandAi, type IntelligenceComposition } from "@/jobs/intelligence";
@@ -30,13 +30,14 @@ import {
   understandAiDispatchKey,
   type UnderstandAiRoutePolicy,
 } from "@/modules/classification";
-import type { UnderstandingRunOutcome } from "@/modules/classification/intelligence-runtime";
+import { runUnderstanding, understandAiRouteTable, type IntelligenceRunScope, type UnderstandingRunOutcome } from "@/modules/classification/intelligence-runtime";
 import { createPostgresIntelligenceStore } from "@/modules/classification/persistence";
-import { withUserScope, withWorkspaceJobScope, type RuntimeDatabase } from "@/platform/db";
+import { claimEffect, withUserScope, withWorkspaceJobScope, type RuntimeDatabase } from "@/platform/db";
 import { runTenantJob, runTenantStepJob, type TenantJobPayload } from "@/platform/jobs";
 import { createLogger, type Logger } from "@/platform/observability";
 import { relayPass, type DeliveryConfig, type DeliveryDependencies } from "@/platform/outbox/delivery";
 import { intelligenceScope } from "@/server/persistence/classification";
+import { CALL_ACCOUNTING_SQL, type CallAccountingRow } from "@/tools/db/ai-call-accounting";
 import { CORPUS_FILE, parseEvalCorpus } from "../../eval/classification/corpus";
 import { goldenOutput } from "../../eval/classification/golden";
 import { FakeJobRuntime, type FakeHandler } from "../../support/fake-job-runtime";
@@ -734,6 +735,233 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
       expect(joined).toMatch(/classification\.intelligence\.dispatch/);
       expect(joined).toMatch(/classification\.intelligence\.run/);
       expect(joined).not.toMatch(/privad|prueba sin enlaces/);
+    });
+  });
+
+  describe("H7-D1e2b · durable provider-call intents: every egress has an identity committed BEFORE the call", () => {
+    type Faults = { readonly atGateway?: () => void; readonly scope?: (scope: IntelligenceRunScope) => IntelligenceRunScope };
+    /**
+     * The INTELLIGENCE run, driven through runUnderstanding with the REAL stores and the ledgered gateway, so faults can
+     * be injected at exact points. `events` records each step only once its transaction COMMITTED (or, for the provider,
+     * when it is called): budget_reserved → call_intent_committed:n → provider_called:n → attempt_recorded:n.
+     */
+    const runDirect = async (t: Tenant, c: Comment, provider: ModelProvider, events: string[] = [], faults: Faults = {}, policy = policyFor({ fixtureWorkspaceIds: [t.workspaceId] })) => {
+      const [row] = (await dispatches(c)).slice(-1);
+      if (row === undefined) throw new Error("no dispatch");
+      const runId = `run_${randomUUID().slice(0, 8)}`;
+      const inScope = async <T,>(work: (scope: IntelligenceRunScope) => Promise<T>): Promise<T> => {
+        const pending: string[] = [];
+        const result = await withWorkspaceJobScope(worker, t.workspaceId, (tx) => {
+          const base = intelligenceScope({ tx, noteOutbox: () => undefined });
+          const store = base.intelligence;
+          const observed: IntelligenceRunScope = {
+            ...base,
+            claimEffect: (effectKey) => claimEffect(tx, { workspaceId: t.workspaceId, effectKey, task: UNDERSTAND_AI_TOPIC, outboxId: row.id, runId }),
+            intelligence: {
+              ...store,
+              reserveBudget: async (r) => { const ok = await store.reserveBudget(r); if (ok) pending.push("budget_reserved"); return ok; },
+              recordCallIntent: async (i) => { const w = await store.recordCallIntent(i); if (w === "inserted") pending.push(`call_intent_committed:${String(i.attemptNumber)}`); return w; },
+              recordAttempts: async (rows) => { const n = await store.recordAttempts(rows); for (const r of rows) pending.push(`attempt_recorded:${String(r.attemptNumber)}`); return n; },
+            },
+          };
+          return work(faults.scope === undefined ? observed : faults.scope(observed));
+        });
+        events.push(...pending);
+        return result;
+      };
+      const logging: ModelProvider = { providerKey: provider.providerKey, complete: (request, call) => { events.push(`provider_called:${String(call.attempt)}`); return provider.complete(request, call); } };
+      return runUnderstanding({
+        inScope,
+        policy,
+        binding: SIM_BINDING,
+        clock,
+        gatewayFor: (budget, egress) => {
+          faults.atGateway?.();
+          return createLedgeredAiGateway({ registry: createModelRegistry([simulatorModel("sim")]), routes: understandAiRouteTable(policy), providers: [logging], budget, egress, killed: () => false, now: clock.now });
+        },
+      }, { workspaceId: t.workspaceId, interactionId: c.interaction, sourceTextVersionId: c.version, understandingRequestId: row.subject_ids["understanding_request"] ?? "", correlationId: row.correlation_id }, { runId });
+    };
+    const intents = (c: Comment) => oracle<{ dispatch_generation: number; attempt_number: number; attempt_kind: string; route_fingerprint: string; model_requested: string }>(
+      "select dispatch_generation, attempt_number, attempt_kind, route_fingerprint, model_requested from classification.ai_call_intents where source_text_version_id = $1 order by dispatch_generation, attempt_number", [c.version]);
+    /** The derived accounting of a version's intents (the reconciliation tool's own SQL), as [generation, attempt, state]. */
+    const accounting = async (c: Comment, staleMinutes = 15) => (await oracle<CallAccountingRow>(CALL_ACCOUNTING_SQL, [new Date(now.getTime() - staleMinutes * 60_000)]))
+      .filter((r) => r.understanding_request_id === (/* the request of this version */ requestIds.get(c.version)))
+      .map((r) => [r.dispatch_generation, r.attempt_number, r.accounting_state]);
+    const requestIds = new Map<string, string>();
+    const own = async () => {
+      const t = await tenant();
+      return { t, policy: policyFor({ fixtureWorkspaceIds: [t.workspaceId] }) };
+    };
+    const dispatchedOwn = async (t: Tenant, policy: UnderstandAiRoutePolicy, text = PRAISE_TEXT) => {
+      const c = await dispatched(t, text, policy);
+      requestIds.set(c.version, (await request(c))?.id ?? "");
+      return c;
+    };
+    const recoverIn = (t: Tenant, policy: UnderstandAiRoutePolicy) =>
+      withWorkspaceJobScope(worker, t.workspaceId, (tx) => recoverStaleUnderstanding(intelligenceScope({ tx, noteOutbox: () => undefined }), clock, policy, { correlationId: "h7d1e2b-recovery-01" }));
+
+    it("22 · ordering: budget_reserved → call_intent_committed → provider_called → attempt_recorded, for the initial call AND the re-ask; every egress names the route", async () => {
+      const { t, policy } = await own();
+      const c = await dispatchedOwn(t, policy);
+      const events: string[] = [];
+      const sim = scriptedProvider([{ kind: "raw", text: "not json" }, { kind: "output", body: goldenOutput(PRAISE) }]);
+      expect(await runDirect(t, c, sim.provider, events, {}, policy)).toMatchObject({ kind: "completed", attempts: 2 });
+      // tx2 re-asserts the two attempt rows idempotently at the end (same ids): they were ALREADY durable per call.
+      expect(events).toEqual(["budget_reserved", "call_intent_committed:1", "provider_called:1", "attempt_recorded:1", "call_intent_committed:2", "provider_called:2", "attempt_recorded:2", "attempt_recorded:1", "attempt_recorded:2"]);
+      expect(await intents(c)).toEqual([
+        { dispatch_generation: 1, attempt_number: 1, attempt_kind: "initial", route_fingerprint: SIM_BINDING.routeFingerprint, model_requested: "sim" },
+        { dispatch_generation: 1, attempt_number: 2, attempt_kind: "reask", route_fingerprint: SIM_BINDING.routeFingerprint, model_requested: "sim" },
+      ]);
+      expect(await attempts(c)).toHaveLength(2);
+      expect(await accounting(c)).toEqual([[1, 1, "RECORDED"], [1, 2, "RECORDED"]]);
+      expect(await results(c)).toHaveLength(1);
+    });
+
+    it("A · crash after the claim, before the budget: no reservation, no intent, no call", async () => {
+      const { t, policy } = await own();
+      const c = await dispatchedOwn(t, policy);
+      const sim = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
+      await expect(runDirect(t, c, sim.provider, [], { atGateway: () => { throw new Error("crash"); } }, policy)).rejects.toThrow("crash");
+      expect(sim.calls).toHaveLength(0);
+      expect(await intents(c)).toEqual([]);
+      expect(await count("select count(*)::int as n from classification.ai_budget_reservations where workspace_id = $1", [t.workspaceId])).toBe(0);
+      expect(await request(c)).toMatchObject({ state: "AI_RUNNING", ai_generation: 1 });
+    });
+
+    it("B · budget reserved, the intent can't be committed: NO provider call, the reservation stays spent, AI_UNAVAILABLE(egress_unrecorded)", async () => {
+      const { t, policy } = await own();
+      const c = await dispatchedOwn(t, policy);
+      const sim = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
+      const broken = (scope: IntelligenceRunScope): IntelligenceRunScope => ({ ...scope, intelligence: { ...scope.intelligence, recordCallIntent: () => Promise.reject(new Error("crash")) } });
+      expect(await runDirect(t, c, sim.provider, [], { scope: broken }, policy)).toMatchObject({ kind: "failed", failureClass: "AI_UNAVAILABLE", cause: "egress_unrecorded", attempts: 0, redispatched: false });
+      expect(sim.calls).toHaveLength(0);
+      expect(await intents(c)).toEqual([]);
+      expect(await oracle("select reserved_calls from classification.ai_budget_reservations where workspace_id = $1", [t.workspaceId])).toEqual([{ reserved_calls: 2 }]);
+    });
+
+    it("C · intent committed, the provider call dies: the intent stays (no fake attempt); IN_FLIGHT, then UNKNOWN_PROVIDER_OUTCOME — also after recovery", async () => {
+      const { t, policy } = await own();
+      const c = await dispatchedOwn(t, policy);
+      const dying: ModelProvider = { providerKey: "simulator", complete: () => Promise.reject(new Error("crash")) };
+      await expect(runDirect(t, c, dying, [], {}, policy)).rejects.toThrow("crash");
+      expect(await intents(c)).toMatchObject([{ dispatch_generation: 1, attempt_number: 1 }]);
+      expect(await attempts(c)).toEqual([]);
+      expect(await accounting(c)).toEqual([[1, 1, "IN_FLIGHT"]]);
+      advance(STALE_IN_FLIGHT_MS + 60_000);
+      expect(await accounting(c)).toEqual([[1, 1, "UNKNOWN_PROVIDER_OUTCOME"]]);
+      expect(await recoverIn(t, policy)).toEqual({ redispatched: 1, failed: 0 });
+      // The unknown call does not disappear when the generation advances; the new generation is a NEW identity.
+      expect(await accounting(c)).toEqual([[1, 1, "UNKNOWN_PROVIDER_OUTCOME"]]);
+      const sim = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
+      expect(await runDirect(t, c, sim.provider, [], {}, policy)).toMatchObject({ kind: "completed", generation: 2 });
+      expect(await accounting(c)).toEqual([[1, 1, "UNKNOWN_PROVIDER_OUTCOME"], [2, 1, "RECORDED"]]);
+      expect(await results(c)).toHaveLength(1);
+      // Budget: both generations reserved (2 calls each); nothing is ever refunded for the unknown call.
+      expect(await oracle("select reserved_calls from classification.ai_budget_reservations where workspace_id = $1", [t.workspaceId])).toEqual([{ reserved_calls: 4 }]);
+    });
+
+    it("C′ · attempt 1 completed, re-ask intent committed, the re-ask dies: attempt 1 and intent 2 are durable — no accounting loss", async () => {
+      const { t, policy } = await own();
+      const c = await dispatchedOwn(t, policy);
+      const sim = scriptedProvider([{ kind: "raw", text: "not json" }]);
+      const halfDying: ModelProvider = { providerKey: "simulator", complete: (request, call) => (call.attempt === 2 ? Promise.reject(new Error("crash")) : sim.provider.complete(request, call)) };
+      await expect(runDirect(t, c, halfDying, [], {}, policy)).rejects.toThrow("crash");
+      expect((await intents(c)).map((i) => [i.attempt_number, i.attempt_kind])).toEqual([[1, "initial"], [2, "reask"]]);
+      expect((await attempts(c)).map((a) => [a.attempt_number, a.outcome])).toEqual([[1, "invalid_output"]]);
+      expect(await accounting(c)).toEqual([[1, 1, "RECORDED"], [1, 2, "IN_FLIGHT"]]);
+    });
+
+    it.each([
+      ["D · the result write", "recordResult"],
+      ["E · the shadow-assessment write", "recordShadowAssessments"],
+      ["F/G · the terminal transition", "transition"],
+    ] as const)("%s fails inside the final transaction: the completed call is ALREADY durable; recovery continues, fully accounted", async (_label, method) => {
+      const { t, policy } = await own();
+      const c = await dispatchedOwn(t, policy);
+      const sim = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
+      let finalTx = false;
+      const failing = (scope: IntelligenceRunScope): IntelligenceRunScope => {
+        const store = scope.intelligence;
+        return {
+          ...scope,
+          intelligence: {
+            ...store,
+            // Only the final transaction's write fails (the claim's own transition in tx1 must succeed).
+            lockRequest: async (id) => { const r = await store.lockRequest(id); if (r?.state === "AI_RUNNING") finalTx = true; return r; },
+            recordResult: (r) => (method === "recordResult" ? Promise.reject(new Error("crash")) : store.recordResult(r)),
+            recordShadowAssessments: (rows) => (method === "recordShadowAssessments" ? Promise.reject(new Error("crash")) : store.recordShadowAssessments(rows)),
+            transition: (tr) => (method === "transition" && finalTx && tr.to === "COMPLETED" ? Promise.reject(new Error("crash")) : store.transition(tr)),
+          },
+        };
+      };
+      await expect(runDirect(t, c, sim.provider, [], { scope: failing }, policy)).rejects.toThrow("crash");
+      expect((await attempts(c)).map((a) => [a.dispatch_generation, a.outcome])).toEqual([[1, "accepted"]]);
+      expect(await results(c)).toEqual([]);
+      expect(await aiAssessments(c)).toEqual([]);
+      expect(await accounting(c)).toEqual([[1, 1, "RECORDED"]]);
+      advance(STALE_IN_FLIGHT_MS + 60_000);
+      expect((await recoverIn(t, policy)).redispatched).toBe(1);
+      expect(await runDirect(t, c, scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]).provider, [], {}, policy)).toMatchObject({ kind: "completed", generation: 2 });
+      expect(await accounting(c)).toEqual([[1, 1, "RECORDED"], [2, 1, "RECORDED"]]);
+      expect(await results(c)).toHaveLength(1);
+    });
+
+    it("21 · H · the re-ask FENCE: recovery supersedes the generation between the initial call and the re-ask — the old run's re-ask intent is refused, re-ask calls 0", async () => {
+      const { t, policy } = await own();
+      const c = await dispatchedOwn(t, policy);
+      const sim = scriptedProvider([{ kind: "raw", text: "not json" }, { kind: "output", body: goldenOutput(PRAISE) }]);
+      const superseding: ModelProvider = {
+        providerKey: "simulator",
+        complete: async (request, call) => {
+          const response = await sim.provider.complete(request, call);
+          if (call.attempt === 1) {
+            advance(STALE_IN_FLIGHT_MS + 60_000);
+            expect(await recoverIn(t, policy)).toEqual({ redispatched: 1, failed: 0 });
+          }
+          return response;
+        },
+      };
+      expect(await runDirect(t, c, superseding, [], {}, policy)).toMatchObject({ kind: "generation_superseded", generation: 1, attempts: 1 });
+      expect(sim.calls.map((call) => call.attempt)).toEqual([1]);
+      expect((await intents(c)).map((i) => [i.dispatch_generation, i.attempt_number])).toEqual([[1, 1]]);
+      expect(await accounting(c)).toEqual([[1, 1, "RECORDED"]]);
+      expect(await request(c)).toMatchObject({ state: "AI_PENDING", ai_generation: 2 });
+    });
+
+    it("H · a late run of a superseded generation can't even make its initial call", async () => {
+      const { t, policy } = await own();
+      const c = await dispatchedOwn(t, policy);
+      const sim = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
+      const late = async () => {
+        advance(STALE_IN_FLIGHT_MS + 60_000);
+        await recoverIn(t, policy);
+      };
+      // After tx1 (the claim) and before the egress fence takes its row lock, recovery supersedes generation 1.
+      let armed = false;
+      const outcome = await runDirect(t, c, sim.provider, [], {
+        atGateway: () => { armed = true; },
+        scope: (scope) => ({ ...scope, intelligence: { ...scope.intelligence, lockRequest: async (id) => { if (armed) { armed = false; await late(); } return scope.intelligence.lockRequest(id); } } }),
+      }, policy);
+      // The fence saw the moved generation under its lock: no intent was written for generation 1 and no call was made.
+      expect(sim.calls).toHaveLength(0);
+      expect(outcome).toMatchObject({ kind: "generation_superseded", generation: 1, attempts: 0 });
+      expect(await intents(c)).toEqual([]);
+    });
+
+    it("16 · duplicate calls (a late run AND its recovered successor) are fully accounted: distinct identities, one accepted result", async () => {
+      const { t, policy } = await own();
+      const c = await dispatchedOwn(t, policy);
+      const hold = gate();
+      const slow = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }], { gate: hold.wait });
+      const late = runDirect(t, c, slow.provider, [], {}, policy);
+      await hold.reached;
+      advance(STALE_IN_FLIGHT_MS + 60_000);
+      expect((await recoverIn(t, policy)).redispatched).toBe(1);
+      expect(await runDirect(t, c, scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]).provider, [], {}, policy)).toMatchObject({ kind: "completed", generation: 2 });
+      hold.open();
+      expect(await late).toMatchObject({ kind: "generation_superseded", generation: 1 });
+      expect(await accounting(c)).toEqual([[1, 1, "RECORDED"], [2, 1, "RECORDED"]]);
+      expect(await results(c)).toHaveLength(1);
     });
   });
 }

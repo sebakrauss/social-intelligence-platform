@@ -5,7 +5,9 @@
  *
  *   understanding_requests   generation-aware transitions only (state, ai_generation, ai_failure_class); the 0025
  *                            guard trigger refuses a decreasing generation, a changed failure class, a terminal move
- *   ai_attempts              append-only; `ai_attempts_once` absorbs a replayed (request, generation, attempt)
+ *   ai_call_intents          append-only (0026); `ai_call_intents_once` = one egress identity per (request,
+ *                            generation, attempt) — committed before the provider call
+ *   ai_attempts              append-only; a replayed row is absorbed (same id or `ai_attempts_once`); names its intent
  *   ai_results               append-only, SHADOW only (`ai_results_shadow_only`); `ai_results_once` = one per request
  *   assessments              AI rows SHADOW only, naming their result (`assessments_ai_shadow_only`); never accepting
  *   ai_budget_reservations   only through classification.reserve_ai_budget() (bound workspace, atomic caps)
@@ -98,6 +100,18 @@ export function createPostgresIntelligenceStore(tx: DatabaseTransaction, noteApp
       return appended;
     },
 
+    async recordCallIntent(i) {
+      const result = await tx.execute(sql`
+        insert into classification.ai_call_intents (id, organization_id, workspace_id, understanding_request_id, interaction_id, source_text_version_id, pipeline_version,
+                                                    dispatch_generation, attempt_number, attempt_kind, task_id, provider, model_requested, route_fingerprint, input_chars,
+                                                    correlation_id, trigger_run_id, created_at)
+        values (${i.id}::uuid, ${i.organizationId}::uuid, ${i.workspaceId}::uuid, ${i.understandingRequestId}::uuid, ${i.interactionId}::uuid, ${i.sourceTextVersionId}::uuid,
+                ${i.pipelineVersion}, ${i.dispatchGeneration}, ${i.attemptNumber}, ${i.attemptKind}, ${i.taskId}, ${i.provider}, ${i.modelRequested}, ${i.routeFingerprint},
+                ${i.inputChars}, ${i.correlationId}, ${i.triggerRunId}, ${i.createdAt})
+        on conflict on constraint ai_call_intents_once do nothing`);
+      return (result.rowCount ?? 0) === 1 ? "inserted" : "exists";
+    },
+
     async recordAttempts(rows) {
       let inserted = 0;
       for (const a of rows) {
@@ -114,7 +128,7 @@ export function createPostgresIntelligenceStore(tx: DatabaseTransaction, noteApp
                   ${a.provider}, ${a.modelRequested}, ${a.modelReported}, ${a.startedAt}, ${a.completedAt}, ${a.latencyMs}, ${a.inputChars}, ${a.inputTokens}, ${a.outputTokens},
                   ${a.cachedInputTokens}, ${a.costEstimateUsd}::numeric, ${a.pricingTableVersion}, ${a.outcome}, ${a.failureClass}, ${textArray(a.issueCodes)}::text[],
                   ${a.correlationId}, ${a.triggerRunId}, ${a.createdAt})
-          on conflict on constraint ai_attempts_once do nothing`);
+          on conflict do nothing`);
         inserted += result.rowCount ?? 0;
       }
       return inserted;

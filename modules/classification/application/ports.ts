@@ -134,6 +134,31 @@ export interface AiAttemptRow {
   readonly createdAt: Date;
 }
 
+/**
+ * The durable identity of ONE provider egress (classification.ai_call_intents, 0026, append-only), committed BEFORE the
+ * call under the request's row lock. Never updated: what happened to the call is derived from its attempt row.
+ */
+export interface CallIntentRow {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly workspaceId: string;
+  readonly understandingRequestId: string;
+  readonly interactionId: string;
+  readonly sourceTextVersionId: string;
+  readonly pipelineVersion: string;
+  readonly dispatchGeneration: number;
+  readonly attemptNumber: 1 | 2;
+  readonly attemptKind: "initial" | "reask";
+  readonly taskId: string;
+  readonly provider: string;
+  readonly modelRequested: string;
+  readonly routeFingerprint: string;
+  readonly inputChars: number;
+  readonly correlationId: string;
+  readonly triggerRunId: string;
+  readonly createdAt: Date;
+}
+
 /** One validated output (classification.ai_results, append-only, SHADOW): never the raw response or copied text. */
 export interface AiResultRow {
   readonly id: string;
@@ -207,6 +232,8 @@ export interface IntelligenceStore {
   transition(transition: RequestTransition): Promise<boolean>;
   /** The IDs-only `classification.understand_ai` outbox row of one generation (idempotent per dispatch key). */
   appendDispatch(input: { readonly request: IntelligenceRequestRecord; readonly generation: number; readonly correlationId: string; readonly outboxId: string; readonly now: Date }): Promise<"appended" | "exists">;
+  /** 0026: one egress identity; a second one for the same (request, generation, attempt) is refused ("exists"). */
+  recordCallIntent(row: CallIntentRow): Promise<"inserted" | "exists">;
   /** Append-only; a row already recorded for the same (request, generation, attempt) is kept (counted as not inserted). */
   recordAttempts(rows: readonly AiAttemptRow[]): Promise<number>;
   recordResult(row: AiResultRow): Promise<"inserted" | "exists">;

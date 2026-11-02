@@ -145,7 +145,8 @@ describe("H6-C3d: 0020's scope", () => {
 
   it("no later migration changes audit policy or vocabulary: 0021 is outbox-only; 0022 only re-creates the request boundary's one insert; 0023 and 0024 name no audit object", () => {
     const later = migrationNames().filter((name) => name > M0020);
-    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql"]);
+    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql"]);
+    expect(code("0026_ai_call_intents.sql").toLowerCase()).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
     expect(code("0025_intelligence_persistence.sql").toLowerCase()).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
     expect(code("0023_resumable_signal_progress.sql").toLowerCase()).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
     expect(code("0024_classification_persistence.sql").toLowerCase()).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);

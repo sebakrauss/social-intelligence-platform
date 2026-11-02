@@ -11,9 +11,10 @@
  *               the endpoint overrides) are never read: the plane refuses a run that holds any of them
  *   route       INTELLIGENCE_ROUTE_POLICY (deny-by-default); the gateway's kill switch is the policy's
  *   budget      per run, the runner's port over classification.reserve_ai_budget()
+ *   egress      per run, the runner's fence (Step H7-D1e2b): each call's ai_call_intents row is committed first
  */
 import { randomUUID } from "node:crypto";
-import { createAiGateway, createModelRegistry, type ModelDescriptor, type ModelProvider } from "@/ai/gateway";
+import { createLedgeredAiGateway, createModelRegistry, type ModelDescriptor, type ModelProvider } from "@/ai/gateway";
 import { createAnthropicClient, createAnthropicProvider } from "@/ai/providers/anthropic";
 import {
   QUALIFIED_UNDERSTANDING_CALL_TIMEOUT_MS,
@@ -84,7 +85,8 @@ export async function runUnderstandAi(context: TenantStepJobContext, composition
     policy,
     binding: composition.binding,
     clock,
-    gatewayFor: (budget) => createAiGateway({ registry, routes, providers: composition.providers(), budget, killed: () => policy.killSwitch !== "inactive", now: clock.now }),
+    // Step H7-D1e2b: the LEDGERED gateway — no provider call without the runner's committed egress identity.
+    gatewayFor: (budget, egress) => createLedgeredAiGateway({ registry, routes, providers: composition.providers(), budget, egress, killed: () => policy.killSwitch !== "inactive", now: clock.now }),
   }, parsed.payload, { runId: context.run.runId });
   const operation = outcome.kind === "skipped" || outcome.kind === "refused" ? `${outcome.kind}.${outcome.reason}` : outcome.kind === "failed" ? `failed.${outcome.failureClass.toLowerCase()}` : outcome.kind;
   log.info("classification.intelligence.run", { workspaceId: context.payload.workspaceId, task: "classification.understand_ai", outcome: "ok", operation, durationMs: Date.now() - started });

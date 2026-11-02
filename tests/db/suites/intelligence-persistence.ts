@@ -14,7 +14,7 @@ import { withUserScope, withWorkspaceJobScope, type DatabaseTransaction, type Ru
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld } from "../support/world";
 import { sqlState } from "./helpers";
-import { INTELLIGENCE_PIPELINE, LANGUAGE_POLICY, attemptColumns, insertAiChain, insertAiRequest, insertRow, resultColumns, type AiTarget } from "./intelligence-fixtures";
+import { INTELLIGENCE_PIPELINE, LANGUAGE_POLICY, attemptColumns, insertAiChain, insertAiRequest, insertIntent, insertRow, intentColumns, resultColumns, type AiTarget } from "./intelligence-fixtures";
 
 interface Tenant extends AiTarget {
   readonly users: Readonly<Record<"owner" | "analyst" | "guest", string>>;
@@ -125,10 +125,11 @@ export function defineIntelligencePersistenceSuite(getTarget: () => DbTarget): v
   });
 
   describe("schema", () => {
-    it("1 · 3 · 24. 0025 is the 25th applied migration; the three new tables are owned by app_owner with RLS enabled AND forced", async () => {
+    it("1 · 3 · 24. 0025 is the 25th applied migration (0026, H7-D1e2b, follows); the three new tables are owned by app_owner with RLS enabled AND forced", async () => {
       const applied = await oracle<{ name: string }>("select name from app_migrations.applied order by name");
-      expect(applied).toHaveLength(25);
-      expect(applied.at(-1)?.name).toBe("0025_intelligence_persistence.sql");
+      expect(applied).toHaveLength(26);
+      expect(applied[24]?.name).toBe("0025_intelligence_persistence.sql");
+      expect(applied.at(-1)?.name).toBe("0026_ai_call_intents.sql");
       const tables = await oracle<{ t: string; owner: string; rls: boolean; forced: boolean }>(
         `select c.relname as t, pg_get_userbyid(c.relowner) as owner, c.relrowsecurity as rls, c.relforcerowsecurity as forced
            from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'classification' and c.relname = any($1::text[]) order by 1`, [[...NEW_TABLES]]);
@@ -150,7 +151,8 @@ export function defineIntelligencePersistenceSuite(getTarget: () => DbTarget): v
         `select c.relname as t, k.conname as name from pg_constraint k join pg_class c on c.oid = k.conrelid join pg_namespace n on n.oid = c.relnamespace
           where n.nspname = 'classification' and c.relname = any($1::text[]) and k.contype in ('u', 'f', 'p') order by 1, 2`, [[...NEW_TABLES]]);
       expect(constraints.map((r) => `${r.t} ${r.name}`)).toEqual([
-        "ai_attempts ai_attempts_once", "ai_attempts ai_attempts_organization_id_workspace_id_fkey", "ai_attempts ai_attempts_pkey", "ai_attempts ai_attempts_request",
+        // H7-D1e2b (0026): + ai_attempts_intent (every attempt names its prior call intent).
+        "ai_attempts ai_attempts_intent", "ai_attempts ai_attempts_once", "ai_attempts ai_attempts_organization_id_workspace_id_fkey", "ai_attempts ai_attempts_pkey", "ai_attempts ai_attempts_request",
         "ai_attempts ai_attempts_result_target",
         "ai_budget_reservations ai_budget_reservations_organization_id_workspace_id_fkey", "ai_budget_reservations ai_budget_reservations_pkey",
         "ai_results ai_results_assessment_target", "ai_results ai_results_attempt", "ai_results ai_results_once", "ai_results ai_results_organization_id_workspace_id_fkey",
@@ -265,6 +267,8 @@ export function defineIntelligencePersistenceSuite(getTarget: () => DbTarget): v
       const requestId = await insertAiRequest(privileged, { ...A, version: A.otherVersion });
       const target = { ...A, version: A.otherVersion };
       const attempt = attemptColumns(target, requestId);
+      await insertIntent(privileged, target, requestId, 1, 1);
+      await insertIntent(privileged, target, requestId, 1, 2);
       await workerRow(A, insertRow("classification.ai_attempts", attempt));
       expect((await sqlState(workerRow(A, insertRow("classification.ai_attempts", { ...attempt, id: randomUUID() })))).constraint).toBe("ai_attempts_once");
       await workerRow(A, insertRow("classification.ai_attempts", attemptColumns(target, requestId, { attempt_number: 2, attempt_kind: "reask" })));
@@ -298,6 +302,7 @@ export function defineIntelligencePersistenceSuite(getTarget: () => DbTarget): v
       expect((await bad({ cost_estimate_usd: 0.01 })).constraint).toBe("ai_attempts_cost");
       expect((await bad({ completed_at: "2026-10-31T11:00:00Z" })).constraint).toBe("ai_attempts_times");
       for (const [outcome, failure] of [["invalid_output", "AI_INVALID_OUTPUT"], ["refused", "AI_REFUSED"], ["unavailable", "AI_UNAVAILABLE"], ["input_too_large", "AI_INPUT_TOO_LARGE"]] as const) {
+        await insertIntent(privileged, B, requestId, 10 + ["invalid_output", "refused", "unavailable", "input_too_large"].indexOf(outcome), 1);
         await workerRow(B, insertRow("classification.ai_attempts", attemptColumns(B, requestId, { dispatch_generation: 10 + ["invalid_output", "refused", "unavailable", "input_too_large"].indexOf(outcome),
           outcome, failure_class: failure, issue_codes: outcome === "invalid_output" ? ["MALFORMED_JSON", "QUOTE_NOT_IN_TEXT"] : [] })));
       }
@@ -307,6 +312,8 @@ export function defineIntelligencePersistenceSuite(getTarget: () => DbTarget): v
       const target = { ...B, version: B.otherVersion };
       const requestId = await insertAiRequest(privileged, target);
       const accepted = attemptColumns(target, requestId);
+      await insertIntent(privileged, target, requestId, 1, 1);
+      await insertIntent(privileged, target, requestId, 2, 1);
       await workerRow(B, insertRow("classification.ai_attempts", accepted));
       const failedAttempt = attemptColumns(target, requestId, { dispatch_generation: 2, outcome: "unavailable", failure_class: "AI_UNAVAILABLE" });
       await workerRow(B, insertRow("classification.ai_attempts", failedAttempt));
@@ -403,6 +410,82 @@ export function defineIntelligencePersistenceSuite(getTarget: () => DbTarget): v
       expect(results.filter((ok) => ok === true)).toHaveLength(5);
       expect(results.filter((ok) => ok === false)).toHaveLength(15);
       expect(await oracle("select reserved_calls from classification.ai_budget_reservations where workspace_id = $1 and budget_day = '2026-11-01'", [B.workspaceId])).toEqual([{ reserved_calls: 5 }]);
+    });
+  });
+
+  describe("H7-D1e2b (0026): durable provider-call intents", () => {
+    const INTENT_FORBIDDEN = /^((\w+_)?(prompt\w*|raw\w*|response\w*|request_body|reasoning|thinking|chain_of_thought|comment\w*|author\w*|handle|api_key|access_token|secret\w*|source_text|text|summary|output\w*|evidence\w*|action\w*|hide\w*|delete\w*|reply\w*|block\w*|moderat\w*|alert\w*|automat\w*|status|state|outcome|completed_at|usage\w*|\w*tokens))$/;
+
+    it("1 · 3 · 18 · 19 · 20. the table exists, owned by app_owner, RLS enabled AND forced; no raw content, action or lifecycle column", async () => {
+      expect(await oracle(`select pg_get_userbyid(c.relowner) as owner, c.relrowsecurity as rls, c.relforcerowsecurity as forced from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'classification' and c.relname = 'ai_call_intents'`)).toEqual([{ owner: "app_owner", rls: true, forced: true }]);
+      const columns = (await oracle<{ c: string }>("select column_name as c from information_schema.columns where table_schema = 'classification' and table_name = 'ai_call_intents' order by ordinal_position")).map((r) => r.c);
+      expect(columns).toEqual(["id", "organization_id", "workspace_id", "understanding_request_id", "interaction_id", "source_text_version_id", "pipeline_version", "dispatch_generation",
+        "attempt_number", "attempt_kind", "task_id", "provider", "model_requested", "route_fingerprint", "input_chars", "correlation_id", "trigger_run_id", "created_at"]);
+      for (const c of columns) expect(c, c).not.toMatch(INTENT_FORBIDDEN);
+      const constraints = await oracle<{ name: string }>(`select k.conname as name from pg_constraint k join pg_class c on c.oid = k.conrelid join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'classification' and c.relname = 'ai_call_intents' and k.contype in ('u', 'f', 'p') order by 1`);
+      expect(constraints.map((r) => r.name)).toEqual(["ai_call_intents_once", "ai_call_intents_pkey", "ai_call_intents_request", "ai_call_intents_workspace"]);
+    });
+
+    it("11 · 12 · 6 · 7. the bound worker inserts and reads an intent; a duplicate egress identity and an attempt number outside 1–2 are refused", async () => {
+      const target = { ...A, version: A.spare[2] ?? "" };
+      const requestId = await insertAiRequest(privileged, target);
+      const first = intentColumns(target, requestId);
+      await workerRow(A, insertRow("classification.ai_call_intents", first));
+      expect(await count(A, "classification.ai_call_intents", "worker")).toBeGreaterThan(0);
+      expect((await sqlState(workerRow(A, insertRow("classification.ai_call_intents", { ...first, id: randomUUID() })))).constraint).toBe("ai_call_intents_once");
+      for (const attempt_number of [0, 3]) expect((await sqlState(workerRow(A, insertRow("classification.ai_call_intents", intentColumns(target, requestId, { attempt_number }))))).code).toBe("23514");
+      expect((await sqlState(workerRow(A, insertRow("classification.ai_call_intents", intentColumns(target, requestId, { attempt_number: 2, attempt_kind: "initial" }))))).constraint).toBe("ai_call_intents_kind");
+      expect((await sqlState(workerRow(A, insertRow("classification.ai_call_intents", intentColumns(target, requestId, { dispatch_generation: 0 }))))).code).toBe("23514");
+      expect((await sqlState(workerRow(A, insertRow("classification.ai_call_intents", intentColumns(target, requestId, { pipeline_version: "classification.deterministic.v1" }))))).code).toBe("23514");
+      await workerRow(A, insertRow("classification.ai_call_intents", intentColumns(target, requestId, { attempt_number: 2, attempt_kind: "reask" })));
+    });
+
+    it("8 · 9 · 13. nobody updates or deletes an intent (append-only)", async () => {
+      for (const statement of [sql`update classification.ai_call_intents set input_chars = 1`, sql`delete from classification.ai_call_intents`]) {
+        expect((await sqlState(asWorker(A, (tx) => tx.execute(statement)))).code).toBe("42501");
+        expect((await sqlState(asMember(A, "owner", (tx) => tx.execute(statement)))).code).toBe("42501");
+      }
+    });
+
+    it("10. members (any role) and guests can't read, insert or see intents", async () => {
+      for (const role of ["owner", "analyst", "guest"] as const) {
+        expect((await sqlState(asMember(A, role, (tx) => tx.execute(sql`select count(*) from classification.ai_call_intents`)))).code).toBe("42501");
+      }
+      const bTarget = { ...B, version: B.spare[2] ?? "" };
+      const requestId = await insertAiRequest(privileged, bTarget);
+      const row = insertRow("classification.ai_call_intents", intentColumns(bTarget, requestId));
+      const statement = sql.raw(row.text.replace(/\$(\d+)/g, (_, n: string) => literal(row.values[Number(n) - 1])));
+      expect((await sqlState(asMember(B, "owner", (tx) => tx.execute(statement)))).code).toBe("42501");
+    });
+
+    it("5 · 3. cross-workspace intents are impossible: B's request can't be named from A, and A can't write B's workspace", async () => {
+      const b = await insertAiChain(privileged, { ...B, version: B.spare[1] ?? "" });
+      const bTarget = { ...B, version: B.spare[1] ?? "" };
+      // Naming B's request inside A's workspace fails like a missing row (composite FK); writing B's workspace is RLS.
+      expect((await sqlState(workerRow(A, insertRow("classification.ai_call_intents", intentColumns({ ...bTarget, organizationId: A.organizationId, workspaceId: A.workspaceId }, b.requestId, { dispatch_generation: 9 }))))).code).toBe("23503");
+      expect((await sqlState(workerRow(A, insertRow("classification.ai_call_intents", intentColumns(bTarget, b.requestId, { dispatch_generation: 9 }))))).code).toBe("42501");
+      expect(await oracle("select count(*)::int as n from classification.ai_call_intents where workspace_id = $1 and dispatch_generation = 9", [A.workspaceId])).toEqual([{ n: 0 }]);
+    });
+
+    it("14 · 15 · 16 · 17. an attempt needs ITS intent: another generation, attempt number or request is refused", async () => {
+      /** The intelligence request of one of B's text versions (reused when an earlier test created it). */
+      const requestOf = async (version: string): Promise<string> =>
+        (await oracle<{ id: string }>("select id from classification.understanding_requests where source_text_version_id = $1 and pipeline_version = $2", [version, INTELLIGENCE_PIPELINE]))[0]?.id
+        ?? insertAiRequest(privileged, { ...B, version });
+      const target = { ...B, version: B.spare[2] ?? "" };
+      const requestId = await requestOf(target.version);
+      await insertIntent(privileged, target, requestId, 3, 1);
+      const attempt = (overrides: Readonly<Record<string, unknown>>) => workerRow(B, insertRow("classification.ai_attempts", attemptColumns(target, requestId, overrides)));
+      expect((await sqlState(attempt({ dispatch_generation: 4 }))).constraint).toBe("ai_attempts_intent");
+      expect((await sqlState(attempt({ dispatch_generation: 3, attempt_number: 2, attempt_kind: "reask", outcome: "unavailable", failure_class: "AI_UNAVAILABLE" }))).constraint).toBe("ai_attempts_intent");
+      // The intent of THIS request does not cover another request of the same workspace (composite FK on the request too).
+      const otherRequest = await requestOf(B.spare[1] ?? "");
+      expect(otherRequest).not.toBe(requestId);
+      expect((await sqlState(workerRow(B, insertRow("classification.ai_attempts", attemptColumns(target, otherRequest, { dispatch_generation: 3 }))))).code).toBe("23503");
+      await attempt({ dispatch_generation: 3 });
+      expect(await oracle("select count(*)::int as n from classification.ai_attempts where understanding_request_id = $1 and dispatch_generation = 3", [requestId])).toEqual([{ n: 1 }]);
     });
   });
 }
