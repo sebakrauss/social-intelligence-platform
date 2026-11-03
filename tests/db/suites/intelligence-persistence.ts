@@ -10,6 +10,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createPostgresInteractionTextReader } from "@/modules/interactions/persistence";
 import { withUserScope, withWorkspaceJobScope, type DatabaseTransaction, type RuntimeDatabase } from "@/platform/db";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld } from "../support/world";
@@ -138,8 +139,10 @@ export function defineIntelligencePersistenceSuite(getTarget: () => DbTarget): v
 
     it("9–12. no new or changed table has a raw-text, prompt, response, reasoning, secret or action column", async () => {
       const columns = await oracle<{ t: string; c: string }>(
-        `select table_name as t, column_name as c from information_schema.columns where table_schema = 'classification' and table_name = any($1::text[])`, [[...NEW_TABLES, "assessments", "understanding_requests"]]);
+        `select table_name as t, column_name as c from information_schema.columns where table_schema = 'classification' and table_name = any($1::text[])`, [[...NEW_TABLES, "ai_call_intents", "assessments", "understanding_requests"]]);
       expect(columns.length).toBeGreaterThan(60);
+      // H7-D1g-prep: the 0026 egress ledger is under the same privacy guard as the 0025 tables.
+      expect(columns.filter((r) => r.t === "ai_call_intents").length).toBe(18);
       for (const { t, c } of columns) expect(`${t}.${c}`, `${t}.${c}`).not.toMatch(FORBIDDEN_COLUMN);
       const added = columns.filter((r) => r.t === "assessments" && ["acceptance_mode", "pipeline_version", "language_policy_version", "ai_result_id"].includes(r.c));
       expect(added).toHaveLength(4);
@@ -410,6 +413,84 @@ export function defineIntelligencePersistenceSuite(getTarget: () => DbTarget): v
       expect(results.filter((ok) => ok === true)).toHaveLength(5);
       expect(results.filter((ok) => ok === false)).toHaveLength(15);
       expect(await oracle("select reserved_calls from classification.ai_budget_reservations where workspace_id = $1 and budget_day = '2026-11-01'", [B.workspaceId])).toEqual([{ reserved_calls: 5 }]);
+    });
+  });
+
+  describe("H7-D1g-prep: tenant boundaries of the intelligence ledger (direct inserts, ancestors, tenant deletion)", () => {
+    /** A request + its intent + an ACCEPTED attempt of `t`, but no result yet (so a result insert is otherwise valid). */
+    const attemptOnly = async (t: AiTarget) => {
+      const requestId = await insertAiRequest(privileged, t);
+      await insertIntent(privileged, t, requestId);
+      const attempt = insertRow("classification.ai_attempts", attemptColumns(t, requestId));
+      return { requestId, attemptId: (await privileged.query<{ id: string }>(attempt.text, attempt.values)).rows[0]?.id ?? "" };
+    };
+    /** A direct budget-counter insert (the table has no `id`, so not insertRow's `returning id`). */
+    const budgetRow = (t: Pick<Tenant, "organizationId" | "workspaceId">) => ({
+      text: `insert into classification.ai_budget_reservations (organization_id, workspace_id, task_id, budget_day, reserved_calls, reserved_input_chars, created_at, updated_at)
+             values ($1, $2, $3, '2026-11-03'::date, 2, 8000, '2026-11-03T12:00:00Z', '2026-11-03T12:00:00Z')`,
+      values: [t.organizationId, t.workspaceId, TASK],
+    });
+
+    it("1. A's bound worker can't INSERT an ai_results row into B's workspace (RLS 42501); the same row is valid in B's own scope", async () => {
+      const b = await tenant();
+      const chain = await attemptOnly(b);
+      const row = insertRow("classification.ai_results", resultColumns(b, chain.requestId, chain.attemptId));
+      expect((await sqlState(workerRow(A, row))).code).toBe("42501");
+      expect(await oracle("select count(*)::int as n from classification.ai_results where workspace_id = $1", [b.workspaceId])).toEqual([{ n: 0 }]);
+      await workerRow(b, row);
+      expect(await oracle("select count(*)::int as n from classification.ai_results where workspace_id = $1", [b.workspaceId])).toEqual([{ n: 1 }]);
+    });
+
+    it("2. A's bound worker can't INSERT a budget counter into B's workspace (RLS 42501), and A's reservation never touches B's counter", async () => {
+      const b = await tenant();
+      expect((await sqlState(workerRow(A, budgetRow(b)))).code).toBe("42501");
+      expect(await oracle("select count(*)::int as n from classification.ai_budget_reservations where workspace_id = $1", [b.workspaceId])).toEqual([{ n: 0 }]);
+      await workerRow(b, budgetRow(b));
+      const before = await oracle("select reserved_calls from classification.ai_budget_reservations where workspace_id = $1", [b.workspaceId]);
+      expect(await asWorker(A, (tx) => tx.execute<{ ok: boolean }>(sql`select classification.reserve_ai_budget(${TASK}, '2026-11-03'::date, 1, 10::bigint, 100, 100000::bigint) as ok`)).then((r) => r.rows[0]?.ok)).toBe(true);
+      expect(await oracle("select reserved_calls from classification.ai_budget_reservations where workspace_id = $1", [b.workspaceId])).toEqual(before);
+    });
+
+    it("3. no cross-tenant ancestor: B's interaction can't be named as A's parent (23503), and A's scope reads none of B's interactions or texts", async () => {
+      const b = await tenant();
+      const content = (await oracle<{ content_item_id: string; connected_account_id: string; provider_asset_id: string; provider_content_id: string }>(
+        "select content_item_id, connected_account_id, provider_asset_id, provider_content_id from interactions.interactions where id = $1", [A.interaction]))[0];
+      if (content === undefined) throw new Error("fixture");
+      // A fully observed reply (every shape CHECK satisfied), so only the composite (workspace, parent) FK can refuse it.
+      const reply = await sqlState(privileged.query(
+        `insert into interactions.interactions (id, organization_id, workspace_id, platform, provider_interaction_id, connected_account_id, provider_asset_id, content_item_id,
+                                                provider_content_id, parent_interaction_id, observed, kind, author_id, author_role, current_visibility, current_availability,
+                                                provider_created_at, state_observed_at, first_observed_at, latest_observed_at, created_at, updated_at)
+         values ($1, $2, $3, 'facebook', $4, $5, $6, $7, $8, $9, true, 'reply', null, 'user', 'visible', 'available', now(), now(), now(), now(), now(), now())`,
+        [randomUUID(), A.organizationId, A.workspaceId, `h7d1g_${randomUUID().slice(0, 8)}`, content.connected_account_id, content.provider_asset_id, content.content_item_id, content.provider_content_id, b.interaction]));
+      expect(reply.code).toBe("23503");
+      // The ancestor read (interactions/persistence/store.ts `item`) filters by id only and relies on forced RLS: from A, B's id reads nothing.
+      const ancestor = (t: Pick<Tenant, "workspaceId">, id: string) => asWorker(t, (tx) => tx.execute<{ n: number }>(sql`
+        select count(*)::int as n from interactions.interactions i
+          left join interactions.source_text_versions v on v.workspace_id = i.workspace_id and v.interaction_id = i.id
+         where i.id = ${id}::uuid`)).then((r) => r.rows[0]?.n);
+      expect(await ancestor(A, b.interaction)).toBe(0);
+      expect(await ancestor(b, b.interaction)).toBeGreaterThan(0);
+      expect(await asWorker(A, (tx) => createPostgresInteractionTextReader(tx).understandingContext(b.interaction, b.version))).toBeUndefined();
+      expect(await asWorker(b, (tx) => createPostgresInteractionTextReader(tx).understandingContext(b.interaction, b.version))).toMatchObject({ workspaceId: b.workspaceId });
+    });
+
+    it("4. deleting a tenant cascades through EVERY intelligence table (request, intent, attempt, result, assessments, budget): no orphan, no other tenant touched", async () => {
+      const c = await tenant();
+      const chain = await insertAiChain(privileged, c);
+      const assessment = insertRow("classification.assessments", aiAssessment(c, chain.resultId));
+      await privileged.query(assessment.text, assessment.values);
+      await workerRow(c, budgetRow(c));
+      const TABLES = ["classification.understanding_requests", "classification.ai_call_intents", "classification.ai_attempts", "classification.ai_results", "classification.assessments",
+        "classification.ai_budget_reservations", "interactions.source_text_versions", "interactions.interactions"] as const;
+      const counts = async (workspaceId: string) => Object.fromEntries(await Promise.all(TABLES.map(async (table) =>
+        [table, (await oracle<{ n: number }>(`select count(*)::int as n from ${table} where workspace_id = $1`, [workspaceId]))[0]?.n ?? -1] as const)));
+      const others = { a: await counts(A.workspaceId), b: await counts(B.workspaceId) };
+      const mine = await counts(c.workspaceId);
+      for (const table of TABLES) expect(mine[table], table).toBeGreaterThan(0);
+      await privileged.query("delete from tenancy.organizations where id = $1", [c.organizationId]);
+      for (const table of TABLES) expect((await counts(c.workspaceId))[table], table).toBe(0);
+      expect({ a: await counts(A.workspaceId), b: await counts(B.workspaceId) }).toEqual(others);
     });
   });
 

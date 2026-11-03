@@ -34,6 +34,8 @@ import { REPOSITORY_ROOT } from "../support/source-scan";
 const SQL = readFileSync(path.join(REPOSITORY_ROOT, "db/migrations/0024_classification_persistence.sql"), "utf8");
 /** Without `--` comments, whitespace collapsed (keeps quoted literals). */
 const CODE = SQL.replace(/--[^\n]*/g, " ").replace(/\s+/g, " ");
+/** A raw model blob, prompt, reasoning, copied source text or author datum — never a column of a classification table. */
+const RAW_OR_PERSONAL = /\b(raw_response|raw_request|response_body|request_body|prompt_text|rendered_prompt|reasoning|chain_of_thought|thinking|source_text|comment_text|author_name|handle|username|access_token|api_key)\b/;
 const quoted = (list: string): string[] => [...list.matchAll(/'([^']*)'/g)].map((m) => m[1] ?? "");
 const checkList = (column: string): string[] => {
   const match = new RegExp(`\\b${column} text(?: not null)? check \\(${column} in \\(([^)]*)\\)\\)`).exec(CODE);
@@ -104,7 +106,15 @@ describe("H7-A2: scope of 0024", () => {
 
   it("no raw model blob, prompt, reasoning, copied source text or author data", () => {
     const columns = CODE.toLowerCase();
-    expect(columns).not.toMatch(/\b(raw_response|raw_request|response_body|request_body|prompt_text|rendered_prompt|reasoning|chain_of_thought|thinking|source_text|comment_text|author_name|handle|username|access_token|api_key)\b/);
+    expect(columns).not.toMatch(RAW_OR_PERSONAL);
+  });
+
+  it("H7-D1g-prep: the same privacy guard covers the intelligence ledger migrations (0025 attempts/results/budget, 0026 ai_call_intents)", () => {
+    for (const file of ["0025_intelligence_persistence.sql", "0026_ai_call_intents.sql"]) {
+      const code = readFileSync(path.join(REPOSITORY_ROOT, "db/migrations", file), "utf8").replace(/--[^\n]*/g, " ").replace(/\s+/g, " ").toLowerCase();
+      expect(code, file).toMatch(/create table classification\.ai_/);
+      expect(code, file).not.toMatch(RAW_OR_PERSONAL);
+    }
   });
 
   it("watch terms carry no semantic field and have no runtime writer; signals have no semantic column", () => {

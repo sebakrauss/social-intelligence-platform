@@ -12,7 +12,11 @@
  *        own committed transaction: classification.reserve_ai_budget()) → provider → at most ONE re-ask. Step H7-D1e2b:
  *        BEFORE EACH provider call (initial and re-ask) the egress fence commits the call's durable identity
  *        (classification.ai_call_intents) in its own transaction, under the request's row lock, only while the request
- *        is still AI_RUNNING at this generation — otherwise no call; and right AFTER each call its final attempt row
+ *        is still AI_RUNNING at this generation — otherwise no call. Step H7-D1g-prep: in that same fence transaction,
+ *        immediately before the identity is written, the operational kill switch (`ai.task_kill`) is re-read: killed
+ *        (or unreadable) ⇒ no identity, no call, AI_UNAVAILABLE(kill_switch) — so an operator's kill stops the initial
+ *        call AND the re-ask of a run already in flight, without leaving an identity that would derive as
+ *        UNKNOWN_PROVIDER_OUTCOME for a call that never happened; and right AFTER each call its final attempt row
  *        (ai_attempts) is committed in its own transaction, so no completed call waits for tx2 to become durable
  *   tx2  re-assert the ledger rows idempotently (same ids); then, only if the request is STILL AI_RUNNING at this
  *        generation: a validated output ⇒ the shadow result (ai_results) + the canonical A1 composition
@@ -74,6 +78,12 @@ export interface UnderstandingRunDependencies {
   readonly gatewayFor: (budget: BudgetPort, egress: EgressPort) => AiGateway;
   readonly binding: UnderstandingModelBinding;
   readonly clock: ClassificationClock;
+  /**
+   * Step H7-D1g-prep: told of each egress the fence AUTHORIZED (its identity committed) and of each attempt durably
+   * RECORDED right after its call — counts only, never content — so a run that throws can still report whether a
+   * provider call may have happened without its attempt (UNKNOWN_PROVIDER_OUTCOME). Observation only: no decision.
+   */
+  readonly egressObserver?: { readonly authorized: () => void; readonly recorded: () => void };
 }
 
 export const RUN_SKIP_REASONS = ["request_not_found", "request_identity_mismatch", "pipeline_not_intelligence", "already_terminal", "already_running", "not_dispatched", "duplicate_delivery"] as const;
@@ -231,10 +241,12 @@ export async function runUnderstanding(deps: UnderstandingRunDependencies, paylo
   const egress: EgressPort = {
     authorize: async (call) => {
       if (call.workspaceId !== request.workspaceId || call.taskId !== UNDERSTANDING_TASK_ID) return "denied";
-      return deps.inScope(async (scope) => {
+      const decision = await deps.inScope(async (scope) => {
         const current = await scope.intelligence.lockRequest(request.id);
         // The fence: same workspace and request, still AI_RUNNING, still exactly this generation (never superseded).
         if (current === undefined || current.workspaceId !== request.workspaceId || current.state !== "AI_RUNNING" || current.aiGeneration !== generation) return "denied" as const;
+        // H7-D1g-prep: the operator's kill, re-read at the last transactional point before egress (fail safe: unreadable ⇒ killed).
+        if (await operationallyKilled(scope)) return "killed" as const;
         const written = await scope.intelligence.recordCallIntent({
           id: intentIds[call.attemptNumber],
           organizationId: request.organizationId,
@@ -258,9 +270,12 @@ export async function runUnderstanding(deps: UnderstandingRunDependencies, paylo
         // A second authorization of the same egress identity is refused (exactly one intent per call).
         return written === "inserted" ? ("authorized" as const) : ("denied" as const);
       });
+      if (decision === "authorized") deps.egressObserver?.authorized();
+      return decision;
     },
     recorded: async (attempt) => {
       await deps.inScope((scope) => scope.intelligence.recordAttempts(ledgerRows([attempt], clock.now())));
+      deps.egressObserver?.recorded();
     },
   };
   const result = await understandInteraction(deps.gatewayFor(budget, egress), pre.input, {
@@ -348,4 +363,70 @@ export async function runUnderstanding(deps: UnderstandingRunDependencies, paylo
       kind: "failed" as const, generation, attempts: rows.length, failureClass: failure.class, cause: failure.cause, redispatched: retry, protection: failedOutcome.protection, needsReview: failedOutcome.needsReview,
     };
   });
+}
+
+// ── Operator-visible terminal outcome (Step H7-D1g-prep) ──────────────────────────────────────────────────────────
+
+/**
+ * The closed vocabulary of a run's TERMINAL outcome, for logs and operators: derived from the outcome's kinds, reasons
+ * and causes only (all closed, identifier-shaped) — never text, prompt, response, provider error body or secret.
+ *   unknown_provider_outcome  the run threw after the fence authorized a call whose attempt never became durable
+ *                             (potentially billable; the ledger derivation tools/db/ai-call-accounting.ts is authoritative)
+ *   run_error                 the run threw with every authorized call durably recorded (or none authorized)
+ */
+export const UNDERSTANDING_RUN_REPORT_CATEGORIES = [
+  "completed", "skipped", "request_not_found", "refused", "killed", "budget_denied", "model_unavailable", "input_too_large", "provider_failed",
+  "provider_refused", "timeout", "reask_exhausted", "egress_denied", "generation_superseded", "unknown_provider_outcome", "run_error",
+] as const;
+export type UnderstandingRunReportCategory = (typeof UNDERSTANDING_RUN_REPORT_CATEGORIES)[number];
+
+export interface UnderstandingRunReport {
+  readonly category: UnderstandingRunReportCategory;
+  /** The closed reason or cause behind the category (identifier-shaped). */
+  readonly detail: string;
+  /** false ⇒ the run did not produce its shadow result (logged at warn, outcome "error"). */
+  readonly ok: boolean;
+}
+
+const FAILURE_CATEGORY: Readonly<Record<string, UnderstandingRunReportCategory>> = Object.freeze({
+  kill_switch: "killed",
+  budget_exhausted: "budget_denied",
+  task_disabled: "model_unavailable",
+  model_unavailable: "model_unavailable",
+  timeout: "timeout",
+  invalid_output: "reask_exhausted",
+  refused: "provider_refused",
+  input_limit: "input_too_large",
+  provider_input_limit: "input_too_large",
+  egress_unrecorded: "egress_denied",
+  provider_unavailable: "provider_failed",
+  rate_limited: "provider_failed",
+  provider_auth_failed: "provider_failed",
+  provider_request_rejected: "provider_failed",
+  model_mismatch: "provider_failed",
+});
+
+const report = (category: UnderstandingRunReportCategory, detail: string, ok: boolean): UnderstandingRunReport => Object.freeze({ category, detail, ok });
+
+export function understandingRunReport(outcome: UnderstandingRunOutcome): UnderstandingRunReport {
+  switch (outcome.kind) {
+    case "completed":
+      return report("completed", "shadow_result", true);
+    case "generation_superseded":
+      return report("generation_superseded", "generation_superseded", true);
+    case "skipped":
+      return outcome.reason === "request_not_found" ? report("request_not_found", outcome.reason, false) : report("skipped", outcome.reason, true);
+    case "refused":
+      if (outcome.reason === "kill_switch") return report("killed", outcome.reason, false);
+      if (outcome.reason === "model_binding_mismatch") return report("model_unavailable", outcome.reason, false);
+      if (outcome.failureClass === "AI_INPUT_TOO_LARGE") return report("input_too_large", outcome.reason, false);
+      return report("refused", outcome.reason, false);
+    case "failed":
+      return report(FAILURE_CATEGORY[outcome.cause] ?? "provider_failed", outcome.cause, false);
+  }
+}
+
+/** The report of a run that THREW, from the egress observer's counts (authorized vs durably recorded calls). */
+export function interruptedRunReport(egress: { readonly authorized: number; readonly recorded: number }): UnderstandingRunReport {
+  return egress.authorized > egress.recorded ? report("unknown_provider_outcome", "attempt_unrecorded", false) : report("run_error", "exception", false);
 }

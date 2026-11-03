@@ -222,16 +222,16 @@ describe("8–10 · the qualified registry entry and the fail-safe route", () =>
   });
 
   it("10 · the default policy is deny-by-default; every missing piece skips; a complete synthetic policy calls in SHADOW", () => {
-    expect(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY).toEqual({ enabled: false, samplingPercentage: 0, killSwitch: "active", model: null, timeoutMs: null, budget: { kind: "deny_all" }, acceptanceMode: "shadow", realDataEligible: false, fixtureWorkspaceIds: [], includeBackfill: false });
-    const request = { samplingBucket: 0, realData: false };
+    expect(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY).toEqual({ enabled: false, samplingPercentage: 0, killSwitch: "active", model: null, timeoutMs: null, budget: { kind: "deny_all" }, acceptanceMode: "shadow", realDataEligible: false, fixtureWorkspaceIds: [], realDataWorkspaceIds: [], includeBackfill: false });
+    const request = { samplingBucket: 0, dataClass: "synthetic_fixture" as const };
     expect(decideUnderstandAiRoute(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY, request)).toEqual({ kind: "skip", reason: "route_disabled" });
     const steps: [Partial<UnderstandAiRoutePolicy>, string][] = [
       [{ killSwitch: "active" }, "kill_switch"], [{ model: null }, "no_model"], [{ timeoutMs: null }, "no_timeout"],
       [{ budget: { kind: "deny_all" } }, "no_budget"], [{ samplingPercentage: 0 }, "not_sampled"],
     ];
     for (const [change, reason] of steps) expect(decideUnderstandAiRoute({ ...COMPLETE_POLICY, ...change }, request), reason).toEqual({ kind: "skip", reason });
-    expect(decideUnderstandAiRoute({ ...COMPLETE_POLICY, samplingPercentage: 50 }, { samplingBucket: 50, realData: false })).toEqual({ kind: "skip", reason: "not_sampled" });
-    expect(decideUnderstandAiRoute(COMPLETE_POLICY, { samplingBucket: 0, realData: true })).toEqual({ kind: "skip", reason: "real_data_not_eligible" });
+    expect(decideUnderstandAiRoute({ ...COMPLETE_POLICY, samplingPercentage: 50 }, { samplingBucket: 50, dataClass: "synthetic_fixture" })).toEqual({ kind: "skip", reason: "not_sampled" });
+    expect(decideUnderstandAiRoute(COMPLETE_POLICY, { samplingBucket: 0, dataClass: "real_unauthorized" })).toEqual({ kind: "skip", reason: "real_data_not_eligible" });
     expect(decideUnderstandAiRoute(COMPLETE_POLICY, request)).toEqual({ kind: "call", model: SIM_REF, timeoutMs: 30_000, budget: { kind: "caps", maxCallsPerDay: 100, maxInputCharsPerDay: 1_000_000 }, acceptanceMode: "shadow" });
     expect(decideUnderstandAiRoute(COMPLETE_POLICY, { ...request, arrival: "backfill" })).toEqual({ kind: "skip", reason: "backfill_excluded" });
     expect(decideUnderstandAiRoute({ ...COMPLETE_POLICY, budget: { kind: "caps", maxCallsPerDay: 0, maxInputCharsPerDay: 10 } }, request)).toEqual({ kind: "skip", reason: "no_budget" });

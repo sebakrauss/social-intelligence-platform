@@ -3,6 +3,10 @@
  * gateway pieces only the INTELLIGENCE composition (jobs/intelligence.ts) needs. Separate from the module index so the
  * MAIN plane's import graph (dispatch, recovery) never reaches the gateway task, the prompt or the runner.
  */
-export { runUnderstanding, RUN_SKIP_REASONS, type IntelligenceRunScope, type UnderstandingModelBinding, type UnderstandingRunDependencies, type UnderstandingRunOutcome, type RunSkipReason } from "./application/ai/run-understanding";
+export {
+  runUnderstanding, RUN_SKIP_REASONS, UNDERSTANDING_RUN_REPORT_CATEGORIES, interruptedRunReport, understandingRunReport,
+  type IntelligenceRunScope, type UnderstandingModelBinding, type UnderstandingRunDependencies, type UnderstandingRunOutcome, type RunSkipReason,
+  type UnderstandingRunReport, type UnderstandingRunReportCategory,
+} from "./application/ai/run-understanding";
 export { understandAiRouteTable } from "./application/ai/understand-ai-contract";
 export { UNDERSTANDING_TASK_ID } from "./application/ai/understanding-task";

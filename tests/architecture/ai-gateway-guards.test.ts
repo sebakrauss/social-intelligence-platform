@@ -38,7 +38,7 @@ describe("H7-C: vendor-free", () => {
     expect(Object.keys(all).filter((name) => /anthropic|openai|langchain|@ai-sdk|^ai$|cohere|mistral|gemini|@google\/generative|ollama|huggingface|llamaindex/i.test(name)).sort()).toEqual(["@anthropic-ai/sdk", "openai"]);
     for (const name of ["@anthropic-ai/sdk", "openai"]) expect(all[name], name).toMatch(/^\d+\.\d+\.\d+$/);
     const importers = sourceFiles([...PRODUCT, "ai", "tests", "tools"]).filter((file) => importsOf(file).some((s) => /^(openai|@anthropic-ai\/sdk)(\/|$)/.test(s))).sort();
-    expect(importers).toEqual(["ai/providers/anthropic/index.ts", "ai/providers/openai/index.ts", "tests/eval/classification/live-bakeoff.test.ts", "tests/unit/ai/provider-adapters.test.ts"]);
+    expect(importers).toEqual(["ai/providers/anthropic/index.ts", "ai/providers/anthropic/runtime-client.ts", "ai/providers/openai/index.ts", "tests/eval/classification/live-bakeoff.test.ts", "tests/unit/ai/provider-adapters.test.ts"]);
   });
 
   it("no product code branches on a vendor name (only future ai/providers/<vendor> adapters and registry config may)", () => {
@@ -180,7 +180,20 @@ describe("H7-D0: real provider adapters and the live bake-off", () => {
   it("only the INTELLIGENCE composition composes a real provider (the qualified Anthropic adapter, never OpenAI); otherwise only the live bake-off does", () => {
     const composers = sourceFiles([...PRODUCT, "tools"]).filter((file) => importsOf(file).some((s) => /ai\/providers\/(openai|anthropic)/.test(s)));
     expect(composers).toEqual(["jobs/intelligence.ts"]);
-    expect(importsOf("jobs/intelligence.ts").filter((s) => /ai\/providers\//.test(s)).sort()).toEqual(["@/ai/providers/anthropic", "@/ai/providers/anthropic/qualified", "@/ai/providers/anthropic/schema-projection"]);
+    expect(importsOf("jobs/intelligence.ts").filter((s) => /ai\/providers\//.test(s)).sort()).toEqual(["@/ai/providers/anthropic", "@/ai/providers/anthropic/qualified", "@/ai/providers/anthropic/runtime-client", "@/ai/providers/anthropic/schema-projection"]);
+    // H7-D1g-prep: the runtime builds its client ONLY through the runtime factory (no trace propagation to the provider).
+    expect(strip(codeOf("jobs/intelligence.ts"))).toMatch(/createAnthropicProvider\(\{ client: createRuntimeAnthropicClient\(apiKey\),/);
+    expect(strip(codeOf("jobs/intelligence.ts"))).not.toMatch(/createAnthropicClient\(/);
+  });
+
+  it("H7-D1g-prep: the runtime client imports only the SDK and the adapter's type, reads no environment, disables SDK retries AND trace propagation", () => {
+    const file = "ai/providers/anthropic/runtime-client.ts";
+    expect(importsOf(file).sort()).toEqual(["./index", "@anthropic-ai/sdk"]);
+    const code = strip(codeOf(file));
+    expect(code).not.toMatch(/process\.env|import\.meta\.env|readFileSync|middleware|fetch\(/);
+    expect(code).toMatch(/export const ANTHROPIC_CLIENT_OPEN_TELEMETRY = Object\.freeze\(\{ propagation: false, traces: Object\.freeze\(\{ contentMode: "metadata_only" as const \}\) \}\);/);
+    expect(code).toMatch(/return new Anthropic\(\{ apiKey, maxRetries: 0, openTelemetry: ANTHROPIC_CLIENT_OPEN_TELEMETRY \}\);/);
+    expect(code.match(/new Anthropic\(/g)).toHaveLength(1);
     expect(sourceFiles(["tests"]).filter((file) => /candidateProvider\(/.test(strip(codeOf(file)))).sort()).toEqual(["tests/eval/classification/live.eval.ts", "tests/eval/classification/live/candidates.ts"]);
   });
 

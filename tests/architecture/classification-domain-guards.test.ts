@@ -116,7 +116,7 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
   it("registers exactly one classification task (H7-D1d, intelligence plane); `ai/` is unchanged and reached only by the INTELLIGENCE composition; the module is used by the two planes' compositions only", () => {
     expect(PRODUCTION_TASKS.tasks.filter((task) => /^(classification|intelligence|ai)\./.test(task.name)).map((task) => [task.name, task.executionPlane])).toEqual([["classification.understand_ai", "intelligence"]]);
     expect(sourceFiles(["ai"])).toEqual(["ai/gateway/attempt.ts", "ai/gateway/failures.ts", "ai/gateway/gateway.ts", "ai/gateway/index.ts", "ai/gateway/provider-port.ts", "ai/gateway/registry.ts", "ai/gateway/task.ts",
-      "ai/providers/anthropic/index.ts", "ai/providers/anthropic/qualified.ts", "ai/providers/anthropic/schema-projection.ts", "ai/providers/diagnostics.ts", "ai/providers/openai/index.ts", "ai/providers/simulator/index.ts"]);
+      "ai/providers/anthropic/index.ts", "ai/providers/anthropic/qualified.ts", "ai/providers/anthropic/runtime-client.ts", "ai/providers/anthropic/schema-projection.ts", "ai/providers/diagnostics.ts", "ai/providers/openai/index.ts", "ai/providers/simulator/index.ts"]);
     expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations", "db"]).filter((file) => /@\/ai\/|@\/prompts\/|application\/ai\//.test(codeOf(file)))).toEqual(["jobs/intelligence.ts"]);
     expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual(["jobs/intelligence-policy.ts", "jobs/intelligence.ts", "jobs/reconciliation.ts", "server/persistence/classification.ts"]);
   });

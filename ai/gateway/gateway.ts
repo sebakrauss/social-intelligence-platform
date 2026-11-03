@@ -9,7 +9,9 @@
  *   4. size    system + data over the model's input bound ⇒ AI_INPUT_TOO_LARGE, no call (never truncated)
  *   5. budget  the budget port denies, answers anything but "allowed", or throws ⇒ AI_BUDGET, no call
  *   6. call    (ledgered gateway, H7-D1e2b) the egress port authorizes EACH provider call first — it commits the call's
- *              durable identity; anything but "authorized", or a throw ⇒ AI_UNAVAILABLE(egress_unrecorded), no call —
+ *              durable identity; anything but "authorized", or a throw ⇒ AI_UNAVAILABLE(egress_unrecorded), no call;
+ *              "killed" (H7-D1g-prep: the operational kill switch re-read at the fence, before the identity is
+ *              written) ⇒ AI_UNAVAILABLE(kill_switch), no call — for the initial call AND the re-ask alike —
  *              and records each call's final attempt right after it returns (a failed record stops further egress) ·
  *              refusal ⇒ AI_REFUSED · transport ⇒ AI_UNAVAILABLE (retryable, by the LATER runtime only) ·
  *              provider input limit ⇒ AI_INPUT_TOO_LARGE
@@ -53,21 +55,25 @@ export interface EgressCall {
 /**
  * The provider-egress authority (Step H7-D1e2b). `authorize` must durably commit the call's identity BEFORE it returns
  * "authorized"; only then is the provider called. `recorded` durably records the call's final attempt right after it
- * returns. Fail closed: anything but "authorized", or a throw, means no call.
+ * returns. Fail closed: anything but "authorized", or a throw, means no call. "killed" (H7-D1g-prep) is a denial whose
+ * reason is the operational kill switch: no identity was written and no call is made.
  */
+export type EgressDecision = "authorized" | "denied" | "killed";
+
 export interface EgressPort {
-  authorize(call: EgressCall): Promise<"authorized" | "denied">;
+  authorize(call: EgressCall): Promise<EgressDecision>;
   recorded(attempt: AttemptRecord): Promise<void>;
 }
 
 /** The default egress authority: no call ever leaves (nothing can be recorded). */
 export const DENY_ALL_EGRESS: EgressPort = Object.freeze({ authorize: () => Promise.resolve("denied" as const), recorded: () => Promise.resolve() });
 
-const authorizeEgress = async (egress: EgressPort, call: EgressCall): Promise<boolean> => {
+const authorizeEgress = async (egress: EgressPort, call: EgressCall): Promise<EgressDecision> => {
   try {
-    return (await egress.authorize(call)) === "authorized";
+    const decision: unknown = await egress.authorize(call);
+    return decision === "authorized" ? "authorized" : decision === "killed" ? "killed" : "denied";
   } catch {
-    return false;
+    return "denied";
   }
 };
 
@@ -208,7 +214,11 @@ function buildGateway(deps: GatewayDependencies, egress: EgressPort | undefined)
           modelKey: route.model.modelKey,
           inputChars: request.system.length + request.data.length,
         };
-        if (egress !== undefined && !(await authorizeEgress(egress, call))) return failed("egress_unrecorded", attempts);
+        if (egress !== undefined) {
+          const decision = await authorizeEgress(egress, call);
+          if (decision === "killed") return failed("kill_switch", attempts);
+          if (decision !== "authorized") return failed("egress_unrecorded", attempts);
+        }
         const startedAt = deps.now();
         const response = await provider.complete(request, { reference: context.reference, attempt: attemptNumber });
         if (response.kind === "refused") {

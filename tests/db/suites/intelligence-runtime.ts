@@ -736,6 +736,23 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
       expect(joined).toMatch(/classification\.intelligence\.run/);
       expect(joined).not.toMatch(/privad|prueba sin enlaces/);
     });
+
+    it("H7-D1g-prep: the run line carries the ACTUAL terminal outcome (completed · provider_refused · unknown_provider_outcome), never a hard-coded ok, never text", async () => {
+      const runLine = () => lines.map((line) => JSON.parse(line) as { event: string; level: string; outcome?: string; operation?: string; count?: number }).filter((r) => r.event === "classification.intelligence.run");
+      lines.length = 0;
+      const ok = await dispatched(A, PRAISE_TEXT);
+      await runLatest(ok, composition(scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]).provider));
+      expect(runLine()).toEqual([expect.objectContaining({ level: "info", outcome: "ok", operation: "completed.shadow_result", count: 1 })]);
+      lines.length = 0;
+      const refused = await dispatched(A, "Texto privadísimo de prueba rechazado");
+      await runLatest(refused, composition(scriptedProvider([{ kind: "refusal" }]).provider));
+      expect(runLine()).toEqual([expect.objectContaining({ level: "warn", outcome: "error", operation: "provider_refused.refused", count: 1 })]);
+      lines.length = 0;
+      const dying = await dispatched(A, "Texto privadísimo de prueba interrumpido");
+      await expect(runLatest(dying, composition({ providerKey: "simulator", complete: () => Promise.reject(new Error("crash")) }))).rejects.toThrow();
+      expect(runLine()).toEqual([expect.objectContaining({ level: "warn", outcome: "error", operation: "unknown_provider_outcome.attempt_unrecorded", count: 1 })]);
+      expect(lines.join("\n")).not.toMatch(/privad|prueba/);
+    });
   });
 
   describe("H7-D1e2b · durable provider-call intents: every egress has an identity committed BEFORE the call", () => {
@@ -837,6 +854,54 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
       expect(sim.calls).toHaveLength(0);
       expect(await intents(c)).toEqual([]);
       expect(await oracle("select reserved_calls from classification.ai_budget_reservations where workspace_id = $1", [t.workspaceId])).toEqual([{ reserved_calls: 2 }]);
+    });
+
+    describe("H7-D1g-prep · the egress fence re-reads the operational kill (ai.task_kill) right before each call", () => {
+      const KILL = "insert into system.operational_switches (switch_key, qualifier, scope, value) values ('ai.task_kill', 'classification_understanding', 'global', '{\"active\": true}')";
+      const UNKILL = "delete from system.operational_switches where switch_key = 'ai.task_kill'";
+
+      it("a kill set AFTER tx1 (and after the budget) stops the INITIAL call: no intent, no call, AI_UNAVAILABLE(kill_switch), nothing UNKNOWN", async () => {
+        const { t, policy } = await own();
+        const c = await dispatchedOwn(t, policy);
+        const events: string[] = [];
+        const sim = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
+        // The operator's kill lands while the run is already AI_RUNNING, right after its budget reservation.
+        const killAfterBudget = (scope: IntelligenceRunScope): IntelligenceRunScope => ({
+          ...scope, intelligence: { ...scope.intelligence, reserveBudget: async (r) => { const ok = await scope.intelligence.reserveBudget(r); await switchChange(KILL); return ok; } },
+        });
+        try {
+          expect(await runDirect(t, c, sim.provider, events, { scope: killAfterBudget }, policy)).toMatchObject({ kind: "failed", failureClass: "AI_UNAVAILABLE", cause: "kill_switch", attempts: 0, redispatched: false });
+        } finally {
+          await switchChange(UNKILL);
+        }
+        expect(sim.calls).toHaveLength(0);
+        expect(events).toEqual(["budget_reserved"]);
+        expect(await intents(c)).toEqual([]);
+        expect(await attempts(c)).toEqual([]);
+        expect(await accounting(c)).toEqual([]);
+        expect(await results(c)).toEqual([]);
+        expect(await request(c)).toMatchObject({ state: "AI_FAILED", ai_failure_class: "AI_UNAVAILABLE" });
+      });
+
+      it("a kill set DURING the initial call stops the RE-ASK: exactly one call, its attempt RECORDED, no second intent, AI_UNAVAILABLE(kill_switch)", async () => {
+        const { t, policy } = await own();
+        const c = await dispatchedOwn(t, policy);
+        const events: string[] = [];
+        let killed = false;
+        const sim = scriptedProvider([{ kind: "raw", text: "not json" }, { kind: "output", body: goldenOutput(PRAISE) }], { gate: async () => { if (!killed) { killed = true; await switchChange(KILL); } } });
+        try {
+          expect(await runDirect(t, c, sim.provider, events, {}, policy)).toMatchObject({ kind: "failed", failureClass: "AI_UNAVAILABLE", cause: "kill_switch", attempts: 1, redispatched: false });
+        } finally {
+          await switchChange(UNKILL);
+        }
+        expect(sim.calls.map((call) => call.attempt)).toEqual([1]);
+        expect(events).toEqual(["budget_reserved", "call_intent_committed:1", "provider_called:1", "attempt_recorded:1", "attempt_recorded:1"]);
+        expect((await intents(c)).map((i) => [i.attempt_number, i.attempt_kind])).toEqual([[1, "initial"]]);
+        expect((await attempts(c)).map((a) => [a.attempt_number, a.outcome])).toEqual([[1, "invalid_output"]]);
+        expect(await accounting(c)).toEqual([[1, 1, "RECORDED"]]);
+        expect(await results(c)).toEqual([]);
+        expect(await request(c)).toMatchObject({ state: "AI_FAILED", ai_failure_class: "AI_UNAVAILABLE" });
+      });
     });
 
     it("C · intent committed, the provider call dies: the intent stays (no fake attempt); IN_FLIGHT, then UNKNOWN_PROVIDER_OUTCOME — also after recovery", async () => {

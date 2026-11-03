@@ -9,6 +9,11 @@
  *   payload     identifiers only (workspace, interaction, source text version, request, correlation); never text
  *   route       deny-by-default: disabled, sampling 0, kill switch active, no model / timeout / budget, no real data,
  *               no backfill; acceptance SHADOW only
+ *   data class  (Step H7-D1g-prep) every workspace is EXACTLY one of: a synthetic fixture workspace, a REAL workspace
+ *               explicitly authorized for real data, an unauthorized real workspace, or a conflict (named by both
+ *               lists). Two separate allowlists, both empty by default; real data needs BOTH the real-data capability
+ *               and exact membership in the real allowlist — never a wildcard, never "all real workspaces", and a
+ *               fixture workspace never implies real authorization (nor is a real workspace ever labeled synthetic)
  */
 import { parseCorrelationId } from "@/domain/correlation";
 import { isUuid } from "@/domain/ids";
@@ -140,10 +145,19 @@ export interface UnderstandAiRoutePolicy {
   readonly timeoutMs: number | null;
   readonly budget: UnderstandAiBudget;
   readonly acceptanceMode: typeof H7_D1_ACCEPTANCE_MODE;
-  /** Real (non-fixture) data eligibility: false until an explicit TL real-data gate (H7-D1a). */
-  readonly realDataEligible: false;
-  /** Synthetic fixture workspaces (the only data that is NOT real); none by default. */
+  /**
+   * The real-data CAPABILITY (H7-D1g-prep): false by default and in every deployed policy until an explicit TL
+   * real-data gate (H7-D1a). Alone it admits nothing: a real workspace must ALSO be in `realDataWorkspaceIds`.
+   */
+  readonly realDataEligible: boolean;
+  /** Synthetic fixture workspaces (the only data that is NOT real); none by default. Never implies real authorization. */
   readonly fixtureWorkspaceIds: readonly string[];
+  /**
+   * REAL workspaces explicitly authorized for real-data shadow (H7-D1g-prep): exact canonical workspace ids only — no
+   * wildcard, no pattern; empty by default (an empty list denies every real workspace). Separate from the fixtures:
+   * a workspace named by both lists is a conflict and is never routed.
+   */
+  readonly realDataWorkspaceIds: readonly string[];
   /** Backfill arrivals stay on the batch path and out of the shadow by default (H7-A0 §9; shadow scope is a TL decision). */
   readonly includeBackfill: boolean;
 }
@@ -158,18 +172,42 @@ export const DEFAULT_UNDERSTAND_AI_ROUTE_POLICY: UnderstandAiRoutePolicy = Objec
   acceptanceMode: H7_D1_ACCEPTANCE_MODE,
   realDataEligible: false,
   fixtureWorkspaceIds: Object.freeze([]),
+  realDataWorkspaceIds: Object.freeze([]),
   includeBackfill: false,
 });
 
-export const ROUTE_SKIP_REASONS = ["route_disabled", "kill_switch", "no_model", "no_timeout", "no_budget", "not_sampled", "real_data_not_eligible", "backfill_excluded"] as const;
+export const ROUTE_SKIP_REASONS = [
+  "route_disabled", "kill_switch", "no_model", "no_timeout", "no_budget", "not_sampled", "real_data_not_eligible", "real_workspace_not_authorized",
+  "workspace_class_conflict", "backfill_excluded",
+] as const;
 export type RouteSkipReason = (typeof ROUTE_SKIP_REASONS)[number];
 
 export type UnderstandAiRouteDecision =
   | { readonly kind: "call"; readonly model: UnderstandAiModelRef; readonly timeoutMs: number; readonly budget: Extract<UnderstandAiBudget, { kind: "caps" }>; readonly acceptanceMode: typeof H7_D1_ACCEPTANCE_MODE }
   | { readonly kind: "skip"; readonly reason: RouteSkipReason };
 
+/**
+ * The data class of a workspace under a policy (H7-D1g-prep), by EXACT membership only:
+ *   synthetic_fixture   named by `fixtureWorkspaceIds` only
+ *   real_authorized     named by `realDataWorkspaceIds` only (still needs `realDataEligible: true` to route)
+ *   real_unauthorized   named by neither (fail safe: unknown ⇒ real, and real is never authorized implicitly)
+ *   class_conflict      named by both — a misconfiguration; never routed
+ */
+export const WORKSPACE_DATA_CLASSES = ["synthetic_fixture", "real_authorized", "real_unauthorized", "class_conflict"] as const;
+export type WorkspaceDataClass = (typeof WORKSPACE_DATA_CLASSES)[number];
+
+const named = (ids: unknown, workspaceId: string): boolean => Array.isArray(ids) && isUuid(workspaceId) && ids.some((id) => id === workspaceId);
+
+export function workspaceDataClassOf(policy: Pick<UnderstandAiRoutePolicy, "fixtureWorkspaceIds" | "realDataWorkspaceIds">, workspaceId: string): WorkspaceDataClass {
+  const fixture = named(policy.fixtureWorkspaceIds, workspaceId);
+  const real = named(policy.realDataWorkspaceIds, workspaceId);
+  if (fixture && real) return "class_conflict";
+  if (fixture) return "synthetic_fixture";
+  return real ? "real_authorized" : "real_unauthorized";
+}
+
 /** Pure route decision for one request; every missing piece of configuration skips (no provider call). */
-export function decideUnderstandAiRoute(policy: UnderstandAiRoutePolicy, request: { readonly samplingBucket: number; readonly realData: boolean; readonly arrival?: string }): UnderstandAiRouteDecision {
+export function decideUnderstandAiRoute(policy: UnderstandAiRoutePolicy, request: { readonly samplingBucket: number; readonly dataClass: WorkspaceDataClass; readonly arrival?: string }): UnderstandAiRouteDecision {
   const skip = (reason: RouteSkipReason): UnderstandAiRouteDecision => Object.freeze({ kind: "skip" as const, reason });
   if (!policy.enabled) return skip("route_disabled");
   if (policy.killSwitch !== "inactive") return skip("kill_switch");
@@ -179,15 +217,17 @@ export function decideUnderstandAiRoute(policy: UnderstandAiRoutePolicy, request
   if (budget.kind !== "caps" || !Number.isInteger(budget.maxCallsPerDay) || budget.maxCallsPerDay < 1 || !Number.isInteger(budget.maxInputCharsPerDay) || budget.maxInputCharsPerDay < 1) return skip("no_budget");
   const percentage = Number.isInteger(policy.samplingPercentage) ? Math.min(Math.max(policy.samplingPercentage, 0), 100) : 0;
   if (!Number.isInteger(request.samplingBucket) || request.samplingBucket < 0 || request.samplingBucket > 99 || request.samplingBucket >= percentage) return skip("not_sampled");
-  // Read as unknown: a policy built outside the type system must still say exactly `true` to admit real data (never in H7-D1).
+  // Read as unknown: a policy or request built outside the type system must still say exactly `true` / a known class.
   const realDataEligible: unknown = policy.realDataEligible;
-  if (request.realData && realDataEligible !== true) return skip("real_data_not_eligible");
+  const dataClass: unknown = request.dataClass;
+  if (dataClass !== "synthetic_fixture") {
+    if (dataClass === "class_conflict") return skip("workspace_class_conflict");
+    if (realDataEligible !== true) return skip("real_data_not_eligible");
+    if (dataClass !== "real_authorized") return skip("real_workspace_not_authorized");
+  }
   if (request.arrival === "backfill" && !policy.includeBackfill) return skip("backfill_excluded");
   return Object.freeze({ kind: "call" as const, model: policy.model, timeoutMs: policy.timeoutMs, budget, acceptanceMode: policy.acceptanceMode });
 }
-
-/** Real data unless the workspace is one of the policy's synthetic fixture workspaces (fail safe: unknown ⇒ real). */
-export const isRealData = (policy: Pick<UnderstandAiRoutePolicy, "fixtureWorkspaceIds">, workspaceId: string): boolean => !policy.fixtureWorkspaceIds.includes(workspaceId);
 
 /** A deterministic 0–99 sampling bucket from a canonical uuid (its leading 32 random bits); never from text. */
 export function samplingBucketOf(uuid: string): number {

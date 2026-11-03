@@ -160,6 +160,7 @@ describe("H7-D1d · the INTELLIGENCE composition", () => {
     const code = codeOf("jobs/intelligence.ts").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
     expect(code).not.toMatch(/ANTHROPIC_API_KEY|process\.env\[|process\.env\./);
     expect(code).toMatch(/const apiKey = environment\[INTELLIGENCE_MODEL_API_KEY_ENV\];/);
-    expect(code).toMatch(/createAnthropicClient\(apiKey\)/);
+    // H7-D1g-prep: the key goes explicitly to the runtime client (no SDK retries, no trace propagation to the provider).
+    expect(code).toMatch(/createRuntimeAnthropicClient\(apiKey\)/);
   });
 });

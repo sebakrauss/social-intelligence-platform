@@ -81,7 +81,12 @@ describe("H7-D1b: no consumer, no promotion, shadow only", () => {
     const code = strip(codeOf(ROUTING));
     expect(code).toMatch(/export const H7_D1_ACCEPTANCE_MODE = "shadow" as const satisfies AcceptanceMode;/);
     expect(code).toMatch(/readonly acceptanceMode: typeof H7_D1_ACCEPTANCE_MODE;/);
-    expect(code).toMatch(/readonly realDataEligible: false;/);
+    // H7-D1g-prep: real data needs the capability AND exact membership in the separate REAL allowlist; both are off and
+    // empty in the domain default, and the deployed policy IS that default (no real workspace, no real-data capability).
+    expect(code).toMatch(/readonly realDataEligible: boolean;/);
+    expect(code).toMatch(/readonly realDataWorkspaceIds: readonly string\[\];/);
+    expect(code).toMatch(/realDataEligible: false,\n  fixtureWorkspaceIds: Object\.freeze\(\[\]\),\n  realDataWorkspaceIds: Object\.freeze\(\[\]\),/);
+    expect(strip(codeOf("jobs/intelligence-policy.ts"))).toMatch(/export const INTELLIGENCE_ROUTE_POLICY: UnderstandAiRoutePolicy = DEFAULT_UNDERSTAND_AI_ROUTE_POLICY;/);
   });
 
   it("H7-D1d: every writer is SHADOW-only — results and AI assessments are written `shadow`, nothing writes `accepting`", () => {
@@ -151,10 +156,12 @@ describe("H7-D1e2b: every provider call has a durable identity committed before 
 
   it("the gateway has ONE provider call, preceded in the same loop by the egress authorization, followed by the durable record", () => {
     expect(gateway.match(/provider\.complete\(/g)).toHaveLength(1);
-    const authorize = gateway.indexOf("if (egress !== undefined && !(await authorizeEgress(egress, call))) return failed(\"egress_unrecorded\", attempts);");
+    // H7-D1g-prep: the egress decision is closed — "killed" ⇒ kill_switch, anything but "authorized" ⇒ egress_unrecorded.
+    const authorize = gateway.indexOf("const decision = await authorizeEgress(egress, call);\n          if (decision === \"killed\") return failed(\"kill_switch\", attempts);\n          if (decision !== \"authorized\") return failed(\"egress_unrecorded\", attempts);");
     const call = gateway.indexOf("const response = await provider.complete(");
     expect(authorize).toBeGreaterThan(-1);
     expect(authorize).toBeLessThan(call);
+    expect(gateway.slice(authorize - 40, authorize)).toMatch(/if \(egress !== undefined\) \{\s+$/);
     expect(gateway.slice(gateway.indexOf("for (const attemptNumber of [1, 2] as const) {"), call)).toContain("authorizeEgress(egress, call)");
     // Every outcome after a call is recorded durably before the gateway returns or re-asks.
     expect(gateway.match(/if \(!\(await durable\(\)\)\) return failed\("egress_unrecorded", attempts\);/g)).toHaveLength(4);
@@ -168,6 +175,10 @@ describe("H7-D1e2b: every provider call has a durable identity committed before 
     expect(fence).toMatch(/const current = await scope\.intelligence\.lockRequest\(request\.id\);/);
     expect(fence).toMatch(/current\.state !== "AI_RUNNING" \|\| current\.aiGeneration !== generation\) return "denied" as const;/);
     expect(fence.indexOf("lockRequest(")).toBeLessThan(fence.indexOf("recordCallIntent("));
+    // H7-D1g-prep: the operational kill is re-read in the SAME fence transaction, after the lock, before the identity is written.
+    expect(fence).toMatch(/if \(await operationallyKilled\(scope\)\) return "killed" as const;/);
+    expect(fence.indexOf("lockRequest(")).toBeLessThan(fence.indexOf("operationallyKilled(scope)"));
+    expect(fence.indexOf("operationallyKilled(scope)")).toBeLessThan(fence.indexOf("recordCallIntent("));
     expect(fence).toMatch(/return written === "inserted" \? \("authorized" as const\) : \("denied" as const\);/);
     expect(runner).toMatch(/recorded: async \(attempt\) => \{\s+await deps\.inScope\(\(scope\) => scope\.intelligence\.recordAttempts\(ledgerRows\(\[attempt\], clock\.now\(\)\)\)\);/);
   });

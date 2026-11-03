@@ -254,12 +254,13 @@ describe("registry and simulator", () => {
 
 describe("H7-D1e2b: the ledgered gateway — a durable egress identity before EVERY provider call", () => {
   /** An egress port that logs, with the provider and the budget, the exact order of events. */
-  const ledger = (options: { readonly deny?: (attempt: 1 | 2) => boolean; readonly throwAt?: 1 | 2; readonly recordFails?: boolean } = {}) => {
+  const ledger = (options: { readonly deny?: (attempt: 1 | 2) => boolean; readonly kill?: (attempt: 1 | 2) => boolean; readonly throwAt?: 1 | 2; readonly recordFails?: boolean } = {}) => {
     const events: string[] = [];
     const egress: EgressPort = {
       authorize: (call) => {
         if (options.throwAt === call.attemptNumber) return Promise.reject(new Error("db down"));
         if (options.deny?.(call.attemptNumber) === true) return Promise.resolve("denied" as const);
+        if (options.kill?.(call.attemptNumber) === true) return Promise.resolve("killed" as const);
         events.push(`intent:${String(call.attemptNumber)}:${call.kind}`);
         return Promise.resolve("authorized" as const);
       },
@@ -321,6 +322,32 @@ describe("H7-D1e2b: the ledgered gateway — a durable egress identity before EV
     expect(h.simulator.calls).toHaveLength(1);
     const valid = ledger({ recordFails: true });
     expect(await runLedgered(harness(), valid.egress, valid.events, "valid_es")).toMatchObject({ kind: "failed", failure: { cause: "egress_unrecorded" } });
+  });
+
+  it("H7-D1g-prep: the fence's kill decision blocks the INITIAL call — no intent, no call, AI_UNAVAILABLE(kill_switch), not retryable", async () => {
+    const h = harness();
+    const killed = ledger({ kill: () => true });
+    expect(await runLedgered(h, killed.egress, killed.events, "valid_es")).toMatchObject({ kind: "failed", failure: { class: "AI_UNAVAILABLE", cause: "kill_switch", retryable: false }, attempts: [] });
+    expect(killed.events).toEqual(["budget"]);
+    expect(h.simulator.calls).toHaveLength(0);
+  });
+
+  it("H7-D1g-prep: the fence's kill decision blocks the RE-ASK — exactly one call, attempt 1 recorded, AI_UNAVAILABLE(kill_switch)", async () => {
+    const h = harness();
+    const killed = ledger({ kill: (attempt) => attempt === 2 });
+    const result = await runLedgered(h, killed.egress, killed.events, "reask_then_valid");
+    expect(result).toMatchObject({ kind: "failed", failure: { class: "AI_UNAVAILABLE", cause: "kill_switch", retryable: false } });
+    expect(result.attempts.map((a) => a.attemptNumber)).toEqual([1]);
+    expect(h.simulator.calls.map((c) => c.attempt)).toEqual([1]);
+    expect(killed.events).toEqual(["budget", "intent:1:initial", "provider:1", "attempt:1:invalid_output"]);
+  });
+
+  it("H7-D1g-prep: an egress answer outside the closed decisions is a denial (egress_unrecorded), never a call", async () => {
+    const h = harness();
+    const odd: EgressPort = { authorize: () => Promise.resolve("maybe" as unknown as "authorized"), recorded: () => Promise.resolve() };
+    expect(await understandInteraction(createLedgeredAiGateway({ ...h.deps, egress: odd }), input("Muy caro el precio"), { ...CONTEXT, reference: "valid_es" }))
+      .toMatchObject({ kind: "failed", failure: { cause: "egress_unrecorded" } });
+    expect(h.simulator.calls).toHaveLength(0);
   });
 
   it("a budget denial still precedes everything: no intent, no call", async () => {

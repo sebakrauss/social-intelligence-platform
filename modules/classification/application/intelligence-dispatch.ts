@@ -27,8 +27,8 @@ import {
   ROUTE_SKIP_REASONS,
   STALE_IN_FLIGHT_MS,
   decideUnderstandAiRoute,
-  isRealData,
   samplingBucketOf,
+  workspaceDataClassOf,
   type UnderstandAiRoutePolicy,
 } from "../domain/intelligence-routing";
 import { CANONICAL_INELIGIBILITY, canonicalEligibility, prepareUnderstandingInput } from "../domain/understanding-eligibility";
@@ -65,7 +65,7 @@ export async function operationallyKilled(scope: Pick<IntelligenceScope, "aiTask
 
 /** The route decision of one target: a deterministic sampling bucket of its text version, never its text. */
 export const routeDecisionFor = (policy: UnderstandAiRoutePolicy, target: { readonly workspaceId: string; readonly sourceTextVersionId: string; readonly arrival: string }) =>
-  decideUnderstandAiRoute(policy, { samplingBucket: samplingBucketOf(target.sourceTextVersionId), realData: isRealData(policy, target.workspaceId), arrival: target.arrival });
+  decideUnderstandAiRoute(policy, { samplingBucket: samplingBucketOf(target.sourceTextVersionId), dataClass: workspaceDataClassOf(policy, target.workspaceId), arrival: target.arrival });
 
 export async function dispatchUnderstanding(scope: IntelligenceScope, clock: ClassificationClock, policy: UnderstandAiRoutePolicy, input: DispatchInput): Promise<DispatchOutcome> {
   const skip = (reason: DispatchSkipReason): DispatchOutcome => ({ kind: "skipped", reason });

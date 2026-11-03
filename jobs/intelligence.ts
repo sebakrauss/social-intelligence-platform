@@ -6,7 +6,8 @@
  *
  *   model       the QUALIFIED descriptor (ai/providers/anthropic/qualified.ts) — still `enabled: false`, so even a
  *               complete route policy gets AI_UNAVAILABLE(model_unavailable) until a later gate enables it
- *   credential  INTELLIGENCE_MODEL_API_KEY, read here and passed EXPLICITLY to the adapter's client; absent ⇒ no
+ *   credential  INTELLIGENCE_MODEL_API_KEY, read here and passed EXPLICITLY to the runtime client (H7-D1g-prep:
+ *               ai/providers/anthropic/runtime-client.ts — no SDK retries, no trace propagation to the provider); absent ⇒ no
  *               provider is composed (model_unavailable, no call). The SDK's ambient variables (ANTHROPIC_API_KEY and
  *               the endpoint overrides) are never read: the plane refuses a run that holds any of them
  *   route       INTELLIGENCE_ROUTE_POLICY (deny-by-default); the gateway's kill switch is the policy's
@@ -15,7 +16,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { createLedgeredAiGateway, createModelRegistry, type ModelDescriptor, type ModelProvider } from "@/ai/gateway";
-import { createAnthropicClient, createAnthropicProvider } from "@/ai/providers/anthropic";
+import { createAnthropicProvider } from "@/ai/providers/anthropic";
 import {
   QUALIFIED_UNDERSTANDING_CALL_TIMEOUT_MS,
   QUALIFIED_UNDERSTANDING_DESCRIPTOR,
@@ -24,9 +25,10 @@ import {
   QUALIFIED_UNDERSTANDING_MODEL_REF,
   QUALIFIED_UNDERSTANDING_SETTINGS,
 } from "@/ai/providers/anthropic/qualified";
+import { createRuntimeAnthropicClient } from "@/ai/providers/anthropic/runtime-client";
 import { ANTHROPIC_TRANSPORT_SCHEMA_VERSION } from "@/ai/providers/anthropic/schema-projection";
 import { understandAiPayloadFromEnvelope, type ClassificationClock, type UnderstandAiRoutePolicy } from "@/modules/classification";
-import { runUnderstanding, understandAiRouteTable, type UnderstandingModelBinding, type UnderstandingRunOutcome } from "@/modules/classification/intelligence-runtime";
+import { interruptedRunReport, runUnderstanding, understandAiRouteTable, understandingRunReport, type UnderstandingModelBinding, type UnderstandingRunOutcome, type UnderstandingRunReport } from "@/modules/classification/intelligence-runtime";
 import { NonRetryableJobError, type TenantStepJobContext } from "@/platform/jobs";
 import type { Logger } from "@/platform/observability";
 import { intelligenceScope } from "@/server/persistence/classification";
@@ -49,7 +51,7 @@ export function intelligenceProviders(environment: Environment = process.env): r
   const apiKey = environment[INTELLIGENCE_MODEL_API_KEY_ENV];
   if (apiKey === undefined || apiKey === "") return Object.freeze([]);
   return Object.freeze([
-    createAnthropicProvider({ client: createAnthropicClient(apiKey), models: { [QUALIFIED_UNDERSTANDING_MODEL_KEY]: QUALIFIED_UNDERSTANDING_SETTINGS }, timeoutMs: QUALIFIED_UNDERSTANDING_CALL_TIMEOUT_MS }),
+    createAnthropicProvider({ client: createRuntimeAnthropicClient(apiKey), models: { [QUALIFIED_UNDERSTANDING_MODEL_KEY]: QUALIFIED_UNDERSTANDING_SETTINGS }, timeoutMs: QUALIFIED_UNDERSTANDING_CALL_TIMEOUT_MS }),
   ]);
 }
 
@@ -80,15 +82,28 @@ export async function runUnderstandAi(context: TenantStepJobContext, composition
   const registry = createModelRegistry(composition.models);
   const routes = understandAiRouteTable(policy);
   const started = Date.now();
-  const outcome = await runUnderstanding({
-    inScope: (work) => context.inScope((scope) => work({ ...intelligenceScope(scope), claimEffect: scope.claimEffect })),
-    policy,
-    binding: composition.binding,
-    clock,
-    // Step H7-D1e2b: the LEDGERED gateway — no provider call without the runner's committed egress identity.
-    gatewayFor: (budget, egress) => createLedgeredAiGateway({ registry, routes, providers: composition.providers(), budget, egress, killed: () => policy.killSwitch !== "inactive", now: clock.now }),
-  }, parsed.payload, { runId: context.run.runId });
-  const operation = outcome.kind === "skipped" || outcome.kind === "refused" ? `${outcome.kind}.${outcome.reason}` : outcome.kind === "failed" ? `failed.${outcome.failureClass.toLowerCase()}` : outcome.kind;
-  log.info("classification.intelligence.run", { workspaceId: context.payload.workspaceId, task: "classification.understand_ai", outcome: "ok", operation, durationMs: Date.now() - started });
+  // Step H7-D1g-prep: the ACTUAL terminal outcome (closed category + closed reason/cause), never a hard-coded "ok".
+  const logRun = (report: UnderstandingRunReport, count: number): void => {
+    const fields = { workspaceId: context.payload.workspaceId, task: "classification.understand_ai", outcome: report.ok ? "ok" as const : "error" as const, operation: `${report.category}.${report.detail}`, durationMs: Date.now() - started, count };
+    if (report.ok) log.info("classification.intelligence.run", fields);
+    else log.warn("classification.intelligence.run", fields);
+  };
+  const egressCounts = { authorized: 0, recorded: 0 };
+  let outcome: UnderstandingRunOutcome;
+  try {
+    outcome = await runUnderstanding({
+      inScope: (work) => context.inScope((scope) => work({ ...intelligenceScope(scope), claimEffect: scope.claimEffect })),
+      policy,
+      binding: composition.binding,
+      clock,
+      // Step H7-D1e2b: the LEDGERED gateway — no provider call without the runner's committed egress identity.
+      gatewayFor: (budget, egress) => createLedgeredAiGateway({ registry, routes, providers: composition.providers(), budget, egress, killed: () => policy.killSwitch !== "inactive", now: clock.now }),
+      egressObserver: { authorized: () => { egressCounts.authorized += 1; }, recorded: () => { egressCounts.recorded += 1; } },
+    }, parsed.payload, { runId: context.run.runId });
+  } catch (error) {
+    logRun(interruptedRunReport(egressCounts), egressCounts.authorized);
+    throw error;
+  }
+  logRun(understandingRunReport(outcome), "attempts" in outcome ? outcome.attempts : 0);
   return outcome;
 }
