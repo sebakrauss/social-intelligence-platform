@@ -9,10 +9,8 @@
  *                   a test recomputes it and compares it with the evaluation candidate, so any drift fails CI
  *   timeout         30 s is part of the qualified configuration (it is fingerprinted, and every qualifying H7-D0 run —
  *                   pass 1 and the stability-only run — completed under it with zero transport failures)
- *   availability    Step H7-D1f-prep: the descriptor is ENABLED (operationally executable) so the INTELLIGENCE plane can
- *                   run it behind the temporary bounded synthetic route (jobs/intelligence-policy.ts: one synthetic
- *                   workspace, no real data, 2 calls/day). `enabled` is NOT fingerprint material: the qualification is
- *                   unchanged, and executable is not production-selected (`productionModelSelected: false`)
+ *   availability    the descriptor is DISABLED and no runtime composes this file yet: the route is disabled by default
+ *                   (modules/classification `DEFAULT_UNDERSTAND_AI_ROUTE_POLICY`); enabling either is a later gate
  *   qualification   route-level provenance only (evaluator / promotion / stability-policy versions and the evidence
  *                   hashes); the runtime never runs the benchmark evaluator and stores none of this per assessment
  *
@@ -50,12 +48,12 @@ export const QUALIFIED_UNDERSTANDING_FINGERPRINT = "76e0ca1f5478239fe0cb11df2994
 
 export const QUALIFIED_UNDERSTANDING_MODEL_REF: ModelRef = Object.freeze({ providerKey: "anthropic", modelKey: QUALIFIED_UNDERSTANDING_MODEL_KEY });
 
-/** The gateway descriptor: the H7-D0 evaluation bounds; enabled for the bounded synthetic route only (H7-D1f-prep). */
+/** The gateway descriptor: the H7-D0 evaluation bounds, DISABLED until a later gate enables it. */
 export const QUALIFIED_UNDERSTANDING_DESCRIPTOR: ModelDescriptor = Object.freeze({
   providerKey: "anthropic",
   modelKey: QUALIFIED_UNDERSTANDING_MODEL_KEY,
   modelVersion: QUALIFIED_UNDERSTANDING_SETTINGS.model,
-  enabled: true,
+  enabled: false,
   structuredOutput: "native_json_schema",
   tools: "none",
   maxInputChars: 200_000,

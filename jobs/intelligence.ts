@@ -4,13 +4,12 @@
  * gateway — and nothing else. MAIN never imports this file (execution-plane guards), so no MAIN graph reaches the
  * gateway, a provider adapter or the model credential.
  *
- *   model       the QUALIFIED descriptor (ai/providers/anthropic/qualified.ts) — enabled since H7-D1f-prep, reachable
- *               only through the bounded synthetic route (one synthetic workspace; every other one is never routed)
+ *   model       the QUALIFIED descriptor (ai/providers/anthropic/qualified.ts) — still `enabled: false`, so even a
+ *               complete route policy gets AI_UNAVAILABLE(model_unavailable) until a later gate enables it
  *   credential  INTELLIGENCE_MODEL_API_KEY, read here and passed EXPLICITLY to the adapter's client; absent ⇒ no
  *               provider is composed (model_unavailable, no call). The SDK's ambient variables (ANTHROPIC_API_KEY and
  *               the endpoint overrides) are never read: the plane refuses a run that holds any of them
- *   route       INTELLIGENCE_ROUTE_POLICY (H7-D1f-prep: the temporary bounded synthetic route); the gateway's kill
- *               switch is the policy's
+ *   route       INTELLIGENCE_ROUTE_POLICY (deny-by-default); the gateway's kill switch is the policy's
  *   budget      per run, the runner's port over classification.reserve_ai_budget()
  *   egress      per run, the runner's fence (Step H7-D1e2b): each call's ai_call_intents row is committed first
  */

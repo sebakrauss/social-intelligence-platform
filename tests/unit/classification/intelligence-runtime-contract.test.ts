@@ -200,8 +200,7 @@ describe("8–10 · the qualified registry entry and the fail-safe route", () =>
     expect(QUALIFIED_UNDERSTANDING_FINGERPRINT_MATERIAL.transportSchema).toBe(ANTHROPIC_TRANSPORT_SCHEMA_VERSION);
     expect(ANTHROPIC_TRANSPORT_SCHEMA_VERSION).toBe("anthropic-transport-schema.v2");
     expect(QUALIFIED_UNDERSTANDING_FINGERPRINT_MATERIAL.taxonomyVersion).toBe(TAXONOMY_VERSION);
-    // H7-D1f-prep: executable (enabled) for the bounded synthetic route only; `enabled` is not fingerprint material.
-    expect(QUALIFIED_UNDERSTANDING_DESCRIPTOR).toEqual({ ...candidateModel(sonnet), enabled: true });
+    expect(QUALIFIED_UNDERSTANDING_DESCRIPTOR).toEqual({ ...candidateModel(sonnet), enabled: false });
     expect(QUALIFIED_UNDERSTANDING_MODEL_REF).toEqual({ providerKey: "anthropic", modelKey: "claude-sonnet-5-5" });
     expect(QUALIFIED_UNDERSTANDING_QUALIFICATION).toMatchObject({
       recommendation: "RECOMMEND_CLAUDE_SONNET_5_5", productionModelSelected: false, promptVersion: UNDERSTANDING_PROMPT_VERSION, promptHash: UNDERSTANDING_PROMPT_HASH,
@@ -217,7 +216,7 @@ describe("8–10 · the qualified registry entry and the fail-safe route", () =>
     expect(result).toMatchObject({ kind: "failed", failure: { class: "AI_UNAVAILABLE", cause: "task_disabled" } });
     expect(requests).toEqual([]);
     const enabledRoute = { [UNDERSTANDING_TASK_ID]: { kind: "model" as const, model: QUALIFIED_UNDERSTANDING_MODEL_REF } };
-    const disabledModel = await createAiGateway({ registry: createModelRegistry([{ ...QUALIFIED_UNDERSTANDING_DESCRIPTOR, enabled: false }]), routes: enabledRoute, providers: [], budget: ALLOW, killed: () => false, now: () => new Date() })
+    const disabledModel = await createAiGateway({ registry: createModelRegistry([QUALIFIED_UNDERSTANDING_DESCRIPTOR]), routes: enabledRoute, providers: [], budget: ALLOW, killed: () => false, now: () => new Date() })
       .run({ ...(await import("@/modules/classification/application/ai/understanding-task")).UNDERSTANDING_TASK }, caseInput("es-ar-complaint-01"), { workspaceId: WORKSPACE, subject: {}, pipelineVersion: INTELLIGENCE_PIPELINE_VERSION, reference: "x" });
     expect(disabledModel).toMatchObject({ kind: "failed", failure: { cause: "model_unavailable" } });
   });

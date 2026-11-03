@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { ANTHROPIC_PROVIDER_KEY } from "@/ai/providers/anthropic";
 import { QUALIFIED_UNDERSTANDING_DESCRIPTOR, QUALIFIED_UNDERSTANDING_FINGERPRINT } from "@/ai/providers/anthropic/qualified";
 import { PRODUCTION_INTELLIGENCE, QUALIFIED_UNDERSTANDING_BINDING, intelligenceProviders } from "@/jobs/intelligence";
-import { D1F_SYNTHETIC_ROUTE_POLICY, D1F_SYNTHETIC_WORKSPACE_ID, INTELLIGENCE_ROUTE_POLICY } from "@/jobs/intelligence-policy";
+import { INTELLIGENCE_ROUTE_POLICY } from "@/jobs/intelligence-policy";
 import {
   DEFAULT_UNDERSTAND_AI_ROUTE_POLICY,
   canonicalEligibility,
@@ -142,12 +142,11 @@ describe("H7-D1d · MAIN dispatch (fakes)", () => {
 });
 
 describe("H7-D1d · the INTELLIGENCE composition", () => {
-  it("binds the QUALIFIED descriptor, its fingerprint and the route policy (H7-D1f-prep: the bounded synthetic route)", () => {
+  it("binds the QUALIFIED descriptor (still disabled), its fingerprint and the deny-by-default policy", () => {
     expect(PRODUCTION_INTELLIGENCE.policy).toBe(INTELLIGENCE_ROUTE_POLICY);
-    expect(INTELLIGENCE_ROUTE_POLICY).toBe(D1F_SYNTHETIC_ROUTE_POLICY);
-    expect(INTELLIGENCE_ROUTE_POLICY).toMatchObject({ realDataEligible: false, includeBackfill: false, fixtureWorkspaceIds: [D1F_SYNTHETIC_WORKSPACE_ID] });
+    expect(INTELLIGENCE_ROUTE_POLICY).toBe(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY);
     expect(PRODUCTION_INTELLIGENCE.models).toEqual([QUALIFIED_UNDERSTANDING_DESCRIPTOR]);
-    expect(QUALIFIED_UNDERSTANDING_DESCRIPTOR.enabled).toBe(true);
+    expect(QUALIFIED_UNDERSTANDING_DESCRIPTOR.enabled).toBe(false);
     expect(QUALIFIED_UNDERSTANDING_BINDING).toEqual({ model: { providerKey: "anthropic", modelKey: "claude-sonnet-5-5" }, modelRequested: "claude-sonnet-5-5", transportSchemaVersion: "anthropic-transport-schema.v2", routeFingerprint: QUALIFIED_UNDERSTANDING_FINGERPRINT });
   });
 
