@@ -135,6 +135,8 @@ export function createPostgresIntelligenceStore(tx: DatabaseTransaction, noteApp
     },
 
     async recordResult(r) {
+      // H7-D1g-minimization: `summary` is ALWAYS written NULL (the column stays for schema compatibility; historical
+      // synthetic rows keep theirs). Evidence is stored as verified source offsets only, never as quoted text.
       const evidence = r.evidence.length === 0 ? null : r.evidence;
       const result = await tx.execute(sql`
         insert into classification.ai_results (id, organization_id, workspace_id, understanding_request_id, interaction_id, source_text_version_id, pipeline_version,
@@ -145,7 +147,7 @@ export function createPostgresIntelligenceStore(tx: DatabaseTransaction, noteApp
         values (${r.id}::uuid, ${r.organizationId}::uuid, ${r.workspaceId}::uuid, ${r.understandingRequestId}::uuid, ${r.interactionId}::uuid, ${r.sourceTextVersionId}::uuid,
                 ${r.pipelineVersion}, ${r.dispatchGeneration}, ${r.attemptId}::uuid, ${r.acceptanceMode}, ${r.provider}, ${r.modelRequested}, ${r.modelReported},
                 ${r.routeFingerprint}, ${r.taskId}, ${r.taskVersion}, ${r.promptVersion}, ${r.promptHash}, ${r.outputSchemaVersion}, ${r.transportSchemaVersion},
-                ${r.taxonomyVersion}, ${r.confidencePolicyVersion}, ${r.languagePolicyVersion}, ${r.inputContractVersion}, ${r.summary},
+                ${r.taxonomyVersion}, ${r.confidencePolicyVersion}, ${r.languagePolicyVersion}, ${r.inputContractVersion}, null,
                 ${evidence === null ? null : intArray(evidence.map((s) => s.start))}::integer[], ${evidence === null ? null : intArray(evidence.map((s) => s.end))}::integer[],
                 ${r.correlationId}, ${r.triggerRunId}, ${r.createdAt})
         on conflict on constraint ai_results_once do nothing`);

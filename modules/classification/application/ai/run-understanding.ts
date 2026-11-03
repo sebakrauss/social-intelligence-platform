@@ -19,7 +19,9 @@
  *        UNKNOWN_PROVIDER_OUTCOME for a call that never happened; and right AFTER each call its final attempt row
  *        (ai_attempts) is committed in its own transaction, so no completed call waits for tx2 to become durable
  *   tx2  re-assert the ledger rows idempotently (same ids); then, only if the request is STILL AI_RUNNING at this
- *        generation: a validated output ⇒ the shadow result (ai_results) + the canonical A1 composition
+ *        generation: a validated output ⇒ the shadow result (ai_results; H7-D1g-minimization: the validated output's
+ *        free-text `summary` is discarded here — validated in memory by the frozen contract, never persisted, logged or
+ *        returned; the column is written NULL) + the canonical A1 composition
  *        (deriveUnderstandingOutcome) + its AI assessments, all SHADOW ⇒ COMPLETED; a failure ⇒ AI_FAILED with its
  *        class, or — transient transport only, below MAX_TRANSPORT_GENERATIONS — the next generation's dispatch
  *
@@ -324,7 +326,6 @@ export async function runUnderstanding(deps: UnderstandingRunDependencies, paylo
         confidencePolicyVersion: accepted.confidencePolicyVersion,
         languagePolicyVersion: accepted.languagePolicyVersion,
         inputContractVersion: accepted.inputContractVersion,
-        summary: result.output.summary,
         evidence: result.output.evidence,
         correlationId: payload.correlationId,
         triggerRunId: run.runId,

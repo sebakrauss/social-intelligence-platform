@@ -361,9 +361,16 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
   describe("22 · simulator flows: success", () => {
     it("ledger → shadow result → A1 composition → SHADOW assessments; COMPLETED; usage recorded, cost null; no text copied", async () => {
       const c = await dispatched(A, COMPLAINT_TEXT);
-      const body = { ...goldenOutput(COMPLAINT), summary: "Pedido demorado sin respuesta.", evidence: [{ quote: "nadie responde" }] };
+      // H7-D1g-minimization: the provider output CARRIES a free-text summary (the frozen contract admits it) …
+      const SUMMARY = "Pedido demorado sin respuesta.";
+      const body = { ...goldenOutput(COMPLAINT), summary: SUMMARY, evidence: [{ quote: "nadie responde" }] };
       const sim = scriptedProvider([{ kind: "output", body }], { usage: true });
+      lines.length = 0;
       const outcome = await runLatest(c, composition(sim.provider));
+      // … it validates (the run completes) but reaches neither the Trigger run output nor any log line.
+      expect(JSON.stringify(outcome)).not.toContain(SUMMARY);
+      expect(lines.join("\n")).not.toContain(SUMMARY);
+      expect(lines.join("\n")).not.toMatch(/summary/i);
       expect(outcome).toMatchObject({ kind: "completed", generation: 1, attempts: 1 });
       if (outcome.kind !== "completed") throw new Error("not completed");
       // Protection / Needs review are DERIVED by the canonical A1 functions (a complaint is protected meaning).
@@ -374,7 +381,9 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
         cost_estimate_usd: null, pricing_table_version: null, provider: "simulator", model_requested: "sim", transport_schema_version: "simulator-script.v1" });
       expect(attempt?.input_chars).toBeGreaterThan(COMPLAINT_TEXT.length);
       const [result] = await results(c);
-      expect(result).toMatchObject({ attempt_id: attempt?.id, acceptance_mode: "shadow", dispatch_generation: 1, summary: "Pedido demorado sin respuesta.", route_fingerprint: SIM_BINDING.routeFingerprint });
+      // … and is never persisted: summary IS NULL; the verified evidence offsets and the structured result are unchanged.
+      expect(result).toMatchObject({ attempt_id: attempt?.id, acceptance_mode: "shadow", dispatch_generation: 1, summary: null, route_fingerprint: SIM_BINDING.routeFingerprint });
+      expect(await oracle("select count(*)::int as n from classification.ai_results where source_text_version_id = $1 and summary is not null", [c.version])).toEqual([{ n: 0 }]);
       expect(result?.evidence_starts).toEqual([COMPLAINT_TEXT.indexOf("nadie responde")]);
       const assessed = await aiAssessments(c);
       expect(assessed.length).toBe(outcome.assessments);
@@ -387,6 +396,7 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
                 coalesce((select string_agg(row_to_json(y)::text, '|') from classification.ai_results y where source_text_version_id = $1), '') as d`, [c.version]))[0]?.d ?? "";
       expect(dump).not.toContain("Hace dos semanas");
       expect(dump).not.toContain("nadie responde");
+      expect(dump).not.toContain(SUMMARY);
       expect(dump).not.toMatch(/WRENKIND_UNTRUSTED_DATA|schemaVersion|dimensions/);
       // Members never read the shadow rows (0025 no_shadow_member_reads); the worker does.
       const memberRows = await withUserScope(web, { sub: A.owner, role: "authenticated" }, A.workspaceId, (tx) => tx.execute<{ n: number }>(sql`select count(*)::int as n from classification.assessments where acceptance_mode = 'shadow'`));
@@ -662,7 +672,7 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
         modelRequested: "sim", modelReported: null, routeFingerprint: SIM_BINDING.routeFingerprint, taskId: "classification.understanding", taskVersion: "understanding-task.v2",
         promptVersion: existing["prompt_version"] as string, promptHash: existing["prompt_hash"] as string, outputSchemaVersion: "understanding-output.v1", transportSchemaVersion: "simulator-script.v1",
         taxonomyVersion: "taxonomy.v1", confidencePolicyVersion: existing["confidence_policy_version"] as string, languagePolicyVersion: "language-policy.v1", inputContractVersion: "understanding-input.v1",
-        summary: null, evidence: [], correlationId: "h7d1d-second-result-01", triggerRunId: "run_second", createdAt: now,
+        evidence: [], correlationId: "h7d1d-second-result-01", triggerRunId: "run_second", createdAt: now,
       }));
       expect(written).toBe("exists");
       expect(await results(c)).toHaveLength(1);

@@ -185,7 +185,8 @@ export interface AiResultRow {
   readonly confidencePolicyVersion: string;
   readonly languagePolicyVersion: string;
   readonly inputContractVersion: string;
-  readonly summary: string | null;
+  // H7-D1g-minimization (first real-data shadow pilot policy SUMMARY_POLICY = DO_NOT_PERSIST): no `summary` field —
+  // the model's free-text summary may echo personal data and no shadow metric needs it, so a row can't carry it at all.
   readonly evidence: readonly SourceSpan[];
   readonly correlationId: string;
   readonly triggerRunId: string;
