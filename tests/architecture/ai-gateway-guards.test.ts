@@ -44,7 +44,14 @@ describe("H7-C: vendor-free", () => {
   it("no product code branches on a vendor name (only future ai/providers/<vendor> adapters and registry config may)", () => {
     // domain/secret-patterns.ts names vendor KEY formats to detect leaked secrets — detection, not product behavior.
     // domain/model-provider-variables.ts (H7-D1b) names the SDK-ambient variables every runtime REFUSES — refusal data.
-    for (const file of sourceFiles(PRODUCT).filter((f) => f !== "domain/secret-patterns.ts" && f !== "domain/model-provider-variables.ts")) expect(strip(codeOf(file)), file).not.toMatch(/["'`](openai|anthropic|claude|gpt-[0-9])/i);
+    // jobs/intelligence-policy.ts (H7-D1f-prep, temporary) names the qualified route reference MAIN may not import from
+    // ai/: checked after removing that ONE exact expression, which must exist — the names may occur nowhere else in it.
+    const POLICY = "jobs/intelligence-policy.ts";
+    const QUALIFIED_ROUTE_REF = 'model: Object.freeze({ providerKey: "anthropic", modelKey: "claude-sonnet-5-5" }),';
+    const policy = strip(codeOf(POLICY));
+    expect(policy.split(QUALIFIED_ROUTE_REF)).toHaveLength(2);
+    expect(policy.replace(QUALIFIED_ROUTE_REF, ""), POLICY).not.toMatch(/["'`](openai|anthropic|claude|gpt-[0-9])/i);
+    for (const file of sourceFiles(PRODUCT).filter((f) => f !== "domain/secret-patterns.ts" && f !== "domain/model-provider-variables.ts" && f !== POLICY)) expect(strip(codeOf(file)), file).not.toMatch(/["'`](openai|anthropic|claude|gpt-[0-9])/i);
   });
 
   it("no environment or credential reader in the gateway, the simulator, the binding or the prompt", () => {

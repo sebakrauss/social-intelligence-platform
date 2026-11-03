@@ -105,8 +105,10 @@ describe("H7-D1b: no consumer, no promotion, shadow only", () => {
     }
   });
 
-  it("the qualified descriptor is disabled and nothing reads the environment or a credential in the new files", () => {
-    expect(strip(codeOf(QUALIFIED))).toMatch(/enabled: false,/);
+  it("the qualified descriptor is executable but not production-selected, and nothing reads the environment or a credential in the new files", () => {
+    // H7-D1f-prep: enabled only to run behind the bounded synthetic route (jobs/intelligence-policy.ts).
+    expect(strip(codeOf(QUALIFIED))).toMatch(/enabled: true,/);
+    expect(strip(codeOf(QUALIFIED))).toMatch(/productionModelSelected: false,/);
     for (const file of [CONTRACT, OUTCOME, QUALIFIED, "domain/model-provider-variables.ts"]) expect(strip(codeOf(file)), file).not.toMatch(/process\.env|import\.meta\.env|readFileSync|fetch\(|apiKey/);
   });
 });

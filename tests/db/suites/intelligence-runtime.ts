@@ -15,7 +15,7 @@ import { createLedgeredAiGateway, createModelRegistry, type ModelProvider, type 
 import { QUALIFIED_UNDERSTANDING_DESCRIPTOR } from "@/ai/providers/anthropic/qualified";
 import { createSimulatorProvider, simulatorModel, type SimulatedResponse } from "@/ai/providers/simulator";
 import { PRODUCTION_INTELLIGENCE, QUALIFIED_UNDERSTANDING_BINDING, runUnderstandAi, type IntelligenceComposition } from "@/jobs/intelligence";
-import { INTELLIGENCE_ROUTE_POLICY } from "@/jobs/intelligence-policy";
+import { D1F_SYNTHETIC_FIXTURE_TEXT, D1F_SYNTHETIC_ROUTE_POLICY, D1F_SYNTHETIC_WORKSPACE_ID, INTELLIGENCE_ROUTE_POLICY } from "@/jobs/intelligence-policy";
 import { runInteractionsObserved, type InteractionsObservedResult } from "@/jobs/reconciliation";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import {
@@ -282,26 +282,29 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
     await privileged.end();
   });
 
-  describe("26 · source defaults: nothing runs", () => {
-    it("the production policy IS the deny-by-default policy; an observed comment gets its deterministic request only", async () => {
-      expect(INTELLIGENCE_ROUTE_POLICY).toBe(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY);
-      expect(PRODUCTION_INTELLIGENCE.policy).toBe(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY);
+  describe("26 · source defaults: nothing runs outside the one synthetic workspace", () => {
+    it("the production policy is the bounded synthetic route (H7-D1f-prep): any other workspace's comment gets its deterministic request only", async () => {
+      expect(INTELLIGENCE_ROUTE_POLICY).toBe(D1F_SYNTHETIC_ROUTE_POLICY);
+      expect(PRODUCTION_INTELLIGENCE.policy).toBe(D1F_SYNTHETIC_ROUTE_POLICY);
+      expect(D1F_SYNTHETIC_ROUTE_POLICY).toMatchObject({ realDataEligible: false, includeBackfill: false, fixtureWorkspaceIds: [D1F_SYNTHETIC_WORKSPACE_ID] });
+      expect([A.workspaceId, B.workspaceId]).not.toContain(D1F_SYNTHETIC_WORKSPACE_ID);
       expect(DEFAULT_UNDERSTAND_AI_ROUTE_POLICY).toMatchObject({ enabled: false, samplingPercentage: 0, killSwitch: "active", realDataEligible: false, budget: { kind: "deny_all" }, model: null, timeoutMs: null });
       const c = await comment(A, PRAISE_TEXT);
       const result = await deliverObserved(await observed(A, c), INTELLIGENCE_ROUTE_POLICY);
       expect(result.classification).toMatchObject({ kind: "recorded", state: "DETERMINISTIC_DONE" });
-      expect(result.intelligence).toEqual({ kind: "skipped", reason: "route_disabled" });
+      expect(result.intelligence).toEqual({ kind: "skipped", reason: "real_data_not_eligible" });
+      expect(await count("select count(*)::int as n from classification.understanding_requests where workspace_id = $1 and pipeline_version = $2", [A.workspaceId, INTELLIGENCE_PIPELINE_VERSION])).toBe(0);
       expect(await request(c)).toBeUndefined();
       expect(await dispatches(c)).toEqual([]);
       expect(await count("select count(*)::int as n from classification.ai_budget_reservations where workspace_id = $1", [A.workspaceId])).toBe(0);
     });
 
-    it("the qualified descriptor is disabled: even a complete route and a provider make no call (AI_UNAVAILABLE)", async () => {
+    it("a disabled descriptor: even a complete route and a provider make no call (AI_UNAVAILABLE)", async () => {
       const qualifiedRef = { providerKey: "anthropic", modelKey: "claude-sonnet-5-5" };
       const c = await dispatched(A, PRAISE_TEXT, policyFor({ model: qualifiedRef }));
       const counting = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
       const anthropicShaped: ModelProvider = { providerKey: "anthropic", complete: (r, call) => counting.provider.complete(r, call) };
-      const outcome = await runLatest(c, composition(anthropicShaped, { policy: policyFor({ model: qualifiedRef }), models: [QUALIFIED_UNDERSTANDING_DESCRIPTOR], binding: QUALIFIED_UNDERSTANDING_BINDING }));
+      const outcome = await runLatest(c, composition(anthropicShaped, { policy: policyFor({ model: qualifiedRef }), models: [{ ...QUALIFIED_UNDERSTANDING_DESCRIPTOR, enabled: false }], binding: QUALIFIED_UNDERSTANDING_BINDING }));
       expect(outcome).toMatchObject({ kind: "failed", failureClass: "AI_UNAVAILABLE", cause: "model_unavailable", redispatched: false, attempts: 0 });
       expect(counting.calls).toHaveLength(0);
       expect(await request(c)).toMatchObject({ state: "AI_FAILED", ai_failure_class: "AI_UNAVAILABLE" });
@@ -677,7 +680,8 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
       const disabled = await dispatched(t, COMPLAINT_TEXT, policy);
       advance(STALE_IN_FLIGHT_MS + 60_000);
       const recover = (p: UnderstandAiRoutePolicy) => withWorkspaceJobScope(worker, t.workspaceId, (tx) => recoverStaleUnderstanding(intelligenceScope({ tx, noteOutbox: () => undefined }), clock, p, { correlationId: "h7d1d-recovery-0002" }));
-      // A route disabled since dispatch: recovery never bypasses routing — both stale requests end AI_FAILED.
+      // A route that no longer admits the workspace (the production policy: t is not its synthetic workspace) — recovery
+      // never bypasses routing: both stale requests end AI_FAILED.
       expect(await recover(INTELLIGENCE_ROUTE_POLICY)).toEqual({ redispatched: 0, failed: 2 });
       expect(await request(lost)).toMatchObject({ state: "AI_FAILED", ai_failure_class: "AI_UNAVAILABLE" });
       expect(await request(disabled)).toMatchObject({ state: "AI_FAILED" });
@@ -962,6 +966,57 @@ export function defineIntelligenceRuntimeSuite(getTarget: () => DbTarget): void 
       expect(await late).toMatchObject({ kind: "generation_superseded", generation: 1 });
       expect(await accounting(c)).toEqual([[1, 1, "RECORDED"], [2, 1, "RECORDED"]]);
       expect(await results(c)).toHaveLength(1);
+    });
+  });
+
+  describe("H7-D1f-prep · the bounded synthetic route on the real stores (its caps, swapped onto a disposable local tenant)", () => {
+    /** The production policy's exact caps and gates, with the simulator and THIS test's tenant as its one fixture workspace. */
+    const bounded = (t: Tenant): UnderstandAiRoutePolicy => ({ ...D1F_SYNTHETIC_ROUTE_POLICY, model: SIM_REF, fixtureWorkspaceIds: [t.workspaceId] });
+    const ledger = async (t: Tenant) => ({
+      budget: await oracle<{ reserved_calls: number; reserved_input_chars: string }>("select reserved_calls, reserved_input_chars from classification.ai_budget_reservations where workspace_id = $1", [t.workspaceId]),
+      intents: await count("select count(*)::int as n from classification.ai_call_intents where workspace_id = $1", [t.workspaceId]),
+      attempts: await count("select count(*)::int as n from classification.ai_attempts where workspace_id = $1", [t.workspaceId]),
+      results: await count("select count(*)::int as n from classification.ai_results where workspace_id = $1", [t.workspaceId]),
+    });
+
+    it("INTELLIGENCE re-filters: a request dispatched for a workspace the production policy does not admit is refused before budget, intent or egress", async () => {
+      const t = await tenant();
+      const c = await dispatched(t, D1F_SYNTHETIC_FIXTURE_TEXT, bounded(t));
+      const sim = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
+      const outcome = await runLatest(c, composition(sim.provider, { policy: PRODUCTION_INTELLIGENCE.policy }));
+      expect(outcome).toEqual({ kind: "refused", failureClass: "AI_UNAVAILABLE", reason: "real_data_not_eligible" });
+      expect(sim.calls).toHaveLength(0);
+      expect(await request(c)).toMatchObject({ state: "AI_FAILED", ai_failure_class: "AI_UNAVAILABLE" });
+      expect(await ledger(t)).toEqual({ budget: [], intents: 0, attempts: 0, results: 0 });
+    });
+
+    it("one run per UTC day: the fixture's run reserves its worst case (2 calls) and may use both; a second request that day is AI_BUDGET with zero calls", async () => {
+      const t = await tenant();
+      const policy = bounded(t);
+      const first = await dispatched(t, D1F_SYNTHETIC_FIXTURE_TEXT, policy);
+      const invalidTwice = scriptedProvider([{ kind: "raw", text: "not json" }, { kind: "raw", text: "still not json" }]);
+      expect(await runLatest(first, composition(invalidTwice.provider, { policy }))).toMatchObject({ kind: "failed", failureClass: "AI_INVALID_OUTPUT", attempts: 2 });
+      expect(invalidTwice.calls.map((call) => call.attempt)).toEqual([1, 2]);
+      const after = await ledger(t);
+      expect(after.budget).toHaveLength(1);
+      expect(after.budget[0]?.reserved_calls).toBe(2);
+      expect(Number(after.budget[0]?.reserved_input_chars)).toBeLessThanOrEqual(8_730);
+      expect([after.intents, after.attempts, after.results]).toEqual([2, 2, 0]);
+      const second = await dispatched(t, D1F_SYNTHETIC_FIXTURE_TEXT, policy);
+      const sim = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
+      expect(await runLatest(second, composition(sim.provider, { policy }))).toMatchObject({ kind: "failed", failureClass: "AI_BUDGET", attempts: 0 });
+      expect(sim.calls).toHaveLength(0);
+      expect(await ledger(t)).toEqual(after);
+    });
+
+    it("the character cap admits only an input of the declared fixture's size: a longer comment is AI_BUDGET with zero calls and no reservation", async () => {
+      const t = await tenant();
+      const policy = bounded(t);
+      const longer = await dispatched(t, `${D1F_SYNTHETIC_FIXTURE_TEXT} ${D1F_SYNTHETIC_FIXTURE_TEXT}`, policy);
+      const sim = scriptedProvider([{ kind: "output", body: goldenOutput(PRAISE) }]);
+      expect(await runLatest(longer, composition(sim.provider, { policy }))).toMatchObject({ kind: "failed", failureClass: "AI_BUDGET", attempts: 0 });
+      expect(sim.calls).toHaveLength(0);
+      expect(await ledger(t)).toEqual({ budget: [], intents: 0, attempts: 0, results: 0 });
     });
   });
 }
