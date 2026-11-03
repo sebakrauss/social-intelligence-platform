@@ -33,7 +33,7 @@ export default async function setup(project: TestProject): Promise<void> {
   await client.connect();
   try {
     const status = await migrationStatus(client, readMigrations());
-    if (status.pending.length > 0) throw new Error("managed suite refused: migrations pending (run npm run db:migrate -- --apply)");
+    if (status.pending.length > 0) throw new Error("managed suite refused: migrations pending (run npm run db:migrate -- --target development --apply)");
     for (const kind of RUNTIME_KINDS) {
       const problems = await loginRoleProblems(client, kind);
       if (problems.length > 0) throw new Error(`managed suite refused: ${kind} login role: ${problems.join("; ")}`);

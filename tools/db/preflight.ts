@@ -1,32 +1,35 @@
 /**
- * Read-only preflight for the managed development database. Run: `npm run db:preflight [-- --connect]`.
- * Without --connect it only inspects local configuration. With --connect it opens each configured
- * connection and reports current_user / session_user and basic project facts. It never writes anything
- * and never prints a secret.
+ * Read-only preflight for the SELECTED database target. Run: `npm run db:preflight -- --target development [--connect]`.
+ * Without --connect it only inspects the target's local configuration (the same identity fence as db:migrate). With
+ * --connect it opens each configured connection and reports current_user / session_user and basic project facts. It
+ * never writes anything and never prints a secret.
  */
 import { RUNTIME_KINDS, RUNTIME_URL_VARIABLES } from "../../platform/db/connection.ts";
-import { checkTarget, EXPECTED_PROJECT_LABEL, loadEnvironment, privilegedClient, readCa } from "./environment.ts";
+import { prepareTarget, privilegedClient } from "./environment.ts";
 import { migrationStatus, readMigrations } from "./migrations.ts";
 import pg from "pg";
 
-const env = loadEnvironment();
-const connect = process.argv.includes("--connect");
-const configuredRuntime = RUNTIME_KINDS.filter((kind) => (env[RUNTIME_URL_VARIABLES[kind]] ?? "") !== "");
-const report = checkTarget(env, { migration: true, runtime: configuredRuntime });
+const args = process.argv.slice(2);
+const connect = args.includes("--connect");
+const unknown = args.filter((arg, index) => arg !== "--connect" && !arg.startsWith("--target") && args[index - 1] !== "--target");
+const fence = prepareTarget(args, { migration: true, runtime: "configured" });
 
-console.log(`Database preflight — expected target: ${EXPECTED_PROJECT_LABEL} (South America / São Paulo)`);
-for (const line of report.lines) console.log(line);
+console.log(`Database preflight — target: ${fence.target ?? "none"}`);
+for (const line of fence.lines) console.log(line);
+if (unknown.length > 0) console.log(`  PROBLEM: unknown argument(s): ${unknown.join(" ")}`);
 
-if (!report.ok) {
+if (!fence.ok || unknown.length > 0 || fence.report === undefined) {
   console.log("PREFLIGHT: configuration incomplete or unsafe (see PROBLEM lines). Nothing was contacted.");
   process.exit(1);
 }
+const report = fence.report;
+const configuredRuntime = RUNTIME_KINDS.filter((kind) => report.runtime[kind] !== undefined);
 if (!connect || report.migration === undefined) {
   console.log("PREFLIGHT: configuration OK (no connection attempted; add --connect to test connectivity).");
   process.exit(0);
 }
 
-const ca = readCa(env);
+const ca = fence.ca;
 let failed = false;
 const migration = privilegedClient(report.migration, ca);
 try {

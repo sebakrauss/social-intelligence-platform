@@ -1,31 +1,37 @@
 /**
  * Creates (if absent) or validates the long-lived runtime login roles web_login, worker_login and
- * system_login, each granted only its fixed target role (R1, R8).
- * Run: `npm run db:provision-roles` (plan) · `-- --apply` (create/validate) · `-- --apply --rotate` (in-place
- * password rotation of existing roles to the passwords now in the runtime URLs).
+ * system_login of the SELECTED target, each granted only its fixed target role (R1, R8).
+ * Run: `npm run db:provision-roles -- --target development` (plan) · `-- --target development --apply`
+ * (create/validate) · `-- --target development --apply --rotate` (in-place password rotation of existing roles to the
+ * passwords now in the runtime URLs). `--target production` reads only `.env.database-production.local`.
  *
- * Passwords come only from the runtime URLs in `.env.local` and are sent as SCRAM verifiers; they are never
- * printed or written anywhere. Nothing is ever dropped or recreated.
+ * The same identity fence as db:migrate runs before any connection (explicit target, complete authority, every URL on
+ * the expected project and region, migration role, strict CA). Passwords come only from the target's runtime URLs and
+ * are sent as SCRAM verifiers; they are never printed or written anywhere. Nothing is ever dropped or recreated.
  */
 import { RUNTIME_KINDS } from "../../platform/db/connection.ts";
-import { checkTarget, EXPECTED_PROJECT_LABEL, loadEnvironment, privilegedClient, readCa, runtimePasswords } from "./environment.ts";
+import { prepareTarget, privilegedClient, runtimePasswords } from "./environment.ts";
 import { loginRoleProblems, provisionLoginRoles } from "./provision.ts";
 
-const env = loadEnvironment();
-const apply = process.argv.includes("--apply");
-const rotate = process.argv.includes("--rotate");
-const report = checkTarget(env, { migration: true, runtime: [...RUNTIME_KINDS] });
+const args = process.argv.slice(2);
+const apply = args.includes("--apply");
+const rotate = args.includes("--rotate");
+const unknown = args.filter((arg, index) => arg !== "--apply" && arg !== "--rotate" && !arg.startsWith("--target") && args[index - 1] !== "--target");
+const fence = prepareTarget(args, { migration: true, runtime: [...RUNTIME_KINDS] });
 
-console.log(`Login role provisioning plan (no secrets) — target ${EXPECTED_PROJECT_LABEL}`);
-for (const line of report.lines) console.log(line);
+console.log(`Login role provisioning plan (no secrets) — target ${fence.target ?? "none"}`);
+for (const line of fence.lines) console.log(line);
 console.log("  web_login → authenticated · worker_login → app_worker · system_login → app_system");
 console.log(`  mode: ${apply ? (rotate ? "apply + in-place password rotation" : "apply (create if absent, otherwise validate)") : "plan only"}; role drops NONE`);
-if (!report.ok || report.migration === undefined) {
+if (unknown.length > 0) console.log(`  PROBLEM: unknown argument(s): ${unknown.join(" ")}`);
+if (rotate && !apply) console.log("  PROBLEM: --rotate is only valid with --apply");
+if (!fence.ok || unknown.length > 0 || (rotate && !apply) || fence.report?.migration === undefined) {
   console.log("REFUSED: configuration incomplete or unsafe. Nothing was contacted.");
   process.exit(1);
 }
+const env = fence.env;
 
-const client = privilegedClient(report.migration, readCa(env));
+const client = privilegedClient(fence.report.migration, fence.ca);
 try {
   await client.connect();
   if (!apply) {

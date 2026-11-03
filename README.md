@@ -47,11 +47,21 @@ SQL migrations (`db/migrations/`); Drizzle mappings only type queries. Every tab
 
 | Command | What it does |
 |---|---|
-| `npm run db:preflight [-- --connect]` | Checks `.env.local` points at the expected project (and not the frozen validation project); with `--connect`, reports connectivity and role names. Read-only. |
-| `npm run db:migrate [-- --apply]` | Prints a secret-free plan; applies pending migrations only with `--apply`. Never drops anything. |
-| `npm run db:provision-roles [-- --apply [--rotate]]` | Creates the three login roles if absent (passwords taken from the runtime URLs, sent as SCRAM verifiers) or validates them; `--rotate` changes passwords in place. Never drops or recreates a role (R8). |
+| `npm run db:preflight -- --target development\|production [--connect]` | Runs the target identity fence (below) on that target's configuration; with `--connect`, reports connectivity and role names. Read-only. |
+| `npm run db:migrate -- --target development\|production [--apply]` | Prints a secret-free plan; applies pending migrations only with `--apply`, after the target identity fence. Never drops anything. |
+| `npm run db:provision-roles -- --target development\|production [--apply [--rotate]]` | After the target identity fence, creates the three login roles if absent (passwords taken from the runtime URLs, sent as SCRAM verifiers) or validates them; `--rotate` changes passwords in place. Never drops or recreates a role (R8). |
 | `npm run test:db:managed` | The same isolation, concurrency, persistence and introspection suites against the managed development project. Reports **NOT RUN** (exit 2) when its configuration is absent. |
 | `npm run db:dev-fixture [-- --apply --confirm-dev-fixture <phrase>]` | Step H7-B1b-0 shared-dev acceptance fixture (`tests/db/dev-fixtures/`): ONE synthetic workspace, simulator connection without credential and one canonical comment ingested through `ingestInteractionFact`. Plan (read-only) by default; refuses any target but the pinned `social-intelligence-dev-v2` digest, and the protected P2-E workspace. Never deletes; never writes classification rows. |
+
+**Database targets and identity (Step H7-production-data-plane-guard).** The three target-aware tools require an explicit
+`--target`. `development` reads `.env.local` and must prove the pinned `social-intelligence-dev-v2` project (SHA-256 of its
+reference) in `sa-east-1`. `production` reads ONLY `.env.database-production.local` (git-ignored; never `.env.local` or
+the process environment; deliberately not `.env.production.local`, which `next build` would load) and requires
+`DATABASE_ENVIRONMENT_CLASS=production`, `DATABASE_EXPECTED_PROJECT_REF` and `DATABASE_EXPECTED_REGION`. Before any
+connection the fence checks every URL's project and region, the migration role (`postgres`, session pooler for production)
+and the CA with the runtime's strict parser. At runtime every pool (`platform/db/identity.ts`) checks that all configured
+database URLs belong to the same project as `DATABASE_EXPECTED_PROJECT_REF`. With no identity variables set it runs in
+legacy development mode, pinned to dev-v2. A partial authority, a mismatch or mixed projects fail closed.
 
 **Database CA.** TLS to a managed endpoint always verifies the server certificate and host name. A runtime gets
 the CA either as a path (`DATABASE_SSL_ROOT_CERT`, local development) or as PEM content

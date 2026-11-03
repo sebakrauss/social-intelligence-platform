@@ -1,29 +1,32 @@
 /**
- * Applies schema migrations to the configured database with the privileged migration credential.
- * Run: `npm run db:migrate` (plan only) · `npm run db:migrate -- --apply` (apply).
+ * Applies schema migrations to the SELECTED target with that target's privileged migration credential.
+ * Run: `npm run db:migrate -- --target development` (plan only) · `npm run db:migrate -- --target development --apply`.
+ * `--target production` reads only `.env.database-production.local` and must prove its explicit identity authority.
  *
- * Always prints a secret-free plan first. Refuses to run unless every configured URL points at the same,
- * expected development project (SUPABASE_PROJECT_REF) and not at the frozen validation project.
+ * Always prints a secret-free plan first. Refuses — before any connection — unless the target is explicit, its
+ * configuration and identity authority (environment class, expected project ref, expected region) are complete, every
+ * configured URL is on that project and region, the migration URL uses the migration role, and the CA bundle passes
+ * the runtime's strict parser; TLS is then verified by the connection itself. Never the frozen validation project.
  * Migrations create or validate NOLOGIN foundation roles only; they never drop or recreate a role (R8).
  */
-import { checkTarget, EXPECTED_PROJECT_LABEL, EXPECTED_REGION, loadEnvironment, privilegedClient, readCa } from "./environment.ts";
+import { privilegedClient, prepareTarget } from "./environment.ts";
 import { applyMigrations, migrationStatus, readMigrations } from "./migrations.ts";
 
-const env = loadEnvironment();
-const apply = process.argv.includes("--apply");
-const report = checkTarget(env, { migration: true, runtime: [] });
+const args = process.argv.slice(2);
+const apply = args.includes("--apply");
+const unknown = args.filter((arg, index) => arg !== "--apply" && !arg.startsWith("--target") && args[index - 1] !== "--target");
+const fence = prepareTarget(args, { migration: true, runtime: "configured" });
 const migrations = readMigrations();
 
 console.log("Migration plan (no secrets)");
-console.log(`  target project label     ${EXPECTED_PROJECT_LABEL}`);
-console.log(`  expected region          ${EXPECTED_REGION} (South America / São Paulo)`);
-for (const line of report.lines) console.log(line);
-if (!report.ok || report.migration === undefined) {
+for (const line of fence.lines) console.log(line);
+if (unknown.length > 0) console.log(`  PROBLEM: unknown argument(s): ${unknown.join(" ")}`);
+if (!fence.ok || unknown.length > 0 || fence.report?.migration === undefined) {
   console.log("REFUSED: configuration incomplete or unsafe. Nothing was contacted.");
   process.exit(1);
 }
 
-const client = privilegedClient(report.migration, readCa(env));
+const client = privilegedClient(fence.report.migration, fence.ca);
 try {
   await client.connect();
   const status = await migrationStatus(client, migrations);

@@ -15,6 +15,8 @@ const REF = "abcdefghijklmnopqrst";
 const POOLER = "aws-0-sa-east-1.pooler.supabase.com";
 const PASSWORD = "synthetic-password-never-echoed";
 const WEB_URL = `postgresql://web_login.${REF}:${PASSWORD}@${POOLER}:6543/postgres`;
+/** The synthetic project is not the pinned development project, so the runtime needs its explicit identity authority. */
+const AUTHORITY = { DATABASE_ENVIRONMENT_CLASS: "development", DATABASE_EXPECTED_PROJECT_REF: REF };
 const BODY_A = ["MIIBszCCAVmgAwIBAgIUSyntheticTestBodyAAAAAAAAAAAAAAAAAAAAAAAAAAA", "U3ludGhldGljQ2VydGlmaWNhdGVCb2R5Rm9yVGVzdHNPbmx5"].join("\n");
 const BODY_B = ["MIIBszCCAVmgAwIBAgIUSyntheticTestBodyBBBBBBBBBBBBBBBBBBBBBBBBBBB", "QW5vdGhlclN5bnRoZXRpY0JvZHk="].join("\n");
 const PEM_A = `-----BEGIN CERTIFICATE-----\n${BODY_A}\n-----END CERTIFICATE-----\n`;
@@ -102,7 +104,7 @@ describe("CA resolution and precedence", () => {
 
   it("neither form configured → no CA, and any managed connection is refused (fail closed)", () => {
     expect(resolveSslRootCert({})).toBeUndefined();
-    const error = refusesQuietly(() => createRuntimeDatabaseFromEnv("web", { DATABASE_WEB_URL: WEB_URL }));
+    const error = refusesQuietly(() => createRuntimeDatabaseFromEnv("web", { DATABASE_WEB_URL: WEB_URL, ...AUTHORITY }));
     expect(error.message).toMatch(/DATABASE_SSL_ROOT_CERT_PEM or DATABASE_SSL_ROOT_CERT/);
     expect(error.message).not.toContain(PASSWORD);
   });
@@ -112,7 +114,7 @@ describe("TLS verification is never weakened", () => {
   it("both forms reach the driver as an in-memory CA with certificate (and host-name) verification on", () => {
     expect(tlsFor(managed, PEM_A)).toEqual({ ca: PEM_A, rejectUnauthorized: true });
     for (const env of [{ [SSL_ROOT_CERT_VARIABLES.pem]: PEM_A.replaceAll("\n", "\r\n") }, { [SSL_ROOT_CERT_VARIABLES.path]: pemFile }]) {
-      const database = createRuntimeDatabaseFromEnv("web", { DATABASE_WEB_URL: WEB_URL, ...env });
+      const database = createRuntimeDatabaseFromEnv("web", { DATABASE_WEB_URL: WEB_URL, ...AUTHORITY, ...env });
       const ssl = (database.pool as unknown as { options: { ssl: unknown } }).options.ssl as Record<string, unknown>;
       expect(ssl["rejectUnauthorized"]).toBe(true);
       expect(typeof ssl["ca"]).toBe("string");

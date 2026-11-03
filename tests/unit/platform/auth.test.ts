@@ -103,6 +103,10 @@ describe("auth configuration", () => {
       "DATABASE_SSL_ROOT_CERT_PEM=",
       "DATABASE_MIGRATION_URL=",
       "SUPABASE_PROJECT_REF=",
+      // Database-environment identity (Step H7-production-data-plane-guard; platform/db/identity.ts).
+      "DATABASE_ENVIRONMENT_CLASS=",
+      "DATABASE_EXPECTED_PROJECT_REF=",
+      "DATABASE_EXPECTED_REGION=",
       // Step 3 job runtime (Trigger.dev): the environment's API key and project reference, names only.
       "TRIGGER_SECRET_KEY=",
       "TRIGGER_PROJECT_REF=",

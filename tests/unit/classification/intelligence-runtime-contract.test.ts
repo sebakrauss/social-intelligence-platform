@@ -152,7 +152,7 @@ describe("2–7 · credential isolation (deployed runs; names only, synthetic va
   });
 
   it("INTELLIGENCE holds only its permitted variables; every SDK-ambient model variable is refused there too", () => {
-    expect([...INTELLIGENCE_PLANE_VARIABLES]).toEqual(["TRIGGER_SECRET_KEY", "DATABASE_WORKER_URL", "DATABASE_SSL_ROOT_CERT", "DATABASE_SSL_ROOT_CERT_PEM", "INTELLIGENCE_MODEL_API_KEY"]);
+    expect([...INTELLIGENCE_PLANE_VARIABLES]).toEqual(["TRIGGER_SECRET_KEY", "DATABASE_WORKER_URL", "DATABASE_SSL_ROOT_CERT", "DATABASE_SSL_ROOT_CERT_PEM", "DATABASE_ENVIRONMENT_CLASS", "DATABASE_EXPECTED_PROJECT_REF", "DATABASE_EXPECTED_REGION", "INTELLIGENCE_MODEL_API_KEY"]);
     expect(planeEnvironmentProblems("intelligence", PINNED, Object.fromEntries(INTELLIGENCE_PLANE_VARIABLES.map((name) => [name, SYNTHETIC])))).toEqual([]);
     for (const name of MODEL_PROVIDER_AMBIENT_VARIABLES) expect(refused("intelligence", name), name).toBe(true);
     expect(planeEnvironmentProblems("intelligence", DEVELOPMENT, { DATABASE_SYSTEM_URL: SYNTHETIC })).toEqual([]);

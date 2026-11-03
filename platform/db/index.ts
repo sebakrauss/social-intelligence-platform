@@ -11,6 +11,15 @@ export {
   type Endpoint,
   type RuntimeKind,
 } from "./connection";
+export {
+  DATABASE_ENVIRONMENT_CLASSES,
+  DATABASE_IDENTITY_VARIABLES,
+  assertRuntimeDatabaseIdentity,
+  databaseIdentityProblems,
+  resolveDatabaseAuthority,
+  type DatabaseAuthority,
+  type DatabaseEnvironmentClass,
+} from "./identity";
 export { classifyDatabaseError, postgresError, type DatabaseFailure } from "./errors";
 export { createRuntimeDatabase, createRuntimeDatabaseFromEnv, pingDatabase, type RuntimeDatabase, type RuntimePoolOptions } from "./pool";
 export {

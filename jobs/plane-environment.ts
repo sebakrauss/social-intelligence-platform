@@ -37,8 +37,9 @@
  *                                                log or telemetry override can apply
  *
  * The INTELLIGENCE plane (declared, not yet deployed) may hold only its own project's TRIGGER_SECRET_KEY, the worker DB
- * credential (tenant analysis authority, D-H7-1) with its TLS root, and INTELLIGENCE_MODEL_API_KEY. It refuses every
- * other plane's capability: Meta app configuration, the integration KMS/AWS identity and the AWS credential chain, the
+ * credential (tenant analysis authority, D-H7-1) with its TLS root and database identity authority, and
+ * INTELLIGENCE_MODEL_API_KEY. It refuses every other plane's capability: Meta app configuration, the integration KMS/AWS
+ * identity and the AWS credential chain, the
  * system DB credential, the main and integration Trigger keys and every SDK-ambient model variable. As for MAIN and
  * INTEGRATION, the web / migration DB credentials, the service-role key and the KMS keyring configuration are kept out
  * of every jobs plane by the static guards (no jobs file may even name them), not by this runtime list. Its only
@@ -87,7 +88,17 @@ const AWS_CREDENTIAL_CHAIN_VARIABLES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_
 const PROVIDER_META_APP_VARIABLES = ["PROVIDER_META_CLIENT_ID", "PROVIDER_META_CONFIG_ID", "PROVIDER_META_CLIENT_SECRET", "PROVIDER_META_WEBHOOK_VERIFY_TOKEN"];
 
 /** What a deployed INTELLIGENCE run may hold (documentation of the contract; enforcement is the refusal list below). */
-export const INTELLIGENCE_PLANE_VARIABLES: readonly string[] = Object.freeze(["TRIGGER_SECRET_KEY", "DATABASE_WORKER_URL", "DATABASE_SSL_ROOT_CERT", "DATABASE_SSL_ROOT_CERT_PEM", INTELLIGENCE_MODEL_API_KEY_ENV]);
+export const INTELLIGENCE_PLANE_VARIABLES: readonly string[] = Object.freeze([
+  "TRIGGER_SECRET_KEY",
+  "DATABASE_WORKER_URL",
+  "DATABASE_SSL_ROOT_CERT",
+  "DATABASE_SSL_ROOT_CERT_PEM",
+  // The database-environment identity authority every plane may hold (platform/db/identity.ts; H7-production-data-plane-guard).
+  "DATABASE_ENVIRONMENT_CLASS",
+  "DATABASE_EXPECTED_PROJECT_REF",
+  "DATABASE_EXPECTED_REGION",
+  INTELLIGENCE_MODEL_API_KEY_ENV,
+]);
 
 /** Variables a deployed run of each plane must NOT hold. */
 export const PLANE_FORBIDDEN_VARIABLES: Readonly<Record<ExecutionPlane, readonly string[]>> = Object.freeze({

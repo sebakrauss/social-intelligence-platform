@@ -15,6 +15,10 @@ import { readFileSync } from "node:fs";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { assertRuntimeTarget, ConnectionConfigError, parseDatabaseUrl, RUNTIME_URL_VARIABLES, type ConnectionTarget, type RuntimeKind } from "./connection";
+import { assertRuntimeDatabaseIdentity } from "./identity";
+import { parseSslRootCertPem, SSL_ROOT_CERT_VARIABLES } from "./tls";
+
+export { parseSslRootCertPem, SSL_ROOT_CERT_VARIABLES } from "./tls";
 
 export interface RuntimeDatabase<K extends RuntimeKind = RuntimeKind> {
   readonly kind: K;
@@ -40,34 +44,6 @@ export function tlsFor(target: ConnectionTarget, sslRootCert: string | undefined
     );
   }
   return { ca: sslRootCert, rejectUnauthorized: true };
-}
-
-/** The two ways a runtime receives the managed database's CA certificate (see the header for precedence). */
-export const SSL_ROOT_CERT_VARIABLES = { pem: "DATABASE_SSL_ROOT_CERT_PEM", path: "DATABASE_SSL_ROOT_CERT" } as const;
-
-const PEM_MAX_LENGTH = 65_536;
-const PEM_MAX_CERTIFICATES = 10;
-const PEM_CERTIFICATE = /^-----BEGIN CERTIFICATE-----\n((?:[A-Za-z0-9+/]{1,76}\n)*[A-Za-z0-9+/]{1,76}={0,2}\n)-----END CERTIFICATE-----$/;
-
-/**
- * Strict PEM CA content: one or more `CERTIFICATE` blocks of base64 lines, nothing else (no keys, no headers, no
- * other text). Real newlines (LF or CRLF) are accepted; so are literal `\n` escapes, but only when the value holds
- * no real newline at all (single-line environment-variable tooling). Returns the normalized bundle; throws a
- * non-sensitive ConnectionConfigError otherwise (the value is never echoed).
- */
-export function parseSslRootCertPem(value: string): string {
-  const invalid = (): never => {
-    throw new ConnectionConfigError(`${SSL_ROOT_CERT_VARIABLES.pem} is not a PEM CA certificate bundle`);
-  };
-  if (value.length > PEM_MAX_LENGTH) invalid();
-  const unescaped = /\r?\n/.test(value) ? value : value.replaceAll("\\n", "\n");
-  const text = unescaped.replaceAll("\r\n", "\n").trim();
-  const blocks = text.split(/(?<=-----END CERTIFICATE-----)\n*/).filter((block) => block !== "");
-  if (blocks.length === 0 || blocks.length > PEM_MAX_CERTIFICATES) invalid();
-  for (const block of blocks) {
-    if (!PEM_CERTIFICATE.test(block)) invalid();
-  }
-  return `${blocks.join("\n")}\n`;
 }
 
 /**
@@ -110,12 +86,17 @@ export function createRuntimeDatabase<K extends RuntimeKind>(kind: K, url: strin
   return { kind, db: drizzle(pool), pool, end: () => pool.end() };
 }
 
-/** Runtime configuration comes only from the runtime's own variable; never the migration URL. */
+/**
+ * Runtime configuration comes only from the runtime's own variable; never the migration URL. Before the pool exists,
+ * every runtime database URL in `env` must belong to the environment's one database project (identity.ts): a project
+ * mismatch, mixed projects or a partial authority fails closed.
+ */
 export function createRuntimeDatabaseFromEnv<K extends RuntimeKind>(
   kind: K,
   env: Readonly<Record<string, string | undefined>> = process.env,
   options: Omit<RuntimePoolOptions, "sslRootCert"> = {},
 ): RuntimeDatabase<K> {
+  assertRuntimeDatabaseIdentity(env);
   return createRuntimeDatabase(kind, env[RUNTIME_URL_VARIABLES[kind]], {
     ...options,
     sslRootCert: resolveSslRootCert(env),
