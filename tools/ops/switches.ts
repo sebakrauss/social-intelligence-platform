@@ -7,6 +7,9 @@
  * The change is validated against the typed registry first (scope, qualifier, value shape), so the tool
  * can't write a value the runtime would reject. If an invalid row reaches the table anyway, readers resolve
  * the switch to its fail-safe value.
+ *
+ * Writes are idempotent (Step H7-production-kill-switch-tooling): setting a value the row already holds, or
+ * clearing an override that doesn't exist, writes nothing — no row, no history — and reports "unchanged".
  */
 import { SWITCHES, type SwitchKey, type SwitchScope } from "../../platform/flags/registry.ts";
 
@@ -31,11 +34,21 @@ export interface SwitchAttribution {
 
 /** The subset of pg.Client / pg.PoolClient the tool needs. */
 export interface Queryable {
-  query(text: string, values?: unknown[]): Promise<{ readonly rowCount: number | null }>;
+  query(text: string, values?: unknown[]): Promise<{ readonly rowCount: number | null; readonly rows: readonly Record<string, unknown>[] }>;
 }
 
 export class SwitchChangeError extends Error {
   override readonly name = "SwitchChangeError";
+}
+
+/** One stored override, as the runtime reads it (identifiers and the JSON value: never a secret). */
+export interface SwitchRow {
+  readonly switchKey: string;
+  readonly qualifier: string;
+  readonly scope: string;
+  readonly organizationId: string | null;
+  readonly workspaceId: string | null;
+  readonly value: unknown;
 }
 
 function isSwitchKey(value: string): value is SwitchKey {
@@ -83,31 +96,70 @@ async function inAuditedTransaction<T>(client: Queryable, attribution: SwitchAtt
   }
 }
 
-/** Sets (inserts or replaces) one override, audited. */
-export async function setSwitch(client: Queryable, target: SwitchTarget, value: unknown, attribution: SwitchAttribution): Promise<void> {
+const ROW_COLUMNS = "switch_key, qualifier, scope, organization_id, workspace_id, value";
+const text = (value: unknown): string => (typeof value === "string" ? value : "");
+const optionalText = (value: unknown): string | null => (typeof value === "string" ? value : null);
+const rowOf = (raw: Record<string, unknown>): SwitchRow => ({
+  switchKey: text(raw["switch_key"]), qualifier: text(raw["qualifier"]), scope: text(raw["scope"]),
+  organizationId: optionalText(raw["organization_id"]), workspaceId: optionalText(raw["workspace_id"]), value: raw["value"],
+});
+const targetValues = (checked: SwitchTarget): unknown[] => [checked.key, checked.qualifier, checked.scope, checked.organizationId ?? null, checked.workspaceId ?? null];
+const TARGET_WHERE = "switch_key = $1 and qualifier = $2 and scope = $3 and organization_id is not distinct from $4::uuid and workspace_id is not distinct from $5::uuid";
+
+/** Read-only: the stored override for exactly `target`, if any (no transaction of its own). */
+export async function readSwitchRow(client: Queryable, target: SwitchTarget): Promise<SwitchRow | undefined> {
+  const checked = validateTarget(target);
+  const result = await client.query(`select ${ROW_COLUMNS} from system.operational_switches where ${TARGET_WHERE}`, targetValues(checked));
+  const raw = result.rows[0];
+  return raw === undefined ? undefined : rowOf(raw);
+}
+
+/** Read-only: every stored override, in a stable order (the "nothing else changed" oracle). */
+export async function snapshotSwitches(client: Queryable): Promise<readonly SwitchRow[]> {
+  const result = await client.query(`select ${ROW_COLUMNS} from system.operational_switches order by switch_key, qualifier, scope, organization_id, workspace_id`);
+  return result.rows.map(rowOf);
+}
+
+const identityOf = (row: SwitchRow): string => JSON.stringify([row.switchKey, row.qualifier, row.scope, row.organizationId, row.workspaceId]);
+const isTarget = (row: SwitchRow, target: SwitchTarget): boolean =>
+  row.switchKey === target.key && row.qualifier === target.qualifier && row.scope === target.scope
+  && row.organizationId === (target.organizationId ?? null) && row.workspaceId === (target.workspaceId ?? null);
+
+/** The identities of every row that differs between two snapshots, EXCLUDING the intended target (empty = nothing else moved). */
+export function unexpectedChanges(before: readonly SwitchRow[], after: readonly SwitchRow[], target: SwitchTarget): readonly string[] {
+  const index = (rows: readonly SwitchRow[]): Map<string, string> => new Map(rows.filter((row) => !isTarget(row, target)).map((row) => [identityOf(row), JSON.stringify(row.value)]));
+  const left = index(before);
+  const right = index(after);
+  const changed = new Set<string>();
+  for (const [identity, value] of left) if (right.get(identity) !== value) changed.add(identity);
+  for (const [identity, value] of right) if (left.get(identity) !== value) changed.add(identity);
+  return [...changed].sort();
+}
+
+/** Sets (inserts or replaces) one override, audited. Idempotent: an identical stored value writes nothing. */
+export async function setSwitch(client: Queryable, target: SwitchTarget, value: unknown, attribution: SwitchAttribution): Promise<{ readonly changed: boolean }> {
   const checked = validateTarget(target);
   if (SWITCHES[checked.key].parse(value) === undefined) throw new SwitchChangeError(`value shape not valid for ${checked.key}`);
-  await inAuditedTransaction(client, attribution, () =>
-    client.query(
+  const encoded = JSON.stringify(value);
+  return inAuditedTransaction(client, attribution, async () => {
+    const current = await client.query(`select (value = $6::jsonb) as same from system.operational_switches where ${TARGET_WHERE} for update`, [...targetValues(checked), encoded]);
+    if (current.rows[0]?.["same"] === true) return { changed: false };
+    await client.query(
       `insert into system.operational_switches (switch_key, qualifier, scope, organization_id, workspace_id, value)
        values ($1, $2, $3, $4, $5, $6::jsonb)
        on conflict (switch_key, qualifier, scope, organization_id, workspace_id)
        do update set value = excluded.value, updated_at = pg_catalog.now()`,
-      [checked.key, checked.qualifier, checked.scope, checked.organizationId ?? null, checked.workspaceId ?? null, JSON.stringify(value)],
-    ),
-  );
+      [...targetValues(checked), encoded],
+    );
+    return { changed: true };
+  });
 }
 
 /** Clears one override (back to the next applicable level or the default), audited. Returns whether a row existed. */
 export async function clearSwitch(client: Queryable, target: SwitchTarget, attribution: SwitchAttribution): Promise<boolean> {
   const checked = validateTarget(target);
   const result = await inAuditedTransaction(client, attribution, () =>
-    client.query(
-      `delete from system.operational_switches
-        where switch_key = $1 and qualifier = $2 and scope = $3
-          and organization_id is not distinct from $4::uuid and workspace_id is not distinct from $5::uuid`,
-      [checked.key, checked.qualifier, checked.scope, checked.organizationId ?? null, checked.workspaceId ?? null],
-    ),
+    client.query(`delete from system.operational_switches where ${TARGET_WHERE}`, targetValues(checked)),
   );
   return (result.rowCount ?? 0) > 0;
 }

@@ -128,9 +128,24 @@ recorded and surfaced, never blindly re-dispatched). Effects are protected by do
 
 | Command | What it does |
 |---|---|
-| `npm run ops:switch -- set\|clear --key … --scope … [--qualifier …] [--value '{…}'] --operator <id> --reason <code> [--apply]` | Audited operator change to one switch on the configured development project. |
+| `npm run ops:switch -- show --target development\|production --key … [--qualifier …]` | Read-only: the stored override and what the runtime resolves for it. |
+| `npm run ops:switch -- set\|clear --target development\|production --key … --scope … [--qualifier …] [--value '{…}'] --operator <id> --reason <code> [--apply [--confirm-production]]` | Audited change to ONE switch on the explicit target. Always reads the stored row first and prints the exact transition; dry run unless `--apply`; production also needs `--confirm-production`. Idempotent (an identical value writes nothing), verified after the write (row re-read, no other override moved, runtime resolution). |
 | `npm run trigger:release -- --cli <absolute path> --integration-project-ref <proj_…> --intelligence-project-ref <proj_…> --main-project-ref <proj_…> [--execute --confirm-paired-release]` | The Trigger.dev production release unit (INTEGRATION, then INTELLIGENCE, then MAIN, one captured commit). Dry run unless `--execute --confirm-paired-release`. |
 | `npm run test:jobs:managed` | T-27 managed leg on the Trigger.dev **DEVELOPMENT** environment (crash → R7 → new run → one effect). Reports **NOT RUN** (exit 2) without `TRIGGER_SECRET_KEY` / `TRIGGER_PROJECT_REF`; refuses non-`tr_dev_` keys. |
+
+**Production AI kill switch (Step H7-production-kill-switch-tooling).** A fresh production database has no rows in
+`system.operational_switches`, so `ai.task_kill` resolves to its default (`active: false`). Before ANY runtime is pointed
+at production the kill must be stored, exactly as it is on dev-v2: key `ai.task_kill`, qualifier
+`classification_understanding` (the understanding task's qualifier; resolution is `any_restrictive`, so a `*` row would
+also kill), scope `global`, value `{"active":true}`. Procedure, each step from the repository root with the production
+file in place: (1) `npm run ops:switch -- show --target production --key ai.task_kill --qualifier classification_understanding`
+— expect `stored … (absent)` and `runtime resolves … {"active":false} (source: default)`; (2) the dry run,
+`npm run ops:switch -- set --target production --key ai.task_kill --qualifier classification_understanding --scope global --value '{"active":true}' --operator <id> --reason release`
+— expect `plan … (absent) → {"active":true}` and `DRY RUN`; (3) the same command with `--apply --confirm-production` —
+expect `verified … stored now: {"active":true}; other overrides unchanged: yes`, `runtime resolves … {"active":true} (source: global)`
+and `APPLIED … (one history row written)`; (4) `show` again — the stored row and the resolution now read `{"active":true}`;
+re-running (3) reports `NO CHANGE` and writes nothing. The history row (`system.operational_switch_changes`: operator,
+reason, previous/new value) is the audit record.
 
 The Trigger.dev **CLI is not a repository dependency**. Run it only as a pinned, ephemeral tool
 (`npx trigger.dev@4.7.2 …`), e.g. `npx trigger.dev@4.7.2 login` once for your own CLI session; a paired release

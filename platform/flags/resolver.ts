@@ -7,7 +7,8 @@
  * fail-safe value (kill switches active, gates closed, mutations disabled, ingestion paused, routing on its
  * default route) — never to a permissive guess.
  */
-import { SWITCHES, type SwitchDefinition, type SwitchKey, type SwitchScope, type SwitchValue } from "./registry";
+// Explicit extension: this module is also loaded by plain-Node tooling (tools/ops/switch-command.ts), like platform/db/identity.ts.
+import { SWITCHES, type SwitchDefinition, type SwitchKey, type SwitchScope, type SwitchValue } from "./registry.ts";
 
 export interface SwitchRowInput {
   readonly switchKey: string;

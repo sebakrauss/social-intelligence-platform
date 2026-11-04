@@ -757,6 +757,28 @@ export function defineT27Suite(getTarget: () => DbTarget): void {
       }
     });
 
+    it("19b · operator writes are idempotent: an identical value or an absent override writes no row and no history (H7-production-kill-switch-tooling)", async () => {
+      const runTask = `jobtest_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+      const kill = { key: "ai.task_kill", qualifier: runTask, scope: "global" } as const;
+      try {
+        expect(await withOperator((client) => setSwitch(client, kill, { active: true }, operator))).toEqual({ changed: true });
+        expect(await withOperator((client) => setSwitch(client, kill, { active: true }, operator))).toEqual({ changed: false });
+        expect(await withOperator((client) => setSwitch(client, kill, { active: true }, operator))).toEqual({ changed: false });
+        expect(await oracle("select value from system.operational_switches where switch_key = 'ai.task_kill' and qualifier = $1", [runTask])).toEqual([{ value: { active: true } }]);
+        expect(resolveSwitch(await withWorkspaceJobScope(worker, world.A1, (tx) => readSwitchRows(tx)), "ai.task_kill", { qualifier: runTask }).value).toEqual({ active: true });
+        expect(await withOperator((client) => setSwitch(client, kill, { active: false }, operator))).toEqual({ changed: true });
+        expect(await withOperator((client) => clearSwitch(client, kill, operator))).toBe(true);
+        expect(await withOperator((client) => clearSwitch(client, kill, operator))).toBe(false);
+        expect(await history("ai.task_kill", runTask)).toEqual([
+          { operation: "set", scope: "global", changed_by: "ops.t27", reason_code: "test", new_value: { active: true } },
+          { operation: "set", scope: "global", changed_by: "ops.t27", reason_code: "test", new_value: { active: false } },
+          { operation: "cleared", scope: "global", changed_by: "ops.t27", reason_code: "test", new_value: null },
+        ]);
+      } finally {
+        await withOperator((client) => clearSwitch(client, kill, operator));
+      }
+    });
+
     it("20 · kill switches, gates and mutation switches fail safe on invalid configuration or an unreadable store", async () => {
       const rows = () => withSystemScope(system, (tx) => readSwitchRows(tx));
       const corrupt = (key: string, qualifier: string, value: string) =>
