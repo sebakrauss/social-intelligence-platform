@@ -21,9 +21,13 @@ export const CREDENTIAL_CONTEXT_FIELDS = ["app", "purpose", "env", "v", "workspa
  * The closed set of cryptographic environment labels (`env`). This is its own concept, not the deployment tier
  * (APP_DEPLOYMENT_ENV): it names the key environment an envelope belongs to, so an envelope opens only where it was
  * sealed. "local" and "test" are the local-keyring environments; "dev" is the label the TA-Q-07b key policy pins
- * (`kms:EncryptionContext:env` = "dev"). Further deployed labels are added only together with their key policy.
+ * (`kms:EncryptionContext:env` = "dev"); "prod" (Step H7-credential-context-code-readiness) is the production label,
+ * pinned by the production key policy (design/phase-7e/aws-authorization/production) — a separate KEK, roles, trust
+ * anchor, profile and certificate, never shared with "dev". A label is added only together with its key policy, and
+ * the label is bound into every envelope (AAD) and every KMS request (encryption context): a "dev" envelope can never
+ * open under "prod" or the reverse.
  */
-export const CREDENTIAL_CONTEXT_ENVS = ["local", "test", "dev"] as const;
+export const CREDENTIAL_CONTEXT_ENVS = ["local", "test", "dev", "prod"] as const;
 export type CredentialContextEnv = (typeof CREDENTIAL_CONTEXT_ENVS)[number];
 
 declare const contextBrand: unique symbol;

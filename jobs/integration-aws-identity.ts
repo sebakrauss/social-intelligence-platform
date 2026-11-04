@@ -64,7 +64,7 @@ export const INTEGRATION_WORKER_REFRESH_WINDOW_SECONDS = 120;
 export const SIGNING_HELPER_TIMEOUT_MS = 30_000;
 /** stdout and stderr are each bounded; a credential_process document is a few hundred bytes. */
 export const SIGNING_HELPER_MAX_OUTPUT_BYTES = 16 * 1024;
-/** The workload certificate's subject CN is this prefix plus the credential context env ("dev"). */
+/** The workload certificate's subject CN is this prefix plus the credential context env ("dev" | "prod"): a dev certificate never serves prod. */
 export const INTEGRATION_WORKLOAD_SUBJECT_CN_PREFIX = "social-intelligence-platform-integration-";
 
 const MAX_CERTIFICATE_PEM = 8 * 1024;

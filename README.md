@@ -330,6 +330,12 @@ until then: expand-only migrations, apply migrations before deploying, and deplo
 
 ## Credential key management (Step 7D)
 
+**Production label (Step H7-credential-context-code-readiness).** `CREDENTIAL_CONTEXT_ENV` accepts `prod` as a
+cryptographic environment distinct from `dev`: its own KMS key, web role, worker role, Roles Anywhere trust anchor, profile
+and certificate (CN `social-intelligence-platform-integration-prod`), designed in `design/phase-7e/aws-authorization/production/`
+and **not yet created**. A `dev` envelope never opens under `prod` (AAD, key and key policy all refuse). The KMS
+worker-auth diagnostic pairs `APP_DEPLOYMENT_ENV=staging` with `dev` and `production` with `prod`; any other pairing is refused.
+
 Provider credentials are sealed with the local keyring in development/test and with AWS KMS everywhere else
 (TA §39, ADR-64). The deployed configuration is three non-secret values:
 

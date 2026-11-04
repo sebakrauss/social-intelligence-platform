@@ -38,8 +38,10 @@ import {
   KMS_DIAGNOSTIC_CREDENTIAL_LABEL,
   KMS_DIAGNOSTIC_FAILURES,
   KMS_DIAGNOSTIC_TASK_ID,
+  KMS_DIAGNOSTIC_TARGETS,
   KMS_DIAGNOSTIC_WORKSPACE_ID,
   KmsDiagnosticError,
+  diagnosticTarget,
   diagnosticPlaintextDigest,
   productionDiagnosticAccess,
   runKmsWorkerAuthDiagnostic,
@@ -141,6 +143,15 @@ const PROFILE = "arn:aws:rolesanywhere:sa-east-1:000000000000:profile/22222222-2
 /** One line with literal "\n" sequences: the form a dashboard field keeps intact. */
 const oneLine = (pem: string): string => pem.trimEnd().split("\n").join("\\n");
 const WORKLOAD_CERTIFICATE = readFileSync(path.join(root, "fixtures/aws-identity/workload-dev.pem"), "utf8");
+/** Synthetic, trusted by nothing: subject CN social-intelligence-platform-integration-prod (the prod label's certificate shape). */
+const WORKLOAD_CERTIFICATE_PROD = readFileSync(path.join(root, "fixtures/aws-identity/workload-wrong-cn.pem"), "utf8");
+/** The approved deployed Integration/PRODUCTION diagnostic configuration: production tier, prod label, prod certificate, nothing of dev. */
+const deployedProduction = (fixture: string, overrides: Env = {}): Env => deployed(fixture, {
+  APP_DEPLOYMENT_ENV: "production",
+  CREDENTIAL_CONTEXT_ENV: "prod",
+  INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM: oneLine(WORKLOAD_CERTIFICATE_PROD),
+  ...overrides,
+});
 const WORKLOAD_KEY = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ type: "pkcs8", format: "pem" }) as string;
 const WORKLOAD_KEY_BODY = WORKLOAD_KEY.split("\n")[1] ?? "-";
 const SESSION_KEY = "SYNTHETICSESSIONKEYS01";
@@ -435,7 +446,9 @@ describe("pre-AWS guards: every refusal happens before AWS transport is reachabl
     ["AWS profile present", "kms_diagnostic_plane_refused", { env: { AWS_PROFILE: "synthetic" } }],
     // deployment tier
     ["APP_DEPLOYMENT_ENV unset", "kms_diagnostic_tier_refused", { env: { APP_DEPLOYMENT_ENV: undefined } }],
-    ["APP_DEPLOYMENT_ENV=production", "kms_diagnostic_tier_refused", { env: { APP_DEPLOYMENT_ENV: "production" } }],
+    // Step H7-credential-context-code-readiness: tiers are PAIRED with labels (staging ↔ dev, production ↔ prod); a mismatch is a context refusal.
+    ["APP_DEPLOYMENT_ENV=production with the dev label", "kms_diagnostic_credential_context_refused", { env: { APP_DEPLOYMENT_ENV: "production" } }],
+    ["APP_DEPLOYMENT_ENV=production with the dev label and a dev fixture", "kms_diagnostic_credential_context_refused", { env: { APP_DEPLOYMENT_ENV: "production", CREDENTIAL_CONTEXT_ENV: "dev" } }],
     ["APP_DEPLOYMENT_ENV=preview", "kms_diagnostic_tier_refused", { env: { APP_DEPLOYMENT_ENV: "preview" } }],
     ["APP_DEPLOYMENT_ENV=Staging", "kms_diagnostic_tier_refused", { env: { APP_DEPLOYMENT_ENV: "Staging" } }],
     // runtime
@@ -448,7 +461,8 @@ describe("pre-AWS guards: every refusal happens before AWS transport is reachabl
     ["CREDENTIAL_CONTEXT_ENV=test", "kms_diagnostic_kms_configuration_refused", { env: { CREDENTIAL_CONTEXT_ENV: "test" } }],
     ["CREDENTIAL_CONTEXT_ENV=local", "kms_diagnostic_kms_configuration_refused", { env: { CREDENTIAL_CONTEXT_ENV: "local" } }],
     ["CREDENTIAL_CONTEXT_ENV=staging", "kms_diagnostic_kms_configuration_refused", { env: { CREDENTIAL_CONTEXT_ENV: "staging" } }],
-    ["CREDENTIAL_CONTEXT_ENV=prod", "kms_diagnostic_kms_configuration_refused", { env: { CREDENTIAL_CONTEXT_ENV: "prod" } }],
+    ["CREDENTIAL_CONTEXT_ENV=prod under the staging tier", "kms_diagnostic_credential_context_refused", { env: { CREDENTIAL_CONTEXT_ENV: "prod" } }],
+    ["CREDENTIAL_CONTEXT_ENV=production (a tier name, not a label)", "kms_diagnostic_kms_configuration_refused", { env: { CREDENTIAL_CONTEXT_ENV: "production" } }],
     ["CREDENTIAL_CONTEXT_ENV unset (deployed)", "kms_diagnostic_kms_configuration_refused", { env: { CREDENTIAL_CONTEXT_ENV: undefined } }],
     ["no KMS configuration at all (deployed)", "kms_diagnostic_kms_configuration_refused", { env: { CREDENTIAL_CONTEXT_ENV: undefined, CREDENTIAL_KMS_KEY_ARN: undefined, CREDENTIAL_KMS_ALLOWED_KEY_ARNS: undefined } }],
     ["two allowed keys (only Key A is accepted)", "kms_diagnostic_kms_configuration_refused", { env: { CREDENTIAL_KMS_ALLOWED_KEY_ARNS: `${KEY_A},${KEY_OTHER}` } }],
@@ -618,6 +632,45 @@ describe("the production opening path, end to end against the in-process AWS dou
     const rendered = [String(caught), inspect(caught, { depth: 5 }), JSON.stringify(caught), (caught as Error).stack ?? ""].join("\n");
     for (const needle of ["SYNTHETIC-AWS-MESSAGE", "arn:aws", "RolesAnywhere", WORKLOAD_KEY_BODY, SESSION_KEY, "000000000000"]) expect(rendered).not.toContain(needle);
     expect((caught as Error & { cause?: unknown }).cause).toBeUndefined();
+  });
+
+  it("KMS_DIAGNOSTIC_TARGETS pairs tiers with labels: staging ↔ dev, production ↔ prod; anything else is no target", () => {
+    expect(KMS_DIAGNOSTIC_TARGETS).toEqual({ staging: "dev", production: "prod" });
+    expect(diagnosticTarget({ APP_DEPLOYMENT_ENV: "staging" })).toEqual({ tier: "staging", contextEnv: "dev" });
+    expect(diagnosticTarget({ APP_DEPLOYMENT_ENV: "production" })).toEqual({ tier: "production", contextEnv: "prod" });
+    for (const tier of ["preview", "Production", "prod", "dev", "", undefined]) expect(diagnosticTarget({ APP_DEPLOYMENT_ENV: tier }), String(tier)).toBeUndefined();
+  });
+
+  it("production target (H7-credential-context-code-readiness): tier production + label prod + prod certificate opens a PROD-sealed fixture with the exact prod context", async () => {
+    const world = kmsWorld();
+    const fixture = await sealFixture(world, { env: "prod" });
+    const env = useEnv(deployedProduction(fixture.raw));
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
+    const outcome = await runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 });
+    expect(outcome).toEqual({ result: "KMS_WORKER_AUTH_DIAGNOSTIC_PASSED", nodeVersion: NODE_22, node22: true, contextEnv: "prod", plaintextMatches: true });
+    expect(identityRuns(exchanges)).toHaveLength(1);
+    expect(kmsCalls(exchanges)).toHaveLength(1);
+    const decrypt = JSON.parse(kmsCalls(exchanges)[0]?.body ?? "{}") as Record<string, unknown>;
+    expect((decrypt["EncryptionContext"] as Record<string, string>)["env"]).toBe("prod");
+    expect(calls).toEqual({ simulator: 0, stagingStub: 0, database: 0 });
+  });
+
+  it("production target with a DEV-sealed fixture: the prod context cannot open it (no plaintext, a fixed code, no provider)", async () => {
+    const world = kmsWorld();
+    const fixture = await sealFixture(world, { env: "dev" });
+    const env = useEnv(deployedProduction(fixture.raw));
+    trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
+    expect(await outcomeOf(runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 }))).toMatch(/^kms_diagnostic_(credential_unreadable|keyring_misconfigured|keyring_access_denied)$/);
+    expect(calls).toEqual({ simulator: 0, stagingStub: 0, database: 0 });
+  });
+
+  it("production target with the DEV certificate: refused as a misconfigured keyring before any helper run or AWS request", async () => {
+    const world = kmsWorld();
+    const fixture = await sealFixture(world, { env: "prod" });
+    const env = useEnv(deployedProduction(fixture.raw, { INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM: oneLine(WORKLOAD_CERTIFICATE) }));
+    const exchanges = trapAws({ identity: identityOk, kms: (e) => world.decrypt(e) });
+    expect(await outcomeOf(runKmsWorkerAuthDiagnostic(ACK, RUN, env, { nodeVersion: NODE_22 }))).toBe("kms_diagnostic_keyring_misconfigured");
+    expect(exchanges).toEqual([]);
   });
 
   it("a missing workload private key fails closed before any helper run or AWS request (lazy identity adapter)", async () => {

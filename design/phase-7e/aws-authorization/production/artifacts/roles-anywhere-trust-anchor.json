@@ -1,0 +1,10 @@
+{
+  "name": "<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_NAME>",
+  "enabled": true,
+  "source": {
+    "sourceType": "CERTIFICATE_BUNDLE",
+    "sourceData": {
+      "x509CertificateData": "<PROD_WORKLOAD_CA_CERTIFICATE_PEM>"
+    }
+  }
+}

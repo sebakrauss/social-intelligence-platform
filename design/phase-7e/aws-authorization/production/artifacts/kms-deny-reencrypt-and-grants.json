@@ -1,0 +1,12 @@
+{
+  "Sid": "DenyReEncryptAndGrantsToEveryone",
+  "Effect": "Deny",
+  "Principal": "*",
+  "Action": [
+    "kms:ReEncrypt*",
+    "kms:CreateGrant",
+    "kms:RetireGrant",
+    "kms:RevokeGrant"
+  ],
+  "Resource": "*"
+}

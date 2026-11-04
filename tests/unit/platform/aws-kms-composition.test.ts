@@ -90,7 +90,7 @@ describe("7D.2 · KMS keyring configuration (pure)", () => {
     ["alias in the allowlist", { allowedKeyArns: `${KEY_A},alias/x` }],
     ["local context env", { contextEnv: "local" }],
     ["test context env", { contextEnv: "test" }],
-    ["unknown context env", { contextEnv: "prod" }],
+    ["unknown context env (a tier name is not a label)", { contextEnv: "production" }],
     ["missing context env", { contextEnv: undefined }],
   ])("%s → KEYRING_MISCONFIGURED, no configured value in the error", (_label, patch) => {
     let caught: unknown;

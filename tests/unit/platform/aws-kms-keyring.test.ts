@@ -159,7 +159,7 @@ describe("7C.5 · exact encryption context", () => {
 
   it("an invalid or widened context is refused before any mapping", () => {
     expect(codeOfSync(() => kmsEncryptionContext({ ...ctx(), key_ref: LOGICAL } as unknown as CredentialContext))).toBe("INVALID_CONTEXT");
-    expect(codeOfSync(() => kmsEncryptionContext({ ...ctx(), env: "prod" } as unknown as CredentialContext))).toBe("INVALID_CONTEXT");
+    expect(codeOfSync(() => kmsEncryptionContext({ ...ctx(), env: "production" } as unknown as CredentialContext))).toBe("INVALID_CONTEXT");
   });
 
   it("physical keys are full KMS key ARNs only", () => {

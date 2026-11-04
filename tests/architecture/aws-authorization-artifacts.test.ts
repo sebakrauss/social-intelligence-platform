@@ -37,6 +37,26 @@ const APPROVED_PLACEHOLDERS = [
   "<DEV_WORKLOAD_CA_CN>",
   "<DEV_WORKLOAD_CA_CERTIFICATE_PEM>",
   "<REVOCATION_CUTOFF_UTC>",
+  // Production vocabulary (Step H7-credential-context-code-readiness; design/phase-7e/aws-authorization/production).
+  "<PROD_AWS_ACCOUNT_ID>",
+  "<PROD_AWS_PARTITION>",
+  "<PROD_KMS_REGION>",
+  "<PROD_KMS_KEY_ARN>",
+  "<PROD_KMS_KEY_ALIAS>",
+  "<PROD_WORKER_ROLE_NAME>",
+  "<PROD_WORKER_ROLE_ARN>",
+  "<PROD_WEB_ROLE_NAME>",
+  "<PROD_WEB_ROLE_ARN>",
+  "<PROD_OPERATOR_ROLE_ARN>",
+  "<PROD_GUARD_POLICY_NAME>",
+  "<PROD_WEB_POLICY_NAME>",
+  "<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_NAME>",
+  "<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>",
+  "<PROD_ROLES_ANYWHERE_PROFILE_NAME>",
+  "<PROD_WORKLOAD_CA_CN>",
+  "<PROD_WORKLOAD_CA_CERTIFICATE_PEM>",
+  "<PROD_CLOUDTRAIL_BUCKET_NAME>",
+  "<PROD_VERCEL_OIDC_PROVIDER_ARN>",
 ];
 /** Allowed in documents only: runbook certificate labels and the live-calibrated alert threshold. Never in a policy. */
 const DOCUMENT_ONLY_LABELS = ["<WORKLOAD_CERTIFICATE_A_SERIAL>", "<WORKLOAD_CERTIFICATE_B_SERIAL>", "<DECRYPT_HOURLY_CEILING>"];
@@ -554,12 +574,12 @@ describe("integration worker role — Decrypt only", () => {
     expect(workerKms.Action).toEqual(["kms:Decrypt"]);
     expect(workerKms.Resource).toEqual(["*"]);
     expect(Object.keys(workerKms.Condition ?? {}).sort()).toEqual(["ForAllValues:StringEquals", "StringEquals", "StringLike"]);
-    expect(KMS_CONTEXT_ENVS).toEqual(["dev"]);
+    expect(KMS_CONTEXT_ENVS).toEqual(["dev", "prod"]);
     expect(CREDENTIAL_PURPOSES).toEqual(["provider-credential"]);
     expect(workerKms.Condition?.["StringEquals"]).toEqual({
       "kms:EncryptionContext:app": CREDENTIAL_CONTEXT_APP,
       "kms:EncryptionContext:purpose": CREDENTIAL_PURPOSES[0],
-      "kms:EncryptionContext:env": KMS_CONTEXT_ENVS[0],
+      "kms:EncryptionContext:env": "dev", // the DEV key pins the dev label; the production key (production/) pins prod
       "kms:EncryptionContext:v": CREDENTIAL_CONTEXT_VERSION,
     });
     expect(workerKms.Condition?.["StringLike"]).toEqual({
@@ -750,5 +770,132 @@ describe("documents — required statements", () => {
     for (const signal of ["`CreateSession`", "`additionalEventData`", "**hex-encoded serial number**", "**observed, not assumed**", "Any event by the retired bootstrap user", "`GetCallerIdentity`", "`GetSessionToken`", "within 30 days of expiry"]) {
       expect(trail, signal).toContain(signal);
     }
+  });
+});
+
+// ── Production target design (Step H7-credential-context-code-readiness) — templates only, nothing applied ──────────
+
+describe("production artifacts — a SEPARATE key, roles, trust anchor, profile and certificate, pinned to the prod label", () => {
+  const PROD_DIR = path.join(DIR, "production", "artifacts");
+  const PROD = {
+    workerKms: "kms-worker-decrypt-statement.json",
+    webKms: "kms-web-seal-statement.json",
+    dataKeyDeny: "kms-deny-data-keys-except-web.json",
+    decryptDeny: "kms-deny-decrypt-except-worker.json",
+    reencryptDeny: "kms-deny-reencrypt-and-grants.json",
+    adminDeny: "kms-deny-administration-to-runtime-principals.json",
+    trust: "worker-trust-policy.json",
+    guard: "worker-deny-guard.json",
+    webPolicy: "web-role-policy.json",
+    profile: "roles-anywhere-profile.json",
+    trustAnchor: "roles-anywhere-trust-anchor.json",
+    revocation: "revoke-older-sessions.json",
+  } as const;
+  const PROD_FRAGMENTS: readonly string[] = [PROD.workerKms, PROD.webKms, PROD.dataKeyDeny, PROD.decryptDeny, PROD.reencryptDeny, PROD.adminDeny];
+  const PROD_CONTRACTS: readonly string[] = [PROD.profile, PROD.trustAnchor];
+  const rawProd = (file: string): string => readFileSync(path.join(REPOSITORY_ROOT, PROD_DIR, file), "utf8");
+  const parsedProd = (file: string): unknown => JSON.parse(rawProd(file)) as unknown;
+  const fragmentProd = (file: string): Statement => statementOf(parsedProd(file), file);
+  const policyProd = (file: string): readonly Statement[] => {
+    const value = parsedProd(file);
+    if (!isRecord(value) || value["Version"] !== "2012-10-17" || !Array.isArray(value["Statement"])) throw new Error(`${file}: expected a policy document`);
+    return (value["Statement"] as readonly unknown[]).map((statement, index) => statementOf(statement, `${file}#${String(index)}`));
+  };
+  const PROD_KEY = "<PROD_KMS_KEY_ARN>";
+  const PROD_WORKER = "<PROD_WORKER_ROLE_ARN>";
+  const PROD_WEB = "<PROD_WEB_ROLE_ARN>";
+  const PROD_CONTEXT = {
+    "kms:EncryptionContext:app": CREDENTIAL_CONTEXT_APP,
+    "kms:EncryptionContext:purpose": CREDENTIAL_PURPOSES[0],
+    "kms:EncryptionContext:env": "prod",
+    "kms:EncryptionContext:v": CREDENTIAL_CONTEXT_VERSION,
+  };
+
+  it("exactly the reviewed production set; every file parses; only PROD_* placeholders (never a DEV_* one); no real identifier", () => {
+    const files = filesUnder(PROD_DIR).map((file) => path.relative(path.join(REPOSITORY_ROOT, PROD_DIR), path.join(REPOSITORY_ROOT, file))).sort();
+    expect(files).toEqual(Object.values(PROD).sort());
+    for (const file of Object.values(PROD)) {
+      if (PROD_FRAGMENTS.includes(file)) expect(() => fragmentProd(file), file).not.toThrow();
+      else if (PROD_CONTRACTS.includes(file)) expect(isRecord(parsedProd(file)), file).toBe(true);
+      else expect(policyProd(file).length, file).toBeGreaterThan(0);
+      const tokens = rawProd(file).match(/<[^<>"\s]+>/g) ?? [];
+      expect(tokens.filter((token) => !APPROVED_PLACEHOLDERS.includes(token)), file).toEqual([]);
+      expect(tokens.filter((token) => token.startsWith("<DEV_")), file).toEqual([]);
+      expect(rawProd(file)).not.toMatch(/(?<!\d)\d{12}(?!\d)|\barn:aws/i);
+    }
+    expect(KMS_CONTEXT_ENVS).toContain("prod");
+  });
+
+  it("key policy: the worker may only Decrypt and the web may only GenerateDataKey, both under the exact six-key prod context", () => {
+    const worker = fragmentProd(PROD.workerKms);
+    const web = fragmentProd(PROD.webKms);
+    expect(worker).toMatchObject({ Sid: "WorkerDecryptOnly", Effect: "Allow", Principal: { AWS: PROD_WORKER }, Action: ["kms:Decrypt"], Resource: ["*"] });
+    expect(web).toMatchObject({ Sid: "WebSealOnly", Effect: "Allow", Principal: { AWS: PROD_WEB }, Action: ["kms:GenerateDataKey"], Resource: ["*"] });
+    for (const statement of [worker, web]) {
+      expect(Object.keys(statement.Condition ?? {}).sort()).toEqual(["ForAllValues:StringEquals", "StringEquals", "StringLike"]);
+      expect(statement.Condition?.["StringEquals"]).toEqual(PROD_CONTEXT);
+      expect(statement.Condition?.["StringLike"]).toEqual({
+        "kms:EncryptionContext:workspace_id": "????????-????-????-????-????????????",
+        "kms:EncryptionContext:credential_id": "????????-????-????-????-????????????",
+      });
+      // AWS: set operators only on kms:EncryptionContextKeys; single-valued kms:EncryptionContext:<key> never with a set operator;
+      // ForAllValues alone would be vacuous, so every key is also required by its own StringEquals/StringLike.
+      expect(statement.Condition?.["ForAllValues:StringEquals"]).toEqual({ "kms:EncryptionContextKeys": [...CREDENTIAL_CONTEXT_FIELDS] });
+      for (const [operator, block] of Object.entries(statement.Condition ?? {})) {
+        if (operator.startsWith("ForAllValues")) expect(Object.keys(block)).toEqual(["kms:EncryptionContextKeys"]);
+        else expect(Object.keys(block).every((key) => key.startsWith("kms:EncryptionContext:")), operator).toBe(true);
+      }
+    }
+    expect(JSON.stringify([worker, web])).not.toMatch(/"env":\s*"dev"|ForAnyValue/);
+  });
+
+  it("explicit denies: data keys only for the web, Decrypt only for the worker, ReEncrypt and grants for nobody, administration never for runtime roles", () => {
+    expect(fragmentProd(PROD.dataKeyDeny)).toEqual({ Sid: "DenyDataKeysExceptWeb", Effect: "Deny", Principal: "*", Action: ["kms:GenerateDataKey*", "kms:Encrypt"], Resource: ["*"], Condition: { StringNotEquals: { "aws:PrincipalArn": PROD_WEB } } });
+    expect(fragmentProd(PROD.decryptDeny)).toEqual({ Sid: "DenyDecryptExceptWorker", Effect: "Deny", Principal: "*", Action: ["kms:Decrypt"], Resource: ["*"], Condition: { StringNotEquals: { "aws:PrincipalArn": PROD_WORKER } } });
+    expect(fragmentProd(PROD.reencryptDeny)).toEqual({ Sid: "DenyReEncryptAndGrantsToEveryone", Effect: "Deny", Principal: "*", Action: ["kms:ReEncrypt*", "kms:CreateGrant", "kms:RetireGrant", "kms:RevokeGrant"], Resource: ["*"] });
+    const admin = fragmentProd(PROD.adminDeny);
+    expect(admin).toMatchObject({ Sid: "DenyAdministrationToRuntimePrincipals", Effect: "Deny", Principal: "*", NotAction: ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"], Resource: ["*"] });
+    expect(admin.Condition?.["ArnLike"]?.["aws:PrincipalArn"]).toEqual([PROD_WEB, PROD_WORKER]);
+  });
+
+  it("worker role: Roles Anywhere trust with the exact production trust anchor, subject CN …-integration-prod and issuer CN; Decrypt-only guard", () => {
+    const [statement] = policyProd(PROD.trust);
+    expect(statement).toEqual({
+      Sid: "RolesAnywhereWorkloadAssumesWorkerRole",
+      Effect: "Allow",
+      Principal: { Service: ROLES_ANYWHERE },
+      Action: ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"],
+      Condition: {
+        ArnEquals: { "aws:SourceArn": "<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>" },
+        StringEquals: { "aws:PrincipalTag/x509Subject/CN": `${INTEGRATION_WORKLOAD_SUBJECT_CN_PREFIX}prod`, "aws:PrincipalTag/x509Issuer/CN": "<PROD_WORKLOAD_CA_CN>" },
+      },
+    });
+    expect(policyProd(PROD.guard)).toEqual([
+      { Sid: "DenyEverythingButDecrypt", Effect: "Deny", NotAction: ["kms:Decrypt"], Resource: ["*"] },
+      { Sid: "DenyDecryptOutsideCredentialKey", Effect: "Deny", Action: ["kms:Decrypt"], NotResource: [PROD_KEY] },
+    ]);
+  });
+
+  it("web role policy: GenerateDataKey on the production key only, under the prod context; everything else denied", () => {
+    const [seal, deny] = policyProd(PROD.webPolicy);
+    expect(seal).toMatchObject({ Sid: "SealWithProductionCredentialKeyOnly", Effect: "Allow", Action: ["kms:GenerateDataKey"], Resource: [PROD_KEY] });
+    expect(seal?.Condition?.["StringEquals"]).toEqual(PROD_CONTEXT);
+    expect(seal?.Condition?.["ForAllValues:StringEquals"]).toEqual({ "kms:EncryptionContextKeys": [...CREDENTIAL_CONTEXT_FIELDS] });
+    expect(deny).toEqual({ Sid: "DenyEverythingButGenerateDataKey", Effect: "Deny", NotAction: ["kms:GenerateDataKey"], Resource: ["*"] });
+  });
+
+  it("Roles Anywhere profile and trust anchor: exactly the production worker role, 900 s, no custom session name, Decrypt-only session policy, a PRODUCTION CA bundle", () => {
+    const profile = parsedProd(PROD.profile) as Readonly<Record<string, unknown>>;
+    expect(profile).toMatchObject({ name: "<PROD_ROLES_ANYWHERE_PROFILE_NAME>", enabled: true, roleArns: [PROD_WORKER], durationSeconds: INTEGRATION_WORKER_SESSION_SECONDS, acceptRoleSessionName: false, requireInstanceProperties: false, managedPolicyArns: [] });
+    const session = (profile["sessionPolicy"] as { Statement: unknown[] }).Statement.map((statement, index) => statementOf(statement, `prod sessionPolicy#${String(index)}`));
+    expect(session).toEqual([{ Sid: "SessionDecryptCredentialKeyOnly", Effect: "Allow", Action: ["kms:Decrypt"], Resource: [PROD_KEY] }]);
+    expect(parsedProd(PROD.trustAnchor)).toEqual({ name: "<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_NAME>", enabled: true, source: { sourceType: "CERTIFICATE_BUNDLE", sourceData: { x509CertificateData: "<PROD_WORKLOAD_CA_CERTIFICATE_PEM>" } } });
+    expect(policyProd(PROD.revocation)).toEqual([{ Sid: "AWSRevokeOlderSessions", Effect: "Deny", Action: ["*"], Resource: ["*"], Condition: { DateLessThan: { "aws:TokenIssueTime": "<REVOCATION_CUTOFF_UTC>" } } }]);
+  });
+
+  it("nothing of production is shared with development by construction: every production ARN, name and CA is its own placeholder", () => {
+    const text = Object.values(PROD).map(rawProd).join("\n");
+    for (const shared of ["<DEV_KMS_KEY_ARN>", "<DEV_WORKER_ROLE_ARN>", "<DEV_WEB_ROLE_ARN>", "<DEV_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>", "<DEV_WORKLOAD_CA_CN>", SUBJECT_CN]) expect(text).not.toContain(shared);
+    expect(text).toContain(`${INTEGRATION_WORKLOAD_SUBJECT_CN_PREFIX}prod`);
   });
 });

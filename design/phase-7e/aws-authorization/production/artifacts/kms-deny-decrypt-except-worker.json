@@ -1,0 +1,12 @@
+{
+  "Sid": "DenyDecryptExceptWorker",
+  "Effect": "Deny",
+  "Principal": "*",
+  "Action": "kms:Decrypt",
+  "Resource": "*",
+  "Condition": {
+    "StringNotEquals": {
+      "aws:PrincipalArn": "<PROD_WORKER_ROLE_ARN>"
+    }
+  }
+}

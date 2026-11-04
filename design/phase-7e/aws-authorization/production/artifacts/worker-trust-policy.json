@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RolesAnywhereWorkloadAssumesWorkerRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "rolesanywhere.amazonaws.com"
+      },
+      "Action": [
+        "sts:AssumeRole",
+        "sts:TagSession",
+        "sts:SetSourceIdentity"
+      ],
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>"
+        },
+        "StringEquals": {
+          "aws:PrincipalTag/x509Subject/CN": "social-intelligence-platform-integration-prod",
+          "aws:PrincipalTag/x509Issuer/CN": "<PROD_WORKLOAD_CA_CN>"
+        }
+      }
+    }
+  ]
+}

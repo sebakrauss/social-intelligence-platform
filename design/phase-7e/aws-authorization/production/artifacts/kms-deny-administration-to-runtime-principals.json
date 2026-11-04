@@ -1,0 +1,19 @@
+{
+  "Sid": "DenyAdministrationToRuntimePrincipals",
+  "Effect": "Deny",
+  "Principal": "*",
+  "NotAction": [
+    "kms:Decrypt",
+    "kms:GenerateDataKey",
+    "kms:DescribeKey"
+  ],
+  "Resource": "*",
+  "Condition": {
+    "ArnLike": {
+      "aws:PrincipalArn": [
+        "<PROD_WEB_ROLE_ARN>",
+        "<PROD_WORKER_ROLE_ARN>"
+      ]
+    }
+  }
+}

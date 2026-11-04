@@ -244,6 +244,15 @@ describe("Roles Anywhere configuration (re-read and re-validated on every resolu
     expect(syncFailureOf(() => readRolesAnywhereIdentity(identityEnv(), other, NOW))).toBe("IDENTITY_MISCONFIGURED");
   });
 
+  it("prod label (H7-credential-context-code-readiness): only a …-integration-prod certificate serves it; the dev certificate is refused, and the prod certificate is refused under dev", () => {
+    const prod = parseKmsKeyringConfig({ contextEnv: "prod", currentKeyArn: KEY, allowedKeyArns: KEY });
+    const prodCertificate = fixture("workload-wrong-cn.pem"); // synthetic, CN social-intelligence-platform-integration-prod
+    const identity = readRolesAnywhereIdentity(identityEnv({ INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM: oneLine(prodCertificate) }), prod, NOW);
+    expect(identity).toMatchObject({ roleArn: ROLE, trustAnchorArn: ANCHOR, profileArn: PROFILE, region: "sa-east-1", certificateFingerprint: new X509Certificate(prodCertificate).fingerprint256 });
+    expect(syncFailureOf(() => readRolesAnywhereIdentity(identityEnv(), prod, NOW))).toBe("IDENTITY_MISCONFIGURED"); // dev certificate under prod
+    expect(syncFailureOf(() => readRolesAnywhereIdentity(identityEnv({ INTEGRATION_AWS_WORKLOAD_CERTIFICATE_PEM: oneLine(prodCertificate) }), KMS, NOW))).toBe("IDENTITY_MISCONFIGURED"); // prod certificate under dev
+  });
+
   it("the retired bootstrap key and the standard AWS credential variables are never an identity source", () => {
     const ambient = {
       INTEGRATION_AWS_BOOTSTRAP_ACCESS_KEY_ID: "SYNTHETICBOOTSTRAPKEYA1",

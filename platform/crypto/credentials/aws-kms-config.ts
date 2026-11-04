@@ -21,8 +21,13 @@ import { isLogicalKeyRef } from "./key-ref";
 /** The logical KEK reference of every AWS KMS provider-credential envelope. Protocol identity: physical keys rotate under it. */
 export const KMS_PROVIDER_CREDENTIALS_KEY_REF = "kms-provider-credentials-v1";
 
-/** Cryptographic environments that have a KMS key policy today. "local" and "test" are local-keyring only. */
-export const KMS_CONTEXT_ENVS: readonly CredentialContextEnv[] = ["dev"];
+/**
+ * Cryptographic environments that may use a KMS keyring: "dev" (TA-Q-07b key policy, live) and "prod" (Step
+ * H7-credential-context-code-readiness: the production key policy is designed, not yet applied — code readiness is not
+ * infrastructure). "local" and "test" are local-keyring only. Each label is served by its OWN key: the policy of the dev
+ * key pins `kms:EncryptionContext:env` = "dev", the production key's pins "prod".
+ */
+export const KMS_CONTEXT_ENVS: readonly CredentialContextEnv[] = ["dev", "prod"];
 
 export interface KmsKeyringConfig {
   readonly contextEnv: CredentialContextEnv;

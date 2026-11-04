@@ -140,3 +140,30 @@ The only placeholders allowed in artifacts and documents:
 Runbook-only operational labels, never values in a policy: `<WORKLOAD_CERTIFICATE_A_SERIAL>`,
 `<WORKLOAD_CERTIFICATE_B_SERIAL>`.
 Alert threshold to calibrate in live acceptance: `<DECRYPT_HOURLY_CEILING>`.
+
+### Production vocabulary (Step H7-credential-context-code-readiness; `production/`)
+
+The production target design (`production/README.md`, `production/artifacts/`) uses its OWN placeholders — never a
+`<DEV_*>` one — so no production artifact can name a development resource:
+
+| Placeholder | Meaning |
+|---|---|
+| `<PROD_AWS_ACCOUNT_ID>` | Production AWS account ID (recommended: a separate account) |
+| `<PROD_AWS_PARTITION>` | AWS partition of that account |
+| `<PROD_KMS_REGION>` | Region of the production provider-credential key (`sa-east-1`, also the Roles Anywhere region) |
+| `<PROD_KMS_KEY_ARN>` | Full ARN of the PRODUCTION provider-credential KMS key |
+| `<PROD_KMS_KEY_ALIAS>` | Its alias |
+| `<PROD_WORKER_ROLE_NAME>` | Production integration worker role name |
+| `<PROD_WORKER_ROLE_ARN>` | Full ARN of the production worker role |
+| `<PROD_WEB_ROLE_NAME>` | Production web (GenerateDataKey-only) role name |
+| `<PROD_WEB_ROLE_ARN>` | Full ARN of the production web role |
+| `<PROD_OPERATOR_ROLE_ARN>` | ARN of the human operator role that administers the production key and runs runbooks |
+| `<PROD_GUARD_POLICY_NAME>` | Name of the production worker's inline guard |
+| `<PROD_WEB_POLICY_NAME>` | Name of the production web role's policy |
+| `<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_NAME>` | Name of the production Roles Anywhere trust anchor |
+| `<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>` | Its full ARN (known only after creation) |
+| `<PROD_ROLES_ANYWHERE_PROFILE_NAME>` | Name of the production Roles Anywhere profile |
+| `<PROD_WORKLOAD_CA_CN>` | Subject CN of the production offline workload CA (the leaf's issuer CN) |
+| `<PROD_WORKLOAD_CA_CERTIFICATE_PEM>` | The production CA's PUBLIC certificate, PEM, entered at apply time |
+| `<PROD_CLOUDTRAIL_BUCKET_NAME>` | The production account's CloudTrail bucket |
+| `<PROD_VERCEL_OIDC_PROVIDER_ARN>` | The IAM OIDC provider for the production Vercel project |

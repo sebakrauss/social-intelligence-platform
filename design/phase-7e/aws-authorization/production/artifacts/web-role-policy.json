@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SealWithProductionCredentialKeyOnly",
+      "Effect": "Allow",
+      "Action": "kms:GenerateDataKey",
+      "Resource": "<PROD_KMS_KEY_ARN>",
+      "Condition": {
+        "StringEquals": {
+          "kms:EncryptionContext:app": "social-intelligence-platform",
+          "kms:EncryptionContext:purpose": "provider-credential",
+          "kms:EncryptionContext:env": "prod",
+          "kms:EncryptionContext:v": "1"
+        },
+        "ForAllValues:StringEquals": {
+          "kms:EncryptionContextKeys": [
+            "app",
+            "purpose",
+            "env",
+            "v",
+            "workspace_id",
+            "credential_id"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyEverythingButGenerateDataKey",
+      "Effect": "Deny",
+      "NotAction": "kms:GenerateDataKey",
+      "Resource": "*"
+    }
+  ]
+}

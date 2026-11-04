@@ -571,7 +571,7 @@ describe("G. structured keyring ports (Step 7B, D2/D3)", () => {
   it("an invalid context never reaches the keyring", async () => {
     let calls = 0;
     const spy: DataKeyGenerator = { ...keyring.generator, generateDataKey: (binding) => (calls++, keyring.generator.generateDataKey(binding)) };
-    await failsWith(createCredentialSealer(spy).seal(markerBytes(), { ...ctx(), env: "prod" } as unknown as CredentialContext), "INVALID_CONTEXT");
+    await failsWith(createCredentialSealer(spy).seal(markerBytes(), { ...ctx(), env: "production" } as unknown as CredentialContext), "INVALID_CONTEXT");
     await failsWith(createCredentialSealer(spy).seal(markerBytes(), { ...ctx(), kms_key: PHYSICAL_OLD } as unknown as CredentialContext), "INVALID_CONTEXT");
     expect(calls).toBe(0);
   });
@@ -699,15 +699,18 @@ describe("I. error taxonomy and retryability (Step 7B, D7)", () => {
   });
 });
 
-describe("J. cryptographic environment authority (Step 7B, D4)", () => {
-  it("the closed set: local and test (local keyring) and dev (pinned by the TA-Q-07b key policy)", () => {
-    expect([...CREDENTIAL_CONTEXT_ENVS]).toEqual(["local", "test", "dev"]);
+describe("J. cryptographic environment authority (Step 7B, D4; prod since H7-credential-context-code-readiness)", () => {
+  it("the closed set: local and test (local keyring), dev (TA-Q-07b key policy) and prod (the production key policy)", () => {
+    expect([...CREDENTIAL_CONTEXT_ENVS]).toEqual(["local", "test", "dev", "prod"]);
     expect(ctx({ env: "dev" }).env).toBe("dev");
+    expect(ctx({ env: "prod" }).env).toBe("prod");
     expect(canonicalContextBytes(ctx({ env: "dev" })).toString("utf8")).toContain('["env","dev"]');
+    expect(canonicalContextBytes(ctx({ env: "prod" })).toString("utf8")).toContain('["env","prod"]');
+    expect(canonicalContextBytes(ctx({ env: "prod" })).equals(canonicalContextBytes(ctx({ env: "dev" })))).toBe(false);
   });
 
-  it("no other label is accepted, however plausible", () => {
-    for (const env of ["staging", "prod", "production", "preview", "development", "Dev", "dev ", "local-dev"]) throwsCode(() => ctx({ env }), "INVALID_CONTEXT");
+  it("no other label is accepted, however plausible — the deployment tier names are NOT cryptographic labels", () => {
+    for (const env of ["staging", "production", "preview", "development", "Dev", "Prod", "dev ", "prod ", "local-dev", "prd"]) throwsCode(() => ctx({ env }), "INVALID_CONTEXT");
   });
 });
 

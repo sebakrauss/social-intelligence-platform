@@ -14,9 +14,9 @@
  *   input      exactly { acknowledge: KMS_DIAGNOSTIC_ACKNOWLEDGEMENT } — no identifiers, envelope or provider input
  *   release    a deployed Trigger.dev PRODUCTION run with an external deployment id (pinned)
  *   plane      no other plane's capability in the environment (jobs/plane-environment.ts)
- *   tier       APP_DEPLOYMENT_ENV exactly "staging"
+ *   tier       APP_DEPLOYMENT_ENV exactly "staging" (→ label "dev") or "production" (→ label "prod"); see KMS_DIAGNOSTIC_TARGETS
  *   runtime    Node.js 22 (process.version "v22.…")
- *   crypto     the KMS keyring (never the local one), CREDENTIAL_CONTEXT_ENV exactly "dev", and exactly ONE allowed
+ *   crypto     the KMS keyring (never the local one), CREDENTIAL_CONTEXT_ENV exactly the tier's paired label, and exactly ONE allowed
  *              key (the current one)
  *   fixture    INTEGRATION_KMS_DIAGNOSTIC_FIXTURE: { v, workspace_id, credential_id, envelope, digest }, strictly
  *              parsed; the ids must be the compile-time synthetic constants below; the envelope must be a well-formed
@@ -61,9 +61,26 @@ export const KMS_DIAGNOSTIC_CREDENTIAL_LABEL = "kms-worker-auth-diagnostic";
 /** Domain separation of the plaintext digest (shared with the future operator sealing step). */
 export const KMS_DIAGNOSTIC_DIGEST_DOMAIN = "social-intelligence-platform/kms-worker-auth-diagnostic/v1\0";
 export const KMS_DIAGNOSTIC_FIXTURE_VERSION = 1;
-/** The only deployment tier and cryptographic environment the diagnostic accepts. */
-export const KMS_DIAGNOSTIC_TIER = "staging";
-export const KMS_DIAGNOSTIC_CONTEXT_ENV = "dev";
+/**
+ * The deployment tiers the diagnostic accepts, each PAIRED with the one cryptographic environment it may prove (Step
+ * H7-credential-context-code-readiness): `staging` ↔ `dev` (the TA-Q-07b key), `production` ↔ `prod` (the production key).
+ * The pairing is closed: a production tier with the dev label (or the reverse) is refused before anything AWS-capable
+ * exists, so a production diagnostic can never run with development credentials, certificates or profiles — the worker
+ * certificate's subject CN is also derived from the label (jobs/integration-aws-identity.ts).
+ */
+export const KMS_DIAGNOSTIC_TARGETS = Object.freeze({ staging: "dev", production: "prod" } as const);
+export type KmsDiagnosticTier = keyof typeof KMS_DIAGNOSTIC_TARGETS;
+export type KmsDiagnosticContextEnv = (typeof KMS_DIAGNOSTIC_TARGETS)[KmsDiagnosticTier];
+export interface KmsDiagnosticTarget {
+  readonly tier: KmsDiagnosticTier;
+  readonly contextEnv: KmsDiagnosticContextEnv;
+}
+/** The target named by APP_DEPLOYMENT_ENV, or undefined for any other value (exact, case-sensitive). */
+export function diagnosticTarget(environment: Environment): KmsDiagnosticTarget | undefined {
+  const tier = environment[PROVIDER_MODE_VARIABLES.tier];
+  if (tier !== "staging" && tier !== "production") return undefined;
+  return Object.freeze({ tier, contextEnv: KMS_DIAGNOSTIC_TARGETS[tier] });
+}
 /** Trigger.dev environment type of the integration project's deployment (TRIGGER_PROVIDER_ENV = prod). */
 export const KMS_DIAGNOSTIC_TRIGGER_ENVIRONMENT = "PRODUCTION";
 
@@ -112,7 +129,7 @@ export interface KmsDiagnosticOutcome {
   readonly result: "KMS_WORKER_AUTH_DIAGNOSTIC_PASSED" | "KMS_WORKER_AUTH_DIAGNOSTIC_PLAINTEXT_MISMATCH";
   readonly nodeVersion: string;
   readonly node22: boolean;
-  readonly contextEnv: typeof KMS_DIAGNOSTIC_CONTEXT_ENV;
+  readonly contextEnv: KmsDiagnosticContextEnv;
   readonly plaintextMatches: boolean;
 }
 
@@ -195,12 +212,13 @@ export function assertDiagnosticPreconditions(payload: unknown, run: KmsDiagnost
   assertDiagnosticInput(payload);
   if (run.environmentType !== KMS_DIAGNOSTIC_TRIGGER_ENVIRONMENT || run.release.kind !== "pinned") refuse("kms_diagnostic_release_refused");
   if (planeEnvironmentProblems("integration", run.release, environment).length > 0) refuse("kms_diagnostic_plane_refused");
-  if (environment[PROVIDER_MODE_VARIABLES.tier] !== KMS_DIAGNOSTIC_TIER) refuse("kms_diagnostic_tier_refused");
+  const target = diagnosticTarget(environment);
+  if (target === undefined) return refuse("kms_diagnostic_tier_refused");
   if (!nodeVersion.startsWith("v22.")) refuse("kms_diagnostic_runtime_refused");
   // The keyring selection (environment.ts) is the ONE reader of CREDENTIAL_CONTEXT_ENV, the KMS key variables and
-  // LOCAL_KEYRING_KEY: it accepts only "dev" as a KMS context env and refuses a local key next to KMS (or a local key in
-  // a deployed runtime), so each of those is refused here as a misconfigured keyring. The local keyring itself
-  // (development/test only) is refused explicitly.
+  // LOCAL_KEYRING_KEY: it accepts only a KMS context env ("dev" | "prod") and refuses a local key next to KMS (or a local
+  // key in a deployed runtime), so each of those is refused here as a misconfigured keyring. The local keyring itself
+  // (development/test only) is refused explicitly; a label that is not the tier's paired one is refused as a context.
   let selection;
   try {
     selection = selectCredentialCrypto(environment);
@@ -208,7 +226,7 @@ export function assertDiagnosticPreconditions(payload: unknown, run: KmsDiagnost
     return refuse("kms_diagnostic_kms_configuration_refused");
   }
   if (selection.kind !== "kms") return refuse("kms_diagnostic_local_keyring_refused");
-  if (selection.config.contextEnv !== KMS_DIAGNOSTIC_CONTEXT_ENV) return refuse("kms_diagnostic_credential_context_refused");
+  if (selection.config.contextEnv !== target.contextEnv) return refuse("kms_diagnostic_credential_context_refused");
   const allowed = selection.config.allowedKeyArns;
   if (allowed.size !== 1 || !allowed.has(selection.config.currentKeyArn)) return refuse("kms_diagnostic_kms_configuration_refused");
   return parseDiagnosticFixture(environment[INTEGRATION_KMS_DIAGNOSTIC_FIXTURE_ENV]);
@@ -251,12 +269,14 @@ export async function runKmsWorkerAuthDiagnostic(
 ): Promise<KmsDiagnosticOutcome> {
   const deps: KmsDiagnosticDependencies = { ...PRODUCTION, ...overrides };
   const fixture = assertDiagnosticPreconditions(payload, run, environment, deps.nodeVersion);
+  const target = diagnosticTarget(environment);
+  if (target === undefined) return refuse("kms_diagnostic_tier_refused");
   const workspaceId: WorkspaceId | undefined = parseWorkspaceId(KMS_DIAGNOSTIC_WORKSPACE_ID);
   if (workspaceId === undefined) return refuse("kms_diagnostic_fixture_refused");
   let matches: boolean;
   try {
     const composed = deps.composeAccess(environment);
-    if (composed.contextEnv !== KMS_DIAGNOSTIC_CONTEXT_ENV) refuse("kms_diagnostic_credential_context_refused");
+    if (composed.contextEnv !== target.contextEnv) refuse("kms_diagnostic_credential_context_refused");
     matches = await composed.access.withCredential({ workspaceId, credentialId: KMS_DIAGNOSTIC_CREDENTIAL_ID, envelope: fixture.envelope }, (credential) => {
       if (credential.id !== KMS_DIAGNOSTIC_CREDENTIAL_LABEL) return Promise.resolve(false);
       const digest = diagnosticPlaintextDigest(encodeProviderCredential(credential));
@@ -275,7 +295,7 @@ export async function runKmsWorkerAuthDiagnostic(
     result: matches ? "KMS_WORKER_AUTH_DIAGNOSTIC_PASSED" : "KMS_WORKER_AUTH_DIAGNOSTIC_PLAINTEXT_MISMATCH",
     nodeVersion: deps.nodeVersion,
     node22: deps.nodeVersion.startsWith("v22."),
-    contextEnv: KMS_DIAGNOSTIC_CONTEXT_ENV,
+    contextEnv: target.contextEnv,
     plaintextMatches: matches,
   });
 }
