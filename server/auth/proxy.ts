@@ -4,10 +4,12 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { readSupabaseAuthConfig, refreshSession } from "@/platform/auth";
+import { serviceIdentityCoherent } from "@/server/http/service-identity";
 
 export async function refreshSessionCookies(request: NextRequest): Promise<NextResponse> {
   let response = NextResponse.next({ request });
-  const config = readSupabaseAuthConfig(process.env);
+  // The proxy already answers 503 on an incoherent identity; this keeps the auth client unbuilt on every other path too.
+  const config = serviceIdentityCoherent(process.env) ? readSupabaseAuthConfig(process.env) : undefined;
   if (config === undefined) return response;
 
   await refreshSession(config, {

@@ -9,6 +9,7 @@
  */
 import { createRuntimeDatabaseFromEnv, type RuntimeDatabase } from "@/platform/db";
 import { assertWebEnvironment } from "@/server/http/web-environment";
+import { assertServiceIdentity } from "@/server/http/service-identity";
 import type { UnitOfWork } from "@/server/pipeline";
 import { createPostgresUnitOfWork } from "./postgres-unit-of-work";
 
@@ -21,9 +22,13 @@ export function webPoolMax(environment: Environment): number {
   return nodeEnv === "development" || nodeEnv === "test" ? WEB_POOL_MAX.local : WEB_POOL_MAX.hosted;
 }
 
-/** A new web pool for this environment: boundary guard first, then the web login-role/pooler/TLS guards. */
+/**
+ * A new web pool for this environment: boundary guard first, then the database/auth identity coherence guard
+ * (server/http/service-identity.ts), then the web login-role/pooler/TLS guards.
+ */
 export function createWebDatabase(environment: Environment = process.env): RuntimeDatabase<"web"> {
   assertWebEnvironment(environment);
+  assertServiceIdentity(environment);
   return createRuntimeDatabaseFromEnv("web", environment, { max: webPoolMax(environment) });
 }
 

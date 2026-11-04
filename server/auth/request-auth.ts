@@ -4,6 +4,7 @@
  */
 import { cookies } from "next/headers";
 import { createSupabaseAuth, readSupabaseAuthConfig, type AuthPort, type CookieJar } from "@/platform/auth";
+import { serviceIdentityCoherent } from "@/server/http/service-identity";
 
 async function requestCookieJar(): Promise<CookieJar> {
   const store = await cookies();
@@ -27,7 +28,8 @@ async function requestCookieJar(): Promise<CookieJar> {
  */
 export async function requestAuth(): Promise<AuthPort | undefined> {
   const jar = await requestCookieJar();
-  const config = readSupabaseAuthConfig(process.env);
+  // Fail closed: an auth project that does not match the database project is "unavailable", never used.
+  const config = serviceIdentityCoherent(process.env) ? readSupabaseAuthConfig(process.env) : undefined;
   return config === undefined ? undefined : createSupabaseAuth(config, jar);
 }
 

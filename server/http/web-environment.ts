@@ -45,6 +45,7 @@
 import { NextResponse } from "next/server";
 import { MODEL_PROVIDER_AMBIENT_VARIABLES } from "@/domain/model-provider-variables";
 import { createLogger, stdoutSink } from "@/platform/observability";
+import { serviceIdentityProblems } from "./service-identity";
 
 export const FORBIDDEN_WEB_VARIABLES = [
   "DATABASE_WORKER_URL",
@@ -108,12 +109,20 @@ export function assertWebEnvironment(environment: Environment): void {
 const log = createLogger({ sink: stdoutSink, base: { module: "server.http" } });
 
 /**
- * For the proxy: a generic 503 (no detail) when the hosted environment carries forbidden configuration, before any
- * page, action or route runs; undefined otherwise. The variable NAMES are logged, never values.
+ * For the proxy: a generic 503 (no detail) when the hosted environment carries forbidden configuration, or when its
+ * database and Supabase Auth configuration do not name one coherent project (server/http/service-identity.ts), before any
+ * page, action or route runs; undefined otherwise. Variable NAMES and problem codes are logged, never values.
  */
 export function rejectForbiddenWebEnvironment(environment: Environment = process.env): NextResponse | undefined {
   const present = forbiddenWebVariables(environment);
-  if (present.length === 0) return undefined;
-  log.error("web.environment.rejected", { operation: present.join(":"), count: present.length, outcome: "error" });
-  return new NextResponse(null, { status: 503, headers: { "Cache-Control": "no-store" } });
+  if (present.length > 0) {
+    log.error("web.environment.rejected", { operation: present.join(":"), count: present.length, outcome: "error" });
+    return new NextResponse(null, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
+  const incoherent = serviceIdentityProblems(environment);
+  if (incoherent.length > 0) {
+    log.error("web.service_identity.rejected", { operation: incoherent.join(" | "), count: incoherent.length, outcome: "error" });
+    return new NextResponse(null, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
+  return undefined;
 }

@@ -63,6 +63,18 @@ and the CA with the runtime's strict parser. At runtime every pool (`platform/db
 database URLs belong to the same project as `DATABASE_EXPECTED_PROJECT_REF`. With no identity variables set it runs in
 legacy development mode, pinned to dev-v2. A partial authority, a mismatch or mixed projects fail closed.
 
+**Web database/auth identity (Step H7-ops-tooling-production-parity).** The hosted web talks to two services of ONE
+Supabase project. `server/http/service-identity.ts` refuses, before any pool or auth client exists (503 from the proxy, no
+pool from `createWebDatabase`, auth "unavailable"), any configuration where `DATABASE_WEB_URL`'s project differs from
+`NEXT_PUBLIC_SUPABASE_URL`'s (`https://<ref>.supabase.co`; custom domains are not verifiable and are refused), where the
+database fails the identity authority above, or where a hosted runtime lacks either half. A legacy JWT publishable key
+is checked offline by its `ref` claim; an `sb_publishable_…` key is opaque — its ownership must be confirmed against
+Supabase at cutover, never assumed from the URL.
+
+**AI call reconciliation (read-only).** `node tools/db/ai-call-reconciliation.ts --target development|production
+[--stale-minutes N] [--rows]` reports provider-call intents per derived state on the SELECTED target (same fence as the
+database tools; one `begin read only` transaction; identifiers, enums and times only).
+
 **Database CA.** TLS to a managed endpoint always verifies the server certificate and host name. A runtime gets
 the CA either as a path (`DATABASE_SSL_ROOT_CERT`, local development) or as PEM content
 (`DATABASE_SSL_ROOT_CERT_PEM`, deployed workers; `\n` escapes accepted). PEM content wins when both are set. With
