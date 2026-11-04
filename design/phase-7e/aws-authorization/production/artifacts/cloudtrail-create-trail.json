@@ -4,12 +4,5 @@
   "IsMultiRegionTrail": true,
   "IncludeGlobalServiceEvents": true,
   "EnableLogFileValidation": true,
-  "IsOrganizationTrail": false,
-  "EventSelectors": [
-    {
-      "ReadWriteType": "All",
-      "IncludeManagementEvents": true,
-      "ExcludeManagementEventSources": []
-    }
-  ]
+  "IsOrganizationTrail": false
 }

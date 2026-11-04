@@ -798,10 +798,13 @@ describe("production artifacts — a SEPARATE key, roles, trust anchor, profile 
     keyPolicy: "kms-key-policy.json",
     webTrust: "web-trust-policy.json",
     oidcProvider: "vercel-oidc-provider.json",
-    cloudtrail: "cloudtrail-trail.json",
+    // Step H7-cloudtrail-contract-split: one contract per CloudTrail API operation
+    createTrail: "cloudtrail-create-trail.json",
+    putEventSelectors: "cloudtrail-put-event-selectors.json",
+    startLogging: "cloudtrail-start-logging.json",
   } as const;
   const PROD_FRAGMENTS: readonly string[] = [PROD.workerKms, PROD.webKms, PROD.dataKeyDeny, PROD.decryptDeny, PROD.reencryptDeny, PROD.adminDeny, PROD.deleteDeny];
-  const PROD_CONTRACTS: readonly string[] = [PROD.profile, PROD.trustAnchor, PROD.oidcProvider, PROD.cloudtrail];
+  const PROD_CONTRACTS: readonly string[] = [PROD.profile, PROD.trustAnchor, PROD.oidcProvider, PROD.createTrail, PROD.putEventSelectors, PROD.startLogging];
   const rawProd = (file: string): string => readFileSync(path.join(REPOSITORY_ROOT, PROD_DIR, file), "utf8");
   const parsedProd = (file: string): unknown => JSON.parse(rawProd(file)) as unknown;
   const fragmentProd = (file: string): Statement => statementOf(parsedProd(file), file);
@@ -1026,13 +1029,44 @@ describe("production artifacts — a SEPARATE key, roles, trust anchor, profile 
     ] as const) expect(admits({ ...good, ...change }), label).toBe(false);
   });
 
-  it("CloudTrail contract: multi-region, management events of BOTH kinds (KMS Decrypt/GenerateDataKey are management Read events), no excluded sources, validation on", () => {
-    expect(parsedProd(PROD.cloudtrail)).toEqual({
-      Name: "<PROD_CLOUDTRAIL_TRAIL_NAME>", S3BucketName: "<PROD_CLOUDTRAIL_BUCKET_NAME>", IsMultiRegionTrail: true, IncludeGlobalServiceEvents: true, EnableLogFileValidation: true, IsOrganizationTrail: false,
-      EventSelectors: [{ ReadWriteType: "All", IncludeManagementEvents: true, ExcludeManagementEventSources: [] }],
-    });
-    expect(doc("production/README.md")).toMatch(/management \*\*Read\*\* events/);
-    expect(doc("production/README.md")).not.toMatch(/KMS data events for the production key/);
+  it("CloudTrail: three contracts, one per API operation, each with ONLY that operation's parameters, all naming the same trail", () => {
+    // Parameter sets from the CloudTrail API reference (CreateTrail, PutEventSelectors, StartLogging).
+    const CREATE_TRAIL_PARAMETERS = ["Name", "S3BucketName", "S3KeyPrefix", "SnsTopicName", "IncludeGlobalServiceEvents", "IsMultiRegionTrail", "EnableLogFileValidation", "CloudWatchLogsLogGroupArn", "CloudWatchLogsRoleArn", "KmsKeyId", "IsOrganizationTrail", "TagsList", "RecursiveLogging"];
+    const PUT_EVENT_SELECTORS_PARAMETERS = ["TrailName", "EventSelectors", "AdvancedEventSelectors"];
+    const EVENT_SELECTOR_FIELDS = ["ReadWriteType", "IncludeManagementEvents", "DataResources", "ExcludeManagementEventSources"];
+    const createTrail = parsedProd(PROD.createTrail) as Record<string, unknown>;
+    const putEventSelectors = parsedProd(PROD.putEventSelectors) as Record<string, unknown>;
+    const startLogging = parsedProd(PROD.startLogging) as Record<string, unknown>;
+
+    // A. CreateTrail: exactly the reviewed fields; EventSelectors is NOT a CreateTrail parameter.
+    expect(createTrail).toEqual({ Name: "<PROD_CLOUDTRAIL_TRAIL_NAME>", S3BucketName: "<PROD_CLOUDTRAIL_BUCKET_NAME>", IsMultiRegionTrail: true, IncludeGlobalServiceEvents: true, EnableLogFileValidation: true, IsOrganizationTrail: false });
+    expect(Object.keys(createTrail).every((key) => CREATE_TRAIL_PARAMETERS.includes(key))).toBe(true);
+    expect(Object.keys(createTrail)).not.toContain("EventSelectors");
+    expect(createTrail).not.toHaveProperty("KmsKeyId"); // the trail is never encrypted with the provider-credential key
+
+    // B. PutEventSelectors: TrailName required; EventSelectors (not AdvancedEventSelectors); one selector; management Read+Write; KMS never excluded.
+    expect(Object.keys(putEventSelectors).sort()).toEqual(["EventSelectors", "TrailName"]);
+    expect(Object.keys(putEventSelectors).every((key) => PUT_EVENT_SELECTORS_PARAMETERS.includes(key))).toBe(true);
+    expect(putEventSelectors["TrailName"]).toBe("<PROD_CLOUDTRAIL_TRAIL_NAME>");
+    const selectors = putEventSelectors["EventSelectors"] as Record<string, unknown>[];
+    expect(selectors).toHaveLength(1);
+    expect(Object.keys(selectors[0] ?? {}).every((key) => EVENT_SELECTOR_FIELDS.includes(key))).toBe(true);
+    expect(selectors[0]).toEqual({ ReadWriteType: "All", IncludeManagementEvents: true, ExcludeManagementEventSources: [] });
+    expect(JSON.stringify(putEventSelectors)).not.toMatch(/kms\.amazonaws\.com|rolesanywhere\.amazonaws\.com|WriteOnly|ReadOnly|AdvancedEventSelectors|DataResources/);
+
+    // C. StartLogging: exactly Name, the same trail.
+    expect(startLogging).toEqual({ Name: "<PROD_CLOUDTRAIL_TRAIL_NAME>" });
+
+    // The three contracts name one trail; none claims logging on creation; the combined artifact is gone and unreferenced.
+    expect(new Set([createTrail["Name"], putEventSelectors["TrailName"], startLogging["Name"]]).size).toBe(1);
+    expect(filesUnder(PROD_DIR).some((file) => file.endsWith("cloudtrail-trail.json"))).toBe(false);
+    for (const file of designFiles.filter((f) => f.endsWith(".md"))) expect(readFileSync(path.join(REPOSITORY_ROOT, file), "utf8"), file).not.toMatch(/cloudtrail-trail\.json/);
+    const readme = doc("production/README.md");
+    expect(readme).toMatch(/not logging\*\* until `StartLogging` succeeds/);
+    expect(readme).toMatch(/management \*\*Read\*\* events/);
+    expect(readme).toMatch(/CreateTrail.*→.*PutEventSelectors.*→.*StartLogging/);
+    expect(readme).toMatch(/Blocking dependency/);
+    expect(readme).not.toMatch(/KMS data events for the production key/);
   });
 
   it("nothing of production is shared with development by construction: every production ARN, name and CA is its own placeholder", () => {

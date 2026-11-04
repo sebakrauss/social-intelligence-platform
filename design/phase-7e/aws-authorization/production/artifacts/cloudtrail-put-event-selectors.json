@@ -1,0 +1,10 @@
+{
+  "TrailName": "<PROD_CLOUDTRAIL_TRAIL_NAME>",
+  "EventSelectors": [
+    {
+      "ReadWriteType": "All",
+      "IncludeManagementEvents": true,
+      "ExcludeManagementEventSources": []
+    }
+  ]
+}
