@@ -1,0 +1,7 @@
+{
+  "Sid": "DenyScheduleKeyDeletionToEveryone",
+  "Effect": "Deny",
+  "Principal": "*",
+  "Action": "kms:ScheduleKeyDeletion",
+  "Resource": "*"
+}

@@ -1,0 +1,166 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EnableIamUserPermissions",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "<PROD_AWS_ACCOUNT_PRINCIPAL_ARN>"
+      },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowKeyAdministrators",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "<PROD_OPERATOR_ROLE_ARN>"
+      },
+      "Action": [
+        "kms:Create*",
+        "kms:Describe*",
+        "kms:Enable*",
+        "kms:List*",
+        "kms:Put*",
+        "kms:Update*",
+        "kms:Revoke*",
+        "kms:Disable*",
+        "kms:Get*",
+        "kms:Delete*",
+        "kms:TagResource",
+        "kms:UntagResource",
+        "kms:ScheduleKeyDeletion",
+        "kms:CancelKeyDeletion",
+        "kms:RotateKeyOnDemand"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "WebSealOnly",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "<PROD_WEB_ROLE_ARN>"
+      },
+      "Action": "kms:GenerateDataKey",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "kms:EncryptionContext:app": "social-intelligence-platform",
+          "kms:EncryptionContext:purpose": "provider-credential",
+          "kms:EncryptionContext:env": "prod",
+          "kms:EncryptionContext:v": "1"
+        },
+        "StringLike": {
+          "kms:EncryptionContext:workspace_id": "????????-????-????-????-????????????",
+          "kms:EncryptionContext:credential_id": "????????-????-????-????-????????????"
+        },
+        "ForAllValues:StringEquals": {
+          "kms:EncryptionContextKeys": [
+            "app",
+            "purpose",
+            "env",
+            "v",
+            "workspace_id",
+            "credential_id"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "WorkerDecryptOnly",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "<PROD_WORKER_ROLE_ARN>"
+      },
+      "Action": "kms:Decrypt",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "kms:EncryptionContext:app": "social-intelligence-platform",
+          "kms:EncryptionContext:purpose": "provider-credential",
+          "kms:EncryptionContext:env": "prod",
+          "kms:EncryptionContext:v": "1"
+        },
+        "StringLike": {
+          "kms:EncryptionContext:workspace_id": "????????-????-????-????-????????????",
+          "kms:EncryptionContext:credential_id": "????????-????-????-????-????????????"
+        },
+        "ForAllValues:StringEquals": {
+          "kms:EncryptionContextKeys": [
+            "app",
+            "purpose",
+            "env",
+            "v",
+            "workspace_id",
+            "credential_id"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyDataKeysExceptWeb",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "kms:GenerateDataKey*",
+        "kms:Encrypt"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalArn": "<PROD_WEB_ROLE_ARN>"
+        }
+      }
+    },
+    {
+      "Sid": "DenyDecryptExceptWorker",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "kms:Decrypt",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalArn": "<PROD_WORKER_ROLE_ARN>"
+        }
+      }
+    },
+    {
+      "Sid": "DenyReEncryptAndGrantsToEveryone",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "kms:ReEncrypt*",
+        "kms:CreateGrant",
+        "kms:RetireGrant",
+        "kms:RevokeGrant"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyAdministrationToRuntimePrincipals",
+      "Effect": "Deny",
+      "Principal": "*",
+      "NotAction": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": [
+            "<PROD_WEB_ROLE_ARN>",
+            "<PROD_WORKER_ROLE_ARN>"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyScheduleKeyDeletionToEveryone",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "kms:ScheduleKeyDeletion",
+      "Resource": "*"
+    }
+  ]
+}

@@ -150,6 +150,7 @@ The production target design (`production/README.md`, `production/artifacts/`) u
 |---|---|
 | `<PROD_AWS_ACCOUNT_ID>` | Production AWS account ID (recommended: a separate account) |
 | `<PROD_AWS_PARTITION>` | AWS partition of that account |
+| `<PROD_AWS_ACCOUNT_PRINCIPAL_ARN>` | The production account principal (its root ARN): the `kms:*` delegation statement of the key policy |
 | `<PROD_KMS_REGION>` | Region of the production provider-credential key (`sa-east-1`, also the Roles Anywhere region) |
 | `<PROD_KMS_KEY_ARN>` | Full ARN of the PRODUCTION provider-credential KMS key |
 | `<PROD_KMS_KEY_ALIAS>` | Its alias |
@@ -166,4 +167,5 @@ The production target design (`production/README.md`, `production/artifacts/`) u
 | `<PROD_WORKLOAD_CA_CN>` | Subject CN of the production offline workload CA (the leaf's issuer CN) |
 | `<PROD_WORKLOAD_CA_CERTIFICATE_PEM>` | The production CA's PUBLIC certificate, PEM, entered at apply time |
 | `<PROD_CLOUDTRAIL_BUCKET_NAME>` | The production account's CloudTrail bucket |
+| `<PROD_CLOUDTRAIL_TRAIL_NAME>` | The production account's CloudTrail trail name |
 | `<PROD_VERCEL_OIDC_PROVIDER_ARN>` | The IAM OIDC provider for the production Vercel project |

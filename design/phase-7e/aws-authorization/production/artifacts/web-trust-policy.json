@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "VercelProductionWebIdentity",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "<PROD_VERCEL_OIDC_PROVIDER_ARN>"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.vercel.com/social-intelligence:aud": "sts.amazonaws.com",
+          "oidc.vercel.com/social-intelligence:sub": "owner:social-intelligence:project:social-intelligence-platform:environment:production",
+          "sts:RoleSessionName": "wrenkind-vercel-web"
+        }
+      }
+    }
+  ]
+}

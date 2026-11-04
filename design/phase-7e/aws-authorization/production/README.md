@@ -36,14 +36,29 @@ Placeholders are the only identifiers used here (vocabulary in `../README.md`).
 |---|---|---|
 | AWS account (recommended: separate) | `<PROD_AWS_ACCOUNT_ID>`, `<PROD_AWS_PARTITION>` | A shared account requires strict separation: distinct key, roles, trust anchor, profile, CA, plus an SCP denying `kms:*` on the production key to all but the two production roles. |
 | Region | `<PROD_KMS_REGION>` = `sa-east-1` | Same region as the production database (TA-Q-05 coherence; KMS is regional). |
-| CloudTrail | `<PROD_CLOUDTRAIL_BUCKET_NAME>` | Management-event trail of the production account; KMS data events for the production key. |
-| KMS key | `<PROD_KMS_KEY_ARN>`, `<PROD_KMS_KEY_ALIAS>` | Symmetric, customer-managed, automatic yearly rotation ON (transparent to Decrypt). Key policy = `artifacts/kms-*.json` statements + administration restricted to `<PROD_OPERATOR_ROLE_ARN>` (MFA). |
-| Web role | `<PROD_WEB_ROLE_NAME>`, `<PROD_WEB_ROLE_ARN>` | Trust: Vercel OIDC provider `<PROD_VERCEL_OIDC_PROVIDER_ARN>`, limited to the production project and `production` environment. Permissions: `artifacts/web-role-policy.json` (`<PROD_WEB_POLICY_NAME>`). |
+| CloudTrail | `<PROD_CLOUDTRAIL_TRAIL_NAME>`, `<PROD_CLOUDTRAIL_BUCKET_NAME>` | `artifacts/cloudtrail-trail.json`: multi-region trail, `ReadWriteType: All`, management events included, **no** `ExcludeManagementEventSources` (KMS `Decrypt` and `GenerateDataKey` are management **Read** events: a write-only trail or a `kms.amazonaws.com` exclusion loses every credential operation). KMS has no "data events"; nothing else to enable. Log-file validation on; bucket with public access blocked and retention ≥ 1 year. |
+| KMS key | `<PROD_KMS_KEY_ARN>`, `<PROD_KMS_KEY_ALIAS>` | Symmetric, customer-managed, automatic yearly rotation ON (transparent to Decrypt). Key policy = the COMPLETE document `artifacts/kms-key-policy.json` (9 statements, §4a); the `kms-*-statement.json` / `kms-deny-*.json` files are its reviewed fragments and must stay identical to it. Created with `--policy file://kms-key-policy.json` and **never** `--bypass-policy-lockout-safety-check`. |
+| OIDC provider | `<PROD_VERCEL_OIDC_PROVIDER_ARN>` | `artifacts/vercel-oidc-provider.json`: Vercel **Team** issuer `https://oidc.vercel.com/social-intelligence`, client ID (audience) exactly `sts.amazonaws.com` — the custom audience the adapter requests (`AWS_STS_OIDC_AUDIENCE`); it must be registered on the provider or every exchange fails. |
+| Web role | `<PROD_WEB_ROLE_NAME>`, `<PROD_WEB_ROLE_ARN>` | Trust: `artifacts/web-trust-policy.json` — `sts:AssumeRoleWithWebIdentity` only, `StringEquals` on `aud` = `sts.amazonaws.com`, `sub` = `owner:social-intelligence:project:social-intelligence-platform:environment:production` and `sts:RoleSessionName` = `wrenkind-vercel-web`; no Preview, Development or other project (no wildcard anywhere). Permissions: `artifacts/web-role-policy.json` (`<PROD_WEB_POLICY_NAME>`). |
 | Worker role | `<PROD_WORKER_ROLE_NAME>`, `<PROD_WORKER_ROLE_ARN>` | Trust: `artifacts/worker-trust-policy.json`. Inline guard `artifacts/worker-deny-guard.json` (`<PROD_GUARD_POLICY_NAME>`). No permissions boundary (it would block the key-policy Allow). |
 | Offline CA | `<PROD_WORKLOAD_CA_CN>`, `<PROD_WORKLOAD_CA_CERTIFICATE_PEM>` | New CA, never the DEV CA. Private key custodied outside personal machines (see §5). |
 | Trust anchor | `<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_NAME>`, `<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_ARN>` | `artifacts/roles-anywhere-trust-anchor.json`: the CA's PUBLIC certificate bundle. |
 | Profile | `<PROD_ROLES_ANYWHERE_PROFILE_NAME>` | `artifacts/roles-anywhere-profile.json`: exactly the worker role, 900 s, `acceptRoleSessionName` false, Decrypt-only session policy. |
 | Worker leaf certificate | — | P-256, CN `social-intelligence-platform-integration-prod`, issuer CN `<PROD_WORKLOAD_CA_CN>`, 90-day validity, `CA:FALSE`, key usage Digital Signature. |
+
+## 4a. The complete key policy (`artifacts/kms-key-policy.json`) — administration, recovery and use
+
+| Statement | Effect | Principal | Actions | Why |
+|---|---|---|---|---|
+| `EnableIamUserPermissions` | Allow | the account principal `<PROD_AWS_ACCOUNT_PRINCIPAL_ARN>` (the production account's root principal) | `kms:*` | The AWS "Enable IAM User Permissions" pattern: lets the account delegate through IAM policies and guarantees the key never becomes unmanageable (the root user cannot be deleted). It grants nothing to any IAM principal by itself. |
+| `AllowKeyAdministrators` | Allow | `<PROD_OPERATOR_ROLE_ARN>` | the standard administrator set (`Create*`, `Describe*`, `Enable*`, `List*`, `Put*`, `Update*`, `Revoke*`, `Disable*`, `Get*`, `Delete*`, `TagResource`, `UntagResource`, `ScheduleKeyDeletion`, `CancelKeyDeletion`, `RotateKeyOnDemand`) | Day-to-day administration (policy edits, alias, rotation, disable/enable, tags) by an SSO role with MFA — never by a laptop credential. No cryptographic use. |
+| `WebSealOnly` / `WorkerDecryptOnly` | Allow | web role / worker role | `kms:GenerateDataKey` / `kms:Decrypt` with the exact six-key `env=prod` context | Cryptographic use, one operation each. |
+| `DenyDataKeysExceptWeb`, `DenyDecryptExceptWorker` | Deny | `*` except the one role | data keys / Decrypt | Administrators and root cannot use the key cryptographically (separation of administration and use). |
+| `DenyReEncryptAndGrantsToEveryone` | Deny | `*` | `ReEncrypt*`, `CreateGrant`, `RetireGrant`, `RevokeGrant` | No grant and no re-encryption path exists until a rotation design is authorized (TA §65). **Not permanent:** `PutKeyPolicy` is not denied, so an administrator (or root) lifts it by an authorized policy change — the two-step is the control. |
+| `DenyAdministrationToRuntimePrincipals` | Deny | `*` when `aws:PrincipalArn` is a runtime role | everything but `Decrypt`, `GenerateDataKey`, `DescribeKey` | Runtime roles can never administer the key, whatever IAM policy they are later given. |
+| `DenyScheduleKeyDeletionToEveryone` | Deny | `*` | `kms:ScheduleKeyDeletion` | Deleting the key destroys every envelope it protects. Deletion needs a prior, deliberate policy change (`PutKeyPolicy` removing this statement) — a rollback is never "delete the key". `DisableKey` (reversible) stays available to administrators. |
+
+Offline evaluation (tests/architecture, deny-wins model): root → `PutKeyPolicy` ALLOW, `Decrypt` DENY, `ScheduleKeyDeletion` DENY; administrator → `PutKeyPolicy`/`DescribeKey`/`DisableKey`/`EnableKeyRotation`/`CancelKeyDeletion` ALLOW, `Decrypt`/`GenerateDataKey`/`CreateGrant`/`ReEncryptFrom`/`ScheduleKeyDeletion` DENY; web → `GenerateDataKey` under `env=prod` ALLOW, under `env=dev`, with a missing or extra key, or `Decrypt` DENY; worker → `Decrypt` under `env=prod` ALLOW, `GenerateDataKey`/`PutKeyPolicy` DENY; any other principal → DENY. This is an offline model of documented AWS semantics, not an AWS evaluation (§8).
 
 ## 4. Least privilege (what the templates grant and deny)
 
@@ -61,6 +76,12 @@ required by its own `StringEquals`/`StringLike`. Roles Anywhere trust: principal
 `sts:AssumeRole`, `sts:TagSession`, `sts:SetSourceIdentity`, conditions `aws:SourceArn` (trust anchor),
 `aws:PrincipalTag/x509Subject/CN`, `aws:PrincipalTag/x509Issuer/CN`. A reviewed template is not a deployed policy: Gate 2
 ends with a read-only recapture that compares the live policies with these artifacts.
+
+## 4b. Creation order without circular dependencies or temporary privilege
+
+1. Account, SSO (`<PROD_OPERATOR_ROLE_ARN>` as a permission-set role), Budgets, SCPs. 2. CloudTrail (`cloudtrail-trail.json`) — before any key exists. 3. OIDC provider (`vercel-oidc-provider.json`). 4. Web role with `web-trust-policy.json` and **no permissions yet**. 5. Production CA (offline, §5) → 6. trust anchor (`roles-anywhere-trust-anchor.json`). 7. Worker role with `worker-trust-policy.json` (needs the trust anchor ARN) and no permissions yet. 8. Profile (`roles-anywhere-profile.json`, needs the worker role ARN; its session policy names the key ARN, so the profile is created AFTER step 9 or updated then). 9. KMS key with the complete `kms-key-policy.json` (needs both role ARNs and the operator role ARN) + alias + rotation. 10. Attach `web-role-policy.json` to the web role and the inline `worker-deny-guard.json` to the worker role (both need the key ARN). 11. Leaf certificate (§5). 12. Read-only recapture against these artifacts. No step grants a privilege that a later step removes: roles exist without permissions until the key they are scoped to exists.
+
+Deployability: `kms-key-policy.json`, `web-trust-policy.json`, `worker-trust-policy.json`, `web-role-policy.json`, `worker-deny-guard.json`, `revoke-older-sessions.json` are complete policy documents, syntactically and semantically validated offline. `vercel-oidc-provider.json`, `roles-anywhere-profile.json`, `roles-anywhere-trust-anchor.json`, `cloudtrail-trail.json` are API field contracts. The `kms-*-statement.json` / `kms-deny-*.json` files are fragments of the key policy and are not applied on their own. **None has been validated in AWS.**
 
 ## 5. Custody of the CA and private keys
 
@@ -106,7 +127,8 @@ Everything else is covered offline (`tests/unit/platform/credential-context-prod
 
 - [ ] Operator decisions recorded: separate account vs strict separation; CA custody; region `sa-east-1`; CloudTrail retention; budget.
 - [ ] Account/OU and CloudTrail trail active before any key exists.
-- [ ] KMS key + alias; key policy = production statements; rotation on; administration limited to `<PROD_OPERATOR_ROLE_ARN>`.
+- [ ] KMS key created with the complete `kms-key-policy.json` (no lockout bypass); alias; rotation on; `get-key-policy` equals the document.
+- [ ] OIDC provider created with client ID `sts.amazonaws.com`; web role trust equals `web-trust-policy.json`.
 - [ ] Web role (OIDC trust to the production Vercel project/environment) + `web-role-policy.json`.
 - [ ] Worker role + `worker-trust-policy.json` + inline `worker-deny-guard.json`; no permissions boundary.
 - [ ] Production CA created and custodied; trust anchor from its PUBLIC certificate; profile (900 s, Decrypt-only).

@@ -40,6 +40,7 @@ const APPROVED_PLACEHOLDERS = [
   // Production vocabulary (Step H7-credential-context-code-readiness; design/phase-7e/aws-authorization/production).
   "<PROD_AWS_ACCOUNT_ID>",
   "<PROD_AWS_PARTITION>",
+  "<PROD_AWS_ACCOUNT_PRINCIPAL_ARN>",
   "<PROD_KMS_REGION>",
   "<PROD_KMS_KEY_ARN>",
   "<PROD_KMS_KEY_ALIAS>",
@@ -56,6 +57,7 @@ const APPROVED_PLACEHOLDERS = [
   "<PROD_WORKLOAD_CA_CN>",
   "<PROD_WORKLOAD_CA_CERTIFICATE_PEM>",
   "<PROD_CLOUDTRAIL_BUCKET_NAME>",
+  "<PROD_CLOUDTRAIL_TRAIL_NAME>",
   "<PROD_VERCEL_OIDC_PROVIDER_ARN>",
 ];
 /** Allowed in documents only: runbook certificate labels and the live-calibrated alert threshold. Never in a policy. */
@@ -109,7 +111,7 @@ type Conditions = Readonly<Record<string, Readonly<Record<string, ConditionValue
 interface Statement {
   readonly Sid: string;
   readonly Effect: "Allow" | "Deny";
-  readonly Principal?: "*" | { readonly AWS: string } | { readonly Service: string };
+  readonly Principal?: "*" | { readonly AWS: string } | { readonly Service: string } | { readonly Federated: string };
   readonly Action?: readonly string[];
   readonly NotAction?: readonly string[];
   readonly Resource?: readonly string[];
@@ -139,11 +141,12 @@ function conditionsOf(value: unknown, what: string): Conditions {
   return out;
 }
 
-function principalOf(value: unknown, what: string): "*" | { readonly AWS: string } | { readonly Service: string } {
+function principalOf(value: unknown, what: string): "*" | { readonly AWS: string } | { readonly Service: string } | { readonly Federated: string } {
   if (value === "*") return "*";
   if (isRecord(value) && Object.keys(value).length === 1 && typeof value["AWS"] === "string") return { AWS: value["AWS"] };
   if (isRecord(value) && Object.keys(value).length === 1 && typeof value["Service"] === "string") return { Service: value["Service"] };
-  throw new Error(`${what}: Principal must be "*", { AWS: <one ARN> } or { Service: <one service> }`);
+  if (isRecord(value) && Object.keys(value).length === 1 && typeof value["Federated"] === "string") return { Federated: value["Federated"] }; // web OIDC trust (production/)
+  throw new Error(`${what}: Principal must be "*", { AWS: <one ARN> }, { Service: <one service> } or { Federated: <one provider ARN> }`);
 }
 
 function statementOf(value: unknown, what: string): Statement {
@@ -790,9 +793,15 @@ describe("production artifacts — a SEPARATE key, roles, trust anchor, profile 
     profile: "roles-anywhere-profile.json",
     trustAnchor: "roles-anywhere-trust-anchor.json",
     revocation: "revoke-older-sessions.json",
+    // Step H7-credential-context-policy-completion
+    deleteDeny: "kms-deny-schedule-key-deletion.json",
+    keyPolicy: "kms-key-policy.json",
+    webTrust: "web-trust-policy.json",
+    oidcProvider: "vercel-oidc-provider.json",
+    cloudtrail: "cloudtrail-trail.json",
   } as const;
-  const PROD_FRAGMENTS: readonly string[] = [PROD.workerKms, PROD.webKms, PROD.dataKeyDeny, PROD.decryptDeny, PROD.reencryptDeny, PROD.adminDeny];
-  const PROD_CONTRACTS: readonly string[] = [PROD.profile, PROD.trustAnchor];
+  const PROD_FRAGMENTS: readonly string[] = [PROD.workerKms, PROD.webKms, PROD.dataKeyDeny, PROD.decryptDeny, PROD.reencryptDeny, PROD.adminDeny, PROD.deleteDeny];
+  const PROD_CONTRACTS: readonly string[] = [PROD.profile, PROD.trustAnchor, PROD.oidcProvider, PROD.cloudtrail];
   const rawProd = (file: string): string => readFileSync(path.join(REPOSITORY_ROOT, PROD_DIR, file), "utf8");
   const parsedProd = (file: string): unknown => JSON.parse(rawProd(file)) as unknown;
   const fragmentProd = (file: string): Statement => statementOf(parsedProd(file), file);
@@ -891,6 +900,139 @@ describe("production artifacts — a SEPARATE key, roles, trust anchor, profile 
     expect(session).toEqual([{ Sid: "SessionDecryptCredentialKeyOnly", Effect: "Allow", Action: ["kms:Decrypt"], Resource: [PROD_KEY] }]);
     expect(parsedProd(PROD.trustAnchor)).toEqual({ name: "<PROD_ROLES_ANYWHERE_TRUST_ANCHOR_NAME>", enabled: true, source: { sourceType: "CERTIFICATE_BUNDLE", sourceData: { x509CertificateData: "<PROD_WORKLOAD_CA_CERTIFICATE_PEM>" } } });
     expect(policyProd(PROD.revocation)).toEqual([{ Sid: "AWSRevokeOlderSessions", Effect: "Deny", Action: ["*"], Resource: ["*"], Condition: { DateLessThan: { "aws:TokenIssueTime": "<REVOCATION_CUTOFF_UTC>" } } }]);
+  });
+
+  // ── The complete key policy: administration, recovery and use (Step H7-credential-context-policy-completion) ──────
+  const ROOT_PRINCIPAL = "<PROD_AWS_ACCOUNT_PRINCIPAL_ARN>";
+  const ADMIN = "<PROD_OPERATOR_ROLE_ARN>";
+  const OTHER = "<SOME_OTHER_ROLE_IN_THE_ACCOUNT>";
+  const ADMIN_ACTIONS = ["kms:Create*", "kms:Describe*", "kms:Enable*", "kms:List*", "kms:Put*", "kms:Update*", "kms:Revoke*", "kms:Disable*", "kms:Get*", "kms:Delete*", "kms:TagResource", "kms:UntagResource", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion", "kms:RotateKeyOnDemand"];
+  const PROD_CONTEXT_REQUEST: Readonly<Record<string, string>> = { app: CREDENTIAL_CONTEXT_APP, purpose: CREDENTIAL_PURPOSES[0], env: "prod", v: CREDENTIAL_CONTEXT_VERSION, workspace_id: "5eed0000-d1a9-4000-8000-00000000d001", credential_id: "5eed0000-d1a9-4000-8000-00000000d002" };
+  interface KeyRequest { readonly principal: string; readonly action: string; readonly context?: Readonly<Record<string, string>> }
+  const glob = (pattern: string, value: string): boolean => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`).test(value);
+  const anyMatch = (patterns: readonly string[], value: string): boolean => patterns.some((pattern) => glob(pattern, value));
+  /** Offline model of the documented semantics: explicit Deny wins; otherwise an Allow in the key policy is required. Not an AWS evaluation. */
+  function keyPolicyDecides(statements: readonly Statement[], request: KeyRequest): "ALLOW" | "DENY" {
+    const contextKeys = Object.keys(request.context ?? {});
+    const matches = (statement: Statement): boolean => {
+      if (statement.Principal !== "*" && !(statement.Principal !== undefined && "AWS" in statement.Principal && statement.Principal.AWS === request.principal)) return false;
+      if (statement.Action !== undefined && !anyMatch(statement.Action, request.action)) return false;
+      if (statement.NotAction !== undefined && anyMatch(statement.NotAction, request.action)) return false;
+      for (const [operator, block] of Object.entries(statement.Condition ?? {})) {
+        for (const [key, expected] of Object.entries(block)) {
+          const values = typeof expected === "string" ? [expected] : expected;
+          if (key === "aws:PrincipalArn") {
+            const equal = values.some((value) => (operator === "ArnLike" ? glob(value, request.principal) : value === request.principal));
+            if (operator === "StringNotEquals" ? equal : !equal) return false;
+          } else if (key === "kms:EncryptionContextKeys") {
+            if (operator !== "ForAllValues:StringEquals") throw new Error(`model: ${operator} not modeled for ${key}`);
+            if (!contextKeys.every((name) => values.includes(name))) return false; // vacuous when the request has no context — hence the per-key conditions below
+          } else if (key.startsWith("kms:EncryptionContext:")) {
+            const actual = request.context?.[key.slice("kms:EncryptionContext:".length)];
+            if (actual === undefined) return false;
+            if (operator === "StringEquals" ? !values.includes(actual) : operator === "StringLike" ? !anyMatch(values, actual) : true) return false;
+          } else throw new Error(`model: condition ${operator} ${key} not modeled`);
+        }
+      }
+      return true;
+    };
+    const applicable = statements.filter(matches);
+    if (applicable.some((statement) => statement.Effect === "Deny")) return "DENY";
+    return applicable.some((statement) => statement.Effect === "Allow") ? "ALLOW" : "DENY";
+  }
+
+  it("the complete key policy: exactly the nine reviewed statements, in order; every fragment is identical to its statement", () => {
+    const full = policyProd(PROD.keyPolicy);
+    expect(full.map((statement) => statement.Sid)).toEqual(["EnableIamUserPermissions", "AllowKeyAdministrators", "WebSealOnly", "WorkerDecryptOnly", "DenyDataKeysExceptWeb", "DenyDecryptExceptWorker", "DenyReEncryptAndGrantsToEveryone", "DenyAdministrationToRuntimePrincipals", "DenyScheduleKeyDeletionToEveryone"]);
+    for (const file of PROD_FRAGMENTS) {
+      const fragmentStatement = fragmentProd(file);
+      expect(full.find((statement) => statement.Sid === fragmentStatement.Sid), file).toEqual(fragmentStatement);
+    }
+    expect(full[0]).toEqual({ Sid: "EnableIamUserPermissions", Effect: "Allow", Principal: { AWS: ROOT_PRINCIPAL }, Action: ["kms:*"], Resource: ["*"] });
+    expect(full[1]).toEqual({ Sid: "AllowKeyAdministrators", Effect: "Allow", Principal: { AWS: ADMIN }, Action: ADMIN_ACTIONS, Resource: ["*"] });
+    expect(fragmentProd(PROD.deleteDeny)).toEqual({ Sid: "DenyScheduleKeyDeletionToEveryone", Effect: "Deny", Principal: "*", Action: ["kms:ScheduleKeyDeletion"], Resource: ["*"] });
+    // Administration and cryptographic use are disjoint principals: no admin Allow names a runtime role, no runtime Allow names the admin or the account.
+    for (const statement of full.filter((entry) => entry.Effect === "Allow")) {
+      const principal = statement.Principal !== undefined && statement.Principal !== "*" && "AWS" in statement.Principal ? statement.Principal.AWS : "";
+      if (principal === ROOT_PRINCIPAL || principal === ADMIN) expect(statement.Action?.some((action) => /^kms:(Decrypt|GenerateDataKey|Encrypt|ReEncrypt)/.test(action)), statement.Sid).toBe(false);
+      else expect(statement.Action, statement.Sid).toHaveLength(1);
+    }
+  });
+
+  it("offline model: administration and recovery are possible (root and the administrator can PutKeyPolicy), use is exclusive, deletion needs a prior policy change", () => {
+    const full = policyProd(PROD.keyPolicy);
+    const decide = (principal: string, action: string, context?: Readonly<Record<string, string>>) => keyPolicyDecides(full, { principal, action, ...(context === undefined ? {} : { context }) });
+    // Recovery path: the account principal keeps PutKeyPolicy even if the administrator role is deleted; the administrator can lift any Deny by an authorized policy change.
+    expect(decide(ROOT_PRINCIPAL, "kms:PutKeyPolicy")).toBe("ALLOW");
+    expect(decide(ADMIN, "kms:PutKeyPolicy")).toBe("ALLOW");
+    for (const action of ["kms:DescribeKey", "kms:DisableKey", "kms:EnableKey", "kms:EnableKeyRotation", "kms:CancelKeyDeletion", "kms:GetKeyPolicy", "kms:CreateAlias", "kms:TagResource"]) expect(decide(ADMIN, action), action).toBe("ALLOW");
+    // Administrators and root never use the key cryptographically, never grant, never re-encrypt, never delete without a policy change.
+    for (const principal of [ROOT_PRINCIPAL, ADMIN]) {
+      for (const action of ["kms:Decrypt", "kms:GenerateDataKey", "kms:Encrypt", "kms:ReEncryptFrom", "kms:ReEncryptTo", "kms:CreateGrant", "kms:ScheduleKeyDeletion"]) expect(decide(principal, action, PROD_CONTEXT_REQUEST), `${principal} ${action}`).toBe("DENY");
+    }
+    // Web: GenerateDataKey under the exact prod context only.
+    expect(decide(PROD_WEB, "kms:GenerateDataKey", PROD_CONTEXT_REQUEST)).toBe("ALLOW");
+    expect(decide(PROD_WEB, "kms:Decrypt", PROD_CONTEXT_REQUEST)).toBe("DENY");
+    expect(decide(PROD_WEB, "kms:GenerateDataKey", { ...PROD_CONTEXT_REQUEST, env: "dev" })).toBe("DENY");
+    expect(decide(PROD_WEB, "kms:GenerateDataKey", { ...PROD_CONTEXT_REQUEST, provider: "meta" })).toBe("DENY");
+    expect(decide(PROD_WEB, "kms:GenerateDataKey", Object.fromEntries(Object.entries(PROD_CONTEXT_REQUEST).filter(([key]) => key !== "credential_id")))).toBe("DENY");
+    expect(decide(PROD_WEB, "kms:GenerateDataKey")).toBe("DENY");
+    expect(decide(PROD_WEB, "kms:GenerateDataKey", { ...PROD_CONTEXT_REQUEST, workspace_id: "not-a-uuid" })).toBe("DENY");
+    expect(decide(PROD_WEB, "kms:PutKeyPolicy")).toBe("DENY");
+    // Worker: Decrypt under the exact prod context only; never data keys, never administration.
+    expect(decide(PROD_WORKER, "kms:Decrypt", PROD_CONTEXT_REQUEST)).toBe("ALLOW");
+    expect(decide(PROD_WORKER, "kms:Decrypt", { ...PROD_CONTEXT_REQUEST, env: "dev" })).toBe("DENY");
+    expect(decide(PROD_WORKER, "kms:GenerateDataKey", PROD_CONTEXT_REQUEST)).toBe("DENY");
+    for (const action of ["kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:CreateGrant", "kms:DisableKey", "kms:DescribeKey"]) expect(decide(PROD_WORKER, action), action).toBe(action === "kms:DescribeKey" ? "DENY" : "DENY");
+    // Anyone else: nothing.
+    for (const action of ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey", "kms:PutKeyPolicy"]) expect(decide(OTHER, action, PROD_CONTEXT_REQUEST), action).toBe("DENY");
+    expect(JSON.stringify(full)).not.toMatch(/BypassPolicyLockoutSafetyCheck|<DEV_/);
+  });
+
+  it("web role trust: the Vercel Team provider, AssumeRoleWithWebIdentity only, exact aud (the adapter's custom audience), exact Production subject and session name; no wildcard", () => {
+    const [statement, ...rest] = policyProd(PROD.webTrust);
+    expect(rest).toEqual([]);
+    const audience = JSON.parse(/^export const AWS_STS_OIDC_AUDIENCE = ([^;\n]+);$/m.exec(codeOf("platform/aws/identity.ts"))?.[1] ?? '""') as string;
+    const sessionName = JSON.parse(/^export const WEB_AWS_ROLE_SESSION_NAME = ([^;\n]+);$/m.exec(codeOf("server/connections/web-identity.ts"))?.[1] ?? '""') as string;
+    expect(audience).toBe("sts.amazonaws.com");
+    const issuer = "oidc.vercel.com/social-intelligence";
+    expect(statement).toEqual({
+      Sid: "VercelProductionWebIdentity", Effect: "Allow", Principal: { Federated: "<PROD_VERCEL_OIDC_PROVIDER_ARN>" }, Action: ["sts:AssumeRoleWithWebIdentity"],
+      Condition: { StringEquals: { [`${issuer}:aud`]: audience, [`${issuer}:sub`]: "owner:social-intelligence:project:social-intelligence-platform:environment:production", "sts:RoleSessionName": sessionName } },
+    });
+    expect(rawProd(PROD.webTrust)).not.toMatch(/[*?]|StringLike|ForAnyValue|ForAllValues|IfExists|NotPrincipal|NotAction/);
+    // The provider must register the custom audience as a client ID, or no exchange succeeds.
+    expect(parsedProd(PROD.oidcProvider)).toEqual({ Url: `https://${issuer}`, ClientIDList: [audience] });
+    // Offline model: every StringEquals condition must hold exactly; only the exact Production request is admitted.
+    const admits = (request: { federated: string; action: string; aud: string; sub: string; session: string }): boolean => {
+      const conditions = (statement?.Condition?.["StringEquals"] ?? {}) as Record<string, string>;
+      const context: Record<string, string> = { [`${issuer}:aud`]: request.aud, [`${issuer}:sub`]: request.sub, "sts:RoleSessionName": request.session };
+      const principal = statement?.Principal;
+      const federated = principal !== undefined && principal !== "*" && "Federated" in principal ? principal.Federated : undefined;
+      return statement?.Effect === "Allow" && federated === request.federated && statement.Action?.[0] === request.action && Object.entries(conditions).every(([key, value]) => context[key] === value);
+    };
+    const good = { federated: "<PROD_VERCEL_OIDC_PROVIDER_ARN>", action: "sts:AssumeRoleWithWebIdentity", aud: audience, sub: "owner:social-intelligence:project:social-intelligence-platform:environment:production", session: sessionName };
+    expect(admits(good)).toBe(true);
+    for (const [label, change] of [
+      ["preview", { sub: "owner:social-intelligence:project:social-intelligence-platform:environment:preview" }],
+      ["development", { sub: "owner:social-intelligence:project:social-intelligence-platform:environment:development" }],
+      ["another project", { sub: "owner:social-intelligence:project:another-project:environment:production" }],
+      ["another team", { sub: "owner:another-team:project:social-intelligence-platform:environment:production" }],
+      ["Vercel default audience", { aud: "https://vercel.com/social-intelligence" }],
+      ["URL-form audience", { aud: "https://sts.amazonaws.com" }],
+      ["another provider", { federated: "<DEV_AWS_PARTITION>" }],
+      ["another session name", { session: "aws-sdk-js-session" }],
+      ["plain AssumeRole", { action: "sts:AssumeRole" }],
+    ] as const) expect(admits({ ...good, ...change }), label).toBe(false);
+  });
+
+  it("CloudTrail contract: multi-region, management events of BOTH kinds (KMS Decrypt/GenerateDataKey are management Read events), no excluded sources, validation on", () => {
+    expect(parsedProd(PROD.cloudtrail)).toEqual({
+      Name: "<PROD_CLOUDTRAIL_TRAIL_NAME>", S3BucketName: "<PROD_CLOUDTRAIL_BUCKET_NAME>", IsMultiRegionTrail: true, IncludeGlobalServiceEvents: true, EnableLogFileValidation: true, IsOrganizationTrail: false,
+      EventSelectors: [{ ReadWriteType: "All", IncludeManagementEvents: true, ExcludeManagementEventSources: [] }],
+    });
+    expect(doc("production/README.md")).toMatch(/management \*\*Read\*\* events/);
+    expect(doc("production/README.md")).not.toMatch(/KMS data events for the production key/);
   });
 
   it("nothing of production is shared with development by construction: every production ARN, name and CA is its own placeholder", () => {

@@ -1,0 +1,15 @@
+{
+  "Name": "<PROD_CLOUDTRAIL_TRAIL_NAME>",
+  "S3BucketName": "<PROD_CLOUDTRAIL_BUCKET_NAME>",
+  "IsMultiRegionTrail": true,
+  "IncludeGlobalServiceEvents": true,
+  "EnableLogFileValidation": true,
+  "IsOrganizationTrail": false,
+  "EventSelectors": [
+    {
+      "ReadWriteType": "All",
+      "IncludeManagementEvents": true,
+      "ExcludeManagementEventSources": []
+    }
+  ]
+}

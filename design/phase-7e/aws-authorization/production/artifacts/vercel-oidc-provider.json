@@ -1,0 +1,6 @@
+{
+  "Url": "https://oidc.vercel.com/social-intelligence",
+  "ClientIDList": [
+    "sts.amazonaws.com"
+  ]
+}
