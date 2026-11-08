@@ -102,3 +102,9 @@ Source IP is **detection only**. A Trigger.dev static IP is never part of author
 The detection mechanism (CloudWatch Logs metric filters, scheduled checks or another approved mechanism), recipients
 and the budget impact are decided by the operator gates (7E.6 established them for the bootstrap design; the Roles
 Anywhere alerts above replace H1–H12 and C1 when the trust is rewritten).
+
+## Deployed state and verification record
+
+This document stays the design. The DEV implementation (seven CloudWatch Logs metric filters, seven alarms, one SNS
+topic), its verification (gate H7-AWS-ALERT-ATTRIBUTION, `CLOSED_WITH_RESERVATIONS`) and the open reservations are
+recorded in `../../security/AWS-SECURITY-ALERTING.md`. The "H7" above is an alert id, not that gate.
