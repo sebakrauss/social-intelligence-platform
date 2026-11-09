@@ -69,6 +69,11 @@ export {
 export type {
   AnalysisTextRecord,
   ContextItemRecord,
+  ConversationActivityCursor,
+  ConversationActivityRow,
+  InteractionReadStore,
+  InteractionSummaryRow,
+  TextVersionRow,
   UnderstandingContextRecord,
   CurrentStateUpdate,
   InteractionRecord,

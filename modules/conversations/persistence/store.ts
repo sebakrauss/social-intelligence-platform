@@ -4,10 +4,10 @@
  * `anchor_observed` is always written true (the 0017 column stays; no provisional anchor exists any more). Workflow
  * transitions belong to the workflow layer and have no grant here.
  */
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { boolean, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { DatabaseTransaction } from "@/platform/db";
-import type { ConversationStore } from "../application/ports";
+import type { ConversationReadStore, ConversationStore } from "../application/ports";
 import { INGESTION_INITIAL_WORKFLOW_STATE } from "../domain/conversation";
 
 const conversations = pgSchema("conversations");
@@ -54,5 +54,20 @@ export function createPostgresConversationStore(tx: DatabaseTransaction): Conver
       return { id: existing.id, created: false };
     },
     findByAnchor,
+  };
+}
+
+const readColumns = { id: conversationRows.id, anchorInteractionId: conversationRows.anchorInteractionId, workflowState: conversationRows.workflowState, createdAt: conversationRows.createdAt };
+
+/** Step 7A: read-only; RLS (0017 member_read) admits the bound workspace's non-guest members only. */
+export function createPostgresConversationReadStore(tx: DatabaseTransaction): ConversationReadStore {
+  return {
+    async findMany(ids) {
+      if (ids.length === 0) return [];
+      return tx.select(readColumns).from(conversationRows).where(inArray(conversationRows.id, [...new Set(ids)].slice(0, 500)));
+    },
+    async get(id) {
+      return (await tx.select(readColumns).from(conversationRows).where(eq(conversationRows.id, id)).limit(1))[0];
+    },
   };
 }

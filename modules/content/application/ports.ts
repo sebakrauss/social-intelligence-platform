@@ -34,3 +34,8 @@ export interface ContentItemStore {
   /** Bookkeeping only: the latest time the content was seen (never moves backwards). */
   noteObserved(id: string, observedAt: Date): Promise<void>;
 }
+
+/** Read-only Inbox access (Step 7A): the content rows named by canonical interactions (0017 member_read decides). */
+export interface ContentItemReadStore {
+  findManyById(ids: readonly string[]): Promise<readonly ContentItemRecord[]>;
+}

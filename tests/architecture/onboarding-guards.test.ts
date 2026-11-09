@@ -55,6 +55,9 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/page.tsx",
       "app/sign-in/page.tsx",
       "app/sign-up/page.tsx",
+      // Step 7A: Workspace › Inbox, conversation list and one conversation (read only; no server action).
+      "app/workspaces/[workspaceId]/inbox/[conversationId]/page.tsx",
+      "app/workspaces/[workspaceId]/inbox/page.tsx",
       // Step 7G-F4: Workspace Settings › Connections (read + one Connect Meta server action).
       "app/workspaces/[workspaceId]/settings/connections/page.tsx",
     ]);

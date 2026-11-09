@@ -22,4 +22,4 @@ export {
   type SliceCoverageOutcome,
   type SliceReadResult,
 } from "./domain/coverage";
-export type { CoverageRecordRow, CoverageStore } from "./application/ports";
+export type { CoverageReadStore, CoverageRecordRow, CoverageScopedRow, CoverageStore } from "./application/ports";

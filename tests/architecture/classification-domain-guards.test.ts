@@ -61,6 +61,8 @@ describe("H7-A1: the classification domain is pure", () => {
       `${MODULE}/intelligence-runtime.ts`,
       `${MODULE}/persistence/index.ts`,
       `${MODULE}/persistence/intelligence-store.ts`,
+      // Step 7A: the Inbox's read-only signal reader (kinds only; no spans, no assessment, no write).
+      `${MODULE}/persistence/signal-reader.ts`,
       `${MODULE}/persistence/store.ts`,
     ]);
   });
@@ -118,7 +120,11 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
     expect(sourceFiles(["ai"])).toEqual(["ai/gateway/attempt.ts", "ai/gateway/failures.ts", "ai/gateway/gateway.ts", "ai/gateway/index.ts", "ai/gateway/provider-port.ts", "ai/gateway/registry.ts", "ai/gateway/task.ts",
       "ai/providers/anthropic/index.ts", "ai/providers/anthropic/qualified.ts", "ai/providers/anthropic/runtime-client.ts", "ai/providers/anthropic/schema-projection.ts", "ai/providers/diagnostics.ts", "ai/providers/openai/index.ts", "ai/providers/simulator/index.ts"]);
     expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations", "db"]).filter((file) => /@\/ai\/|@\/prompts\/|application\/ai\//.test(codeOf(file)))).toEqual(["jobs/intelligence.ts"]);
-    expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual(["jobs/intelligence-policy.ts", "jobs/intelligence.ts", "jobs/reconciliation.ts", "server/persistence/classification.ts"]);
+    // Step 7A adds the Inbox read side: the pipeline's read-source type, its Postgres composition and the two read queries
+    // (signal KINDS only, through the module's read port; no assessment, protection or write reaches the web).
+    expect(sourceFiles(["app", "ui", "server", "jobs", "platform", "integrations", "mutations"]).filter((file) => /@\/modules\/classification/.test(codeOf(file)))).toEqual([
+      "jobs/intelligence-policy.ts", "jobs/intelligence.ts", "jobs/reconciliation.ts", "server/persistence/classification.ts", "server/persistence/inbox.ts", "server/pipeline/unit-of-work.ts", "server/queries/inbox.ts",
+    ]);
   });
 });
 

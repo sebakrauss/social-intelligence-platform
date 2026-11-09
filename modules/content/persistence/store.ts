@@ -3,9 +3,9 @@
  * the canonical row is unique per (workspace, platform, provider content id), and its account, platform and asset are
  * fixed at creation (no UPDATE grant on them).
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { DatabaseTransaction } from "@/platform/db";
-import type { ContentItemStore } from "../application/ports";
+import type { ContentItemReadStore, ContentItemStore } from "../application/ports";
 import { contentItems } from "./tables";
 
 
@@ -59,6 +59,16 @@ export function createPostgresContentItemStore(tx: DatabaseTransaction): Content
         .update(contentItems)
         .set({ latestObservedAt: observedAt, updatedAt: observedAt })
         .where(and(eq(contentItems.id, id), sql`${contentItems.latestObservedAt} < ${observedAt}`));
+    },
+  };
+}
+
+/** Step 7A: read-only; RLS (0017 member_read) admits the bound workspace's non-guest members only. */
+export function createPostgresContentItemReadStore(tx: DatabaseTransaction): ContentItemReadStore {
+  return {
+    async findManyById(ids) {
+      if (ids.length === 0) return [];
+      return tx.select(columns).from(contentItems).where(inArray(contentItems.id, [...new Set(ids)].slice(0, 500)));
     },
   };
 }

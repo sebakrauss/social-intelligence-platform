@@ -3,7 +3,7 @@ import { createOrganizationAction, createWorkspaceAction } from "@/server/tenanc
 import { ONBOARDING_STATUS_MESSAGES, parseOnboardingStatus } from "@/server/tenancy/onboarding";
 import { currentOnboardingState } from "@/server/tenancy/runtime";
 import { t } from "@/server/i18n";
-import { workspaceConnectionsPath } from "@/server/routes";
+import { workspaceConnectionsPath, workspaceInboxPath } from "@/server/routes";
 
 /** Tenancy state is per request: never prerender it. */
 export const dynamic = "force-dynamic";
@@ -62,9 +62,16 @@ export default async function OnboardingPage({
           <ul>
             {state.workspaces.map((workspace) => {
               const connections = workspaceConnectionsPath(workspace.id);
+              const inbox = workspaceInboxPath(workspace.id);
               return (
                 <li key={workspace.id}>
                   {workspace.name} · {workspace.organizationName}
+                  {inbox === undefined ? null : (
+                    <>
+                      {" · "}
+                      <a href={inbox}>{t("inbox.link")}</a>
+                    </>
+                  )}
                   {connections === undefined ? null : (
                     <>
                       {" · "}

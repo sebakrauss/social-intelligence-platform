@@ -18,6 +18,7 @@ import type { ReconciliationRequestPort, ReconciliationStore } from "@/modules/i
 import { createPostgresTenancyStore } from "@/modules/tenancy/persistence";
 import { classifyDatabaseError, createPostgresOutbox, withUserScope, type RuntimeDatabase } from "@/platform/db";
 import type { Transaction, TransactionScope, UnitOfWork } from "@/server/pipeline";
+import { inboxReadSources } from "./inbox";
 
 export function normalizeDatabaseError(error: unknown): unknown {
   switch (classifyDatabaseError(error)) {
@@ -51,6 +52,7 @@ export function createPostgresUnitOfWork(database: RuntimeDatabase<"web">): Unit
             connections: createPostgresConnectionStore(tx),
             capability: readOnly(createPostgresCapabilityStore(tx)),
             reconciliation: requestOnly(createPostgresReconciliationStore(tx, () => undefined)),
+            inbox: inboxReadSources(tx),
           }),
         );
       } catch (error) {

@@ -263,3 +263,18 @@ export interface IntelligenceScope {
    */
   readonly aiTaskKilled: () => Promise<boolean>;
 }
+
+/** One persisted deterministic signal, as the Inbox reads it (Step 7A): the fact's kind only — no spans, no text. */
+export interface PersistedSignalRow {
+  readonly interactionId: string;
+  readonly sourceTextVersionId: string;
+  readonly kind: string;
+}
+
+/**
+ * Read-only Inbox access to persisted signals (Step 7A); runs in the caller's user-scoped transaction (0024 member_read
+ * decides). Signals are narrow facts (S19): the reader exposes nothing that could be mistaken for an assessment.
+ */
+export interface SignalReadStore {
+  forInteractions(interactionIds: readonly string[]): Promise<readonly PersistedSignalRow[]>;
+}

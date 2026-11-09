@@ -9,4 +9,4 @@ export {
   type ConversationPlanningInput,
   type ConversationWorkflowState,
 } from "./domain/conversation";
-export type { ConversationStore } from "./application/ports";
+export type { ConversationReadStore, ConversationRow, ConversationStore } from "./application/ports";

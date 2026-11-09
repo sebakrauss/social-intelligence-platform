@@ -22,7 +22,7 @@ import type {
   WorkspaceMembership,
 } from "@/modules/tenancy";
 import type { AuthUser, IdentityPort } from "@/platform/auth/port";
-import type { Transaction, TransactionScope, UnitOfWork } from "@/server/pipeline";
+import type { InboxReadSources, Transaction, TransactionScope, UnitOfWork } from "@/server/pipeline";
 
 export interface InMemoryState {
   organizations: Map<string, Organization>;
@@ -119,6 +119,16 @@ const NO_CONNECTIONS: ConnectionStore = {
   moves: { getIncoming: unavailable, findRequested: unavailable, insertIncoming: unavailable, retry: unavailable, routeRelease: unavailable, routeRetry: unavailable },
 };
 
+/** The Inbox read side is proven on the real database; a test that needs it injects its own sources. */
+const NO_INBOX: InboxReadSources = {
+  conversations: { findMany: unavailable, get: unavailable },
+  interactions: { listConversationActivity: unavailable, summaries: unavailable, thread: unavailable, textVersions: unavailable },
+  content: { findManyById: unavailable },
+  coverage: { latestPerAccountAndKind: unavailable },
+  signals: { forInteractions: unavailable },
+  accounts: unavailable,
+};
+
 export class InMemoryUnitOfWork implements UnitOfWork {
   state: InMemoryState;
   commits = 0;
@@ -127,6 +137,8 @@ export class InMemoryUnitOfWork implements UnitOfWork {
   /** Step H6-C4: the request boundary's answer for a command test (unset = not available), and what it was asked. */
   reconciliation: ReconciliationRequestPort["requestRun"] | undefined;
   reconciliationRequests: Parameters<ReconciliationRequestPort["requestRun"]>[0][] = [];
+  /** Step 7A: the Inbox read sources a test injects (unset = every read is unavailable). */
+  inbox: InboxReadSources | undefined;
 
   constructor(state: InMemoryState = emptyState()) {
     this.state = state;
@@ -164,7 +176,8 @@ export class InMemoryUnitOfWork implements UnitOfWork {
           return answer === undefined ? unavailable() : answer(input);
         },
       };
-      const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS, capability: { header: unavailable, entries: unavailable }, reconciliation });
+      const inbox: InboxReadSources = this.inbox ?? NO_INBOX;
+      const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS, capability: { header: unavailable, entries: unavailable }, reconciliation, inbox });
       this.state = draft;
       this.commits += 1;
       return result;

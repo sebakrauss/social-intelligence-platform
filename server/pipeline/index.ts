@@ -19,4 +19,4 @@ export {
   type PipelineResult,
   type PipelineStep,
 } from "./pipeline";
-export type { Transaction, TransactionScope, UnitOfWork } from "./unit-of-work";
+export type { InboxAccountRow, InboxReadSources, Transaction, TransactionScope, UnitOfWork } from "./unit-of-work";

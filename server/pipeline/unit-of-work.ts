@@ -8,10 +8,36 @@
 import type { UserId, WorkspaceId } from "@/domain/ids";
 import type { AuditLog } from "@/modules/audit";
 import type { CapabilityReadStore } from "@/modules/capability";
+import type { SignalReadStore } from "@/modules/classification";
 import type { ConnectionStore } from "@/modules/connections";
+import type { ContentItemReadStore } from "@/modules/content";
+import type { ConversationReadStore } from "@/modules/conversations";
+import type { CoverageReadStore } from "@/modules/coverage";
 import type { ReconciliationRequestPort } from "@/modules/ingestion";
+import type { InteractionReadStore } from "@/modules/interactions";
 import type { TenancyStore } from "@/modules/tenancy";
 import type { OutboxWriter } from "@/platform/outbox";
+
+/** A managed account as the Inbox names it (identifier, platform, lifecycle status only). */
+export interface InboxAccountRow {
+  readonly id: string;
+  readonly platform: string;
+  readonly status: string;
+}
+
+/**
+ * Step 7A: the Inbox's READ-ONLY sources — each owner module's read port over its own tables, plus the managed accounts
+ * of the bound workspace. RLS (member_read of 0007, 0017, 0024) admits the bound workspace's non-guest members only;
+ * nothing here writes.
+ */
+export interface InboxReadSources {
+  readonly conversations: ConversationReadStore;
+  readonly interactions: InteractionReadStore;
+  readonly content: ContentItemReadStore;
+  readonly coverage: CoverageReadStore;
+  readonly signals: SignalReadStore;
+  readonly accounts: () => Promise<readonly InboxAccountRow[]>;
+}
 
 export interface Transaction {
   readonly tenancy: TenancyStore;
@@ -25,6 +51,8 @@ export interface Transaction {
    * primitive; the boundary writes the run, its audit event and its planner row itself.
    */
   readonly reconciliation: ReconciliationRequestPort;
+  /** Step 7A: the Inbox read side (no write path). */
+  readonly inbox: InboxReadSources;
 }
 
 /**
