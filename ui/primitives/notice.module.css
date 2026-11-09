@@ -1,0 +1,65 @@
+/*
+ * Notice (UI-2; manual §2 status colors, §7 "an error is a round pill with a background; information has no color of
+ * its own"). A card-radius (8) block with an icon and text; the tone sets the soft background and the foreground.
+ * Information uses the surface and secondary grey. No tone is communicated by color alone: each has its icon.
+ */
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wk-space-12);
+  padding: var(--wk-space-12) var(--wk-space-16);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-surface);
+  color: var(--wk-text-primary);
+  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+}
+
+.icon {
+  flex: none;
+  display: inline-flex;
+  margin-top: var(--wk-space-2);
+  color: var(--wk-text-secondary);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-2);
+  min-width: 0;
+}
+
+.title {
+  font: 500 14px / calc(20 / 14) var(--wk-font-ui);
+}
+
+.success {
+  background: var(--wk-success-bg);
+  border-color: var(--wk-success-bg);
+}
+
+.success .icon,
+.success .title {
+  color: var(--wk-success-fg);
+}
+
+.warning {
+  background: var(--wk-warning-bg);
+  border-color: var(--wk-warning-bg);
+}
+
+.warning .icon,
+.warning .title {
+  color: var(--wk-warning-fg);
+}
+
+.danger {
+  background: var(--wk-danger-bg);
+  border-color: var(--wk-danger-bg);
+}
+
+.danger .icon,
+.danger .title {
+  color: var(--wk-danger-fg);
+}

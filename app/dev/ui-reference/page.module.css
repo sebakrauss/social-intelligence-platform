@@ -1,0 +1,92 @@
+/* UI reference (UI-2, development only). Layout for the component sheet; every color comes from the tokens. */
+
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--wk-space-24) var(--wk-space-16) var(--wk-space-64);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-32);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-16);
+}
+
+.logo {
+  font-size: 28px;
+}
+
+.lead {
+  color: var(--wk-text-secondary);
+  max-width: 64ch;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-12);
+  padding-top: var(--wk-space-16);
+  border-top: 1px solid var(--wk-border-default);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--wk-space-16);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-12);
+  padding: var(--wk-space-16);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-surface);
+}
+
+.caption {
+  color: var(--wk-text-secondary);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--wk-space-8);
+}
+
+.swatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  padding: var(--wk-space-8);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-sm);
+}
+
+.swatchColor {
+  height: 32px;
+  border-radius: var(--wk-radius-xs);
+  border: 1px solid var(--wk-border-strong);
+}
+
+.swatchName {
+  color: var(--wk-text-secondary);
+}

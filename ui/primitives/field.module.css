@@ -1,0 +1,80 @@
+/*
+ * Field (UI-2): label, control, help and error. Radius 6 on inputs (manual §5); 32px control on desktop, 44 on touch
+ * (§11). Error is never color alone: an icon and the message accompany the red border.
+ */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  max-width: 100%;
+}
+
+.label {
+  display: inline-flex;
+  gap: var(--wk-space-4);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  letter-spacing: 0.005em;
+  color: var(--wk-text-primary);
+}
+
+.required {
+  color: var(--wk-text-secondary);
+}
+
+.control {
+  width: 100%;
+  min-height: 32px;
+  padding: var(--wk-space-4) var(--wk-space-12);
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-raised);
+  color: var(--wk-text-primary);
+  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+  transition: border-color var(--wk-duration-fast) var(--wk-ease-standard);
+}
+
+.control::placeholder {
+  color: var(--wk-text-tertiary);
+}
+
+.control:hover:not(:disabled) {
+  border-color: var(--wk-text-tertiary);
+}
+
+.control:disabled {
+  color: var(--wk-text-disabled);
+  background: var(--wk-bg-surface);
+  border-color: var(--wk-border-default);
+  cursor: not-allowed;
+}
+
+.multiline {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.invalid {
+  border-color: var(--wk-danger-fg);
+}
+
+.help {
+  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.01em;
+  color: var(--wk-text-secondary);
+}
+
+.error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  letter-spacing: 0.005em;
+  color: var(--wk-danger-fg);
+}
+
+@media (pointer: coarse) {
+  .control {
+    min-height: 44px;
+  }
+}

@@ -1,0 +1,28 @@
+/*
+ * Text link (UI-2). The interactive blue of the manual (§2: links and keyboard focus), always underlined so the color
+ * is never the only cue. The focus ring is the global one.
+ */
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  color: var(--wk-interactive-link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+  border-radius: var(--wk-radius-xs);
+  transition: text-decoration-thickness var(--wk-duration-fast) var(--wk-ease-standard);
+}
+
+.link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.quiet {
+  color: var(--wk-text-primary);
+}
+
+.quiet:hover {
+  color: var(--wk-interactive-link);
+}

@@ -1,0 +1,46 @@
+/*
+ * Data tag (UI-2; manual §7 "square is data", §8 anatomy: 20px, radius 4, padding 6, icon 12 · gap 5,
+ * Inter 500 11.5). Border only, no fill: it describes something fixed and must not read as a state or an error.
+ * The optional positive / negative tones color border, icon and text (manual §7, sentiment) and stay border-only.
+ */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-xs);
+  font: 500 11.5px / 1 var(--wk-font-ui);
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  color: var(--wk-text-primary);
+  background: transparent;
+}
+
+.icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--wk-text-secondary);
+}
+
+.positive {
+  color: var(--wk-success-fg);
+  border-color: var(--wk-success-fg);
+}
+
+.negative {
+  color: var(--wk-danger-fg);
+  border-color: var(--wk-danger-fg);
+}
+
+.positive .icon,
+.negative .icon {
+  color: inherit;
+}
+
+.mono {
+  font: 500 11px / 1 var(--wk-font-mono);
+  letter-spacing: 0.02em;
+}

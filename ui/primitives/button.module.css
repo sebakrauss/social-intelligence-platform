@@ -1,0 +1,90 @@
+/*
+ * Button (UI-2; Manual de Marca v1.1 §5 radius 6 on buttons, §11 touch targets 32 desktop / 44 touch). The primary
+ * button is neutral (white on dark, black on light: action.primary-*), never blue. Depth comes from a surface step,
+ * not a shadow. The focus ring is the global one from base.css.
+ */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: 0 var(--wk-space-12);
+  border: 1px solid transparent;
+  border-radius: var(--wk-radius-sm);
+  font: 500 14px / calc(20 / 14) var(--wk-font-ui);
+  letter-spacing: 0;
+  color: var(--wk-text-primary);
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color var(--wk-duration-fast) var(--wk-ease-standard), border-color var(--wk-duration-fast) var(--wk-ease-standard), color var(--wk-duration-fast) var(--wk-ease-standard);
+}
+
+.small {
+  min-height: 28px;
+  padding: 0 var(--wk-space-8);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  letter-spacing: 0.005em;
+}
+
+.primary {
+  color: var(--wk-action-primary-fg);
+  background: var(--wk-action-primary-bg);
+  border-color: var(--wk-action-primary-bg);
+}
+
+.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--wk-action-primary-bg) 86%, var(--wk-bg-canvas));
+  border-color: color-mix(in srgb, var(--wk-action-primary-bg) 86%, var(--wk-bg-canvas));
+}
+
+.secondary {
+  border-color: var(--wk-border-strong);
+  background: var(--wk-bg-raised);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--wk-bg-hover);
+}
+
+.ghost {
+  background: transparent;
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--wk-bg-hover);
+}
+
+.button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  color: var(--wk-text-disabled);
+  background: transparent;
+  border-color: var(--wk-border-default);
+}
+
+.primary:disabled {
+  background: var(--wk-bg-hover);
+}
+
+.button[aria-busy="true"] {
+  cursor: progress;
+}
+
+/* Touch: 44px minimum (manual §11). */
+@media (pointer: coarse) {
+  .button {
+    min-height: 44px;
+    padding: 0 var(--wk-space-16);
+  }
+
+  .small {
+    min-height: 44px;
+  }
+}

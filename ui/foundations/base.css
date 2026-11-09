@@ -55,3 +55,19 @@ pre {
   background: var(--wk-border-strong);
   color: var(--wk-text-primary);
 }
+
+/*
+ * Screen-reader-only text (UI-2 addition to the foundations): the one global utility, for words that assistive
+ * technology must hear but the layout must not show (a platform name beside its monogram, "opens in a new tab").
+ */
+.wk-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -50,6 +50,8 @@ describe("onboarding surface (Step 7G-F3)", () => {
       // Step H6-F3: the Meta webhook receiver (public; trusted by the provider signature, never a session).
       "app/api/webhooks/meta/route.ts",
       "app/auth/callback/route.ts",
+      // UI-2: the component reference sheet; a 404 in every build that is not `next dev` (brand-guards proves it).
+      "app/dev/ui-reference/page.tsx",
       "app/layout.tsx",
       "app/onboarding/page.tsx",
       "app/page.tsx",

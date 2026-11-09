@@ -1,0 +1,70 @@
+/*
+ * Disclosure (UI-2): native <details>/<summary>. The summary is a 32px (44 on touch) row with the browser's own
+ * marker, colored with the secondary text token; the body sits under a 1px divider. Nothing is animated.
+ */
+
+.disclosure {
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-surface);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: var(--wk-space-4) var(--wk-space-12);
+  border-radius: var(--wk-radius-md);
+  cursor: pointer;
+  font: 500 14px / calc(20 / 14) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+  list-style: none;
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid var(--wk-text-secondary);
+  transition: transform var(--wk-duration-fast) var(--wk-ease-standard);
+}
+
+.disclosure[open] > .summary::before {
+  transform: rotate(90deg);
+}
+
+.summary:hover {
+  background: var(--wk-bg-hover);
+}
+
+.disclosure[open] > .summary {
+  border-bottom: 1px solid var(--wk-border-default);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.meta {
+  margin-left: auto;
+  font: 400 12px / calc(16 / 12) var(--wk-font-mono);
+  color: var(--wk-text-secondary);
+}
+
+.body {
+  padding: var(--wk-space-12);
+  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+}
+
+@media (pointer: coarse) {
+  .summary {
+    min-height: 44px;
+  }
+}

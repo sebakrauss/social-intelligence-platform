@@ -16,7 +16,7 @@ const HEX_COLOR = /#[0-9a-fA-F]{3,8}\b/;
 /** The only places a brand color may be spelled out. */
 const COLOR_SOURCES = new Set(["ui/foundations/tokens.ts", "ui/foundations/tokens.css", "tools/brand/icon-svg.ts"]);
 /** The only places the human/brand blue may be referenced. */
-const BLUE_USERS = new Set(["ui/foundations/tokens.css", "ui/foundations/tokens.ts", "ui/brand/logo.tsx", "ui/icons/icon.tsx"]);
+const BLUE_USERS = new Set(["ui/foundations/tokens.css", "ui/foundations/tokens.ts", "ui/brand/logo.tsx", "ui/icons/icon.tsx", "ui/primitives/state-pill.module.css"]);
 
 function filesUnder(root: string, accept: (file: string) => boolean): string[] {
   const out: string[] = [];
@@ -36,15 +36,15 @@ const textOf = (file: string): string => readFileSync(path.join(REPOSITORY_ROOT,
 
 describe("one source of color", () => {
   it("no hex color appears in app/, ui/ or server/ outside the token files (kit SVG and app icons excepted)", () => {
-    const files = [...sourceFiles(["app", "ui", "server"]), ...filesUnder("ui", (file) => file.endsWith(".css"))];
+    const files = [...sourceFiles(["app", "ui", "server"]), ...filesUnder("ui", (file) => file.endsWith(".css")), ...filesUnder("app", (file) => file.endsWith(".css"))];
     for (const file of files) {
       if (COLOR_SOURCES.has(file)) continue;
       expect(codeOf(file), file).not.toMatch(HEX_COLOR);
     }
   });
 
-  it("the blue is referenced only by the logo, the Persona icon and the token files", () => {
-    const files = [...sourceFiles(["app", "ui", "server"]), ...filesUnder("ui", (file) => file.endsWith(".css"))];
+  it("the blue is referenced only by the logo, the Persona icon, the human state pill and the token files", () => {
+    const files = [...sourceFiles(["app", "ui", "server"]), ...filesUnder("ui", (file) => file.endsWith(".css")), ...filesUnder("app", (file) => file.endsWith(".css"))];
     for (const file of files) {
       if (BLUE_USERS.has(file)) continue;
       expect(codeOf(file), file).not.toMatch(/--wk-human-|--wk-blue-|BLUE\[|BLUE\./);
@@ -70,16 +70,21 @@ describe("one source of color", () => {
 describe("foundations are inert", () => {
   const css = filesUnder("ui", (file) => file.endsWith(".css"));
 
-  it("ships CSS only through ui/foundations and ui/brand, as plain or module files", () => {
-    for (const file of css) expect(file).toMatch(/^ui\/(foundations|brand)\/[a-z-]+(\.module)?\.css$/);
+  it("ships CSS only through ui/foundations, ui/brand and ui/primitives, as plain or module files", () => {
+    for (const file of css) expect(file).toMatch(/^ui\/(foundations|brand|primitives)\/[a-z-]+(\.module)?\.css$/);
+    expect(filesUnder("ui/primitives", (file) => file.endsWith(".css")).every((file) => file.endsWith(".module.css"))).toBe(true);
   });
 
   it("no CSS imports anything, fetches anything or carries an expression", () => {
     for (const file of css) expect(textOf(file), file).not.toMatch(/@import|url\(|expression\(|https?:|javascript:/);
   });
 
-  it("the foundation, brand and icon components are server components", () => {
-    for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons"])) expect(codeOf(file), file).not.toMatch(/"use client"|from "react-dom"|useState|useEffect/);
+  it("the foundation, brand, icon and primitive components are server components", () => {
+    for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives"])) expect(codeOf(file), file).not.toMatch(/"use client"|from "react-dom"|useState|useEffect|onClick|onChange/);
+  });
+
+  it("primitives render native elements and never raw HTML, scripts or inline handlers", () => {
+    for (const file of sourceFiles(["ui/primitives"])) expect(codeOf(file), file).not.toMatch(/dangerouslySetInnerHTML|<script|javascript:|on[A-Z][a-z]+=\{/);
   });
 
   it("nothing in ui/ reaches tools/, server/, platform/ or the database", () => {
@@ -136,6 +141,18 @@ describe("kit assets kept in the repository", () => {
     const declarers = [...sourceFiles(["app", "ui", "server"]), ...filesUnder("ui", (file) => file.endsWith(".css"))].filter((file) => /--wk-font-(brand|ui|mono):/.test(textOf(file)));
     expect(declarers).toEqual(["ui/foundations/tokens.css"]);
     for (const file of sourceFiles(["app", "ui", "server"])) expect(codeOf(file), file).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com|next\/font\/google|@fontsource|typekit|fonts\.bunny/);
+  });
+});
+
+describe("UI reference page (development only)", () => {
+  const page = codeOf("app/dev/ui-reference/page.tsx");
+
+  it("is a 404 outside next dev, indexes nothing, reads no data and offers no action", () => {
+    expect(page).toMatch(/const IS_DEVELOPMENT = process\.env\.NODE_ENV === "development";/);
+    expect(page).toMatch(/if \(!IS_DEVELOPMENT\) notFound\(\);/);
+    expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+    expect(page).not.toMatch(/@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|<form|action=|"use server"|fetch\(/);
+    expect((page.match(/process\.env/g) ?? []).length).toBe(1);
   });
 });
 

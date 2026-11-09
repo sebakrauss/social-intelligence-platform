@@ -1,0 +1,47 @@
+/*
+ * Origin mark (UI-2; manual §7 "Origen": own monograms, no third-party logos or colors; §8 anatomy: 18px box,
+ * radius 5, Inter 600 8.5, gap 6, plus the AD mark for paid). The monogram is a bordered box in the text color; the
+ * AD mark is a filled box so organic and paid differ in shape and fill, not in color.
+ */
+
+.origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--wk-text-primary);
+  white-space: nowrap;
+}
+
+.monogram,
+.ad {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 18px;
+  min-width: 18px;
+  padding: 0 3px;
+  border: 1px solid var(--wk-border-strong);
+  border-radius: 5px;
+  font: 600 8.5px / 1 var(--wk-font-ui);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--wk-text-primary);
+  background: transparent;
+}
+
+.ad {
+  color: var(--wk-action-primary-fg);
+  background: var(--wk-action-primary-bg);
+  border-color: var(--wk-action-primary-bg);
+}
+
+.unknown {
+  color: var(--wk-text-tertiary);
+  border-style: dashed;
+}
+
+.name {
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+}

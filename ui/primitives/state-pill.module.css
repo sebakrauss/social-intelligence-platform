@@ -1,0 +1,57 @@
+/*
+ * State pill (UI-2; manual §7 "round is state", §8 anatomy: 24px, radius 999, padding 8 · 10, icon 14 · gap 6,
+ * Inter 500 12). Soft background with a dot or icon on the left. Human in blue (the only blue outside links and
+ * focus), success green, review amber, system failure red, everything else grey. Never color alone: the dot or icon
+ * and the text are always there.
+ */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--wk-radius-full);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  color: var(--wk-text-primary);
+  background: var(--wk-border-default);
+}
+
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--wk-radius-full);
+  background: currentColor;
+}
+
+.icon {
+  flex: none;
+  display: inline-flex;
+}
+
+.human {
+  color: var(--wk-human-text);
+  background: var(--wk-human-bg);
+}
+
+.human .dot {
+  background: var(--wk-human-dot);
+}
+
+.success {
+  color: var(--wk-success-fg);
+  background: var(--wk-success-bg);
+}
+
+.warning {
+  color: var(--wk-warning-fg);
+  background: var(--wk-warning-bg);
+}
+
+.danger {
+  color: var(--wk-danger-fg);
+  background: var(--wk-danger-bg);
+}
