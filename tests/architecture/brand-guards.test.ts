@@ -71,8 +71,8 @@ describe("foundations are inert", () => {
   const css = filesUnder("ui", (file) => file.endsWith(".css"));
 
   it("ships CSS only through ui/foundations, ui/brand and ui/primitives, as plain or module files", () => {
-    for (const file of css) expect(file).toMatch(/^ui\/(foundations|brand|primitives)\/[a-z-]+(\.module)?\.css$/);
-    expect(filesUnder("ui/primitives", (file) => file.endsWith(".css")).every((file) => file.endsWith(".module.css"))).toBe(true);
+    for (const file of css) expect(file).toMatch(/^ui\/(foundations|brand|primitives|shell)\/[a-z-]+(\.module)?\.css$/);
+    expect([...filesUnder("ui/primitives", (file) => file.endsWith(".css")), ...filesUnder("ui/shell", (file) => file.endsWith(".css"))].every((file) => file.endsWith(".module.css"))).toBe(true);
   });
 
   it("no CSS imports anything, fetches anything or carries an expression", () => {
@@ -80,7 +80,7 @@ describe("foundations are inert", () => {
   });
 
   it("the foundation, brand, icon and primitive components are server components", () => {
-    for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives"])) expect(codeOf(file), file).not.toMatch(/"use client"|from "react-dom"|useState|useEffect|onClick|onChange/);
+    for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell"])) expect(codeOf(file), file).not.toMatch(/"use client"|from "react-dom"|useState|useEffect|onClick|onChange/);
   });
 
   it("primitives render native elements and never raw HTML, scripts or inline handlers", () => {
@@ -144,15 +144,48 @@ describe("kit assets kept in the repository", () => {
   });
 });
 
-describe("UI reference page (development only)", () => {
-  const page = codeOf("app/dev/ui-reference/page.tsx");
-
-  it("is a 404 outside next dev, indexes nothing, reads no data and offers no action", () => {
+describe("UI reference pages (development only)", () => {
+  it.each(["app/dev/ui-reference/page.tsx", "app/dev/ui-reference/shell/page.tsx"])("%s is a 404 outside next dev, indexes nothing, reads no data and offers no action", (file) => {
+    const page = codeOf(file);
     expect(page).toMatch(/const IS_DEVELOPMENT = process\.env\.NODE_ENV === "development";/);
     expect(page).toMatch(/if \(!IS_DEVELOPMENT\) notFound\(\);/);
     expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
     expect(page).not.toMatch(/@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|<form|action=|"use server"|fetch\(/);
     expect((page.match(/process\.env/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("app shell (UI-3)", () => {
+  const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "");
+
+  it("the shell read is the onboarding's list_own command and nothing else; it reaches no persistence, provider or job code", () => {
+    const shell = codeOf("server/shell/shell.ts");
+    expect([...shell.matchAll(/tenancyOnboardingCommands\.(\w+)/g)].map((match) => match[1])).toEqual(["listOwnTenancy"]);
+    expect(shell).not.toMatch(/\binsert\s+into\b|\bupdate\s+\w+\s+set\b|sql`|\.insert\(|\.update\(|\.delete\(|tx\.|process\.env/i);
+    for (const file of ["server/shell/shell.ts", "server/shell/runtime.ts", "app/workspaces/[workspaceId]/workspace-shell.tsx", "ui/shell/app-shell.tsx"]) {
+      for (const specifier of importsOf(file)) {
+        expect(specifier, `${file} → ${specifier}`).not.toMatch(/platform\/db|modules\/[^/]+\/persistence|integrations\/|server\/connections|modules\/connections|platform\/crypto|platform\/aws|platform\/jobs|jobs\/|@trigger\.dev|@aws-sdk|^pg$|drizzle/);
+      }
+    }
+    expect(importsOf("server/shell/runtime.ts")).toContain("@/server/persistence/runtime");
+  });
+
+  it("the composition's only form is the existing sign-out action; the section layouts only delegate to it", () => {
+    const composition = codeOf("app/workspaces/[workspaceId]/workspace-shell.tsx");
+    expect((composition.match(/<form\b/g) ?? []).length).toBe(1);
+    expect(composition).toMatch(/<form action=\{signOutAction\}>/);
+    expect(composition).not.toMatch(/"use client"|"use server"|process\.env|fetch\(/);
+    for (const layout of ["app/workspaces/[workspaceId]/inbox/layout.tsx", "app/workspaces/[workspaceId]/settings/layout.tsx"]) {
+      const code = codeOf(layout);
+      expect(code).toMatch(/<WorkspaceShell workspaceId=\{workspaceId\} section="(inbox|settings)">/);
+      expect(code).not.toMatch(/<form|action=|@\/server\/|@\/platform\/|process\.env/);
+    }
+  });
+
+  it("the shell names no destination that does not exist yet", () => {
+    for (const file of ["app/workspaces/[workspaceId]/workspace-shell.tsx", "ui/shell/app-shell.tsx", "server/shell/shell.ts"]) {
+      expect(codeOf(file), file).not.toMatch(/\b(Home|Insights|Reports|TikTok|Content & Ads|Alerts)\b/);
+    }
   });
 });
 

@@ -52,6 +52,8 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/auth/callback/route.ts",
       // UI-2: the component reference sheet; a 404 in every build that is not `next dev` (brand-guards proves it).
       "app/dev/ui-reference/page.tsx",
+      // UI-3: the app-shell reference (synthetic data), also development-only.
+      "app/dev/ui-reference/shell/page.tsx",
       "app/layout.tsx",
       "app/onboarding/page.tsx",
       "app/page.tsx",
@@ -59,9 +61,13 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/sign-up/page.tsx",
       // Step 7A: Workspace › Inbox, conversation list and one conversation (read only; no server action).
       "app/workspaces/[workspaceId]/inbox/[conversationId]/page.tsx",
+      // UI-3: section layouts draw the app shell around the existing pages; the composition reads only (brand-guards).
+      "app/workspaces/[workspaceId]/inbox/layout.tsx",
       "app/workspaces/[workspaceId]/inbox/page.tsx",
       // Step 7G-F4: Workspace Settings › Connections (read + one Connect Meta server action).
       "app/workspaces/[workspaceId]/settings/connections/page.tsx",
+      "app/workspaces/[workspaceId]/settings/layout.tsx",
+      "app/workspaces/[workspaceId]/workspace-shell.tsx",
     ]);
   });
 });

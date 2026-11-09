@@ -223,6 +223,20 @@ export const MESSAGE_KEYS = [
   "inbox.facts.author_own_brand",
   "inbox.facts.watch_term_match",
   "inbox.facts.other",
+  // App shell (UI-3)
+  "shell.skip_to_content",
+  "shell.nav.label",
+  "shell.nav.inbox",
+  "shell.nav.settings",
+  "shell.section.inbox.heading",
+  "shell.section.inbox.conversations",
+  "shell.section.settings.heading",
+  "shell.section.settings.connections",
+  "shell.workspace.label",
+  "shell.workspace.switch",
+  "shell.workspace.unavailable",
+  "shell.workspace.monitor_only",
+  "shell.account.label",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

@@ -229,4 +229,18 @@ export const developmentReferenceCatalog: Catalog = {
   "inbox.facts.author_own_brand": "Written by your account",
   "inbox.facts.watch_term_match": "Matches a watch term",
   "inbox.facts.other": "Other observed fact",
+  // App shell (UI-3)
+  "shell.skip_to_content": "Skip to content",
+  "shell.nav.label": "Main navigation",
+  "shell.nav.inbox": "Inbox",
+  "shell.nav.settings": "Settings",
+  "shell.section.inbox.heading": "Inbox",
+  "shell.section.inbox.conversations": "Conversations",
+  "shell.section.settings.heading": "Settings",
+  "shell.section.settings.connections": "Connections",
+  "shell.workspace.label": "Workspace",
+  "shell.workspace.switch": "Switch workspace",
+  "shell.workspace.unavailable": "This workspace isn't available to you.",
+  "shell.workspace.monitor_only": "Monitor-only",
+  "shell.account.label": "Account",
 };

@@ -1,0 +1,580 @@
+/*
+ * App shell (UI-3; Manual de Marca v1.1 §5 product grid: rail 56 · sidebar 220 · fluid content · panel 360).
+ * Desktop: three columns (four with a detail panel). Tablet: the sidebar folds into a top strip. Phone: the rail
+ * becomes a bottom bar and the sidebar a top bar. Depth is a surface step and a 1px divider, never a shadow; the
+ * active destination is marked by weight, the primary text color and a 2px bar — never blue, which stays for a
+ * person, links and focus.
+ */
+
+.shell {
+  display: grid;
+  grid-template-columns: 56px 220px minmax(0, 1fr);
+  grid-template-rows: minmax(100dvh, auto);
+  grid-template-areas: "rail side main";
+  background: var(--wk-bg-canvas);
+  color: var(--wk-text-primary);
+}
+
+.withPanel {
+  grid-template-columns: 56px 220px minmax(0, 1fr) 360px;
+  grid-template-areas: "rail side main panel";
+}
+
+.skip {
+  position: absolute;
+  left: var(--wk-space-8);
+  top: var(--wk-space-8);
+  z-index: 3;
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-action-primary-bg);
+  color: var(--wk-action-primary-fg);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+.skip:focus {
+  transform: none;
+}
+
+/* Rail */
+.rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--wk-bg-surface);
+  border-right: 1px solid var(--wk-border-default);
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  z-index: 2;
+}
+
+.railNav {
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--wk-space-8);
+}
+
+.railList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+}
+
+.railItem {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 56px;
+  min-height: 52px;
+  padding: var(--wk-space-8) 0;
+  color: var(--wk-text-secondary);
+  text-decoration: none;
+  font: 500 10px / 1 var(--wk-font-ui);
+  letter-spacing: 0.01em;
+  border-radius: var(--wk-radius-xs);
+  transition: color var(--wk-duration-fast) var(--wk-ease-standard), background-color var(--wk-duration-fast) var(--wk-ease-standard);
+}
+
+.railItem:hover {
+  color: var(--wk-text-primary);
+  background: var(--wk-bg-hover);
+}
+
+.railItem[aria-current="page"] {
+  color: var(--wk-text-primary);
+}
+
+.railItem[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-text-primary);
+}
+
+.railBottom {
+  margin-top: auto;
+  padding-bottom: var(--wk-space-8);
+}
+
+/* Account menu: native details, opens upward above the rail */
+.account {
+  position: relative;
+}
+
+.accountSummary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 56px;
+  min-height: 52px;
+  padding: var(--wk-space-8) 0;
+  color: var(--wk-text-secondary);
+  font: 500 10px / 1 var(--wk-font-ui);
+  letter-spacing: 0.01em;
+  border-radius: var(--wk-radius-xs);
+}
+
+.accountSummary::-webkit-details-marker {
+  display: none;
+}
+
+.accountSummary:hover,
+.account[open] > .accountSummary {
+  color: var(--wk-text-primary);
+  background: var(--wk-bg-hover);
+}
+
+.accountMenu {
+  position: absolute;
+  left: 8px;
+  bottom: calc(100% + 4px);
+  z-index: 2;
+  min-width: 180px;
+  padding: var(--wk-space-8);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-lg);
+  background: var(--wk-bg-raised);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+}
+
+.accountMenuLabel {
+  padding: 0 var(--wk-space-4);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+/* Sidebar */
+.sidebar {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-20);
+  padding: var(--wk-space-16);
+  background: var(--wk-bg-surface);
+  border-right: 1px solid var(--wk-border-default);
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  overflow-y: auto;
+  min-width: 0;
+  z-index: 1;
+}
+
+.brand {
+  font-size: 30px;
+  line-height: 1;
+  padding: var(--wk-space-4) 0 var(--wk-space-4) var(--wk-space-4);
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  min-width: 0;
+}
+
+.workspaceLabel {
+  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.01em;
+  color: var(--wk-text-tertiary);
+  text-transform: uppercase;
+}
+
+.workspaceName {
+  font: 600 20px / calc(26 / 20) var(--wk-font-brand);
+  letter-spacing: -0.01em;
+  color: var(--wk-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.workspaceOrganization {
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.workspaceMode {
+  margin-top: var(--wk-space-4);
+}
+
+.switcher {
+  margin-top: var(--wk-space-4);
+}
+
+.switcherSummary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  margin-left: calc(-1 * var(--wk-space-8));
+  border-radius: var(--wk-radius-sm);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.switcherSummary::-webkit-details-marker {
+  display: none;
+}
+
+.switcherSummary:hover {
+  color: var(--wk-text-primary);
+  background: var(--wk-bg-hover);
+}
+
+.switcherList {
+  list-style: none;
+  padding: var(--wk-space-4) 0 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-2);
+}
+
+.switcherItem {
+  display: flex;
+  flex-direction: column;
+  min-height: 44px;
+  justify-content: center;
+  padding: var(--wk-space-4) var(--wk-space-8);
+  border-radius: var(--wk-radius-sm);
+  color: var(--wk-text-primary);
+  text-decoration: none;
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  overflow-wrap: anywhere;
+}
+
+a.switcherItem:hover {
+  background: var(--wk-bg-hover);
+}
+
+.switcherItemOrganization {
+  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
+  color: var(--wk-text-tertiary);
+}
+
+.sideNav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+}
+
+.sideHeading {
+  padding: 0 var(--wk-space-8);
+  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.01em;
+  color: var(--wk-text-tertiary);
+  text-transform: uppercase;
+}
+
+.sideList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-2);
+}
+
+.sideItem {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border-radius: var(--wk-radius-sm);
+  color: var(--wk-text-secondary);
+  text-decoration: none;
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.sideItem:hover {
+  color: var(--wk-text-primary);
+  background: var(--wk-bg-hover);
+}
+
+.sideItem[aria-current="page"] {
+  color: var(--wk-text-primary);
+  background: var(--wk-bg-hover);
+}
+
+/* Content and panel */
+.main {
+  grid-area: main;
+  min-width: 0;
+  padding: var(--wk-space-24) var(--wk-space-32) var(--wk-space-64);
+}
+
+.main:focus {
+  outline: none;
+}
+
+.panel {
+  grid-area: panel;
+  min-width: 0;
+  border-left: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-surface);
+  padding: var(--wk-space-24) var(--wk-space-16);
+}
+
+/* Tablet: sidebar folds into a strip above the content; the rail stays. */
+@media (max-width: 1023px) {
+  .shell,
+  .withPanel {
+    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "rail side"
+      "rail main";
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+    overflow: visible;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wk-space-16);
+    padding: var(--wk-space-12) var(--wk-space-16);
+    border-right: 0;
+    border-bottom: 1px solid var(--wk-border-default);
+  }
+
+  .brand {
+    padding: 0;
+  }
+
+  .workspace {
+    flex: 1 1 200px;
+  }
+
+  .workspaceName {
+    font: 600 16px / calc(22 / 16) var(--wk-font-brand);
+  }
+
+  .sideNav {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--wk-space-8);
+  }
+
+  .sideList {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .sideHeading {
+    padding: 0;
+  }
+
+  .panel {
+    grid-area: main;
+    border-left: 0;
+    border-top: 1px solid var(--wk-border-default);
+  }
+
+  .main {
+    padding: var(--wk-space-16) var(--wk-space-16) var(--wk-space-64);
+  }
+}
+
+/* Phone: a compact top row (wordmark · workspace · switcher), the content, and a bottom bar for the rail. */
+@media (max-width: 767px) {
+  .shell,
+  .withPanel {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "side"
+      "main"
+      "rail";
+  }
+
+  .rail {
+    position: sticky;
+    top: auto;
+    bottom: 0;
+    height: auto;
+    flex-direction: row;
+    border-right: 0;
+    border-top: 1px solid var(--wk-border-default);
+    z-index: 2;
+  }
+
+  .railNav {
+    flex: 1;
+    display: flex;
+    padding-top: 0;
+  }
+
+  .railList {
+    flex: 1;
+    flex-direction: row;
+    gap: 0;
+  }
+
+  .railList > li {
+    flex: 1;
+    display: flex;
+  }
+
+  .railItem,
+  .accountSummary {
+    width: auto;
+    flex: 1;
+    min-height: 56px;
+  }
+
+  .railItem[aria-current="page"]::before {
+    left: 10px;
+    right: 10px;
+    top: 0;
+    bottom: auto;
+    width: auto;
+    height: 2px;
+  }
+
+  .railBottom {
+    margin-top: 0;
+    padding-bottom: 0;
+    display: flex;
+    flex: 0 0 auto;
+  }
+
+  .accountSummary {
+    min-width: 64px;
+  }
+
+  .accountMenu {
+    left: auto;
+    right: 8px;
+  }
+
+  /* The sidebar becomes a single row; the workspace block dissolves into it (display: contents). */
+  .sidebar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand name switch"
+      "brand org switch"
+      "brand mode switch";
+    align-items: center;
+    column-gap: var(--wk-space-12);
+    row-gap: 0;
+    padding: var(--wk-space-8) var(--wk-space-16);
+    border-bottom: 1px solid var(--wk-border-default);
+  }
+
+  .brand {
+    grid-area: brand;
+    padding: 0;
+    font-size: 30px;
+  }
+
+  .workspace {
+    display: contents;
+  }
+
+  .workspaceLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .workspaceName {
+    grid-area: name;
+    font: 600 14px / calc(18 / 14) var(--wk-font-brand);
+    letter-spacing: -0.005em;
+  }
+
+  .workspaceOrganization {
+    grid-area: org;
+    font: 400 11px / calc(14 / 11) var(--wk-font-ui);
+  }
+
+  .workspaceMode {
+    grid-area: mode;
+    margin-top: var(--wk-space-2);
+  }
+
+  .switcher {
+    grid-area: switch;
+    position: relative;
+    margin: 0;
+    justify-self: end;
+  }
+
+  .switcherSummary {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--wk-border-strong);
+  }
+
+  .switcherText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .switcherList {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 3;
+    min-width: 240px;
+    max-width: calc(100vw - 2 * var(--wk-space-16));
+    padding: var(--wk-space-8);
+    border: 1px solid var(--wk-border-default);
+    border-radius: var(--wk-radius-lg);
+    background: var(--wk-bg-raised);
+  }
+
+  /* A contextual list whose only entry is the current section repeats the page title: not on a phone. */
+  .sideNavCurrentOnly {
+    display: none;
+  }
+
+  .sideNav:not(.sideNavCurrentOnly) {
+    grid-column: 1 / -1;
+    padding-top: var(--wk-space-8);
+  }
+
+  .main {
+    padding: var(--wk-space-16) var(--wk-space-16) var(--wk-space-32);
+  }
+}
