@@ -51,6 +51,8 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/api/webhooks/meta/route.ts",
       "app/auth/callback/route.ts",
       // UI-2: the component reference sheet; a 404 in every build that is not `next dev` (brand-guards proves it).
+      // UI-4: the Inbox reference (synthetic view models), also development-only.
+      "app/dev/ui-reference/inbox/page.tsx",
       "app/dev/ui-reference/page.tsx",
       // UI-3: the app-shell reference (synthetic data), also development-only.
       "app/dev/ui-reference/shell/page.tsx",
@@ -64,6 +66,9 @@ describe("onboarding surface (Step 7G-F3)", () => {
       // UI-3: section layouts draw the app shell around the existing pages; the composition reads only (brand-guards).
       "app/workspaces/[workspaceId]/inbox/layout.tsx",
       "app/workspaces/[workspaceId]/inbox/page.tsx",
+      // UI-4: views.tsx draws the Step 7A view models (no read, no action). No loading.tsx: a Suspense boundary would
+      // turn the sign-in redirect into a streamed 200, and the redirect stays a 307.
+      "app/workspaces/[workspaceId]/inbox/views.tsx",
       // Step 7G-F4: Workspace Settings › Connections (read + one Connect Meta server action).
       "app/workspaces/[workspaceId]/settings/connections/page.tsx",
       "app/workspaces/[workspaceId]/settings/layout.tsx",

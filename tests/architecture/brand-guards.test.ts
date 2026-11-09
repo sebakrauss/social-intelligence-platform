@@ -71,8 +71,8 @@ describe("foundations are inert", () => {
   const css = filesUnder("ui", (file) => file.endsWith(".css"));
 
   it("ships CSS only through ui/foundations, ui/brand and ui/primitives, as plain or module files", () => {
-    for (const file of css) expect(file).toMatch(/^ui\/(foundations|brand|primitives|shell)\/[a-z-]+(\.module)?\.css$/);
-    expect([...filesUnder("ui/primitives", (file) => file.endsWith(".css")), ...filesUnder("ui/shell", (file) => file.endsWith(".css"))].every((file) => file.endsWith(".module.css"))).toBe(true);
+    for (const file of css) expect(file).toMatch(/^ui\/(foundations|brand|primitives|shell|inbox)\/[a-z-]+(\.module)?\.css$/);
+    expect([...filesUnder("ui/primitives", (file) => file.endsWith(".css")), ...filesUnder("ui/shell", (file) => file.endsWith(".css")), ...filesUnder("ui/inbox", (file) => file.endsWith(".css"))].every((file) => file.endsWith(".module.css"))).toBe(true);
   });
 
   it("no CSS imports anything, fetches anything or carries an expression", () => {
@@ -80,7 +80,7 @@ describe("foundations are inert", () => {
   });
 
   it("the foundation, brand, icon and primitive components are server components", () => {
-    for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell"])) expect(codeOf(file), file).not.toMatch(/"use client"|from "react-dom"|useState|useEffect|onClick|onChange/);
+    for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell", "ui/inbox"])) expect(codeOf(file), file).not.toMatch(/"use client"|from "react-dom"|useState|useEffect|onClick|onChange/);
   });
 
   it("primitives render native elements and never raw HTML, scripts or inline handlers", () => {
@@ -145,12 +145,13 @@ describe("kit assets kept in the repository", () => {
 });
 
 describe("UI reference pages (development only)", () => {
-  it.each(["app/dev/ui-reference/page.tsx", "app/dev/ui-reference/shell/page.tsx"])("%s is a 404 outside next dev, indexes nothing, reads no data and offers no action", (file) => {
+  it.each(["app/dev/ui-reference/page.tsx", "app/dev/ui-reference/shell/page.tsx", "app/dev/ui-reference/inbox/page.tsx"])("%s is a 404 outside next dev, indexes nothing, reads no data and offers no action", (file) => {
     const page = codeOf(file);
     expect(page).toMatch(/const IS_DEVELOPMENT = process\.env\.NODE_ENV === "development";/);
     expect(page).toMatch(/if \(!IS_DEVELOPMENT\) notFound\(\);/);
     expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
-    expect(page).not.toMatch(/@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|<form|action=|"use server"|fetch\(/);
+    // The Inbox reference imports view-model TYPES from server/inbox/inbox and the app's own views; never a runtime read.
+    expect(page.replace(/import type \{[^}]*\} from "@\/server\/inbox\/inbox";/, "")).not.toMatch(/@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|<form|action=|"use server"|fetch\(|runtime/);
     expect((page.match(/process\.env/g) ?? []).length).toBe(1);
   });
 });

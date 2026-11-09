@@ -121,6 +121,8 @@ describe("DataTag", () => {
     expect(renderToStaticMarkup(h(DataTag, { mono: true, children: "12" }))).toMatch(/class="[^"]*mono/);
     expect(renderToStaticMarkup(h(DataTag, { tone: "positive", children: "p" }))).toMatch(/class="[^"]*positive/);
     expect(renderToStaticMarkup(h(DataTag, { tone: "negative", children: "n" }))).toMatch(/class="[^"]*negative/);
+    const abbreviated = renderToStaticMarkup(h(DataTag, { mono: true, srLabel: "3 comments and replies read", children: "3 read" }));
+    expect(abbreviated).toContain('<span aria-hidden="true">3 read</span><span class="wk-sr-only">3 comments and replies read</span>');
   });
 });
 

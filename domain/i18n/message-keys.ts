@@ -237,6 +237,13 @@ export const MESSAGE_KEYS = [
   "shell.workspace.unavailable",
   "shell.workspace.monitor_only",
   "shell.account.label",
+  // Inbox presentation (UI-4)
+  "inbox.detail.placeholder",
+  "inbox.skip_to_conversation",
+  "inbox.coverage.incomplete",
+  "inbox.item.read_count_short",
+  "inbox.source.mixed_short",
+  "inbox.source.unknown_short",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

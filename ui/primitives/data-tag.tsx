@@ -15,10 +15,12 @@ export interface DataTagProps {
   readonly icon?: IconName;
   readonly tone?: DataTagTone;
   readonly mono?: boolean;
+  /** The full accessible name when the visible text is an abbreviation ("3 read" → "3 comments and replies read"). */
+  readonly srLabel?: string;
   readonly className?: string;
 }
 
-export function DataTag({ children, icon, tone = "neutral", mono = false, className }: DataTagProps) {
+export function DataTag({ children, icon, tone = "neutral", mono = false, srLabel, className }: DataTagProps) {
   const classes = [styles["tag"], tone === "neutral" ? undefined : styles[tone], mono ? styles["mono"] : undefined, className].filter((value): value is string => typeof value === "string" && value !== "").join(" ");
   return (
     <span className={classes}>
@@ -27,7 +29,14 @@ export function DataTag({ children, icon, tone = "neutral", mono = false, classN
           <Icon name={icon} size={16} />
         </span>
       )}
-      {children}
+      {srLabel === undefined || srLabel === "" ? (
+        children
+      ) : (
+        <>
+          <span aria-hidden="true">{children}</span>
+          <span className="wk-sr-only">{srLabel}</span>
+        </>
+      )}
     </span>
   );
 }

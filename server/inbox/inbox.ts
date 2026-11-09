@@ -161,3 +161,15 @@ export const FACT_FALLBACK: MessageKey = "inbox.facts.other";
 export function when(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/u, "Z");
 }
+
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] as const;
+
+/**
+ * The visible form of an as-of time (UI-4): absolute, UTC, minute precision, in the data typeface — "01 NOV 2026 ·
+ * 10:10 UTC". Never relative (the page isn't live) and never in a local zone (no workspace time zone exists yet).
+ * The machine-readable instant goes in <time dateTime> through when().
+ */
+export function displayTime(date: Date): string {
+  const two = (value: number): string => String(value).padStart(2, "0");
+  return `${two(date.getUTCDate())} ${MONTHS[date.getUTCMonth()] ?? "???"} ${String(date.getUTCFullYear())} · ${two(date.getUTCHours())}:${two(date.getUTCMinutes())} UTC`;
+}

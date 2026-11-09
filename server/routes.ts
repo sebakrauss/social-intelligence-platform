@@ -20,10 +20,21 @@ export function workspaceInboxPath(workspaceId: unknown): string | undefined {
   return id === undefined ? undefined : `/workspaces/${id}/inbox`;
 }
 
-/** Workspace › Inbox › one conversation (Step 7A). Both ids must be canonical UUIDs or there is no path. */
-export function workspaceConversationPath(workspaceId: unknown, conversationId: unknown): string | undefined {
+/** The DOM id of a conversation's row in the list (UI-4): the conversation page's fragment target. */
+export function conversationRowId(conversationId: string): string {
+  return `row-${conversationId}`;
+}
+
+/**
+ * Workspace › Inbox › one conversation (Step 7A). Both ids must be canonical UUIDs or there is no path. With a list
+ * position (UI-4), the page re-renders the list at that position and the fragment brings the row into view; the
+ * cursor is the opaque, server-issued string.
+ */
+export function workspaceConversationPath(workspaceId: unknown, conversationId: unknown, cursor?: string): string | undefined {
   const id = parseWorkspaceId(workspaceId);
-  return id === undefined || !isUuid(conversationId) ? undefined : `/workspaces/${id}/inbox/${conversationId}`;
+  if (id === undefined || !isUuid(conversationId)) return undefined;
+  const position = cursor === undefined || cursor === "" ? "" : `?cursor=${encodeURIComponent(cursor)}`;
+  return `/workspaces/${id}/inbox/${conversationId}${position}#${conversationRowId(conversationId)}`;
 }
 
 /** The Inbox page with an older-conversations position (Step 7A); the cursor is an opaque, server-issued string. */
