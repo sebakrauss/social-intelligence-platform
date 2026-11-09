@@ -34,6 +34,8 @@ export const PIPELINE_WORKSPACE_ACTIONS = [
   "connected_account.unlinked",
   "connected_account.move_requested",
   "connected_account.capability_reevaluation_requested",
+  // Step 7B-1 (0027): the public-reply request (the executor's outcomes are the job runtime's, actor `system`).
+  "mutation_intent.created",
 ] as const;
 export const PIPELINE_ORGANIZATION_ACTIONS = [
   "workspace.created",
@@ -52,6 +54,13 @@ export const COMMAND_BOUND_ELSEWHERE = [
   "connected_account.move_failed",
   "connected_account.move_rejected",
   "connection.validated",
+  // Step 7B-1 (0027): the Platform Mutation Executor's outcomes — the job runtime only (actor `system`).
+  "mutation_intent.executing",
+  "mutation_intent.confirmed",
+  "mutation_intent.failed",
+  "mutation_intent.blocked",
+  "mutation_intent.outcome_unknown",
+  "mutation_intent.reconciled",
 ] as const;
 
 interface Tenant {
@@ -124,8 +133,8 @@ export function defineAuditProvenanceSuite(getTarget: () => DbTarget): void {
     actorUserId: user,
     organizationId: t.organizationId,
     workspaceId: t.workspaceId,
-    targetType: action.startsWith("connected_account.move") ? "asset_move" : action.startsWith("connected_account.") ? "connected_account" : action.startsWith("connection.") ? "connection" : action.startsWith("invitation.") ? "invitation" : action.startsWith("workspace_membership.") ? "workspace_membership" : "workspace",
-    targetId: action.startsWith("workspace_membership.") ? `${t.workspaceId}:${randomUUID()}` : action.startsWith("connected_account.") ? t.account : t.workspaceId,
+    targetType: action.startsWith("mutation_intent.") ? "mutation_intent" : action.startsWith("connected_account.move") ? "asset_move" : action.startsWith("connected_account.") ? "connected_account" : action.startsWith("connection.") ? "connection" : action.startsWith("invitation.") ? "invitation" : action.startsWith("workspace_membership.") ? "workspace_membership" : "workspace",
+    targetId: action.startsWith("workspace_membership.") ? `${t.workspaceId}:${randomUUID()}` : action.startsWith("connected_account.") ? t.account : action.startsWith("mutation_intent.") ? randomUUID() : t.workspaceId,
   });
 
   beforeAll(() => {

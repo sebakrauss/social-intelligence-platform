@@ -11,6 +11,7 @@ import { parseUserId } from "@/domain/ids";
 import type { AuditEvent, AuditLog } from "@/modules/audit";
 import type { ConnectionStore } from "@/modules/connections";
 import type { ReconciliationRequestPort } from "@/modules/ingestion";
+import type { MutationRequestSources } from "@/mutations/request";
 import type { OutboxMessage, OutboxWriter } from "@/platform/outbox";
 import type {
   Invitation,
@@ -119,6 +120,14 @@ const NO_CONNECTIONS: ConnectionStore = {
   moves: { getIncoming: unavailable, findRequested: unavailable, insertIncoming: unavailable, retry: unavailable, routeRelease: unavailable, routeRetry: unavailable },
 };
 
+/** Step 7B-1: the request side of the executor is proven on the real database; a command test injects its own. */
+const NO_MUTATIONS: MutationRequestSources = {
+  intents: { insert: unavailable, findByIdempotencyKey: unavailable, get: unavailable, lock: unavailable, transition: unavailable, appendHistory: unavailable },
+  replies: { insert: unavailable, getByIntent: unavailable, linkedIntent: unavailable, confirm: unavailable },
+  targets: { load: unavailable },
+  guards: { providerActionsEnabled: unavailable, replyCapability: unavailable, account: unavailable },
+};
+
 /** The Inbox read side is proven on the real database; a test that needs it injects its own sources. */
 const NO_INBOX: InboxReadSources = {
   conversations: { findMany: unavailable, get: unavailable },
@@ -139,6 +148,8 @@ export class InMemoryUnitOfWork implements UnitOfWork {
   reconciliationRequests: Parameters<ReconciliationRequestPort["requestRun"]>[0][] = [];
   /** Step 7A: the Inbox read sources a test injects (unset = every read is unavailable). */
   inbox: InboxReadSources | undefined;
+  /** Step 7B-1: the mutation request sources a test injects (unset = unavailable). */
+  mutations: MutationRequestSources | undefined;
 
   constructor(state: InMemoryState = emptyState()) {
     this.state = state;
@@ -177,7 +188,8 @@ export class InMemoryUnitOfWork implements UnitOfWork {
         },
       };
       const inbox: InboxReadSources = this.inbox ?? NO_INBOX;
-      const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS, capability: { header: unavailable, entries: unavailable }, reconciliation, inbox });
+      const mutations: MutationRequestSources = this.mutations ?? NO_MUTATIONS;
+      const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS, capability: { header: unavailable, entries: unavailable }, reconciliation, inbox, mutations });
       this.state = draft;
       this.commits += 1;
       return result;

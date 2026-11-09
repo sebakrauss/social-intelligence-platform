@@ -26,15 +26,17 @@ const migrationNames = (): string[] => readdirSync(MIGRATIONS).filter((f) => f.e
 const raw = (name: string): string => readFileSync(path.join(MIGRATIONS, name), "utf8");
 const code = (name: string): string => raw(name).replace(/--[^\n]*/g, " ");
 const M0020 = "0020_audit_command_provenance.sql";
+/** Step 7B-1: the second (and so far last) alteration of `append_own` — 0020's exact WITH CHECK plus the request's event. */
+const M0027 = "0027_mutation_intents.sql";
 const PRODUCTION = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "ai", "mutations", "jobs", "tools"];
 const sorted = (values: Iterable<string>): string[] => [...new Set(values)].sort();
 /** The closed vocabulary's declaration (AUDIT_ACTIONS) names every action; it is not a producer. */
 const VOCABULARY = "modules/audit/domain/audit-event.ts";
 const producers = (): string[] => sourceFiles(PRODUCTION).filter((file) => file !== VOCABULARY);
 
-/** The actions admitted by 0020's WITH CHECK, per branch (a) workspace, (b) organization, (c) user. */
-function admitted(): { workspace: string[]; organization: string[]; user: string[] } {
-  const sql = code(M0020);
+/** The actions admitted by the CURRENT `append_own` WITH CHECK (0020 as extended by 0027), per branch (a) workspace, (b) organization, (c) user. */
+function admitted(migration = M0027): { workspace: string[]; organization: string[]; user: string[] } {
+  const sql = code(migration);
   const policy = sql.slice(sql.indexOf("alter policy append_own on audit.audit_events"));
   const branches = policy.split(/\n\s*or \(\n/);
   const actions = (part: string | undefined): string[] => {
@@ -72,7 +74,13 @@ describe("H6-C3d: the members' audit append is the pipeline's, exactly", () => {
     const creators = names.filter((n) => /create policy append_own on audit\.audit_events/.test(code(n)));
     const alterers = names.filter((n) => /alter policy append_own on audit\.audit_events/.test(code(n)));
     expect(creators).toEqual(["0003_audit.sql"]);
-    expect(alterers).toEqual([M0020]);
+    expect(alterers).toEqual([M0020, M0027]);
+    // 0027 extends 0020's WITH CHECK by exactly ONE action in branch (a): every other branch is 0020's, verbatim.
+    const before = admitted(M0020);
+    const after = admitted(M0027);
+    expect(after.organization).toEqual(before.organization);
+    expect(after.user).toEqual(before.user);
+    expect(after.workspace).toEqual(sorted([...before.workspace, "mutation_intent.created"]));
     for (const n of names) {
       for (const match of code(n).matchAll(/create policy ([a-z_]+) on audit\.audit_events[^;]*?\bto ([a-z_, ]+)/g)) {
         const roles = (match[2] ?? "").split(",").map((r) => r.trim());
@@ -80,9 +88,11 @@ describe("H6-C3d: the members' audit append is the pipeline's, exactly", () => {
         expect(roles.some((r) => r === "authenticated" || r === "public" || r === "anon"), `${n}: ${match[1] ?? ""}`).toBe(false);
       }
       // No later migration may touch the narrowed policy or the audit table's policies/grants for members.
-      if (n > M0020) {
+      if (n > M0020 && n !== M0027) {
         expect(code(n), n).not.toMatch(/policy append_own|on audit\.audit_events[^;]*\bto (authenticated|public|anon)\b|grant [^;]* on audit\.audit_events/);
       }
+      // 0027 alters the narrowed policy exactly once and grants nothing on the audit table.
+      if (n === M0027) expect(code(n)).not.toMatch(/on audit\.audit_events[^;]*\bto (authenticated|public|anon)\b|grant [^;]* on audit\.audit_events/);
     }
   });
 
@@ -143,9 +153,19 @@ describe("H6-C3d: 0020's scope", () => {
     expect(sql.toLowerCase()).not.toMatch(/\b(insert into|update|delete from|truncate|alter table|create table|drop|audit_events_action_check)\b/);
   });
 
-  it("no later migration changes audit policy or vocabulary: 0021 is outbox-only; 0022 only re-creates the request boundary's one insert; 0023 and 0024 name no audit object", () => {
+  it("no later migration changes audit policy or vocabulary — except 0027 (Step 7B-1), which widens the vocabulary and extends append_own by the request's event only", () => {
     const later = migrationNames().filter((name) => name > M0020);
-    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql"]);
+    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", M0027]);
+    // 0027's audit statements are exactly: the two exact widenings (drop / add NOT VALID / validate, lint-verified) and
+    // the one ALTER POLICY; no audit row is read or written, no audit grant or other audit policy changes.
+    const m27 = code(M0027).toLowerCase().replace(/--[^\n]*/g, " ");
+    const auditStatements = m27.split(";").map((s) => s.trim()).filter((s) => /audit\.|audit_events/.test(s));
+    expect(auditStatements.map((s) => s.split(/\s+/).slice(0, 4).join(" "))).toEqual([
+      "alter table audit.audit_events drop", "alter table audit.audit_events add", "alter table audit.audit_events validate",
+      "alter table audit.audit_events drop", "alter table audit.audit_events add", "alter table audit.audit_events validate",
+      "alter policy append_own on",
+    ]);
+    expect(m27).not.toMatch(/insert into audit|update audit|delete from audit|grant [^;]* on audit|create policy [a-z_]+ on audit/);
     expect(code("0026_ai_call_intents.sql").toLowerCase()).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
     expect(code("0025_intelligence_persistence.sql").toLowerCase()).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
     expect(code("0023_resumable_signal_progress.sql").toLowerCase()).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);

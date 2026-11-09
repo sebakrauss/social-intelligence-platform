@@ -21,8 +21,11 @@ import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/targe
 import { cleanupWorld } from "../support/world";
 import { sqlState } from "./helpers";
 
-/** The topics the action pipeline appends AS the member (0004 `append_own`): derived from the web producers, pinned by guard. */
-export const MEMBER_TOPICS = ["connections.discover_assets", "capability.evaluate_account"] as const;
+/**
+ * The topics the action pipeline appends AS the member (0004 `append_own`): derived from the web producers, pinned by guard.
+ * Step 7B-1: the public-reply request appends the executor's `mutations.execute_intent` (its consumer re-checks everything).
+ */
+export const MEMBER_TOPICS = ["connections.discover_assets", "capability.evaluate_account", "mutations.execute_intent"] as const;
 /** Every other tenant task of the registry: produced only by a reviewed definer (0010, 0019) or the job runtime. */
 export const INTERNAL_TOPICS = [
   "connections.move.release_source",

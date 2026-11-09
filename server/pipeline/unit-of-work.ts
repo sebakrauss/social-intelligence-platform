@@ -16,6 +16,7 @@ import type { CoverageReadStore } from "@/modules/coverage";
 import type { ReconciliationRequestPort } from "@/modules/ingestion";
 import type { InteractionReadStore } from "@/modules/interactions";
 import type { TenancyStore } from "@/modules/tenancy";
+import type { MutationRequestSources } from "@/mutations/request";
 import type { OutboxWriter } from "@/platform/outbox";
 
 /** A managed account as the Inbox names it (identifier, platform, lifecycle status only). */
@@ -53,6 +54,11 @@ export interface Transaction {
   readonly reconciliation: ReconciliationRequestPort;
   /** Step 7A: the Inbox read side (no write path). */
   readonly inbox: InboxReadSources;
+  /**
+   * Step 7B-1: the executor's REQUEST side only (TA §26.3 left column): the member's PENDING intent, its reply text
+   * and the request-time guards. The web holds no execution path, no transition and no provider mutation port.
+   */
+  readonly mutations: MutationRequestSources;
 }
 
 /**

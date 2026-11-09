@@ -127,6 +127,8 @@ describe("task registry", () => {
       "ingestion.process_signals",
       // Step H7-D1d: the one INTELLIGENCE task.
       "classification.understand_ai",
+      // Step 7B-1: the Platform Mutation Executor (INTEGRATION, lane 1, single attempt).
+      "mutations.execute_intent",
     ];
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS, ...tenantTasks].sort());
     expect(PRODUCTION_TASKS.tasks.filter((task) => task.scope === "system").map((task) => task.name).sort()).toEqual([...SYSTEM_TASKS].sort());

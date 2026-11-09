@@ -35,7 +35,9 @@ const MAIN_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_swe
   "ingestion.route_provider_events", "ingestion.purge_provider_events",
   // Step H6-F4: the tenant half of webhook signals (DB planning only; never a credential).
   "ingestion.process_signals"];
-const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account", "ingestion.reconcile_slice", "ingestion.confirm_interaction"];
+const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account", "ingestion.reconcile_slice", "ingestion.confirm_interaction",
+  // Step 7B-1: the Platform Mutation Executor — the only task that obtains a provider MUTATION port.
+  "mutations.execute_intent"];
 /** Step 7E.7-B / 7G-H5.5-P5-B / 7G-H5.5-P12-B2: integration-only, operator-triggered diagnostics — discovered by the integration config, never registered. */
 const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic", "integration.read_content_validation", "integration.read_interactions_validation"];
 /** Step H7-D1d: the one task that holds the model credential. */
@@ -64,7 +66,7 @@ async function reachable(dir: string): Promise<string[]> {
 }
 
 describe("registry: every task declares its plane explicitly", () => {
-  it("exactly the main, the four integration and the one intelligence task, by explicit declaration", () => {
+  it("exactly the main, the five integration and the one intelligence task, by explicit declaration", () => {
     expect(PRODUCTION_TASKS.tasks.map((task) => task.name).sort()).toEqual([...MAIN_TASKS, ...INTEGRATION_TASKS, ...INTELLIGENCE_TASKS].sort());
     for (const task of PRODUCTION_TASKS.tasks) expect(task.executionPlane, task.name).toBe(INTEGRATION_TASKS.includes(task.name) ? "integration" : INTELLIGENCE_TASKS.includes(task.name) ? "intelligence" : "main");
     expect(Object.entries(PRODUCTION_TASKS.unboundRoutes).filter(([, plane]) => plane === "integration").map(([name]) => name).sort()).toEqual([...INTEGRATION_TASKS].sort());
@@ -105,9 +107,10 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     expect(main).toEqual([...MAIN_TASKS].sort());
     expect(integration).toEqual([...INTEGRATION_TASKS, ...INTEGRATION_DIAGNOSTIC_TASKS].sort());
     const intelligence = discoveredTasks(PLANE_DIRS.intelligence);
-    // The release unit expects exactly the discovered counts: INTEGRATION 7, INTELLIGENCE 1, MAIN 11 (H6-C3 adds 1 + 2;
-    // H6-E 1 + 0; H6-F3 0 + 2; H6-F4 0 + 1 — ingestion.process_signals; H7-D1e: the intelligence plane, 1).
-    expect(integration).toHaveLength(7);
+    // The release unit expects exactly the discovered counts: INTEGRATION 8, INTELLIGENCE 1, MAIN 11 (H6-C3 adds 1 + 2;
+    // H6-E 1 + 0; H6-F3 0 + 2; H6-F4 0 + 1 — ingestion.process_signals; H7-D1e: the intelligence plane, 1; 7B-1: the
+    // executor, 1 + 0).
+    expect(integration).toHaveLength(8);
     expect(intelligence).toHaveLength(1);
     expect(main).toHaveLength(11);
     expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", integration.length], ["intelligence", intelligence.length], ["main", main.length]]);

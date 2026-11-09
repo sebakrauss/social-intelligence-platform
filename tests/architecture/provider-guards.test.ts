@@ -528,9 +528,11 @@ describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cu
     const users = findReferences(sourceFiles(PRODUCTION), [/\bPageCursor\b|\bparsePageCursor\b|META_PAGE_CURSOR_PREFIX|MetaGraphCursor/]).map(([file]) => file);
     // Step H6-C3: the ONE consumer outside the adapters is the reconciliation slice, which only re-validates its stored
     // cursor (parsePageCursor) before handing it back to the same port; it never names a Meta cursor or logs anything.
-    expect(users.filter((file) => !file.startsWith("integrations/providers/"))).toEqual(["modules/ingestion/application/reconciliation.ts"]);
-    const reconciliation = codeOf("modules/ingestion/application/reconciliation.ts");
-    expect(reconciliation).not.toMatch(/META_PAGE_CURSOR_PREFIX|MetaGraphCursor|\blogger\b|console\.|\.log\(/);
+    // Step 7B-1: the executor's reconciliation lookup pages ONE listing in memory (never persisted, never logged).
+    expect(users.filter((file) => !file.startsWith("integrations/providers/"))).toEqual(["modules/ingestion/application/reconciliation.ts", "mutations/executor/reply-lookup.ts"]);
+    for (const consumer of ["modules/ingestion/application/reconciliation.ts", "mutations/executor/reply-lookup.ts"]) {
+      expect(codeOf(consumer), consumer).not.toMatch(/META_PAGE_CURSOR_PREFIX|MetaGraphCursor|\blogger\b|console\.|\.log\(/);
+    }
     // Step H6-C2 (0018, TL-approved): the ONLY persisted cursor is ingestion.reconciliation_slices.cursor — short-lived
     // slice state for the job runtime, never a watermark, never readable by members. No other db code names one.
     expect(findReferences(sourceFiles(["db"]), [/cursor/i])).toEqual([["db/schema/classification.ts", "cursor"]]);

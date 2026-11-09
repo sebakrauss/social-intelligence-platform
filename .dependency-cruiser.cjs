@@ -230,9 +230,16 @@ module.exports = {
     {
       name: "mutation-execution-jobs-only",
       severity: "error",
-      comment: "Executor internals are bundled only into the job runtime; others use mutations/request.",
-      from: { pathNot: "^(mutations|jobs|tests)/" },
-      to: { path: "^mutations/", pathNot: "^mutations/request/" },
+      comment: "Executor internals are bundled only into the job runtime; others use mutations/request (and server/ composes its persistence for the request side).",
+      from: { pathNot: "^(mutations|jobs|tests)/|^server/persistence/mutation-execution\\.ts$" },
+      to: { path: "^mutations/", pathNot: "^mutations/(request|persistence)/" },
+    },
+    {
+      name: "mutation-persistence-composed-by-server",
+      severity: "error",
+      comment: "The executor's own persistence is wired only by the composition roots (server/persistence for the request side, jobs/ for execution).",
+      from: { pathNot: "^(mutations|jobs|tests|server/persistence)/" },
+      to: { path: "^mutations/persistence/" },
     },
     {
       name: "mutation-request-callers",
@@ -335,7 +342,7 @@ module.exports = {
       name: "db-drivers-only-in-persistence",
       severity: "error",
       comment: "Database clients only in platform/db, db/, module persistence, and the database tooling/tests.",
-      from: { pathNot: "^(platform/db|db|modules/[^/]+/persistence|tools/db|tests/db)/" },
+      from: { pathNot: "^(platform/db|db|modules/[^/]+/persistence|mutations/persistence|tools/db|tests/db)/" },
       to: { path: npmPackage(DB_DRIVERS) },
     },
     {
@@ -438,8 +445,8 @@ module.exports = {
     {
       name: "plane-opener-integration-only",
       severity: "error",
-      comment: "Only the integration plane's task directory reaches the CredentialOpener composition (jobs/connections.ts): the main plane — outbox relay and sweepers, the Move saga, the reconciliation planner and consumer (jobs/reconciliation.ts), every shared jobs module — never does. Step H6-C3: jobs/reconciliation-slice.ts is the integration plane's reconciliation slice. Step H6-E: jobs/confirm-interaction.ts is its stored-interaction confirmation.",
-      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|integration-kms-diagnostic\\.ts$|integration-read-content-validation\\.ts$|integration-read-interactions-validation\\.ts$|reconciliation-slice\\.ts$|confirm-interaction\\.ts$|trigger/integration/)" },
+      comment: "Only the integration plane's task directory reaches the CredentialOpener composition (jobs/connections.ts): the main plane — outbox relay and sweepers, the Move saga, the reconciliation planner and consumer (jobs/reconciliation.ts), every shared jobs module — never does. Step H6-C3: jobs/reconciliation-slice.ts is the integration plane's reconciliation slice. Step H6-E: jobs/confirm-interaction.ts is its stored-interaction confirmation. Step 7B-1: jobs/mutations.ts is its Platform Mutation Executor.",
+      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|integration-kms-diagnostic\\.ts$|integration-read-content-validation\\.ts$|integration-read-interactions-validation\\.ts$|reconciliation-slice\\.ts$|confirm-interaction\\.ts$|mutations\\.ts$|trigger/integration/)" },
       to: { path: "^jobs/connections\\.ts$" },
     },
     {

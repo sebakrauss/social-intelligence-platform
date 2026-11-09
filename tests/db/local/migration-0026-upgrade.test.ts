@@ -15,6 +15,8 @@ import { attemptColumns, insertIntent, insertRow } from "../suites/intelligence-
 
 const THROUGH = "0025_intelligence_persistence.sql";
 const M0026 = "0026_ai_call_intents.sql";
+/** Step 7B-1: the executor's persistence follows; a pure expansion that names no classification object. */
+const M0027 = "0027_mutation_intents.sql";
 const OLD = { organizationId: randomUUID(), workspaceId: randomUUID(), user: randomUUID(), interaction: randomUUID(), version: randomUUID(), deterministic: randomUUID(), intelligence: randomUUID() };
 
 describe("0025 → 0026 upgrade with 0025-era data", () => {
@@ -43,11 +45,11 @@ describe("0025 → 0026 upgrade with 0025-era data", () => {
     await cluster.stop();
   });
 
-  it("starts at exactly 25 applied migrations, 0026 pending", async () => {
+  it("starts at exactly 25 applied migrations, 0026 (and 0027) pending", async () => {
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied.at(-1)).toBe(THROUGH);
     expect(status.applied).toHaveLength(25);
-    expect(status.pending.map((m) => m.name)).toEqual([M0026]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0026, M0027]);
   });
 
   it("seeds the 0025-era shapes", async () => {
@@ -91,13 +93,13 @@ describe("0025 → 0026 upgrade with 0025-era data", () => {
     } finally {
       await client.query("rollback");
     }
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0026]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0026, M0027]);
   });
 
-  it("2 · 4. the real runner applies exactly 0026; every 0025-era row keeps its values; a re-run is a no-op", async () => {
+  it("2 · 4. the real runner applies exactly 0026 (then 0027); every 0025-era row keeps its values; a re-run is a no-op", async () => {
     const before = await snapshot();
-    expect(await applyMigrations(client, readMigrations())).toEqual([M0026]);
-    expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(26);
+    expect(await applyMigrations(client, readMigrations())).toEqual([M0026, M0027]);
+    expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(27);
     expect(await snapshot()).toEqual(before);
     expect(await rows("select count(*)::int as n from classification.ai_call_intents")).toEqual([{ n: 0 }]);
     expect(await applyMigrations(client, readMigrations())).toEqual([]);

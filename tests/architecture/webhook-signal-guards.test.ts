@@ -103,12 +103,12 @@ describe("H6-F1 → H6-F3: scope", () => {
     }
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
     // H6-F2 added exactly 0022; H6-F3 and H6-F4 none; H6-F4b exactly 0023 (persistence only); H7-A2 0024 (classification);
-    // H7-D1c 0025 (intelligence persistence); H7-D1e2b 0026 (provider-call intents).
-    expect(migrations.slice(-5)).toEqual(["0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql"]);
+    // H7-D1c 0025 (intelligence persistence); H7-D1e2b 0026 (provider-call intents); 7B-1 0027 (mutation intents, no webhook object).
+    expect(migrations.slice(-6)).toEqual(["0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql"]);
     expect(PRODUCTION_TASKS.tasks.map((t) => t.name).filter((n) => /webhook|provider_event|process_signal|purge/.test(n)).sort()).toEqual(["ingestion.process_signals", "ingestion.purge_provider_events", "ingestion.route_provider_events"]);
     // H6-F4: the tenant consumer of the routed rows.
     expect(PRODUCTION_TASKS.tenant("ingestion.process_signals")?.executionPlane).toBe("main");
-    expect(RELEASE_PLANES.map((p) => [p.plane, p.expectedTasks])).toEqual([["integration", 7], ["intelligence", 1], ["main", 11]]);
+    expect(RELEASE_PLANES.map((p) => [p.plane, p.expectedTasks])).toEqual([["integration", 8], ["intelligence", 1], ["main", 11]]);
     // The verify token: read by the web receiver's config only; refused by both jobs planes.
     expect(sourceFiles(PRODUCTION).filter((file) => /PROVIDER_META_WEBHOOK_VERIFY_TOKEN/.test(codeOf(file))).sort()).toEqual(["jobs/plane-environment.ts", "server/webhooks/meta-config.ts"]);
     // The App Secret still reaches only the web's Meta app configuration; no jobs-plane code names the webhook secret.

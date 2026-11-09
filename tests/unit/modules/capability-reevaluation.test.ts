@@ -448,7 +448,11 @@ describe("vocabulary alignment with migration 0014", () => {
     expect(listed("connected_account_events_reason_code_check")).toEqual([...ACCOUNT_EVENT_REASONS].sort());
     // 0014's list is the vocabulary as of 0014: everything but what later migrations added (0018, Step H6-C2). The live
     // CHECK's equality with AUDIT_ACTIONS is the DB suites' (connections, reconciliation-persistence).
-    const addedLater = ["connected_account.reconciliation_requested"];
+    const addedLater = [
+      "connected_account.reconciliation_requested",
+      // Step 7B-1 (0027): the Platform Mutation Executor's request and outcomes.
+      "mutation_intent.created", "mutation_intent.executing", "mutation_intent.confirmed", "mutation_intent.failed", "mutation_intent.blocked", "mutation_intent.outcome_unknown", "mutation_intent.reconciled",
+    ];
     expect(listed("audit_events_action_check")).toEqual([...AUDIT_ACTIONS].filter((action) => !addedLater.includes(action)).sort());
   });
 });

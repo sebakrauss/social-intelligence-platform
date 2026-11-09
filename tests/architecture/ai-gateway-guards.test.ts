@@ -118,11 +118,11 @@ describe("H7-C: data minimization and the untrusted boundary", () => {
 });
 
 describe("H7-C: nothing is wired to a runtime", () => {
-  it("H7-D1e: exactly one AI task, on the intelligence plane, discovered by its own config only; the release unit is INTEGRATION 7 / INTELLIGENCE 1 / MAIN 11", () => {
+  it("H7-D1e: exactly one AI task, on the intelligence plane, discovered by its own config only; the release unit is INTEGRATION 8 / INTELLIGENCE 1 / MAIN 11", () => {
     const planes = PRODUCTION_TASKS.tasks.reduce<Record<string, number>>((acc, task) => ({ ...acc, [task.executionPlane]: (acc[task.executionPlane] ?? 0) + 1 }), {});
-    // Registry tenant/system tasks per plane (the deployed INTEGRATION 7 = these 4 + 3 diagnostic/validation tasks).
-    expect(planes).toEqual({ main: 11, integration: 4, intelligence: 1 });
-    expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", 7], ["intelligence", 1], ["main", 11]]);
+    // Registry tenant/system tasks per plane (the deployed INTEGRATION 8 = these 5 + 3 diagnostic/validation tasks; 7B-1 adds the executor).
+    expect(planes).toEqual({ main: 11, integration: 5, intelligence: 1 });
+    expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", 8], ["intelligence", 1], ["main", 11]]);
     expect(PRODUCTION_TASKS.tasks.filter((task) => /understand|intelligence|^ai\./.test(task.name)).map((task) => [task.name, task.executionPlane])).toEqual([["classification.understand_ai", "intelligence"]]);
     const configs = ["trigger.config.ts", "trigger.integration.config.ts", "trigger.managed-test.config.ts"];
     expect(readdirSync(REPOSITORY_ROOT).filter((name) => /^trigger\..*config\.ts$/.test(name)).sort()).toEqual([...configs, "trigger.intelligence.config.ts"].sort());
@@ -143,9 +143,10 @@ describe("H7-C: nothing is wired to a runtime", () => {
     expect(strip(codeOf("modules/classification/application/understand-deterministic.ts"))).not.toMatch(/understandInteraction|gateway|AI_PENDING|intelligence/i);
   });
 
-  it("no migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents)", () => {
+  it("no AI migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents); 0027 is Step 7B-1's mutation intents and names no AI object", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toBe("0026_ai_call_intents.sql");
+    expect(migrations.at(-1)).toBe("0027_mutation_intents.sql");
+    expect(strip(codeOf("db/migrations/0027_mutation_intents.sql"))).not.toMatch(/classification\.|ai_|understand/);
   });
 });
 

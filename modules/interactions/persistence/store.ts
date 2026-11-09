@@ -266,3 +266,48 @@ export function createPostgresInteractionTextReader(tx: DatabaseTransaction): In
     },
   };
 }
+
+/**
+ * Step 7B-1: what the executor's request and guard chain need to know about ONE canonical interaction of the bound
+ * workspace (identifiers, provenance and the last observed state — never its text). Issued only here, from the
+ * canonical row; a row of another workspace (or an unknown id) is simply absent.
+ */
+export interface InteractionReplyTargetRow {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly connectedAccountId: string;
+  readonly platform: string;
+  readonly providerInteractionId: string;
+  readonly providerAssetId: string;
+  readonly providerContentId: string;
+  readonly contentItemId: string;
+  readonly parentProviderInteractionId: string | null;
+  readonly kind: "comment" | "reply" | "unknown";
+  readonly observed: boolean;
+  readonly visibility: string | null;
+  readonly availability: string | null;
+  readonly authorRole: string | null;
+}
+
+export async function loadInteractionReplyTarget(tx: DatabaseTransaction, workspaceId: string, interactionId: string): Promise<InteractionReplyTargetRow | undefined> {
+  const row = (await tx.select().from(interactionRows).where(and(eq(interactionRows.workspaceId, workspaceId), eq(interactionRows.id, interactionId))).limit(1))[0];
+  if (row === undefined) return undefined;
+  const parent = row.parentInteractionId === null ? null : (await tx.select({ providerInteractionId: interactionRows.providerInteractionId }).from(interactionRows)
+    .where(and(eq(interactionRows.workspaceId, workspaceId), eq(interactionRows.id, row.parentInteractionId))).limit(1))[0];
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    connectedAccountId: row.connectedAccountId,
+    platform: row.platform,
+    providerInteractionId: row.providerInteractionId,
+    providerAssetId: row.providerAssetId,
+    providerContentId: row.providerContentId,
+    contentItemId: row.contentItemId,
+    parentProviderInteractionId: parent === undefined || parent === null ? null : parent.providerInteractionId,
+    kind: isInteractionKind(row.kind) ? row.kind : "unknown",
+    observed: row.observed,
+    visibility: row.currentVisibility,
+    availability: row.currentAvailability,
+    authorRole: row.authorRole,
+  };
+}

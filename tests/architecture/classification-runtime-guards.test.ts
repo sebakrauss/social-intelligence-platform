@@ -72,9 +72,10 @@ describe("H7-B: MAIN only, no new task or topic", () => {
     expect(users(/classification\.understand_ai/).sort()).toEqual(USERS_OF_UNDERSTAND_AI);
   });
 
-  it("no migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents)", () => {
+  it("no classification migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents); 0027 is Step 7B-1's", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toBe("0026_ai_call_intents.sql");
+    expect(migrations.at(-1)).toBe("0027_mutation_intents.sql");
+    expect(codeOf("db/migrations/0027_mutation_intents.sql").replace(/--[^\n]*/g, " ")).not.toMatch(/classification\./);
   });
 });
 

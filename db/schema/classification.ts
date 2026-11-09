@@ -45,6 +45,8 @@ export const APPLICATION_SCHEMAS = [
   "content", "interactions", "conversations", "coverage", "ingestion",
   // Step H7-A2 (0024): classification persistence (TA §7.1 owner).
   "classification",
+  // Step 7B-1 (0027): the Platform Mutation Executor's intents, history and outbound replies (TA §26; owner: mutations/).
+  "mutations",
 ] as const;
 
 /** Schema USAGE per runtime role (no other role may hold USAGE or CREATE). */
@@ -67,6 +69,7 @@ export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number],
   coverage: ["authenticated", "app_worker"],
   ingestion: ["authenticated", "app_worker"],
   classification: ["authenticated", "app_worker"],
+  mutations: ["authenticated", "app_worker"],
 };
 
 export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>> = {
@@ -92,6 +95,9 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
       "manage_bound_workspace UPDATE authenticated",
       "member_read SELECT authenticated",
       "owner_read SELECT app_owner",
+      // Step 7B-1 (0027): the owner may LOCK a workspace row FOR SHARE (WITH CHECK false: never change it) so the
+      // executor's mode re-check serializes with mode changes.
+      "owner_share_lock UPDATE app_owner",
       "worker_bound_workspace SELECT app_worker",
     ],
     privileges: { authenticated: ["INSERT", "SELECT", "UPDATE(mode)"], app_worker: ["SELECT"] },
@@ -503,6 +509,23 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     policies: ["member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
     privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT"] },
   },
+  // Step 7B-1 (0027): the executor's tables. Members (replying roles) insert ONLY a PENDING intent, its first history row
+  // and its reply text; every later status, history row and confirmation is the bound worker's. Guests read nothing.
+  "mutations.mutation_intents": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "member_request INSERT authenticated", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["SELECT", "UPDATE(attempt)", "UPDATE(outcome_code)", "UPDATE(run_reference)", "UPDATE(status)", "UPDATE(updated_at)"] },
+  },
+  "mutations.mutation_intent_history": {
+    class: "append_only_history",
+    policies: ["member_append INSERT authenticated", "member_read SELECT authenticated", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
+  "mutations.outbound_replies": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "member_request INSERT authenticated", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["SELECT", "UPDATE(confirmed_at)", "UPDATE(provider_reply_id)"] },
+  },
   "t26_fixture.conversations": {
     class: "test_fixture",
     policies: ["user_content ALL authenticated", "worker_bound ALL app_worker"],
@@ -597,4 +620,8 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   // Step H7-D1c (0025): the atomic budget reservation (bound workspace, invoker) and the never-decreasing counter guard.
   "classification.reserve_ai_budget(text,date,integer,bigint,integer,bigint)": ["app_worker"],
   "classification.ai_budget_reservation_guard()": [],
+  // Step 7B-1 (0027): the executor's live initiator re-check — the user's CURRENT role in the BOUND workspace, worker only.
+  "mutations.initiator_workspace_role(uuid)": ["app_worker"],
+  "mutations.workspace_mode_for_execution()": ["app_worker"],
+  "mutations.intent_mode_guard()": [],
 };

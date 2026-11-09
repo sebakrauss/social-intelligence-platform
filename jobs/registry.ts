@@ -18,6 +18,9 @@
  *                                          provenance (the only removal authority besides a verified signal), lane 3
  *   classification.understand_ai (H7-D1d)  INTELLIGENCE: one understanding request — the model call through the AI
  *                                          gateway, then the shadow ledger / result / assessments, lane 2 (ids only)
+ *   mutations.execute_intent (7B-1)        INTEGRATION: the Platform Mutation Executor — ONE provider mutation call for
+ *                                          ONE persisted intent (EXECUTING committed first, R6), lane 1 (user mutations),
+ *                                          single attempt: a lost run is reconciled, never re-sent
  *
  * Execution planes (Step 7E.4B.3), declared explicitly per task — drawn by credential-opening capability, never by
  * name, directory or scope: the two tasks that open a provider credential run in the integration plane; the relay, the
@@ -143,6 +146,17 @@ export const PRODUCTION_TASKS = defineTaskRegistry([
   // Step H7-D1d: the ONLY intelligence-plane task (0025 outbox_intelligence_routing: plane intelligence ⇔ this topic).
   // Single attempt: the runtime owns transport retries as new dispatch generations, the gateway owns the one re-ask, and
   // MAIN's stale-request recovery owns a crashed or lost run — no Trigger.dev retry multiplies them. Serial per request.
+  // Step 7B-1: the executor. Single attempt — one provider call per intent, ever; an interrupted run leaves the intent
+  // EXECUTING and reconciliation (not a retry) decides. Serial per account (a provider-account concurrency budget, TA §45).
+  {
+    name: "mutations.execute_intent",
+    scope: "workspace",
+    executionPlane: "integration",
+    lane: 1,
+    retry: RETRY_POLICIES.singleAttempt,
+    concurrency: { by: "subject", subject: "connected_account_id" },
+    subjects: ["connected_account_id", "mutation_intent_id"],
+  },
   {
     name: "classification.understand_ai",
     scope: "workspace",

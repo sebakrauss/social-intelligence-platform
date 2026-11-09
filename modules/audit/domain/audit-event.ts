@@ -63,6 +63,15 @@ export const AUDIT_ACTIONS = [
   "connected_account.capability_reevaluation_requested",
   // Step H6-C2 (migration 0018; TL D-C1): the explicit Owner/Admin request that starts a reconciliation (written by H6-C4)
   "connected_account.reconciliation_requested",
+  // Step 7B-1 (migration 0027): the Platform Mutation Executor — the member's request (pipeline) and the job runtime's
+  // outcomes (actor `system`)
+  "mutation_intent.created",
+  "mutation_intent.executing",
+  "mutation_intent.confirmed",
+  "mutation_intent.failed",
+  "mutation_intent.blocked",
+  "mutation_intent.outcome_unknown",
+  "mutation_intent.reconciled",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -75,6 +84,7 @@ export const AUDIT_TARGET_TYPES = [
   "connection",
   "connected_account",
   "asset_move",
+  "mutation_intent",
 ] as const;
 export type AuditTargetType = (typeof AUDIT_TARGET_TYPES)[number];
 

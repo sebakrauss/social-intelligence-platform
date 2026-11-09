@@ -28,20 +28,21 @@ const migrations = readMigrations();
 const sorted = <T extends string>(values: readonly T[]): T[] => [...values].sort();
 
 describe("H6-E1: the member-topic inventory is derived from the web producers", () => {
-  it("every production outbox append is one of five call sites; the web-reachable ones use exactly the two member builders", () => {
+  it("every production outbox append is one of six call sites; the web-reachable ones use exactly the three member builders", () => {
     const appenders = sourceFiles(PRODUCTION).filter((file) => /outbox\.append\(/.test(codeOf(file)));
     expect(appenders.sort()).toEqual([
       "modules/connections/application/capability-reevaluation.ts", // web command (requestCapabilityReevaluation)
       "modules/connections/application/moves.ts", // job runtime (the activation step of a Move)
       "server/commands/connected-accounts.ts", // web commands (link, save_selection)
       "server/commands/connections.ts", // web command (completed exchange)
+      "server/commands/mutations.ts", // web command (Step 7B-1: the public-reply request → the executor's intent)
       "server/pipeline/pipeline.ts", // the pipeline's pass-through wrapper (records what a command appends)
     ]);
-    for (const file of ["server/commands/connected-accounts.ts", "server/commands/connections.ts", "modules/connections/application/capability-reevaluation.ts"]) {
+    for (const file of ["server/commands/connected-accounts.ts", "server/commands/connections.ts", "server/commands/mutations.ts", "modules/connections/application/capability-reevaluation.ts"]) {
       const code = codeOf(file);
       const calls = [...code.matchAll(/outbox\.append\(\s*(\w+)\(/g)].map((m) => m[1]);
       expect(calls.length, file).toBe([...code.matchAll(/outbox\.append\(/g)].length);
-      for (const builder of calls) expect(["discoveryRequest", "capabilityEvaluationRequest"], file).toContain(builder);
+      for (const builder of calls) expect(["discoveryRequest", "capabilityEvaluationRequest", "executeIntentDispatch"], file).toContain(builder);
     }
     expect(codeOf("server/pipeline/pipeline.ts")).toMatch(/return base\.outbox\.append\(message\);/);
     // The other appends (appendOutboxOnce) are the job runtime's: capability requests, ingestion events, slices, confirmations.
@@ -50,12 +51,14 @@ describe("H6-E1: the member-topic inventory is derived from the web producers", 
     expect(once.sort()).toEqual(["modules/classification/persistence/intelligence-store.ts", "modules/ingestion/persistence/reconciliation-store.ts", "modules/ingestion/persistence/store.ts", "server/persistence/connections.ts"]);
   });
 
-  it("the two builders' topics are exactly MEMBER_TOPICS, and both are registered tenant tasks", () => {
+  it("the three builders' topics are exactly MEMBER_TOPICS, and all are registered tenant tasks", () => {
     expect(codeOf("modules/connections/application/discovery.ts")).toMatch(/export const DISCOVER_ASSETS_TASK = "connections\.discover_assets";/);
     expect(codeOf("modules/connections/domain/model.ts")).toMatch(/export const CAPABILITY_EVALUATION_TOPIC = "capability\.evaluate_account";/);
+    expect(codeOf("mutations/request/index.ts")).toMatch(/export const EXECUTE_INTENT_TASK = "mutations\.execute_intent";/);
     expect(codeOf("modules/connections/application/discovery.ts")).toMatch(/topic: DISCOVER_ASSETS_TASK,/);
     expect(codeOf("modules/connections/application/capability-request.ts")).toMatch(/topic: CAPABILITY_EVALUATION_TOPIC,/);
-    expect(sorted(MEMBER_TOPICS)).toEqual(["capability.evaluate_account", "connections.discover_assets"]);
+    expect(codeOf("mutations/request/index.ts")).toMatch(/topic: EXECUTE_INTENT_TASK,/);
+    expect(sorted(MEMBER_TOPICS)).toEqual(["capability.evaluate_account", "connections.discover_assets", "mutations.execute_intent"]);
     for (const topic of MEMBER_TOPICS) expect(PRODUCTION_TASKS.tenant(topic)?.scope, topic).toBe("workspace");
   });
 });
