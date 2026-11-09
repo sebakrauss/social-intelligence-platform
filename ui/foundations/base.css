@@ -1,0 +1,57 @@
+/*
+ * Base element styles (UI-1), all through the semantic tokens of ./tokens.css. These apply to every surface and are
+ * the only global styling of elements: canvas and text colors, the product text style on the body, links in the
+ * interactive blue, and the keyboard focus ring the manual requires (§11). No component styling lives here.
+ */
+
+html {
+  background: var(--wk-bg-canvas);
+  color: var(--wk-text-primary);
+}
+
+body {
+  background: var(--wk-bg-canvas);
+  color: var(--wk-text-primary);
+  font-family: var(--wk-font-ui);
+  font-size: 14px;
+  line-height: calc(20 / 14);
+}
+
+a {
+  color: var(--wk-interactive-link);
+  text-underline-offset: 0.15em;
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--wk-font-mono);
+}
+
+/*
+ * Focus ring (manual §11): 2px blue, 2px apart, on everything interactive. The ring is drawn on :focus so every
+ * browser shows it; where :focus-visible is supported the second rule hides it for pointer focus only (a browser that
+ * does not know :focus-visible drops that rule as invalid and keeps the ring on every focus). The ring is never
+ * removed without a visible replacement.
+ */
+:focus {
+  outline: var(--wk-focus-width) solid var(--wk-interactive-focus);
+  outline-offset: var(--wk-focus-offset);
+  border-radius: var(--wk-radius-xs);
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+:focus-visible {
+  outline: var(--wk-focus-width) solid var(--wk-interactive-focus);
+  outline-offset: var(--wk-focus-offset);
+  border-radius: var(--wk-radius-xs);
+}
+
+::selection {
+  background: var(--wk-border-strong);
+  color: var(--wk-text-primary);
+}

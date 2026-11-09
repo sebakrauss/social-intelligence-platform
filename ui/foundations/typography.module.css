@@ -1,0 +1,68 @@
+/*
+ * Type scale (UI-1; Manual de Marca v1.1 §4). One class per approved style; sizes and line heights are the manual's
+ * pixel pairs (line height expressed as the exact ratio), letter spacing its percentages. Outfit speaks (17px and
+ * up), Inter works (product text), JetBrains Mono measures (data). Families come through the token variables, which
+ * resolve to the self-hosted files loaded by ../fonts.ts.
+ */
+
+.displayXl {
+  font: 600 72px / calc(72 / 72) var(--wk-font-brand);
+  letter-spacing: -0.035em;
+}
+
+.displayL {
+  font: 600 56px / calc(58 / 56) var(--wk-font-brand);
+  letter-spacing: -0.03em;
+}
+
+.heading1 {
+  font: 600 40px / calc(44 / 40) var(--wk-font-brand);
+  letter-spacing: -0.025em;
+}
+
+.heading2 {
+  font: 600 28px / calc(34 / 28) var(--wk-font-brand);
+  letter-spacing: -0.02em;
+}
+
+.heading3 {
+  font: 600 20px / calc(26 / 20) var(--wk-font-brand);
+  letter-spacing: -0.01em;
+}
+
+.bodyL {
+  font: 400 17px / calc(27 / 17) var(--wk-font-brand);
+  letter-spacing: 0;
+}
+
+.uiBody {
+  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+  letter-spacing: 0;
+}
+
+.uiBodyS {
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  letter-spacing: 0;
+}
+
+.uiLabel {
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  letter-spacing: 0.005em;
+}
+
+.uiCaption {
+  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.01em;
+}
+
+.mono {
+  font: 400 12px / calc(16 / 12) var(--wk-font-mono);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.monoS {
+  font: 500 11px / calc(16 / 11) var(--wk-font-mono);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}

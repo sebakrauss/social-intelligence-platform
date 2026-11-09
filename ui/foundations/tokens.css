@@ -1,0 +1,173 @@
+/*
+ * Wrenkind design tokens (UI-1) — written from ./tokens.ts, which is the typed source of truth; the unit test
+ * tests/unit/ui/tokens.test.ts fails when the two drift. Manual de Marca v1.1 §2, §3, §5, §10.
+ *
+ * Themes: the semantic tokens take the light values by default and the dark values when the system prefers dark
+ * (no override yet). A future persisted override sets data-theme="dark" | "light" on <html>; both selectors below are
+ * already honored, and an explicit "light" wins over the system preference.
+ *
+ * Rule: nothing outside this file names a brand color. Components use the semantic variables only, and the blue
+ * (--wk-human-*, --wk-blue-*) is reserved for where a person decides, the logo's dot, links and keyboard focus.
+ */
+
+:root {
+  /* Primitives · neutral (pure greys, no tint) */
+  --wk-neutral-0: #FFFFFF;
+  --wk-neutral-25: #FAFAFA;
+  --wk-neutral-50: #F4F4F4;
+  --wk-neutral-100: #EBEBEB;
+  --wk-neutral-200: #DADADA;
+  --wk-neutral-300: #C2C2C2;
+  --wk-neutral-400: #A3A3A3;
+  --wk-neutral-500: #7A7A7A;
+  --wk-neutral-600: #5C5C5C;
+  --wk-neutral-700: #3D3D3D;
+  --wk-neutral-800: #262626;
+  --wk-neutral-850: #1A1A1A;
+  --wk-neutral-900: #141414;
+  --wk-neutral-950: #0A0A0A;
+
+  /* Primitives · blue (Electric Blue at 500) */
+  --wk-blue-50: #EEF3FF;
+  --wk-blue-100: #DCE6FF;
+  --wk-blue-200: #B9CCFF;
+  --wk-blue-300: #8FA9FF;
+  --wk-blue-400: #6E95FF;
+  --wk-blue-500: #4C7DFF;
+  --wk-blue-600: #2F5BDB;
+  --wk-blue-700: #2446B0;
+  --wk-blue-800: #1D3784;
+  --wk-blue-900: #172A5E;
+
+  /* Space · 4px base */
+  --wk-space-0: 0px;
+  --wk-space-2: 2px;
+  --wk-space-4: 4px;
+  --wk-space-8: 8px;
+  --wk-space-12: 12px;
+  --wk-space-16: 16px;
+  --wk-space-20: 20px;
+  --wk-space-24: 24px;
+  --wk-space-32: 32px;
+  --wk-space-40: 40px;
+  --wk-space-48: 48px;
+  --wk-space-64: 64px;
+  --wk-space-80: 80px;
+  --wk-space-96: 96px;
+  --wk-space-128: 128px;
+
+  /* Radius · 6 buttons and inputs, 8 cards, 12 panels, 4 data tags, full pills */
+  --wk-radius-xs: 4px;
+  --wk-radius-sm: 6px;
+  --wk-radius-md: 8px;
+  --wk-radius-lg: 12px;
+  --wk-radius-xl: 16px;
+  --wk-radius-full: 999px;
+
+  /* Motion */
+  --wk-duration-instant: 80ms;
+  --wk-duration-fast: 120ms;
+  --wk-duration-base: 200ms;
+  --wk-duration-slow: 320ms;
+  --wk-duration-reveal: 640ms;
+  --wk-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --wk-ease-enter: cubic-bezier(0, 0, 0, 1);
+  --wk-ease-exit: cubic-bezier(0.3, 0, 1, 1);
+
+  /*
+   * Type families. The public tokens read the private variables that next/font/local (./fonts.ts) sets on <html>
+   * (--wk-font-…-file: the bundled file's generated family plus its size-adjusted fallback). Where the loader is
+   * absent they resolve to the brand family name, then the system stack. Nothing else declares these tokens.
+   */
+  --wk-font-brand: var(--wk-font-brand-file, "Outfit"), system-ui, sans-serif;
+  --wk-font-ui: var(--wk-font-ui-file, "Inter"), system-ui, sans-serif;
+  --wk-font-mono: var(--wk-font-mono-file, "JetBrains Mono"), ui-monospace, monospace;
+
+  /* Focus ring (manual §11): 2px of blue with 2px of separation on every interactive element. */
+  --wk-focus-width: 2px;
+  --wk-focus-offset: 2px;
+
+  /* Semantic · light (default) */
+  color-scheme: light;
+  --wk-bg-canvas: #FFFFFF;
+  --wk-bg-surface: #FAFAFA;
+  --wk-bg-raised: #FFFFFF;
+  --wk-bg-hover: #F4F4F4;
+  --wk-border-default: #EBEBEB;
+  --wk-border-strong: #DADADA;
+  --wk-text-primary: #0A0A0A;
+  --wk-text-secondary: #5C5C5C;
+  --wk-text-tertiary: #6E6E6E;
+  --wk-text-disabled: #C2C2C2;
+  --wk-action-primary-bg: #0A0A0A;
+  --wk-action-primary-fg: #FAFAFA;
+  --wk-human-dot: #4C7DFF;
+  --wk-human-text: #2F5BDB;
+  --wk-human-bg: #EEF3FF;
+  --wk-interactive-link: #2F5BDB;
+  --wk-interactive-focus: #2F5BDB;
+  --wk-success-fg: #16794A;
+  --wk-success-bg: #E8F6EE;
+  --wk-warning-fg: #8A5A00;
+  --wk-warning-bg: #FFF4DE;
+  --wk-danger-fg: #C42F24;
+  --wk-danger-bg: #FDECEA;
+}
+
+/* Semantic · dark, by system preference unless the page says light */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --wk-bg-canvas: #0A0A0A;
+    --wk-bg-surface: #141414;
+    --wk-bg-raised: #1A1A1A;
+    --wk-bg-hover: #1F1F1F;
+    --wk-border-default: #262626;
+    --wk-border-strong: #3D3D3D;
+    --wk-text-primary: #FAFAFA;
+    --wk-text-secondary: #A3A3A3;
+    --wk-text-tertiary: #8A8A8A;
+    --wk-text-disabled: #5C5C5C;
+    --wk-action-primary-bg: #FAFAFA;
+    --wk-action-primary-fg: #0A0A0A;
+    --wk-human-dot: #4C7DFF;
+    --wk-human-text: #8FA9FF;
+    --wk-human-bg: #141C33;
+    --wk-interactive-link: #8FA9FF;
+    --wk-interactive-focus: #6E95FF;
+    --wk-success-fg: #3CCB7F;
+    --wk-success-bg: #0F2A1C;
+    --wk-warning-fg: #F5A524;
+    --wk-warning-bg: #2E2208;
+    --wk-danger-fg: #FF6B5E;
+    --wk-danger-bg: #331412;
+  }
+}
+
+/* Semantic · dark, by explicit override */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --wk-bg-canvas: #0A0A0A;
+  --wk-bg-surface: #141414;
+  --wk-bg-raised: #1A1A1A;
+  --wk-bg-hover: #1F1F1F;
+  --wk-border-default: #262626;
+  --wk-border-strong: #3D3D3D;
+  --wk-text-primary: #FAFAFA;
+  --wk-text-secondary: #A3A3A3;
+  --wk-text-tertiary: #8A8A8A;
+  --wk-text-disabled: #5C5C5C;
+  --wk-action-primary-bg: #FAFAFA;
+  --wk-action-primary-fg: #0A0A0A;
+  --wk-human-dot: #4C7DFF;
+  --wk-human-text: #8FA9FF;
+  --wk-human-bg: #141C33;
+  --wk-interactive-link: #8FA9FF;
+  --wk-interactive-focus: #6E95FF;
+  --wk-success-fg: #3CCB7F;
+  --wk-success-bg: #0F2A1C;
+  --wk-warning-fg: #F5A524;
+  --wk-warning-bg: #2E2208;
+  --wk-danger-fg: #FF6B5E;
+  --wk-danger-bg: #331412;
+}

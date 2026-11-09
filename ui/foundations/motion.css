@@ -1,0 +1,17 @@
+/*
+ * Reduced motion (UI-1; manual §10 and §11). When the system asks for less movement, nothing spins or pulses: every
+ * animation stops at its final frame and every transition becomes a fast fade. The animated brand SVGs carry their
+ * own prefers-reduced-motion rule; this covers everything else.
+ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: var(--wk-duration-fast) !important;
+    transition-property: opacity, color, background-color, border-color !important;
+    scroll-behavior: auto !important;
+  }
+}

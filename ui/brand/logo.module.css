@@ -1,0 +1,16 @@
+/*
+ * Logo (UI-1). The SVG scales with the height its parent gives it; width follows the viewBox ratio. In the `color`
+ * tone the wordmark and the Loop take the primary text color of the current theme, which is exactly the manual's
+ * "color on dark" (#FAFAFA) and "color on light" (#0A0A0A) versions; the dot is always Electric Blue.
+ */
+
+.logo {
+  display: inline-block;
+  height: 1em;
+  width: auto;
+  vertical-align: middle;
+}
+
+.color {
+  color: var(--wk-text-primary);
+}
