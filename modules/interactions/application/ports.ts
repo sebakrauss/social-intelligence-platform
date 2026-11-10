@@ -216,6 +216,8 @@ export interface ConversationActivityCursor {
 /** One interaction as the Inbox reads it: the canonical row with its author label and CURRENT text (if observed). */
 export interface InteractionSummaryRow {
   readonly id: string;
+  /** The provider's identity of the row (Step 7B-3: an outbound reply confirmed with this id is the same message). */
+  readonly providerInteractionId: string;
   readonly conversationId: string | null;
   readonly contentItemId: string;
   readonly connectedAccountId: string;

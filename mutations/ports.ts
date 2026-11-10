@@ -62,9 +62,26 @@ export interface IntentStore {
   appendHistory(workspaceId: string, intentId: string, transition: IntentTransition & { readonly id: string; readonly correlationId: string; readonly at: Date }): Promise<void>;
 }
 
+/** One outbound reply with its intent's state, as the Inbox shows it (Step 7B-3): text, closed state, identifiers. */
+export interface OutboundReplyView {
+  readonly intentId: string;
+  readonly parentInteractionId: string;
+  readonly connectedAccountId: string;
+  readonly platform: string;
+  readonly text: string;
+  readonly status: IntentStatus;
+  readonly outcomeCode: IntentOutcomeCode | null;
+  readonly providerReplyId: string | null;
+  readonly initiatorUserId: string;
+  readonly createdAt: Date;
+  readonly confirmedAt: Date | null;
+}
+
 export interface OutboundReplyStore {
   insert(reply: OutboundReply): Promise<void>;
   getByIntent(workspaceId: string, intentId: string): Promise<OutboundReply | undefined>;
+  /** The outbound replies under the given parents with their intents' states, oldest first (bounded by the caller). */
+  listForParents(workspaceId: string, parentInteractionIds: readonly string[]): Promise<readonly OutboundReplyView[]>;
   /** The intent already linked to this provider reply in the workspace, if any (0027: one link per reply identity). */
   linkedIntent(workspaceId: string, platform: string, providerReplyId: string): Promise<string | undefined>;
   confirm(workspaceId: string, intentId: string, providerReplyId: string | null, confirmedAt: Date): Promise<void>;

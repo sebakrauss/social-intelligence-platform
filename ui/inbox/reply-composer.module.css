@@ -1,0 +1,121 @@
+/* Contextual reply composer (Step 7B-3). Editorial, inside the thread: a quiet affordance, then a bordered block that
+   keeps the comment above it in view. Data stays square (textarea, preview); state is a pill elsewhere. */
+
+.slot {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: var(--wk-space-4);
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  margin-top: var(--wk-space-8);
+  padding: var(--wk-space-12) var(--wk-space-16);
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-surface);
+}
+
+.heading {
+  margin: 0;
+  font: 500 14px / calc(20 / 14) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+}
+
+.destination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-4) var(--wk-space-12);
+  margin: 0;
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.as {
+  color: var(--wk-text-primary);
+}
+
+.note {
+  margin: 0;
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+}
+
+.label {
+  margin: 0;
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--wk-text-secondary);
+}
+
+.textarea {
+  width: 100%;
+  min-height: 96px;
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-canvas);
+  color: var(--wk-text-primary);
+  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+  resize: vertical;
+}
+
+.textarea[aria-invalid="true"] {
+  border-color: var(--wk-danger-fg);
+}
+
+.help,
+.count {
+  margin: 0;
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.countOver {
+  margin: 0;
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-danger-fg);
+}
+
+.reviewHeading {
+  margin: 0;
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+}
+
+.preview {
+  margin: 0;
+  padding: var(--wk-space-12);
+  border-left: 2px solid var(--wk-border-strong);
+  background: var(--wk-bg-canvas);
+  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--wk-space-8);
+}
+
+@media (max-width: 599px) {
+  .composer {
+    padding: var(--wk-space-12);
+  }
+
+  .actions > * {
+    flex: 1 1 auto;
+  }
+}

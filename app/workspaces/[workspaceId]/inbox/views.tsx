@@ -16,13 +16,22 @@ import {
   type AccountCoverageView,
   type ConversationDetail as ConversationDetailModel,
   type ConversationViewState,
+  type OutboundReplyItem,
+  OUTBOUND_STATE_MESSAGES,
+  REPLY_BLOCKED_MESSAGES,
+  REPLY_REASON_MESSAGES,
+  REPLY_REFUSAL_MESSAGES,
   type CoverageKindView,
   type InboxConversationItem,
   type InboxListState,
   type InboxPage,
   type ThreadItem,
 } from "@/server/inbox/inbox";
+import { randomUUID } from "node:crypto";
+import { publishReplyAction } from "@/server/inbox/actions";
+import type { ReplyAction } from "@/server/inbox/reply-state";
 import { t } from "@/server/i18n";
+import { ReplyComposer, type ReplyComposerLabels, type ReplyOutcomeMessages } from "@/ui/inbox/reply-composer";
 import { conversationRowId, workspaceConversationPath, workspaceInboxPagePath, workspaceInboxPath } from "@/server/routes";
 import type { IconName } from "@/ui/icons/icon";
 import {
@@ -41,6 +50,8 @@ import {
   PaneMessage,
   Pagination,
   SectionLabel,
+  OutboundReply,
+  ReplyUnavailable,
   Thread,
   ThreadMember,
   Version,
@@ -229,10 +240,12 @@ export function DetailEmpty() {
 }
 
 /** The detail pane for a ready conversation. The back link (one-screen layouts) keeps the list position. */
-export function ConversationView({ workspaceId, detail, cursor }: { readonly workspaceId: string; readonly detail: ConversationDetailModel; readonly cursor: string | undefined }) {
+export function ConversationView({ workspaceId, detail, cursor, replyAction = publishReplyAction, replyOutcomes }: { readonly workspaceId: string; readonly detail: ConversationDetailModel; readonly cursor: string | undefined; readonly replyAction?: ReplyAction; readonly replyOutcomes?: ReplyOutcomeMessages }) {
   const platform = platformName(detail.platform);
   const platformText = platform ?? t("inbox.platform.unknown");
   const back = cursor === undefined ? workspaceInboxPath(workspaceId) : workspaceInboxPagePath(workspaceId, cursor);
+  const outboundByParent = new Map<string, OutboundReplyItem[]>();
+  for (const item of detail.outbound) (outboundByParent.get(item.parentInteractionId) ?? outboundByParent.set(item.parentInteractionId, []).get(item.parentInteractionId))?.push(item);
   return (
     <ConversationDetail
       back={back === undefined ? undefined : <TextLink href={back}>{t("inbox.back")}</TextLink>}
@@ -250,9 +263,10 @@ export function ConversationView({ workspaceId, detail, cursor }: { readonly wor
         {t("inbox.understanding_pending")}
       </Notice>
       <SectionLabel id="thread">{t("inbox.thread.heading")}</SectionLabel>
+      {detail.reply.kind === "unavailable" ? <ReplyUnavailable label={t("inbox.reply.unavailable_label")} reason={t(REPLY_REASON_MESSAGES[detail.reply.reason])} /> : null}
       <Thread labelledBy="thread">
         {detail.thread.map((item) => (
-          <Member key={item.interactionId} item={item} platformText={platformText} />
+          <Member key={item.interactionId} item={item} platformText={platformText} detail={detail} workspaceId={workspaceId} replyAction={replyAction} outcomes={replyOutcomes ?? replyOutcomeMessages()} outbound={outboundByParent.get(item.interactionId) ?? []} />
         ))}
       </Thread>
       {detail.truncated ? (
@@ -264,7 +278,85 @@ export function ConversationView({ workspaceId, detail, cursor }: { readonly wor
   );
 }
 
-function Member({ item, platformText }: { readonly item: ThreadItem; readonly platformText: string }) {
+/**
+ * Step 7B-3: which members may receive a public reply. The brand's own messages, placeholders never read, and
+ * comments hidden or gone from the platform offer nothing; on Instagram, only top-level comments do (replies attach to
+ * the top-level comment, PD/Meta documented restriction). The server re-checks every one of these at request time.
+ */
+export function replyEligible(item: Pick<ThreadItem, "observed" | "presence" | "author" | "parentInteractionId">, platform: ConversationDetailModel["platform"]): boolean {
+  if (!item.observed || item.presence !== "present" || item.author === "own_account") return false;
+  if (platform === "instagram" && item.parentInteractionId !== null) return false;
+  return true;
+}
+
+const OUTBOUND_TONES: { readonly [S in OutboundReplyItem["state"]]: StateTone } = { sending: "neutral", sent: "success", failed: "danger", checking: "warning", blocked: "warning" };
+
+function composerLabels(platformText: string, author: string, maxChars: number, instagramTopLevel: boolean): ReplyComposerLabels {
+  return {
+    open: t("inbox.reply.action"),
+    heading: t("inbox.reply.heading"),
+    to: t("inbox.reply.to", { author }),
+    as: t("inbox.reply.as", { platform: platformText }),
+    ...(instagramTopLevel ? { note: t("inbox.reply.instagram_top_level") } : {}),
+    fieldLabel: t("inbox.reply.field_label"),
+    fieldHelp: t("inbox.reply.field_help", { max: String(maxChars) }),
+    // Templates: the client fills `{count}` as the person types (functions never cross the server → client boundary).
+    remaining: t("inbox.reply.remaining", { count: "{count}" }),
+    overLimit: t("inbox.reply.over_limit", { count: "{count}" }),
+    empty: t("inbox.reply.empty"),
+    cancel: t("inbox.reply.cancel"),
+    review: t("inbox.reply.review"),
+    edit: t("inbox.reply.edit"),
+    reviewHeading: t("inbox.reply.review_heading"),
+    reviewTextLabel: t("inbox.reply.review_text_label"),
+    reviewNote: t("inbox.reply.review_note"),
+    publish: t("inbox.reply.publish"),
+    publishing: t("inbox.reply.publishing"),
+  };
+}
+
+/** Every closed outcome the action can answer, translated on the server (the client holds no catalog). */
+export function replyOutcomeMessages(): ReplyOutcomeMessages {
+  return {
+    requested: t("inbox.reply.requested"),
+    existing: t("inbox.reply.existing"),
+    unavailable: t("inbox.reply.unavailable"),
+    signed_out: t("inbox.reply.signed_out"),
+    ...Object.fromEntries(Object.entries(REPLY_REFUSAL_MESSAGES).map(([reason, key]) => [`refused.${reason}`, t(key)])),
+    ...Object.fromEntries(Object.entries(REPLY_BLOCKED_MESSAGES).map(([code, key]) => [`blocked.${code}`, t(key)])),
+  };
+}
+
+/** The server-issued key of ONE composer render: unique per form, bound to its target by the command's reuse check. */
+export function replyFormKey(): string {
+  return `rk-${randomUUID()}`;
+}
+
+function OutboundRows({ items }: { readonly items: readonly OutboundReplyItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((item) => {
+        const times = [t("inbox.outbound.requested_at", { time: displayTime(item.createdAt) })];
+        if (item.confirmedAt !== null) times.push(t("inbox.outbound.confirmed_at", { time: displayTime(item.confirmedAt) }));
+        const note = item.state === "checking" ? t("inbox.outbound.checking_note") : item.state === "failed" ? t("inbox.outbound.failed_note") : item.state === "blocked" ? t("inbox.outbound.blocked_note") : undefined;
+        return (
+          <OutboundReply
+            key={item.intentId}
+            author={t("inbox.outbound.author")}
+            kind={t("inbox.outbound.kind")}
+            state={<StatePill tone={OUTBOUND_TONES[item.state]}>{t(OUTBOUND_STATE_MESSAGES[item.state])}</StatePill>}
+            text={item.text}
+            times={times}
+            {...(note === undefined ? {} : { note })}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function Member({ item, platformText, detail, workspaceId, replyAction, outcomes, outbound }: { readonly item: ThreadItem; readonly platformText: string; readonly detail: ConversationDetailModel; readonly workspaceId: string; readonly replyAction: ReplyAction; readonly outcomes: ReplyOutcomeMessages; readonly outbound: readonly OutboundReplyItem[] }) {
   const author = item.author === "own_account" ? t(AUTHOR_MESSAGES.own_account) : item.author === "unknown" ? t(AUTHOR_MESSAGES.unknown) : (item.authorLabel ?? t("inbox.author.unnamed"));
   const times: string[] = [];
   if (item.providerEditedAt !== null) times.push(t("inbox.thread.edited", { time: displayTime(item.providerEditedAt) }));
@@ -273,6 +365,16 @@ function Member({ item, platformText }: { readonly item: ThreadItem; readonly pl
   // "Written by your account" repeats what the author line already says on the brand's own messages: the fact stays in
   // the data (nothing is removed from the view model) and is simply not drawn twice.
   const facts = item.facts.filter((fact) => !(fact === "author_own_brand" && item.author === "own_account"));
+  const composer =
+    detail.reply.kind === "available" && replyEligible(item, detail.platform) ? (
+      <ReplyComposer
+        action={replyAction}
+        fields={{ workspaceId, conversationId: detail.conversationId, targetInteractionId: item.interactionId, idempotencyKey: replyFormKey() }}
+        maxChars={detail.reply.maxChars}
+        labels={composerLabels(platformText, author, detail.reply.maxChars, detail.platform === "instagram")}
+        outcomes={outcomes}
+      />
+    ) : undefined;
   return (
     <ThreadMember
       nested={item.parentInteractionId !== null}
@@ -322,9 +424,12 @@ function Member({ item, platformText }: { readonly item: ThreadItem; readonly pl
               </Facts>
             ),
           })}
+      {...(composer === undefined ? {} : { actions: composer })}
+      {...(outbound.length === 0 ? {} : { outbound: <OutboundRows items={outbound} /> })}
     />
   );
 }
+
 
 /** The whole list-pane content for a list state (ready or closed). */
 export function ListPaneFor({ state, cursor, selectedId }: { readonly state: InboxListState | undefined; readonly cursor: string | undefined; readonly selectedId?: string }) {

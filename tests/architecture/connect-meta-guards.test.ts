@@ -192,9 +192,10 @@ describe("Managed accounts (Step 7G-H5): local configuration only", () => {
     for (const specifier of importsOf(LINKING)) expect(specifier, specifier).toMatch(/^(@\/domain\/errors|@\/domain\/ids|\.\.\/domain\/model|\.\/authorization|\.\/ports)$/);
   });
 
-  it("the pending-state button is the only client component, and it only reads the form status", () => {
+  it("the pending-state button and the Step 7B-3 reply composer are the only client components; the button only reads the form status", () => {
     const clients = sourceFiles(PRODUCTION_ROOTS).filter((file) => readFileSync(path.join(REPOSITORY_ROOT, file), "utf8").startsWith('"use client";'));
-    expect(clients).toEqual([PENDING_BUTTON]);
+    // The composer's own rule lives in brand-guards (type-only server import, labels from props, one form).
+    expect(clients).toEqual([PENDING_BUTTON, "ui/inbox/reply-composer.tsx"]);
     expect(importsOf(PENDING_BUTTON)).toEqual(["react-dom"]);
     expect(codeOf(PENDING_BUTTON)).toMatch(/disabled=\{pending\}/);
   });

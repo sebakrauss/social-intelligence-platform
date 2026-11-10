@@ -24,6 +24,7 @@ function bounded(limit: number): number {
 
 const summaryColumns = {
   id: interactionRows.id,
+  providerInteractionId: interactionRows.providerInteractionId,
   conversationId: interactionRows.conversationId,
   contentItemId: interactionRows.contentItemId,
   connectedAccountId: interactionRows.connectedAccountId,

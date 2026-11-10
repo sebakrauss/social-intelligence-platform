@@ -4,7 +4,7 @@
  * history, confirmation). RLS decides visibility — a row of another workspace is simply absent — and the grants decide
  * what each role may change (0027). Every write names the workspace explicitly (R5).
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { DatabaseTransaction } from "@/platform/db";
 import { isIntentOutcomeCode, isIntentStatus, MUTATION_KINDS, MUTATION_REQUEST_TYPES, type MutationIntent } from "../domain/intent";
 import type { IntentStore, OutboundReply, OutboundReplyStore } from "../ports";
@@ -140,6 +140,41 @@ export function createPostgresOutboundReplyStore(tx: DatabaseTransaction): Outbo
     async getByIntent(workspaceId, intentId) {
       const row = (await tx.select().from(outboundReplies).where(and(eq(outboundReplies.workspaceId, workspaceId), eq(outboundReplies.intentId, intentId))).limit(1))[0];
       return row === undefined ? undefined : toReply(row);
+    },
+    async listForParents(workspaceId, parentInteractionIds) {
+      const ids = [...new Set(parentInteractionIds)].slice(0, 500);
+      if (ids.length === 0) return [];
+      const rows = await tx
+        .select({
+          intentId: outboundReplies.intentId,
+          parentInteractionId: outboundReplies.parentInteractionId,
+          connectedAccountId: outboundReplies.connectedAccountId,
+          platform: outboundReplies.platform,
+          text: outboundReplies.text,
+          providerReplyId: outboundReplies.providerReplyId,
+          createdAt: outboundReplies.createdAt,
+          confirmedAt: outboundReplies.confirmedAt,
+          status: mutationIntents.status,
+          outcomeCode: mutationIntents.outcomeCode,
+          initiatorUserId: mutationIntents.initiatorUserId,
+        })
+        .from(outboundReplies)
+        .innerJoin(mutationIntents, and(eq(mutationIntents.workspaceId, outboundReplies.workspaceId), eq(mutationIntents.id, outboundReplies.intentId)))
+        .where(and(eq(outboundReplies.workspaceId, workspaceId), inArray(outboundReplies.parentInteractionId, ids)))
+        .orderBy(asc(outboundReplies.createdAt), asc(outboundReplies.id));
+      return rows.map((row) => ({
+        intentId: row.intentId,
+        parentInteractionId: row.parentInteractionId,
+        connectedAccountId: row.connectedAccountId,
+        platform: row.platform,
+        text: row.text,
+        status: isIntentStatus(row.status) ? row.status : corrupt("status"),
+        outcomeCode: row.outcomeCode === null ? null : isIntentOutcomeCode(row.outcomeCode) ? row.outcomeCode : corrupt("outcome_code"),
+        providerReplyId: row.providerReplyId,
+        initiatorUserId: row.initiatorUserId,
+        createdAt: row.createdAt,
+        confirmedAt: row.confirmedAt,
+      }));
     },
     async linkedIntent(workspaceId, platform, providerReplyId) {
       const row = (await tx.select({ intentId: outboundReplies.intentId }).from(outboundReplies)

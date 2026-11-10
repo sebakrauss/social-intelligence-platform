@@ -79,16 +79,38 @@ describe("foundations are inert", () => {
     for (const file of css) expect(textOf(file), file).not.toMatch(/@import|url\(|expression\(|https?:|javascript:/);
   });
 
+  /** Step 7B-3: the ONE client component in ui/ — the contextual reply composer — pinned below with its own rule. */
+  const CLIENT_COMPONENTS = ["ui/inbox/reply-composer.tsx"];
+
   it("the foundation, brand, icon and primitive components are server components", () => {
-    for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell", "ui/inbox"])) expect(codeOf(file), file).not.toMatch(/"use client"|from "react-dom"|useState|useEffect|onClick|onChange/);
+    for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell", "ui/inbox"]).filter((file) => !CLIENT_COMPONENTS.includes(file))) {
+      // No client directive, hook or BOUND handler (a primitive may forward an optional `onClick` prop for client components).
+      expect(codeOf(file), file).not.toMatch(/"use client"|from "react-dom"|useState|useEffect|onClick=\{|onChange=\{/);
+    }
+    expect(codeOf("ui/primitives/button.tsx")).not.toMatch(/onClick=\{|useState|"use client"/);
+  });
+
+  it("the reply composer is the only client component: labels from props, a type-only import of the action's state, no fetch, no raw HTML, no catalog, no persistence", () => {
+    const composer = codeOf("ui/inbox/reply-composer.tsx");
+    expect(composer).toMatch(/^"use client";/);
+    const imports = [...composer.matchAll(/^import (type )?\{[^}]*\} from "([^"]+)";/gm)].map((m) => [m[1] === undefined ? "value" : "type", m[2] ?? ""] as const);
+    expect(imports.filter(([, from]) => from.startsWith("@/server/"))).toEqual([["type", "@/server/inbox/reply-state"]]);
+    expect(imports.filter(([, from]) => /^@\/(tools|platform|modules|db|integrations|ai|mutations|jobs)\//.test(from))).toEqual([]);
+    expect(composer).not.toMatch(/dangerouslySetInnerHTML|<script|javascript:|fetch\(|\bt\(|@\/server\/i18n|process\.env/);
+    // Only the review stage posts; the hidden field is the same state string the review shows.
+    expect(composer).toMatch(/<form action=\{formAction\}/);
+    expect([...composer.matchAll(/<form/g)]).toHaveLength(1);
+    expect(composer).toMatch(/<blockquote className=\{styles\["preview"\]\}>\{text\}<\/blockquote>/);
+    expect(composer).toMatch(/<input type="hidden" name="text" value=\{text\} \/>/);
+    expect([...composer.matchAll(/<input type="hidden" name="([^"]+)"/g)].map((m) => m[1])).toEqual(["workspaceId", "conversationId", "targetInteractionId", "idempotencyKey", "text"]);
   });
 
   it("primitives render native elements and never raw HTML, scripts or inline handlers", () => {
     for (const file of sourceFiles(["ui/primitives"])) expect(codeOf(file), file).not.toMatch(/dangerouslySetInnerHTML|<script|javascript:|on[A-Z][a-z]+=\{/);
   });
 
-  it("nothing in ui/ reaches tools/, server/, platform/ or the database", () => {
-    for (const file of sourceFiles(["ui"])) expect(codeOf(file), file).not.toMatch(/from "@\/(tools|server|platform|modules|db|integrations|ai|mutations|jobs)\//);
+  it("nothing in ui/ reaches tools/, server/, platform/ or the database (the composer's type-only import of the action state is pinned above)", () => {
+    for (const file of sourceFiles(["ui"])) expect(codeOf(file).replace(/^import type \{[^}]*\} from "@\/server\/inbox\/reply-state";$/m, ""), file).not.toMatch(/from "@\/(tools|server|platform|modules|db|integrations|ai|mutations|jobs)\//);
   });
 });
 
@@ -153,6 +175,25 @@ describe("UI reference pages (development only)", () => {
     // The Inbox reference imports view-model TYPES from server/inbox/inbox and the app's own views; never a runtime read.
     expect(page.replace(/import type \{[^}]*\} from "@\/server\/inbox\/inbox";/, "")).not.toMatch(/@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|<form|action=|"use server"|fetch\(|runtime/);
     expect((page.match(/process\.env/g) ?? []).length).toBe(1);
+  });
+
+  it("the reply harness (Step 7B-3) is a 404 outside next dev, indexes nothing, and its only action is the development-only simulation that reaches no pipeline, database, provider or job", () => {
+    const page = codeOf("app/dev/ui-reference/reply/page.tsx");
+    expect(page).toMatch(/const IS_DEVELOPMENT = process\.env\.NODE_ENV === "development";/);
+    expect(page).toMatch(/if \(!IS_DEVELOPMENT\) notFound\(\);/);
+    expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+    expect(page.replace(/import type \{[^}]*\} from "@\/server\/inbox\/inbox";/, "")).not.toMatch(/@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|@\/mutations\/|publishReplyAction|fetch\(|runtime/);
+    expect(page).toMatch(/replyAction=\{simulateReplyAction\}/);
+    // The simulation never claims a delivery: its request outcomes read "demo", and the real catalog copy is untouched.
+    expect(page).toMatch(/const DEMO_OUTCOME = "Demo only — no reply was sent\.";/);
+    expect(page).toMatch(/replyOutcomes=\{\{ \.\.\.replyOutcomeMessages\(\), requested: DEMO_OUTCOME, existing: DEMO_OUTCOME \}\}/);
+    expect(codeOf("ui/inbox/reply-composer.tsx")).toMatch(/requested: "info"/);
+    const action = codeOf("app/dev/ui-reference/reply/actions.ts");
+    expect(action).toMatch(/^"use server";/);
+    expect(action).toMatch(/const IS_DEVELOPMENT = process\.env\.NODE_ENV === "development";/);
+    expect(action).toMatch(/if \(!IS_DEVELOPMENT\) return \{ kind: "unavailable" \};/);
+    expect([...action.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])).toEqual(["@/server/inbox/reply-state"]);
+    expect(action).not.toMatch(/pipeline|requestPublicReplyCommand|mutations\/|platform\/db|fetch\(|requestAuth/);
   });
 });
 

@@ -31,7 +31,10 @@ import type { ConversationRow } from "@/modules/conversations";
 import type { CoverageScopedRow } from "@/modules/coverage";
 import type { ConversationActivityRow, InteractionSummaryRow, TextVersionRow } from "@/modules/interactions";
 import type { PersistedSignalRow } from "@/modules/classification";
-import type { InboxAccountRow, Transaction, WorkspaceCommand } from "@/server/pipeline";
+import type { PermissionKey } from "@/domain/access";
+import type { WorkspaceMode } from "@/modules/tenancy";
+import { REPLY_TEXT_MAX_CHARS, type OutboundReplyView, type RequestGuards } from "@/mutations/request";
+import type { InboxAccountRow, Transaction, WorkspaceCommand, WorkspaceContext } from "@/server/pipeline";
 
 export const INBOX_PAGE_SIZE = 25;
 /** Members shown of one conversation; one more is read only to tell that the thread goes on (stays under the store's bound). */
@@ -138,6 +141,30 @@ export interface ThreadItem {
   readonly facts: readonly string[];
 }
 
+/**
+ * Step 7B-3: whether THIS member may reply publicly in THIS conversation, resolved on the server with the request-side
+ * guards the command itself uses (IA §18 precedence): no permission → hidden (no affordance at all); Monitor-only →
+ * unavailable with the mode reason; then the account, the provider-action switch, the capability for the content's own
+ * kind and source (which already folds connection health in). One reason only, in outcome language.
+ */
+export type ReplyUnavailableReason = "monitor_only" | "account_inactive" | "paused" | "connection" | "platform_unavailable";
+export type ReplyModel =
+  | { readonly kind: "hidden" }
+  | { readonly kind: "unavailable"; readonly reason: ReplyUnavailableReason; readonly platform: PlatformLabel }
+  | { readonly kind: "available"; readonly connectedAccountId: string; readonly platform: PlatformLabel; readonly maxChars: number; readonly limitation: string | null };
+
+/** The closed display states of an outbound reply (TA §44.1): never optimistic, never a provider detail. */
+export type OutboundReplyState = "sending" | "sent" | "failed" | "checking" | "blocked";
+export interface OutboundReplyItem {
+  readonly intentId: string;
+  readonly parentInteractionId: string;
+  readonly text: string;
+  readonly state: OutboundReplyState;
+  readonly outcomeCode: string | null;
+  readonly createdAt: Date;
+  readonly confirmedAt: Date | null;
+}
+
 export interface ConversationDetail {
   readonly conversationId: string;
   readonly workflowState: ConversationStateLabel;
@@ -148,6 +175,10 @@ export interface ConversationDetail {
   readonly thread: readonly ThreadItem[];
   /** True when the conversation has more members than INBOX_THREAD_LIMIT; the first ones are shown. */
   readonly truncated: boolean;
+  /** Step 7B-3: the reply affordance for this member and conversation. */
+  readonly reply: ReplyModel;
+  /** Step 7B-3: outbound replies requested here, with their real states; a reply already read back as a canonical thread member is not repeated. */
+  readonly outbound: readonly OutboundReplyItem[];
 }
 
 // ── Cursor ───────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -329,6 +360,49 @@ export interface ConversationDetailInput {
   readonly content: ContentItemRecord | undefined;
   readonly threadLimit: number;
   readonly versionLimit: number;
+  /** Step 7B-3 (optional for callers that only draw the thread): the reply affordance and the outbound replies. */
+  readonly reply?: ReplyModel;
+  readonly outbound?: readonly OutboundReplyItem[];
+}
+
+export const OUTBOUND_STATE_OF: { readonly [S in OutboundReplyView["status"]]: OutboundReplyState } = {
+  PENDING: "sending",
+  EXECUTING: "sending",
+  CONFIRMED: "sent",
+  FAILED: "failed",
+  BLOCKED: "blocked",
+  OUTCOME_UNKNOWN: "checking",
+};
+
+/** Outbound replies as the thread shows them; one already read back as a canonical member (same provider id) is dropped. */
+export function buildOutbound(views: readonly OutboundReplyView[], thread: readonly Pick<InteractionSummaryRow, "providerInteractionId">[]): readonly OutboundReplyItem[] {
+  const readBack = new Set(thread.map((member) => member.providerInteractionId));
+  return views
+    .filter((view) => view.providerReplyId === null || !readBack.has(view.providerReplyId))
+    .map((view) => ({ intentId: view.intentId, parentInteractionId: view.parentInteractionId, text: view.text, state: OUTBOUND_STATE_OF[view.status], outcomeCode: view.outcomeCode, createdAt: view.createdAt, confirmedAt: view.confirmedAt }));
+}
+
+export interface ReplyModelInput {
+  readonly permissions: ReadonlySet<PermissionKey>;
+  readonly mode: WorkspaceMode;
+  readonly content: ContentItemRecord | undefined;
+  readonly guards: RequestGuards;
+}
+
+/** The reply affordance, from the SAME guards the request command re-checks (one resolver chain, IA §18 order). */
+export async function buildReplyModel(input: ReplyModelInput): Promise<ReplyModel> {
+  if (!input.permissions.has("reply.public")) return { kind: "hidden" };
+  const platform = platformLabel(input.content?.platform);
+  if (input.mode !== "STANDARD") return { kind: "unavailable", reason: "monitor_only", platform };
+  if (input.content === undefined) return { kind: "unavailable", reason: "account_inactive", platform };
+  const account = await input.guards.account(input.content.connectedAccountId);
+  if (account === undefined || account.status !== "ACTIVE") return { kind: "unavailable", reason: "account_inactive", platform };
+  if (!(await input.guards.providerActionsEnabled(account.platform))) return { kind: "unavailable", reason: "paused", platform };
+  const capability = await input.guards.replyCapability(input.content.connectedAccountId, { contentKind: input.content.contentKind, reportedSource: input.content.reportedSource });
+  if (capability.state === "TEMPORARILY_UNAVAILABLE") return { kind: "unavailable", reason: "connection", platform };
+  if (capability.state === "UNAVAILABLE") return { kind: "unavailable", reason: "platform_unavailable", platform };
+  if (account.connectionStatus !== "ACTIVE") return { kind: "unavailable", reason: "connection", platform };
+  return { kind: "available", connectedAccountId: input.content.connectedAccountId, platform, maxChars: REPLY_TEXT_MAX_CHARS, limitation: capability.state === "AVAILABLE_WITH_LIMITATION" ? "limited" : null };
 }
 
 export function buildConversationDetail(input: ConversationDetailInput): ConversationDetail {
@@ -375,6 +449,8 @@ export function buildConversationDetail(input: ConversationDetailInput): Convers
     anchorInteractionId: input.conversation.anchorInteractionId,
     thread,
     truncated: input.thread.length > input.threadLimit,
+    reply: input.reply ?? { kind: "hidden" },
+    outbound: input.outbound ?? [],
   };
 }
 
@@ -404,17 +480,21 @@ export const inboxListCommand: WorkspaceCommand<{ readonly cursor: InboxCursor |
 
 const uuid = parsed((value) => (isUuid(value) ? value : undefined));
 
-async function readConversation(tx: Transaction, conversationId: string): Promise<ConversationDetail> {
+async function readConversation(tx: Transaction, context: WorkspaceContext, conversationId: string): Promise<ConversationDetail> {
   const conversation = await tx.inbox.conversations.get(conversationId);
   // Unknown here, or another workspace's (RLS hides it): the same NOT_FOUND, never "forbidden".
   if (conversation === undefined) throw new AppError("NOT_FOUND", {});
   const thread = await tx.inbox.interactions.thread(conversation.id, INBOX_THREAD_LIMIT + 1);
-  const ids = thread.slice(0, INBOX_THREAD_LIMIT).map((member) => member.id);
+  const shown = thread.slice(0, INBOX_THREAD_LIMIT);
+  const ids = shown.map((member) => member.id);
   const versions = await tx.inbox.interactions.textVersions(ids, INBOX_VERSION_LIMIT + 2);
   const signals = await tx.inbox.signals.forInteractions(ids);
   const anchor = thread.find((member) => member.id === conversation.anchorInteractionId) ?? (await tx.inbox.interactions.summaries([conversation.anchorInteractionId]))[0];
   const content = anchor === undefined ? undefined : (await tx.inbox.content.findManyById([anchor.contentItemId]))[0];
-  return buildConversationDetail({ conversation, thread, versions, signals, content, threadLimit: INBOX_THREAD_LIMIT, versionLimit: INBOX_VERSION_LIMIT });
+  // Step 7B-3: the reply affordance (same guards as the request command) and the outbound replies under these members.
+  const reply = await buildReplyModel({ permissions: context.permissions, mode: context.mode, content, guards: tx.mutations.guards });
+  const outbound = buildOutbound(await tx.mutations.replies.listForParents(context.workspaceId, ids), shown);
+  return buildConversationDetail({ conversation, thread, versions, signals, content, threadLimit: INBOX_THREAD_LIMIT, versionLimit: INBOX_VERSION_LIMIT, reply, outbound });
 }
 
 export const inboxConversationCommand: WorkspaceCommand<{ readonly conversationId: string }, ConversationDetail, ConversationDetail> = {
@@ -423,7 +503,7 @@ export const inboxConversationCommand: WorkspaceCommand<{ readonly conversationI
   permission: "workspace.read_operational",
   requiresStandardMode: false,
   validate: object({ conversationId: uuid }),
-  execute: (_context, input, tx) => readConversation(tx, input.conversationId),
+  execute: (context, input, tx) => readConversation(tx, context, input.conversationId),
   audit: () => undefined,
   respond: (output) => output,
 };

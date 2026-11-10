@@ -28,6 +28,7 @@ import {
   type InboxPageInput,
 } from "@/server/queries/inbox";
 import { createHarness, errorCode, expectOk } from "../../support/harness";
+import { memoryStores } from "../mutations/support";
 import { userId } from "../../support/in-memory";
 
 const OWNER = userId(1);
@@ -47,6 +48,7 @@ const T2 = new Date("2026-11-01T10:10:00.000Z");
 
 const summary = (over: Partial<InboxPageInput["anchors"][number]> = {}): InboxPageInput["anchors"][number] => ({
   id: ANCHOR,
+  providerInteractionId: "sim_c_anchor",
   conversationId: CONVERSATION,
   contentItemId: CONTENT,
   connectedAccountId: ACCOUNT,
@@ -324,6 +326,8 @@ function sources(options: { readonly conversation?: boolean; readonly input?: In
 
 async function setup() {
   const h = createHarness();
+  // Step 7B-3: the conversation query also resolves the reply affordance through the request-side guards.
+  h.unitOfWork.mutations = memoryStores();
   const organizationId = await h.createOrganization(OWNER);
   const workspaceId = await h.createWorkspace(OWNER, organizationId, "MONITOR_ONLY");
   const members: Partial<Record<WorkspaceRole, ReturnType<typeof userId>>> = { OWNER };

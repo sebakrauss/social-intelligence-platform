@@ -64,9 +64,9 @@ describe("the surface requests; it never decides", () => {
     for (const specifier of importsOf(PAGE)) expect(specifier).not.toMatch(/^@\/modules\//);
     expect(page).not.toMatch(/profileEligibility|withinReevaluationCooldown|isCurrentProfile|catalogRevision|CATALOGS|COOLDOWN|Date\.now|new Date|30 \* 60/);
     expect(page).toMatch(/offer\.allowed/);
-    // The only client component is still the pending-state button (no client-side request logic).
+    // The only client components are the pending-state button and the Step 7B-3 reply composer (no client-side request logic here).
     const clients = sourceFiles(PRODUCTION_ROOTS).filter((file) => readFileSync(path.join(REPOSITORY_ROOT, file), "utf8").startsWith('"use client";'));
-    expect(clients).toEqual(["ui/connections/pending-submit-button.tsx"]);
+    expect(clients).toEqual(["ui/connections/pending-submit-button.tsx", "ui/inbox/reply-composer.tsx"]);
   });
 
   it("the read-model offer reuses the recovery core's functions and restates none of its rules; it locks and writes nothing", () => {

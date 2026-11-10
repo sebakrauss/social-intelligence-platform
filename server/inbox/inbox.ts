@@ -9,6 +9,9 @@
  *   - A browser-supplied cursor that isn't one the server issued is ignored (first page): it is a position, not data.
  */
 import type { MessageKey } from "@/domain/i18n/message-keys";
+import type { PublicReplyRefusal } from "@/mutations/request";
+import type { OutboundReplyState, ReplyUnavailableReason } from "@/server/queries/inbox";
+import type { ReplyBlockedCode } from "./reply-state";
 import { PLATFORM_DISPLAY_NAMES } from "@/domain/platforms";
 import { isUuid, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
 import type { ActionPipeline } from "@/server/pipeline";
@@ -27,7 +30,8 @@ import {
   type SourceLabel,
 } from "@/server/queries/inbox";
 
-export type { AccountCoverageView, ConversationDetail, CoverageKindView, InboxConversationItem, InboxPage, ThreadItem, ThreadTextVersion } from "@/server/queries/inbox";
+export type { AccountCoverageView, ConversationDetail, CoverageKindView, InboxConversationItem, InboxPage, OutboundReplyItem, OutboundReplyState, ReplyModel, ReplyUnavailableReason, ThreadItem, ThreadTextVersion } from "@/server/queries/inbox";
+export type { ReplyActionState } from "./reply-state";
 
 export type InboxListState =
   | { readonly kind: "signed_out" }
@@ -100,6 +104,44 @@ export const PRESENCE_MESSAGES: { readonly [P in Exclude<PresenceState, "present
   hidden: "inbox.presence.hidden",
   removed_at_source: "inbox.presence.removed",
   unknown: "inbox.presence.unknown",
+};
+
+/** Step 7B-3: one reason per unavailable reply (IA §18: outcome language, one reason only). */
+export const REPLY_REASON_MESSAGES: { readonly [R in ReplyUnavailableReason]: MessageKey } = {
+  monitor_only: "inbox.reply.reason.monitor_only",
+  account_inactive: "inbox.reply.reason.account_inactive",
+  paused: "inbox.reply.reason.paused",
+  connection: "inbox.reply.reason.connection",
+  platform_unavailable: "inbox.reply.reason.platform_unavailable",
+};
+
+/** Step 7B-3: the closed answers of the publish action, as copy (the composer receives them translated). */
+export const REPLY_REFUSAL_MESSAGES: { readonly [R in PublicReplyRefusal]: MessageKey } = {
+  TARGET_NOT_FOUND: "inbox.reply.refused.target_not_found",
+  TARGET_NOT_READ: "inbox.reply.refused.target_not_read",
+  TARGET_NOT_PRESENT: "inbox.reply.refused.target_not_present",
+  TARGET_OWN_ACCOUNT: "inbox.reply.refused.target_own_account",
+  TEXT_EMPTY: "inbox.reply.refused.text_empty",
+  TEXT_TOO_LONG: "inbox.reply.refused.text_too_long",
+  ACCOUNT_INACTIVE: "inbox.reply.refused.account_inactive",
+  CONNECTION_UNAVAILABLE: "inbox.reply.refused.connection_unavailable",
+  CAPABILITY_UNAVAILABLE: "inbox.reply.refused.capability_unavailable",
+  PROVIDER_ACTIONS_DISABLED: "inbox.reply.refused.provider_actions_disabled",
+  IDEMPOTENCY_KEY_REUSED: "inbox.reply.refused.idempotency_key_reused",
+};
+export const REPLY_BLOCKED_MESSAGES: { readonly [C in ReplyBlockedCode]: MessageKey } = {
+  PERMISSION_DENIED: "inbox.reply.blocked.permission_denied",
+  MODE_BLOCKED: "inbox.reply.blocked.mode_blocked",
+  NOT_FOUND: "inbox.reply.blocked.not_found",
+  INVALID_INPUT: "inbox.reply.blocked.invalid_input",
+};
+
+export const OUTBOUND_STATE_MESSAGES: { readonly [S in OutboundReplyState]: MessageKey } = {
+  sending: "inbox.outbound.state.sending",
+  sent: "inbox.outbound.state.sent",
+  failed: "inbox.outbound.state.failed",
+  checking: "inbox.outbound.state.checking",
+  blocked: "inbox.outbound.state.blocked",
 };
 
 export const CONVERSATION_STATE_MESSAGES: { readonly [S in ConversationStateLabel]: MessageKey } = {

@@ -123,7 +123,7 @@ const NO_CONNECTIONS: ConnectionStore = {
 /** Step 7B-1: the request side of the executor is proven on the real database; a command test injects its own. */
 const NO_MUTATIONS: MutationRequestSources = {
   intents: { insert: unavailable, findByIdempotencyKey: unavailable, get: unavailable, lock: unavailable, transition: unavailable, appendHistory: unavailable },
-  replies: { insert: unavailable, getByIntent: unavailable, linkedIntent: unavailable, confirm: unavailable },
+  replies: { insert: unavailable, getByIntent: unavailable, listForParents: unavailable, linkedIntent: unavailable, confirm: unavailable },
   targets: { load: unavailable },
   guards: { providerActionsEnabled: unavailable, replyCapability: unavailable, account: unavailable },
 };

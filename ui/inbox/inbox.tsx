@@ -165,8 +165,12 @@ export function Thread({ children, labelledBy }: { readonly children: ReactNode;
   );
 }
 
-/** One comment or reply. `nested` indents one level (a reply); `own` marks the brand's own message. */
-export function ThreadMember({ nested, own, author, kind, time, presence, text, textMuted = false, times, versions, facts }: {
+/**
+ * One comment or reply. `nested` indents one level (a reply); `own` marks the brand's own message. `actions` (Step
+ * 7B-3) is the contextual reply affordance under the message; `outbound` the outbound replies requested for it, drawn
+ * inside the same list item so the thread keeps its order.
+ */
+export function ThreadMember({ nested, own, author, kind, time, presence, text, textMuted = false, times, versions, facts, actions, outbound }: {
   readonly nested: boolean;
   readonly own: boolean;
   readonly author: string;
@@ -178,6 +182,8 @@ export function ThreadMember({ nested, own, author, kind, time, presence, text, 
   readonly times: readonly string[];
   readonly versions?: ReactNode;
   readonly facts?: ReactNode;
+  readonly actions?: ReactNode;
+  readonly outbound?: ReactNode;
 }) {
   return (
     <li className={join(styles["member"], nested ? styles["nested"] : undefined, own ? styles["own"] : undefined)}>
@@ -201,7 +207,41 @@ export function ThreadMember({ nested, own, author, kind, time, presence, text, 
       )}
       {versions}
       {facts}
+      {actions}
+      {outbound}
     </li>
+  );
+}
+
+/**
+ * An outbound reply requested from Wrenkind (Step 7B-3), under the comment it answers: the text as written, its REAL
+ * state as a pill (round = state), when it was requested and, once the platform confirmed it, when. Never optimistic.
+ */
+export function OutboundReply({ author, kind, state, text, times, note }: {
+  readonly author: string;
+  readonly kind: string;
+  readonly state: ReactNode;
+  readonly text: string;
+  readonly times: readonly string[];
+  readonly note?: string;
+}) {
+  return (
+    <div className={styles["outbound"]}>
+      <div className={styles["memberHead"]}>
+        <span className={styles["memberAuthor"]}>{author}</span>
+        <span className={styles["memberKind"]}>· {kind}</span>
+        {state}
+      </div>
+      <p className={styles["memberText"]}>{text}</p>
+      {times.length === 0 ? null : (
+        <p className={styles["memberTimes"]}>
+          {times.map((entry) => (
+            <span key={entry}>{entry}</span>
+          ))}
+        </p>
+      )}
+      {note === undefined ? null : <p className={styles["outboundNote"]}>{note}</p>}
+    </div>
   );
 }
 
@@ -231,5 +271,15 @@ export function Facts({ label, children }: { readonly label: string; readonly ch
       <p className={styles["caption"]}>{label}</p>
       <div className={styles["factList"]}>{children}</div>
     </div>
+  );
+}
+
+/** Step 7B-3: replies are not available in this conversation — the one reason, in outcome language, never a dead control. */
+export function ReplyUnavailable({ label, reason }: { readonly label: string; readonly reason: string }) {
+  return (
+    <p className={styles["replyUnavailable"]}>
+      <span className={styles["replyUnavailableLabel"]}>{label}</span>
+      <span>{reason}</span>
+    </p>
   );
 }

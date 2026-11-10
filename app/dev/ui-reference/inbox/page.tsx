@@ -57,6 +57,8 @@ const DETAIL: ConversationDetail = {
   contentKind: "post",
   anchorInteractionId: "a1111111-1111-4111-8111-111111111111",
   truncated: false,
+  reply: { kind: "hidden" },
+  outbound: [],
   thread: [
     { interactionId: "a1111111-1111-4111-8111-111111111111", parentInteractionId: null, kind: "comment", observed: true, author: "audience", authorLabel: "caro.m", text: "Pedí el 2 de octubre y todavía no llega. ¿Alguien me puede responder?\nYa escribí dos veces por privado y nadie contesta.", presence: "present", providerCreatedAt: at("2026-11-08T22:50:00Z"), providerEditedAt: at("2026-11-08T22:58:00Z"), textObservedAt: at("2026-11-08T23:14:00Z"), earlierVersions: [{ text: "Pedí el 2 de octubre y todavía no llega.", observedAt: at("2026-11-08T22:55:00Z"), providerEditedAt: null }], olderVersionsOmitted: true, facts: ["link_present"] },
     { interactionId: "a2222222-2222-4222-8222-222222222222", parentInteractionId: "a1111111-1111-4111-8111-111111111111", kind: "reply", observed: true, author: "own_account", authorLabel: null, text: "Gracias por avisar, te escribimos por privado para revisar el pedido.", presence: "present", providerCreatedAt: at("2026-11-08T23:05:00Z"), providerEditedAt: null, textObservedAt: at("2026-11-08T23:14:00Z"), earlierVersions: [], olderVersionsOmitted: false, facts: ["author_own_brand"] },
@@ -66,7 +68,21 @@ const DETAIL: ConversationDetail = {
   ],
 };
 
-const VIEWS = ["list", "selected", "detail", "empty", "none", "partial", "unavailable", "not_allowed", "not_found"] as const;
+/** Step 7B-3: the same conversation with the reply affordance available (and every outbound state) or unavailable. */
+const DETAIL_REPLY: ConversationDetail = {
+  ...DETAIL,
+  reply: { kind: "available", connectedAccountId: ACCOUNT_IG, platform: "instagram", maxChars: 2200, limitation: null },
+  outbound: [
+    { intentId: "b1111111-1111-4111-8111-111111111111", parentInteractionId: "a1111111-1111-4111-8111-111111111111", text: "Hola Caro, lamentamos la demora. Revisamos tu pedido ahora mismo y te escribimos con la fecha de entrega.", state: "sending", outcomeCode: null, createdAt: at("2026-11-08T23:20:00Z"), confirmedAt: null },
+    { intentId: "b2222222-2222-4222-8222-222222222222", parentInteractionId: "a1111111-1111-4111-8111-111111111111", text: "Gracias por la paciencia, ya está en camino.", state: "sent", outcomeCode: null, createdAt: at("2026-11-08T23:21:00Z"), confirmedAt: at("2026-11-08T23:21:30Z") },
+    { intentId: "b3333333-3333-4333-8333-333333333333", parentInteractionId: "a1111111-1111-4111-8111-111111111111", text: "Te confirmamos por aquí.", state: "checking", outcomeCode: "RESPONSE_LOST", createdAt: at("2026-11-08T23:22:00Z"), confirmedAt: null },
+    { intentId: "b4444444-4444-4444-8444-444444444444", parentInteractionId: "a5555555-5555-4555-8555-555555555555", text: "Lo sentimos, ¿nos cuentas qué pasó?", state: "failed", outcomeCode: "TARGET_NOT_FOUND", createdAt: at("2026-11-08T23:23:00Z"), confirmedAt: null },
+    { intentId: "b5555555-5555-4555-8555-555555555555", parentInteractionId: "a5555555-5555-4555-8555-555555555555", text: "Gracias por avisar.", state: "blocked", outcomeCode: "MODE_NOT_STANDARD", createdAt: at("2026-11-08T23:24:00Z"), confirmedAt: null },
+  ],
+};
+const DETAIL_REPLY_UNAVAILABLE: ConversationDetail = { ...DETAIL, reply: { kind: "unavailable", reason: "platform_unavailable", platform: "instagram" } };
+
+const VIEWS = ["list", "selected", "detail", "empty", "none", "partial", "unavailable", "not_allowed", "not_found", "reply", "reply_unavailable"] as const;
 type View = (typeof VIEWS)[number];
 const isView = (value: unknown): value is View => typeof value === "string" && (VIEWS as readonly string[]).includes(value);
 
@@ -86,6 +102,8 @@ export default async function InboxReferencePage({ searchParams }: { readonly se
       {view === "unavailable" ? <InboxPanes selected={false} list={<ClosedState kind="unavailable" />} detail={null} /> : null}
       {view === "not_allowed" ? <InboxPanes selected={false} list={<ClosedState kind="not_allowed" />} detail={null} /> : null}
       {view === "not_found" ? <InboxPanes selected list={list(PAGE)} detail={<ClosedState kind="conversation_not_found" />} /> : null}
+      {view === "reply" ? <InboxPanes selected skipToDetail={{ href: "#conversation", label: "Skip to conversation" }} list={list(PAGE, IDS[0])} detail={<ConversationView workspaceId={WS} detail={DETAIL_REPLY} cursor={cursor} />} /> : null}
+      {view === "reply_unavailable" ? <InboxPanes selected skipToDetail={{ href: "#conversation", label: "Skip to conversation" }} list={list(PAGE, IDS[0])} detail={<ConversationView workspaceId={WS} detail={DETAIL_REPLY_UNAVAILABLE} cursor={cursor} />} /> : null}
     </main>
   );
 }

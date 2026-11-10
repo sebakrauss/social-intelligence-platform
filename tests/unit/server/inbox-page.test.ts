@@ -86,6 +86,8 @@ const detail = (): ReadyDetail => ({
     contentKind: "post",
     anchorInteractionId: ANCHOR,
     truncated: false,
+    reply: { kind: "hidden" },
+    outbound: [],
     thread: [
       {
         interactionId: ANCHOR,

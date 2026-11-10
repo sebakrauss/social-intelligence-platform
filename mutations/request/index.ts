@@ -15,7 +15,7 @@ import { REPLY_TEXT_MAX_CHARS, type MutationIntent } from "../domain/intent";
 import type { IntentStore, MutationClock, OutboundReply, OutboundReplyStore, ReplyTargets, RequestGuards } from "../ports";
 
 export { MUTATION_KINDS, INTENT_STATUSES, INTENT_OUTCOME_CODES, REPLY_TEXT_MAX_CHARS, type IntentOutcomeCode, type IntentStatus, type MutationIntent, type MutationKind } from "../domain/intent";
-export type { IntentStore, OutboundReply, OutboundReplyStore, ReplyTarget, ReplyTargets, RequestGuards } from "../ports";
+export type { IntentStore, OutboundReply, OutboundReplyStore, OutboundReplyView, ReplyTarget, ReplyTargets, RequestGuards } from "../ports";
 
 /** The outbox topic the request appends; the job runtime registers the task of the same name (lane 1). */
 export const EXECUTE_INTENT_TASK = "mutations.execute_intent";

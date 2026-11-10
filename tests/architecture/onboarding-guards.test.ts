@@ -54,6 +54,9 @@ describe("onboarding surface (Step 7G-F3)", () => {
       // UI-4: the Inbox reference (synthetic view models), also development-only.
       "app/dev/ui-reference/inbox/page.tsx",
       "app/dev/ui-reference/page.tsx",
+      // Step 7B-3: the reply harness (synthetic conversation + a development-only simulated action; never a database).
+      "app/dev/ui-reference/reply/actions.ts",
+      "app/dev/ui-reference/reply/page.tsx",
       // UI-3: the app-shell reference (synthetic data), also development-only.
       "app/dev/ui-reference/shell/page.tsx",
       "app/layout.tsx",
@@ -61,7 +64,8 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/page.tsx",
       "app/sign-in/page.tsx",
       "app/sign-up/page.tsx",
-      // Step 7A: Workspace › Inbox, conversation list and one conversation (read only; no server action).
+      // Step 7A: Workspace › Inbox, conversation list and one conversation (Step 7B-3: the reply composer posts to
+      // server/inbox/actions.ts, the one Inbox server action; the pages themselves still only read).
       "app/workspaces/[workspaceId]/inbox/[conversationId]/page.tsx",
       // UI-3: section layouts draw the app shell around the existing pages; the composition reads only (brand-guards).
       "app/workspaces/[workspaceId]/inbox/layout.tsx",

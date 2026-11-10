@@ -28,11 +28,13 @@ export interface ButtonProps {
   readonly form?: string;
   readonly id?: string;
   readonly className?: string;
+  /** Client-side handler (a client component's stage change); server components never pass one. */
+  readonly onClick?: () => void;
 }
 
 const join = (...classes: readonly (string | undefined | false)[]): string => classes.filter((value): value is string => typeof value === "string" && value !== "").join(" ");
 
-export function Button({ children, variant = "secondary", size = "md", type = "button", disabled = false, pending = false, pendingLabel, icon, name, value, form, id, className }: ButtonProps) {
+export function Button({ children, variant = "secondary", size = "md", type = "button", disabled = false, pending = false, pendingLabel, icon, name, value, form, id, className, onClick }: ButtonProps) {
   const inactive = disabled || pending;
   return (
     <button
@@ -44,6 +46,7 @@ export function Button({ children, variant = "secondary", size = "md", type = "b
       {...(value === undefined ? {} : { value })}
       {...(form === undefined ? {} : { form })}
       {...(id === undefined ? {} : { id })}
+      {...(onClick === undefined ? {} : { onClick })}
     >
       {icon === undefined ? null : <Icon name={icon} size={16} />}
       {pending && pendingLabel !== undefined && pendingLabel !== "" ? pendingLabel : children}

@@ -155,6 +155,15 @@ export function memoryStores(state: GuardState = guardState(), targets: readonly
         return Promise.resolve();
       },
       getByIntent: (workspaceId, intentId) => Promise.resolve(replyRows.get(key(workspaceId, intentId))),
+      listForParents: (workspaceId, parents) =>
+        Promise.resolve(
+          [...replyRows.values()]
+            .filter((row) => row.workspaceId === workspaceId && parents.includes(row.parentInteractionId))
+            .map((row) => {
+              const intent = intentRows.get(key(workspaceId, row.intentId));
+              return { intentId: row.intentId, parentInteractionId: row.parentInteractionId, connectedAccountId: row.connectedAccountId, platform: row.platform, text: row.text, status: intent?.status ?? "PENDING", outcomeCode: intent?.outcomeCode ?? null, providerReplyId: row.providerReplyId, initiatorUserId: intent?.initiatorUserId ?? "", createdAt: row.createdAt, confirmedAt: row.confirmedAt };
+            }),
+        ),
       linkedIntent: (workspaceId, platform, providerReplyId) =>
         Promise.resolve([...replyRows.values()].find((row) => row.workspaceId === workspaceId && row.platform === platform && row.providerReplyId === providerReplyId)?.intentId),
       confirm: (workspaceId, intentId, providerReplyId, confirmedAt) => {
