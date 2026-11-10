@@ -15,7 +15,7 @@ import { REPLY_TEXT_MAX_CHARS, type MutationIntent } from "../domain/intent";
 import type { IntentStore, MutationClock, OutboundReply, OutboundReplyStore, ReplyTargets, RequestGuards } from "../ports";
 
 export { MUTATION_KINDS, INTENT_STATUSES, INTENT_OUTCOME_CODES, REPLY_TEXT_MAX_CHARS, type IntentOutcomeCode, type IntentStatus, type MutationIntent, type MutationKind } from "../domain/intent";
-export type { IntentStore, OutboundReply, OutboundReplyStore, OutboundReplyView, ReplyTarget, ReplyTargets, RequestGuards } from "../ports";
+export type { IntentStore, OutboundReply, OutboundReplyStore, OutboundReplyView, ProviderActionDecision, ReplyTarget, ReplyTargets, RequestGuards } from "../ports";
 
 /** The outbox topic the request appends; the job runtime registers the task of the same name (lane 1). */
 export const EXECUTE_INTENT_TASK = "mutations.execute_intent";
@@ -81,7 +81,7 @@ export async function requestPublicReply(sources: MutationRequestSources, clock:
   if (target.presence !== "present") return { kind: "refused", reason: "TARGET_NOT_PRESENT" };
   if (target.ownAccount) return { kind: "refused", reason: "TARGET_OWN_ACCOUNT" };
 
-  if (!(await sources.guards.providerActionsEnabled(target.platform))) return { kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" };
+  if ((await sources.guards.providerActionAllowed(target.platform, "public_reply")) !== "allowed") return { kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" };
   const account = await sources.guards.account(target.connectedAccountId);
   if (account === undefined || account.status !== "ACTIVE") return { kind: "refused", reason: "ACCOUNT_INACTIVE" };
   if (account.connectionStatus !== "ACTIVE") return { kind: "refused", reason: "CONNECTION_UNAVAILABLE" };

@@ -136,10 +136,24 @@ export function unexpectedChanges(before: readonly SwitchRow[], after: readonly 
   return [...changed].sort();
 }
 
+/**
+ * Step 7B-12A: under `explicit_allow` (mutation.provider_action), "*" is the emergency block only. A wildcard value
+ * that would grant is refused before anything is contacted — the resolver would treat it as invalid (fail-safe) anyway.
+ */
+export function wildcardGrantProblem(key: SwitchKey, qualifier: string, value: unknown): string | undefined {
+  const definition = SWITCHES[key] as unknown as { readonly parse: (value: unknown) => unknown; readonly resolution: string; readonly isRestrictive?: (value: never) => boolean };
+  if (definition.resolution !== "explicit_allow" || qualifier !== "*") return undefined;
+  const parsed = definition.parse(value);
+  if (parsed !== undefined && definition.isRestrictive?.(parsed as never) === true) return undefined;
+  return `"*" may only block ${key} (a wildcard never grants); name the exact platform:action instead`;
+}
+
 /** Sets (inserts or replaces) one override, audited. Idempotent: an identical stored value writes nothing. */
 export async function setSwitch(client: Queryable, target: SwitchTarget, value: unknown, attribution: SwitchAttribution): Promise<{ readonly changed: boolean }> {
   const checked = validateTarget(target);
   if (SWITCHES[checked.key].parse(value) === undefined) throw new SwitchChangeError(`value shape not valid for ${checked.key}`);
+  const wildcard = wildcardGrantProblem(checked.key, checked.qualifier, value);
+  if (wildcard !== undefined) throw new SwitchChangeError(wildcard);
   const encoded = JSON.stringify(value);
   return inAuditedTransaction(client, attribution, async () => {
     const current = await client.query(`select (value = $6::jsonb) as same from system.operational_switches where ${TARGET_WHERE} for update`, [...targetValues(checked), encoded]);

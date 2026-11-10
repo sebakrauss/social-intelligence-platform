@@ -75,13 +75,26 @@ describe("resolution", () => {
 
   it("any_restrictive: one applicable restrictive row wins, whatever its specificity", () => {
     const rows = [
+      row({ switchKey: "ingestion.provider_pause", value: { paused: true } }),
+      row({ switchKey: "ingestion.provider_pause", qualifier: "tiktok", value: { paused: false } }),
+    ];
+    expect(resolveSwitch(rows, "ingestion.provider_pause", { qualifier: "tiktok" }).value.paused).toBe(true);
+    const narrow = [row({ switchKey: "ingestion.provider_pause", qualifier: "tiktok", value: { paused: true } })];
+    expect(resolveSwitch(narrow, "ingestion.provider_pause", { qualifier: "tiktok" }).value.paused).toBe(true);
+    expect(resolveSwitch(narrow, "ingestion.provider_pause", { qualifier: "facebook" }).value.paused).toBe(false);
+  });
+
+  it("mutation.provider_action (was any_restrictive, fail-open; Step 7B-12A explicit_allow): the same rows now deny everything not exactly granted", () => {
+    const rows = [
       row({ switchKey: "mutation.provider_action", value: { enabled: false } }),
       row({ switchKey: "mutation.provider_action", qualifier: "tiktok:hide", value: { enabled: true } }),
     ];
     expect(resolveSwitch(rows, "mutation.provider_action", { qualifier: "tiktok:hide" }).value.enabled).toBe(false);
     const narrow = [row({ switchKey: "mutation.provider_action", qualifier: "tiktok:hide", value: { enabled: false } })];
     expect(resolveSwitch(narrow, "mutation.provider_action", { qualifier: "tiktok:hide" }).value.enabled).toBe(false);
-    expect(resolveSwitch(narrow, "mutation.provider_action", { qualifier: "tiktok:unhide" }).value.enabled).toBe(true);
+    // Formerly TRUE (the default allowed every pair nothing restricted): now nothing grants tiktok:unhide → deny.
+    expect(resolveSwitch(narrow, "mutation.provider_action", { qualifier: "tiktok:unhide" }).value.enabled).toBe(false);
+    expect(resolveSwitch(narrow, "mutation.provider_action", { qualifier: "tiktok:unhide" }).source).toBe("default");
   });
 
   it.each([

@@ -183,9 +183,9 @@ export function memoryStores(state: GuardState = guardState(), targets: readonly
     guards: {
       initiatorRole: () => Promise.resolve(state.role),
       workspaceMode: () => Promise.resolve(state.mode),
-      providerActionsEnabled: (platform) => {
-        calls.push(`switch:${platform}`);
-        return Promise.resolve(state.switchEnabled);
+      providerActionAllowed: (platform, action) => {
+        calls.push(`switch:${platform}:${action}`);
+        return Promise.resolve(state.switchEnabled ? "allowed" : "paused");
       },
       replyCapability: (_accountId, scope) => {
         calls.push(`capability:${scope.contentKind}/${scope.reportedSource}`);

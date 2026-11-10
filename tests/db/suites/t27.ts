@@ -795,11 +795,24 @@ export function defineT27Suite(getTarget: () => DbTarget): void {
         { key: "ingestion.provider_pause", qualifier: "tiktok", scope: "global" },
       ] as const;
       try {
-        // Valid configuration resolves with the declared semantics.
-        await withOperator((client) => setSwitch(client, { key: "mutation.provider_action", qualifier: "*", scope: "global" }, { enabled: true }, operator));
+        // Valid configuration resolves with the declared semantics (Step 7B-12A: mutation.provider_action is explicit_allow).
+        // A granting wildcard is refused by the tool — formerly accepted, and it allowed every pair (fail-open).
+        await expect(withOperator((client) => setSwitch(client, { key: "mutation.provider_action", qualifier: "*", scope: "global" }, { enabled: true }, operator))).rejects.toThrow(/may only block/);
         await withOperator((client) => setSwitch(client, { key: "mutation.provider_action", qualifier: "tiktok:hide", scope: "global" }, { enabled: false }, operator));
         expect(resolveSwitch(await rows(), "mutation.provider_action", { qualifier: "tiktok:hide" }).value.enabled).toBe(false);
-        expect(resolveSwitch(await rows(), "mutation.provider_action", { qualifier: "facebook:hide" }).value.enabled).toBe(true);
+        // Formerly TRUE (nothing restricted facebook:hide): nothing grants it → deny.
+        expect(resolveSwitch(await rows(), "mutation.provider_action", { qualifier: "facebook:hide" }).value.enabled).toBe(false);
+        // An exact grant allows exactly its pair, through the audited tool, on the real table — and the "*" block beats it.
+        await withOperator((client) => setSwitch(client, { key: "mutation.provider_action", qualifier: "tiktok:hide", scope: "global" }, { enabled: true }, operator));
+        expect(resolveSwitch(await rows(), "mutation.provider_action", { qualifier: "tiktok:hide" }).value.enabled).toBe(true);
+        expect(resolveSwitch(await rows(), "mutation.provider_action", { qualifier: "tiktok:unhide" }).value.enabled).toBe(false);
+        await withOperator((client) => setSwitch(client, { key: "mutation.provider_action", qualifier: "*", scope: "global" }, { enabled: false }, operator));
+        expect(resolveSwitch(await rows(), "mutation.provider_action", { qualifier: "tiktok:hide" }).value.enabled).toBe(false);
+        await withOperator((client) => clearSwitch(client, { key: "mutation.provider_action", qualifier: "*", scope: "global" }, operator));
+        // A granting wildcard written AROUND the tool resolves to the fail-safe, never to a grant.
+        await corrupt("mutation.provider_action", "*", '{"enabled":true}');
+        expect(resolveSwitch(await rows(), "mutation.provider_action", { qualifier: "tiktok:hide" })).toEqual({ value: { enabled: false }, source: "fail_safe", failSafe: true });
+        await withOperator((client) => clearSwitch(client, { key: "mutation.provider_action", qualifier: "*", scope: "global" }, operator));
 
         // Invalid values (written around the tool) resolve to the fail-safe, never to a permissive guess.
         await corrupt("ai.task_kill", testTask, '{"active":"no"}');

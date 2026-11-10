@@ -37,6 +37,7 @@ import { runExecuteIntent, runReconcileIntent, type MutationComposition } from "
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { FakeJobRuntime, type FakeHandler } from "../../support/fake-job-runtime";
 import { rawScenario } from "../../providers/support/fixtures";
+import { clearSwitch, setSwitch } from "../../../tools/ops/switches";
 import { FakeIdentity, verifiedUser } from "../../support/in-memory";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld } from "../support/world";
@@ -278,16 +279,40 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
   const auditRows = (id: string) => oracle<{ action: string; actor_type: string; actor_user_id: string | null; outcome: string }>("select action, actor_type, actor_user_id, outcome from audit.audit_events where target_type = 'mutation_intent' and target_id = $1 order by occurred_at, array_position(array['mutation_intent.created', 'mutation_intent.executing', 'mutation_intent.outcome_unknown', 'mutation_intent.confirmed', 'mutation_intent.failed', 'mutation_intent.blocked', 'mutation_intent.reconciled'], action)", [id]);
   const replyRow = (workspaceId: string, id: string) => oracle<{ text: string; provider_reply_id: string | null; confirmed_at: Date | null }>("select text, provider_reply_id, confirmed_at from mutations.outbound_replies where workspace_id = $1 and intent_id = $2", [workspaceId, id]);
 
-  beforeAll(() => {
+  /**
+   * Step 7B-12A: mutation.provider_action is fail-closed (explicit_allow). This suite's simulator account publishes on
+   * "facebook", so it grants EXACTLY facebook:public_reply, through the audited tool, for its own duration — and the
+   * Step 7B-12A block below proves the deny paths by withdrawing that grant.
+   */
+  const SWITCH_OPERATOR = { operator: "ops.mutations-suite", reason: "test" } as const;
+  const AUTHORIZATION = { key: "mutation.provider_action", qualifier: "facebook:public_reply", scope: "global" } as const;
+  const WILDCARD = { key: "mutation.provider_action", qualifier: "*", scope: "global" } as const;
+  const withOperator = async <T>(work: (client: pg.PoolClient) => Promise<T>): Promise<T> => {
+    const client = await privileged.connect();
+    try {
+      return await work(client);
+    } finally {
+      client.release();
+    }
+  };
+  const authorize = (enabled: boolean) => withOperator((client) => setSwitch(client, AUTHORIZATION, { enabled }, SWITCH_OPERATOR));
+  const withdraw = () => withOperator((client) => clearSwitch(client, AUTHORIZATION, SWITCH_OPERATOR));
+
+  beforeAll(async () => {
     const target = getTarget();
     privileged = privilegedPool(target);
     web = runtimeDatabase(target, "web");
     worker = runtimeDatabase(target, "worker");
     system = runtimeDatabase(target, "system");
     logger = createLogger({ sink: () => undefined });
+    await authorize(true);
   });
 
   afterAll(async () => {
+    await withOperator(async (client) => {
+      await clearSwitch(client, WILDCARD, SWITCH_OPERATOR);
+      await clearSwitch(client, AUTHORIZATION, SWITCH_OPERATOR);
+    });
     await cleanupWorld(privileged, organizations);
     await Promise.all([web.end(), worker.end(), system.end()]);
     await privileged.end();
@@ -871,6 +896,60 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       expect((await replyRow(t.workspaceId, lateId))[0]?.provider_reply_id).toBeNull();
       // The identity index is the last word: even a privileged second link of the same provider reply is refused.
       expect(await sqlState(privileged.query("update mutations.outbound_replies set provider_reply_id = $1, confirmed_at = now() where intent_id = $2", [linkedId, lateId]))).toMatchObject({ code: "23505", constraint: "outbound_replies_provider_identity" });
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("Step 7B-12A: fail-closed mutation authorization on PostgreSQL (explicit_allow, read in the transaction)", () => {
+    const onlyThisWorkspace = (workspaceId: string) => quietPendingOutbox((text, values) => privileged.query(text, values), "topic = $1 and workspace_id <> $2", [TASK, workspaceId]);
+    const unique = (): string => `${TEXT} ${randomUUID()}`;
+
+    it("nothing granted → the request is refused before anything is written, and the Inbox reads 'not enabled' (platform reason), never an available control", async () => {
+      const t = await tenant();
+      const conversationId = await conversationFor(t);
+      await withdraw();
+      try {
+        const refused = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: unique() });
+        expect(refused.status === "ok" ? refused.value : refused).toMatchObject({ kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" });
+        expect(await oracle("select 1 from mutations.mutation_intents where workspace_id = $1", [t.workspaceId])).toHaveLength(0);
+        const view = await inboxView(t, t.users.RESPONDER, conversationId);
+        expect(view.status === "ok" ? view.value.reply : view).toMatchObject({ kind: "unavailable", reason: "platform_unavailable" });
+      } finally {
+        await authorize(true);
+      }
+    });
+
+    it("the '*' emergency block beats the exact grant: refused at request time, and the Inbox reads 'paused'", async () => {
+      const t = await tenant();
+      const conversationId = await conversationFor(t);
+      await withOperator((client) => setSwitch(client, WILDCARD, { enabled: false }, SWITCH_OPERATOR));
+      try {
+        const refused = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: unique() });
+        expect(refused.status === "ok" ? refused.value : refused).toMatchObject({ kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" });
+        const view = await inboxView(t, t.users.RESPONDER, conversationId);
+        expect(view.status === "ok" ? view.value.reply : view).toMatchObject({ kind: "unavailable", reason: "paused" });
+      } finally {
+        await withOperator((client) => clearSwitch(client, WILDCARD, SWITCH_OPERATOR));
+      }
+    });
+
+    it("revoked between the request and the execution → the executor re-reads it in the EXECUTING transaction: BLOCKED PROVIDER_ACTIONS_DISABLED, nothing sent", async () => {
+      const h = harness();
+      const t = await tenant();
+      const created = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: unique() });
+      const id = created.status === "ok" && created.value.kind === "requested" ? created.value.intentId : "";
+      expect(id).not.toBe("");
+      await onlyThisWorkspace(t.workspaceId);
+      await authorize(false);
+      try {
+        const before = h.world.interactions().length;
+        await h.step();
+        expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "BLOCKED", attempt: 1, outcome_code: "PROVIDER_ACTIONS_DISABLED" })]);
+        expect(h.world.interactions()).toHaveLength(before);
+        expect((await replyRow(t.workspaceId, id))[0]?.provider_reply_id).toBeNull();
+      } finally {
+        await authorize(true);
+      }
     });
   });
 }

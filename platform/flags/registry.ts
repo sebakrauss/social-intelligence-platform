@@ -8,8 +8,10 @@
  *   - its qualifier vocabulary (closed where the vocabulary exists; identifier-shaped where it doesn't yet)
  *   - a closed value shape; any other shape is INVALID
  *   - a default (no rows) and a fail-safe value for invalid configuration or an unreadable store
- *   - its resolution rule: `any_restrictive` (one applicable restrictive row wins: kill/pause/disable) or
- *     `most_specific` (workspace > organization > global, then exact qualifier > "*")
+ *   - its resolution rule: `any_restrictive` (one applicable restrictive row wins: kill/pause/disable),
+ *     `most_specific` (workspace > organization > global, then exact qualifier > "*") or `explicit_allow`
+ *     (Step 7B-12A, mutation.provider_action only: DENY unless an EXACT qualifier row grants it and no applicable row
+ *     restricts it; "*" can only restrict — it is the emergency block, never a grant)
  *
  * Consumers (automation evaluator, executor, availability resolver, AI gateway, integration workers) arrive
  * in later steps and read these contracts; Step 3 builds only the foundation.
@@ -21,6 +23,8 @@ export type SwitchScope = (typeof SWITCH_SCOPES)[number];
 export const PLATFORMS = ["facebook", "instagram", "tiktok"] as const;
 export const POLICY_TYPES = ["obvious_spam", "obvious_bots", "malicious_links", "configured_patterns"] as const;
 export const MUTATION_ACTIONS = ["public_reply", "private_reply", "hide", "unhide", "delete", "block"] as const;
+export type SwitchPlatform = (typeof PLATFORMS)[number];
+export type MutationAction = (typeof MUTATION_ACTIONS)[number];
 
 const IDENTIFIER = /^[a-z][a-z0-9_]{0,40}$/;
 const includes = (list: readonly string[], value: string): boolean => list.includes(value);
@@ -80,9 +84,11 @@ export interface SwitchDefinition<V> {
   readonly defaultValue: V;
   /** Applied when any applicable row is invalid, or the store can't be read. */
   readonly failSafe: V;
-  readonly resolution: "any_restrictive" | "most_specific";
-  /** For `any_restrictive`: whether a value is the restrictive state. */
+  readonly resolution: "any_restrictive" | "most_specific" | "explicit_allow";
+  /** For `any_restrictive` and `explicit_allow`: whether a value is the restrictive state. */
   readonly isRestrictive?: (value: V) => boolean;
+  /** For `explicit_allow`: whether a value grants (only an EXACT-qualifier row may; a granting "*" row is invalid). */
+  readonly isGrant?: (value: V) => boolean;
 }
 
 const define = <V>(definition: SwitchDefinition<V>): SwitchDefinition<V> => Object.freeze(definition);
@@ -109,16 +115,22 @@ export const SWITCHES = {
     failSafe: { open: false },
     resolution: "most_specific",
   }),
-  /** Platform mutation switch per provider × action (incident control; surfaced as temporarily unavailable). */
+  /**
+   * Platform mutation authorization per platform × action (Step 7B-12A, fail-closed). Nothing is allowed by default: a
+   * platform:action is enabled ONLY by its own exact row `{enabled:true}`, and only while no applicable row says
+   * `{enabled:false}`. "*" may only be `{enabled:false}` — the global emergency block, which always wins; a `"*"` row
+   * that grants is invalid and resolves to the fail-safe. Unknown platforms or actions never resolve to allowed.
+   */
   "mutation.provider_action": define({
     key: "mutation.provider_action",
     scopes: ["global"],
     qualifier: qualifiers.platformAction,
     parse: booleanShape("enabled"),
-    defaultValue: { enabled: true },
+    defaultValue: { enabled: false },
     failSafe: { enabled: false },
-    resolution: "any_restrictive",
+    resolution: "explicit_allow",
     isRestrictive: (value) => !value.enabled,
+    isGrant: (value) => value.enabled,
   }),
   /** Provider rollout: enable a platform or capability for selected organizations. Off unless enabled. */
   "provider.rollout": define({

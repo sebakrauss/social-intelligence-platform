@@ -125,7 +125,7 @@ const NO_MUTATIONS: MutationRequestSources = {
   intents: { insert: unavailable, findByIdempotencyKey: unavailable, get: unavailable, lock: unavailable, transition: unavailable, appendHistory: unavailable, competitorsFor: unavailable },
   replies: { insert: unavailable, getByIntent: unavailable, listForParents: unavailable, linkedIntent: unavailable, confirm: unavailable },
   targets: { load: unavailable },
-  guards: { providerActionsEnabled: unavailable, replyCapability: unavailable, account: unavailable },
+  guards: { providerActionAllowed: unavailable, replyCapability: unavailable, account: unavailable },
 };
 
 /** The Inbox read side is proven on the real database; a test that needs it injects its own sources. */

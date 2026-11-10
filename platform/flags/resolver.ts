@@ -55,11 +55,38 @@ function rowIsValid(definition: SwitchDefinition<unknown>, row: SwitchRowInput):
   return (definition.scopes as readonly string[]).includes(row.scope) && definition.qualifier(row.qualifier) && definition.parse(row.value) !== undefined;
 }
 
+/**
+ * `explicit_allow` (Step 7B-12A): fail-closed authorization. The query must name ONE exact, valid qualifier; any
+ * applicable invalid row (a granting "*" included) is the fail-safe; any applicable restrictive row ("*" = the emergency
+ * block) denies; otherwise only an exact-qualifier granting row allows. No rows → the default (deny).
+ */
+function resolveExplicitAllow<V>(definition: SwitchDefinition<V>, relevant: readonly SwitchRowInput[], query: SwitchQuery): ResolvedSwitch<V> {
+  const failSafe: ResolvedSwitch<V> = { value: definition.failSafe, source: "fail_safe", failSafe: true };
+  const qualifier = query.qualifier;
+  if (qualifier === undefined || qualifier === "*" || !definition.qualifier(qualifier)) return failSafe;
+  const parsed: { readonly row: SwitchRowInput; readonly value: V }[] = [];
+  for (const row of relevant) {
+    const value = definition.parse(row.value);
+    if (value === undefined) return failSafe;
+    if (row.qualifier === "*" && definition.isRestrictive?.(value) !== true) return failSafe;
+    parsed.push({ row, value });
+  }
+  const restrictive = parsed.find((entry) => definition.isRestrictive?.(entry.value) === true);
+  if (restrictive !== undefined) return { value: restrictive.value, source: restrictive.row.scope as SwitchScope, failSafe: false };
+  const grant = parsed.find((entry) => entry.row.qualifier === qualifier && definition.isGrant?.(entry.value) === true);
+  if (grant !== undefined) return { value: grant.value, source: grant.row.scope as SwitchScope, failSafe: false };
+  return { value: definition.defaultValue, source: "default", failSafe: false };
+}
+
 /** Resolves one switch from the visible rows. */
 export function resolveSwitch<K extends SwitchKey>(rows: readonly SwitchRowInput[], key: K, query: SwitchQuery = {}): ResolvedSwitch<SwitchValue<K>> {
   const definition = SWITCHES[key] as unknown as SwitchDefinition<SwitchValue<K>>;
   const generic = definition as unknown as SwitchDefinition<unknown>;
   const relevant = rows.filter((row) => applicable(generic, row, query));
+  if (definition.resolution === "explicit_allow") {
+    if (relevant.some((row) => !rowIsValid(generic, row))) return { value: definition.failSafe, source: "fail_safe", failSafe: true };
+    return resolveExplicitAllow(definition, relevant, query);
+  }
   if (relevant.some((row) => !rowIsValid(generic, row))) {
     return { value: definition.failSafe, source: "fail_safe", failSafe: true };
   }

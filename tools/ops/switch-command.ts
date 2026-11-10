@@ -12,9 +12,9 @@
  */
 import { parseArgs } from "node:util";
 import { resolveSwitch, type SwitchRowInput } from "../../platform/flags/resolver.ts";
-import { SWITCHES } from "../../platform/flags/registry.ts";
+import { MUTATION_ACTIONS, PLATFORMS, SWITCHES } from "../../platform/flags/registry.ts";
 import { DATABASE_TARGETS, type DatabaseTarget } from "../db/environment.ts";
-import { REASON_CODES, SwitchChangeError, validateTarget, type ReasonCode, type SwitchAttribution, type SwitchRow, type SwitchTarget } from "./switches.ts";
+import { REASON_CODES, SwitchChangeError, validateTarget, wildcardGrantProblem, type ReasonCode, type SwitchAttribution, type SwitchRow, type SwitchTarget } from "./switches.ts";
 
 export const ACTIONS = ["set", "clear", "show"] as const;
 export type SwitchAction = (typeof ACTIONS)[number];
@@ -104,6 +104,8 @@ export function parseSwitchCommand(argv: readonly string[]): ParsedCommand {
     return { ok: false, problem: "--value must be JSON" };
   }
   if (SWITCHES[target.key].parse(value) === undefined) return { ok: false, problem: `value shape not valid for ${target.key}` };
+  const wildcard = wildcardGrantProblem(target.key, target.qualifier, value);
+  if (wildcard !== undefined) return { ok: false, problem: wildcard };
   return { ok: true, command: { action, databaseTarget, target, value, attribution, apply, confirmProduction } };
 }
 
@@ -148,5 +150,17 @@ export function describeResolution(rows: readonly SwitchRow[], target: SwitchTar
     ...(target.organizationId === undefined ? {} : { organizationId: target.organizationId }),
     ...(target.workspaceId === undefined ? {} : { workspaceId: target.workspaceId }),
   });
-  return `  runtime resolves         ${target.key} [${target.qualifier}] → ${JSON.stringify(resolved.value)} (source: ${resolved.source}${resolved.failSafe ? ", FAIL-SAFE" : ""})`;
+  const line = `  runtime resolves         ${target.key} [${target.qualifier}] → ${JSON.stringify(resolved.value)} (source: ${resolved.source}${resolved.failSafe ? ", FAIL-SAFE" : ""})`;
+  // Step 7B-12A: under explicit_allow "*" is not a pair a mutation asks for — show the block and EVERY platform:action
+  // the runtime would allow right now, so an operator verifies all 18 pairs in one read.
+  if (SWITCHES[target.key].resolution === "explicit_allow" && target.qualifier === "*") {
+    const pairs = PLATFORMS.flatMap((platform) => MUTATION_ACTIONS.map((action) => `${platform}:${action}`));
+    const allowed = pairs.filter((pair) => (resolveSwitch(input, target.key, { qualifier: pair }).value as { readonly enabled?: unknown }).enabled === true);
+    const blocked = input.some((row) => row.switchKey === target.key && row.qualifier === "*" && row.scope === "global" && (row.value as { readonly enabled?: unknown } | null)?.enabled === false);
+    return [
+      `  emergency block          ${target.key} [*] ${blocked ? "ACTIVE: every platform:action is denied" : "absent"}`,
+      `  runtime allows           ${allowed.length === 0 ? "none" : allowed.join(", ")} (of ${String(pairs.length)} platform:action pairs; everything else is denied)`,
+    ].join("\n");
+  }
+  return line;
 }

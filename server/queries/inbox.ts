@@ -397,11 +397,15 @@ export async function buildReplyModel(input: ReplyModelInput): Promise<ReplyMode
   if (input.content === undefined) return { kind: "unavailable", reason: "account_inactive", platform };
   const account = await input.guards.account(input.content.connectedAccountId);
   if (account === undefined || account.status !== "ACTIVE") return { kind: "unavailable", reason: "account_inactive", platform };
-  if (!(await input.guards.providerActionsEnabled(account.platform))) return { kind: "unavailable", reason: "paused", platform };
+  // What the platform and the connection allow comes first (IA §18); the operational authorization last (Step 7B-12A):
+  // nothing granted reads as "not enabled yet", an emergency block or invalid configuration as "paused".
   const capability = await input.guards.replyCapability(input.content.connectedAccountId, { contentKind: input.content.contentKind, reportedSource: input.content.reportedSource });
   if (capability.state === "TEMPORARILY_UNAVAILABLE") return { kind: "unavailable", reason: "connection", platform };
   if (capability.state === "UNAVAILABLE") return { kind: "unavailable", reason: "platform_unavailable", platform };
   if (account.connectionStatus !== "ACTIVE") return { kind: "unavailable", reason: "connection", platform };
+  const authorization = await input.guards.providerActionAllowed(account.platform, "public_reply");
+  if (authorization === "not_enabled") return { kind: "unavailable", reason: "platform_unavailable", platform };
+  if (authorization !== "allowed") return { kind: "unavailable", reason: "paused", platform };
   return { kind: "available", connectedAccountId: input.content.connectedAccountId, platform, maxChars: REPLY_TEXT_MAX_CHARS, limitation: capability.state === "AVAILABLE_WITH_LIMITATION" ? "limited" : null };
 }
 

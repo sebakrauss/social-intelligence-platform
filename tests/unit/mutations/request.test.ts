@@ -22,7 +22,8 @@ describe("7B-1: a created request", () => {
     expect(outcome.reply).toMatchObject({ intentId: outcome.intent.id, organizationId: ORGANIZATION, workspaceId: WORKSPACE, parentInteractionId: TARGET, text: "Gracias por escribirnos.", providerReplyId: null, confirmedAt: null, platform: "facebook" });
     expect(stores.history).toEqual([expect.objectContaining({ intentId: outcome.intent.id, from: null, to: "PENDING", attempt: 0, actor: "web", code: null, runReference: null })]);
     // The switch was asked for the target's platform; the capability for the target's own content kind and source.
-    expect(stores.calls).toContain("switch:facebook");
+    // Step 7B-12A: the request consults the authorization for the EXACT platform:action, never a platform-wide flag.
+    expect(stores.calls).toContain("switch:facebook:public_reply");
     expect(stores.calls).toContain("capability:post/mixed");
   });
 

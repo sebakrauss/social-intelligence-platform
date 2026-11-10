@@ -6,8 +6,10 @@ export {
   SWITCH_KEYS,
   SWITCH_SCOPES,
   type AiRoute,
+  type MutationAction,
   type SwitchDefinition,
   type SwitchKey,
+  type SwitchPlatform,
   type SwitchScope,
   type SwitchValue,
 } from "./registry";

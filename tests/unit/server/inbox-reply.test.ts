@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { PermissionKey } from "@/domain/access";
 import type { ContentItemRecord } from "@/modules/content";
-import type { OutboundReplyView, RequestGuards } from "@/mutations/request";
+import type { OutboundReplyView, ProviderActionDecision, RequestGuards } from "@/mutations/request";
 import { effectivePermissions } from "@/platform/permissions";
 import { OUTBOUND_STATE_OF, buildOutbound, buildReplyModel } from "@/server/queries/inbox";
 import { replyEligible } from "@/app/workspaces/[workspaceId]/inbox/views";
@@ -15,9 +15,9 @@ import { replyEligible } from "@/app/workspaces/[workspaceId]/inbox/views";
 const ACCOUNT = "66666666-6666-4666-8666-666666666666";
 const content: ContentItemRecord = { id: "c1", platform: "instagram", connectedAccountId: ACCOUNT, providerAssetId: "ig_acct", providerContentId: "ig_post_1", contentKind: "post", reportedSource: "paid", latestObservedAt: new Date() };
 
-function guards(over: { capability?: "AVAILABLE" | "AVAILABLE_WITH_LIMITATION" | "UNAVAILABLE" | "TEMPORARILY_UNAVAILABLE"; switch?: boolean; account?: Awaited<ReturnType<RequestGuards["account"]>>; scopes?: string[] } = {}): RequestGuards {
+function guards(over: { capability?: "AVAILABLE" | "AVAILABLE_WITH_LIMITATION" | "UNAVAILABLE" | "TEMPORARILY_UNAVAILABLE"; switch?: boolean; authorization?: ProviderActionDecision; account?: Awaited<ReturnType<RequestGuards["account"]>>; scopes?: string[] } = {}): RequestGuards {
   return {
-    providerActionsEnabled: () => Promise.resolve(over.switch ?? true),
+    providerActionAllowed: () => Promise.resolve(over.authorization ?? (over.switch === false ? "paused" : "allowed")),
     account: () => Promise.resolve(over.account === undefined && !("account" in over) ? { status: "ACTIVE", platform: "instagram", provider: "simulator", providerAssetId: "ig_acct", connectionStatus: "ACTIVE", credentialId: "c" } : over.account),
     replyCapability: (_id, scope) => {
       over.scopes?.push(`${scope.contentKind}/${scope.reportedSource}`);
@@ -41,7 +41,7 @@ describe("7B-3: the reply model follows the availability precedence", () => {
     expect(scopes).toEqual([]);
   });
 
-  it("then the account, the provider-action switch, the capability (platform unavailable vs connection) — one reason", async () => {
+  it("then the account, the capability (platform unavailable vs connection), the provider-action authorization — one reason", async () => {
     const owner = permissions("OWNER");
     expect(await buildReplyModel({ permissions: owner, mode: "STANDARD", content: undefined, guards: guards() })).toMatchObject({ kind: "unavailable", reason: "account_inactive" });
     expect(await buildReplyModel({ permissions: owner, mode: "STANDARD", content, guards: guards({ account: undefined }) })).toMatchObject({ kind: "unavailable", reason: "account_inactive" });
@@ -49,6 +49,19 @@ describe("7B-3: the reply model follows the availability precedence", () => {
     // The Meta catalog today: no reply_public → UNAVAILABLE → the platform reason, never a dead control.
     expect(await buildReplyModel({ permissions: owner, mode: "STANDARD", content, guards: guards({ capability: "UNAVAILABLE" }) })).toEqual({ kind: "unavailable", reason: "platform_unavailable", platform: "instagram" });
     expect(await buildReplyModel({ permissions: owner, mode: "STANDARD", content, guards: guards({ capability: "TEMPORARILY_UNAVAILABLE" }) })).toMatchObject({ kind: "unavailable", reason: "connection" });
+  });
+
+  it("Step 7B-12A: what the platform and the connection allow comes BEFORE the operational authorization; 'not enabled' reads as not available yet, a block as paused", async () => {
+    const owner = permissions("OWNER");
+    const model = (over: Parameters<typeof guards>[0]) => buildReplyModel({ permissions: owner, mode: "STANDARD", content, guards: guards(over) });
+    // The platform reason wins over any switch state (the Meta catalog today: reply_public UNAVAILABLE).
+    expect(await model({ capability: "UNAVAILABLE", authorization: "paused" })).toEqual({ kind: "unavailable", reason: "platform_unavailable", platform: "instagram" });
+    expect(await model({ capability: "UNAVAILABLE", authorization: "not_enabled" })).toEqual({ kind: "unavailable", reason: "platform_unavailable", platform: "instagram" });
+    expect(await model({ capability: "TEMPORARILY_UNAVAILABLE", authorization: "paused" })).toMatchObject({ reason: "connection" });
+    // Capability available: nothing granted → "not enabled in Wrenkind yet"; the emergency block or bad config → "paused".
+    expect(await model({ authorization: "not_enabled" })).toEqual({ kind: "unavailable", reason: "platform_unavailable", platform: "instagram" });
+    expect(await model({ authorization: "paused" })).toEqual({ kind: "unavailable", reason: "paused", platform: "instagram" });
+    expect(await model({ authorization: "allowed" })).toMatchObject({ kind: "available" });
   });
 
   it("available carries the account, the platform and the real limit; the capability is asked for the content's own kind and source", async () => {

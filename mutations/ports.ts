@@ -6,6 +6,7 @@
 import type { ProviderAccess } from "@/integrations/providers/contract/dto";
 import type { ProviderObjectRef } from "@/integrations/providers/contract/identity";
 import type { ProviderMutationPort } from "@/integrations/providers/contract/mutation-port";
+import type { MutationAction } from "@/platform/flags";
 import type { CompetingIntent, IntentOutcomeCode, IntentStatus, IntentTransition, MutationIntent } from "./domain/intent";
 
 /** The canonical interaction a reply targets, as persistence knows it (never a browser-supplied provider id). */
@@ -100,8 +101,12 @@ export interface ExecutionGuards {
   initiatorRole(workspaceId: string, userId: string): Promise<string | undefined>;
   /** The workspace mode, read in the same transaction as the EXECUTING transition (consistent read). */
   workspaceMode(workspaceId: string): Promise<"STANDARD" | "MONITOR_ONLY" | undefined>;
-  /** Operational switch mutation.provider_action for `<platform>:public_reply` (fail-safe: disabled). */
-  providerActionsEnabled(platform: string): Promise<boolean>;
+  /**
+   * Operational authorization mutation.provider_action for EXACTLY `<platform>:<action>` (Step 7B-12A, fail-closed):
+   * "allowed" only when that exact pair is granted and nothing restricts it; "not_enabled" when nothing grants it (the
+   * default); "paused" when a restrictive row (the "*" emergency block included) or invalid configuration denies it.
+   */
+  providerActionAllowed(platform: string, action: MutationAction): Promise<ProviderActionDecision>;
   /** Current availability of reply_public for the account and the TARGET's content kind and source (never inferred; UNAVAILABLE on any doubt). */
   replyCapability(connectedAccountId: string, scope: { readonly contentKind: string; readonly reportedSource: string }): Promise<{ readonly state: "AVAILABLE" | "AVAILABLE_WITH_LIMITATION" | "UNAVAILABLE" | "TEMPORARILY_UNAVAILABLE"; readonly catalogId: string; readonly catalogRevision: number }>;
   /** The account and its connection: provider, statuses and the credential envelope reference the job may open. */
@@ -109,7 +114,10 @@ export interface ExecutionGuards {
 }
 
 /** What the request side checks before creating an intent: the same guards, minus the runtime-only ones. */
-export type RequestGuards = Pick<ExecutionGuards, "providerActionsEnabled" | "replyCapability" | "account">;
+export type RequestGuards = Pick<ExecutionGuards, "providerActionAllowed" | "replyCapability" | "account">;
+
+/** The operational authorization of one platform:action (Step 7B-12A). Only "allowed" lets a mutation proceed. */
+export type ProviderActionDecision = "allowed" | "not_enabled" | "paused";
 
 /** The provider boundary as the executor sees it: a mutation port per provider, or none (fails closed). */
 export interface MutationProviders {

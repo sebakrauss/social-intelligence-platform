@@ -82,9 +82,11 @@ export interface AuthorityReads {
 /** The guards both sides share, over the owner modules' reads of this transaction. */
 export function sharedGuards(tx: DatabaseTransaction, reads: AuthorityReads): RequestGuards {
   return {
-    async providerActionsEnabled(platform) {
-      const resolved = resolveSwitch(await readSwitchRows(tx), "mutation.provider_action", { qualifier: `${platform}:public_reply` });
-      return resolved.value.enabled;
+    async providerActionAllowed(platform, action) {
+      // Read in THIS transaction, never cached: a revocation is seen by the next request or execution (Step 7B-12A).
+      const resolved = resolveSwitch(await readSwitchRows(tx), "mutation.provider_action", { qualifier: `${platform}:${action}` });
+      if (resolved.value.enabled && !resolved.failSafe) return "allowed";
+      return resolved.source === "default" ? "not_enabled" : "paused";
     },
     async account(connectedAccountId) {
       const account = await reads.account(connectedAccountId);

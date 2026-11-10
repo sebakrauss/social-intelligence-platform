@@ -117,7 +117,8 @@ async function admit(stores: ExecutorStores, workspaceId: string, intentId: stri
   if ((await stores.guards.workspaceMode(intent.workspaceId)) !== "STANDARD") return block("MODE_NOT_STANDARD");
   const account = await stores.guards.account(intent.connectedAccountId);
   if (account === undefined || account.status !== "ACTIVE") return block("ACCOUNT_INACTIVE");
-  if (!(await stores.guards.providerActionsEnabled(account.platform))) return block("PROVIDER_ACTIONS_DISABLED");
+  // Re-checked here, in the transaction that would commit EXECUTING, before any credential is opened (Step 7B-12A).
+  if ((await stores.guards.providerActionAllowed(account.platform, "public_reply")) !== "allowed") return block("PROVIDER_ACTIONS_DISABLED");
   if (account.connectionStatus !== "ACTIVE" || account.credentialId === null) return block("CONNECTION_UNAVAILABLE");
   const target = await stores.targets.load(intent.targetInteractionId);
   if (target === undefined || !target.observed || target.presence !== "present" || target.ownAccount) return block("TARGET_NOT_PRESENT");
