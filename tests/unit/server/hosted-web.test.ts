@@ -83,14 +83,18 @@ describe("6B.2 · Secure session cookies outside local development", () => {
 describe("6B.3 · web pool size for serverless hosting", () => {
   const maxOf = (database: RuntimeDatabase): unknown => (database.pool as unknown as { options: { max: unknown } }).options.max;
 
-  it("a hosted web instance keeps exactly one connection; local development/test keep 4", () => {
-    expect(webPoolMax({ NODE_ENV: "production" })).toBe(1);
-    expect(webPoolMax({})).toBe(1);
+  /** A conversation page issues this many commands at once (conversation view, list, shell membership). */
+  const PARALLEL_COMMANDS_PER_CONVERSATION_PAGE = 3;
+
+  it("a hosted web instance keeps a small pool that fits one page's parallel commands (Step 7B-8B); local development/test keep 4", () => {
+    expect(webPoolMax({ NODE_ENV: "production" })).toBe(4);
+    expect(webPoolMax({})).toBe(4);
+    expect(webPoolMax({ NODE_ENV: "production" })).toBeGreaterThan(PARALLEL_COMMANDS_PER_CONVERSATION_PAGE);
     expect(webPoolMax({ NODE_ENV: "development" })).toBe(4);
     expect(webPoolMax({ NODE_ENV: "test" })).toBe(4);
     const hosted = createWebDatabase({ NODE_ENV: "production", DATABASE_WEB_URL: LOCAL_WEB_URL });
     const local = createWebDatabase({ NODE_ENV: "development", DATABASE_WEB_URL: LOCAL_WEB_URL });
-    expect([maxOf(hosted), maxOf(local)]).toEqual([1, 4]);
+    expect([maxOf(hosted), maxOf(local)]).toEqual([4, 4]);
     void hosted.end();
     void local.end();
   });

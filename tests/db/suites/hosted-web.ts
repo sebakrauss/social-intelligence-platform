@@ -6,7 +6,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import type { RuntimeDatabase } from "@/platform/db";
 import { webHealth } from "@/server/http/health";
-import { createWebDatabase } from "@/server/persistence/runtime";
+import { createWebDatabase, WEB_POOL_MAX } from "@/server/persistence/runtime";
 import type { DbTarget } from "../support/target";
 
 export function defineHostedWebSuite(getTarget: () => DbTarget): void {
@@ -31,13 +31,14 @@ export function defineHostedWebSuite(getTarget: () => DbTarget): void {
   });
 
   describe("hosted web health (TA-11A)", () => {
-    it("200 through the real web composition: one connection, web_login, nothing readable", async () => {
+    it("200 through the real web composition: the hosted pool size, web_login, nothing readable", async () => {
       const response = await webHealth(open(getTarget().runtimeUrls.web));
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ status: "ok" });
       const database = opened.at(-1);
       if (database === undefined) throw new Error("no pool");
-      expect((database.pool as unknown as { options: { max: number } }).options.max).toBe(1);
+      // Step 7B-8B: a hosted instance keeps 4 connections (one page's parallel commands plus neighbouring requests).
+      expect((database.pool as unknown as { options: { max: number } }).options.max).toBe(WEB_POOL_MAX.hosted);
       const identity = await database.pool.query<{ current_user: string; session_user: string }>("select current_user, session_user");
       expect(identity.rows[0]).toEqual({ current_user: "web_login", session_user: "web_login" });
       // The probe's role holds no table privileges of its own: it reads nothing and bypasses no RLS.
