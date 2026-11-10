@@ -16,6 +16,7 @@ import {
   isIntentOutcomeCode,
   isIntentStatus,
   isTerminal,
+  publicReplyDepthAllowed,
   type IntentStatus,
 } from "@/mutations/domain/intent";
 
@@ -77,5 +78,21 @@ describe("7B-1: the intent vocabulary is closed", () => {
     expect(OUTCOME_STATUS.TARGET_ACCOUNT_MISMATCH).toBe("BLOCKED");
     expect(OUTCOME_STATUS.PROVIDER_UNAVAILABLE).toBe("FAILED");
     expect(OUTCOME_STATUS.MODE_NOT_STANDARD).toBe("BLOCKED");
+    // Step 7B-13C (F1): a guard refusal (nothing was sent), never a provider failure.
+    expect(OUTCOME_STATUS.TARGET_NOT_REPLYABLE).toBe("BLOCKED");
+    expect(isIntentOutcomeCode("TARGET_NOT_REPLYABLE")).toBe(true);
+  });
+
+  it("Step 7B-13C (F1): Instagram admits top-level comments only; insufficient or ambiguous shapes refuse; other platforms unchanged", () => {
+    const at = (platform: string, kind: string, parentProviderInteractionId: string | null) => publicReplyDepthAllowed({ platform, kind, parentProviderInteractionId });
+    expect(at("instagram", "comment", null)).toBe(true);
+    expect(at("instagram", "reply", "p")).toBe(false);
+    expect(at("instagram", "reply", null)).toBe(false);
+    expect(at("instagram", "comment", "p")).toBe(false);
+    expect(at("instagram", "unknown", null)).toBe(false);
+    expect(at("instagram", "", null)).toBe(false);
+    for (const platform of ["facebook", "tiktok"]) {
+      for (const [kind, parent] of [["comment", null], ["reply", "p"], ["unknown", null]] as const) expect(at(platform, kind, parent), `${platform}/${kind}`).toBe(true);
+    }
   });
 });

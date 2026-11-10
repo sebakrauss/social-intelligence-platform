@@ -1,16 +1,20 @@
 /**
  * Job-runtime composition of the INTEGRATION-plane task `mutations.execute_intent` (Step 7B-1): the Platform Mutation
  * Executor (TA §26) for ONE persisted intent. This is the ONLY place a provider MUTATION port is obtained (TA §6.3
- * rule 3; §26.1–§26.2): today the local simulator's, in development/test, built from the simulator world the read
- * side already uses. No Meta or TikTok mutation adapter exists; for those providers the executor records BLOCKED
- * (PROVIDER_MUTATION_UNSUPPORTED) before any credential is opened. The credential is opened only through this
- * plane's credential access (jobs/connections.ts), once, between transactions, for one call.
+ * rule 3; §26.1–§26.2): the local simulator's, in development/test, built from the simulator world the read side
+ * already uses; and (Step 7B-13A) Meta's, for INSTAGRAM accounts only — the Instagram public-reply port of 7B-11.
+ * Facebook, TikTok and every other provider/platform have no mutation port: the executor records BLOCKED
+ * (PROVIDER_MUTATION_UNSUPPORTED) before any credential is opened. Having a port decides nothing: the executor's guard
+ * chain (role, mode, account, the exact mutation.provider_action grant, connection, target authority, capability) runs
+ * first, and today the Meta catalog publishes no reply_public and no grant exists. The credential is opened only
+ * through this plane's credential access (jobs/connections.ts), once, between transactions, for one call.
  *
  * Thin handler: resolve the two identifiers, run the executor; every outcome is recorded by the executor itself and
  * the run completes (single attempt by registry: a lost run is reconciled, never re-sent).
  */
 import { randomUUID } from "node:crypto";
 import type { DiscoveryProviders, ProviderCredentialAccess } from "@/modules/connections";
+import { createMetaMutationPort } from "@/integrations/providers/meta/mutation-port";
 import { createSimulatorMutationPort } from "@/integrations/providers/simulator/mutation-port";
 import type { ProviderMutationPort } from "@/integrations/providers/contract/mutation-port";
 import { providerObjectRef, type ProviderAccess } from "@/integrations/providers/contract";
@@ -20,6 +24,7 @@ import { reconcileIntent, type ReconcileResult } from "@/mutations/executor/reco
 import { createReadPortReplyLookup } from "@/mutations/executor/reply-lookup";
 import type { CredentialUse, MutationClock, MutationProviders } from "@/mutations/ports";
 import { NonRetryableJobError, type TenantStepJobContext } from "@/platform/jobs";
+import { providerComposition } from "@/server/connections/provider-mode";
 import { isLocalSimulatorRuntime, localSimulator } from "@/server/connections/simulator";
 import { credentialAuthority, executorStores } from "@/server/persistence/mutation-execution";
 import { composeJobProviders } from "./connections";
@@ -63,15 +68,39 @@ export interface MutationComposition {
 
 let composition: MutationComposition | undefined;
 
+/** The composed mutation ports; undefined where none may exist. */
+export interface MutationPorts {
+  readonly simulator: ProviderMutationPort | undefined;
+  /** Meta's Instagram public-reply port (Step 7B-13A); never served for any other platform. */
+  readonly instagram: ProviderMutationPort | undefined;
+}
+
 /**
- * The ONLY provider mutation composition: the local simulator's port where its own rule allows it (development/test);
- * every other provider has no mutation port and fails closed at the executor. Credential access and read ports are the
- * integration plane's (composeJobProviders), so reconciliation reads through exactly the opener the reads use.
+ * Which port serves an account (Step 7B-13A): the simulator's for simulator accounts; Meta's for an account whose
+ * provider is "meta" AND whose platform is "instagram" — exactly that pair; nothing else (Meta/Facebook, TikTok,
+ * unknown) gets a port, so the executor blocks before any credential is opened.
+ */
+export function selectMutationPorts(ports: MutationPorts): MutationProviders {
+  return {
+    mutation: (provider, platform) => {
+      if (provider === "simulator") return ports.simulator;
+      if (provider === "meta" && platform === "instagram") return ports.instagram;
+      return undefined;
+    },
+  };
+}
+
+/**
+ * The ONLY provider mutation composition: the local simulator's port where its own rule allows it (development/test),
+ * and Meta's Instagram public-reply port (with its own Graph write transport) wherever the Meta read port is composed —
+ * never under the synthetic staging stub. Credential access and read ports are the integration plane's
+ * (composeJobProviders), so reconciliation reads through exactly the opener the reads use.
  */
 export function composeMutationProviders(environment: Environment): MutationComposition {
   const base = composeJobProviders(environment);
   const simulator: ProviderMutationPort | undefined = isLocalSimulatorRuntime(environment) ? createSimulatorMutationPort(localSimulator(environment).world) : undefined;
-  return { access: base.access, reads: base.providers, providers: { mutation: (provider) => (provider === "simulator" ? simulator : undefined) } };
+  const instagram: ProviderMutationPort | undefined = providerComposition(environment).kind === "staging_stub" ? undefined : createMetaMutationPort();
+  return { access: base.access, reads: base.providers, providers: selectMutationPorts({ simulator, instagram }) };
 }
 
 function clockOf(options: { readonly clock?: MutationClock }): MutationClock {

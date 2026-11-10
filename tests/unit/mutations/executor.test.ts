@@ -92,6 +92,13 @@ describe("7B-1 executor: the confirmed path", () => {
     expect(stores.events.every((event) => event.intent.organizationId === ORGANIZATION && event.intent.initiatorUserId === USER)).toBe(true);
   });
 
+  it("Step 7B-13C (F1): a Facebook reply to a reply (simulator) keeps executing — the top-level rule is Instagram's only", async () => {
+    const stores = memoryStores(guardState(), [replyTarget({ kind: "reply", parentProviderInteractionId: "fb_c_009" })]);
+    const { intent, clock } = seeded(stores);
+    expect((await executeIntent(deps(stores, clock), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).kind).toBe("confirmed");
+    expect(statusesOf(stores)).toEqual(["PENDING", "EXECUTING", "CONFIRMED"]);
+  });
+
   it("a CONFIRMED, FAILED or BLOCKED intent is a noop: no transition, no call", async () => {
     for (const status of ["CONFIRMED", "FAILED", "BLOCKED"] as const) {
       const stores = memoryStores();

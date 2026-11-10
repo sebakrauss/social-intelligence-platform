@@ -132,6 +132,22 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["provider-contract-pure", "integrations/providers/contract/uses-node.ts", "crypto"],
   ["provider-mutation-implementations-executor-only", "integrations/providers/meta/index.ts", "integrations/providers/meta/mutation-port.ts"],
   ["provider-mutation-implementations-executor-only", "server/obtains-adapter-mutations.ts", "integrations/providers/meta/mutation-port.ts"],
+  // Step 7B-13A: the Meta mutation port has exactly one composer, jobs/mutations.ts (the allowed fixture of that name)
+  ["meta-mutation-executor-composition-only", "integrations/providers/meta/index.ts", "integrations/providers/meta/mutation-port.ts"],
+  ["meta-mutation-executor-composition-only", "server/obtains-adapter-mutations.ts", "integrations/providers/meta/mutation-port.ts"],
+  ["meta-mutation-executor-composition-only", "jobs/composes-meta-mutation.ts", "integrations/providers/meta/mutation-port.ts"],
+  // Step 7B-13C (F4): the exception is EXACT — look-alikes of jobs/mutations.ts are not composers
+  ["meta-mutation-executor-composition-only", "jobs/mutations.tsx", "integrations/providers/meta/mutation-port.ts"],
+  ["meta-mutation-executor-composition-only", "jobs/mutations-meta.ts", "integrations/providers/meta/mutation-port.ts"],
+  // Step 7B-13C (F2): only the INTEGRATION task entrypoint imports the mutation composition
+  ["mutation-composition-integration-task-only", "jobs/trigger/main/uses-mutation-composition.ts", "jobs/mutations.ts"],
+  ["mutation-composition-integration-task-only", "jobs/trigger/intelligence/uses-mutation-composition.ts", "jobs/mutations.ts"],
+  ["mutation-composition-integration-task-only", "jobs/trigger/integration/uses-mutation-composition.ts", "jobs/mutations.ts"],
+  ["mutation-composition-integration-task-only", "jobs/uses-mutation-composition.ts", "jobs/mutations.ts"],
+  ["mutation-composition-integration-task-only", "server/uses-mutation-composition.ts", "jobs/mutations.ts"],
+  ["mutation-composition-integration-task-only", "app/uses-mutation-composition.ts", "jobs/mutations.ts"],
+  ["jobs-are-entry-points", "server/uses-mutation-composition.ts", "jobs/mutations.ts"],
+  ["jobs-are-entry-points", "app/uses-mutation-composition.ts", "jobs/mutations.ts"],
   // Credential crypto (Step 5A): the web seals but never opens; local keyring only at composition roots
   ["credential-opening-job-runtime-only", "server/opens-credentials.ts", "platform/crypto/credentials/open.ts"],
   ["credential-opening-job-runtime-only", "app/opens-credentials.ts", "platform/crypto/credentials/local-opener.ts"],
@@ -244,6 +260,30 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["staging-stub-no-io", "integrations/providers/staging-stub/uses-network.ts", "http"],
   ["staging-stub-jobs-composition-only", "server/composes-staging-stub.ts", "integrations/providers/staging-stub/index.ts"],
 ];
+
+describe("Step 7B-13C (F2/F4): the composition exceptions are exact paths (anchored), never look-alikes", () => {
+  const exemptions = (name: string): RegExp => {
+    const rule = config.forbidden.find((candidate) => candidate.name === name) as { readonly from?: { readonly pathNot?: string } } | undefined;
+    return new RegExp(rule?.from?.pathNot ?? "^$");
+  };
+  const META_PORT = exemptions("meta-mutation-executor-composition-only");
+  const COMPOSITION = exemptions("mutation-composition-integration-task-only");
+
+  it("the Meta mutation port: only jobs/mutations.ts (and tests) are exempt", () => {
+    expect(META_PORT.source).toBe("^(jobs\\/mutations\\.ts$|tests\\/)");
+    for (const path of ["jobs/mutations.ts", "tests/unit/jobs/x.test.ts"]) expect(META_PORT.test(path), path).toBe(true);
+    for (const path of ["jobs/mutations.tsx", "jobs/mutations.ts.old", "jobs/mutations.ts.bak", "jobs/mutations-meta.ts", "jobs/mutationsX.ts", "jobs/trigger/integration/mutations.ts", "jobs/mutations.d.ts", "xjobs/mutations.ts", "server/jobs/mutations.ts"]) {
+      expect(META_PORT.test(path), path).toBe(false);
+    }
+  });
+
+  it("the mutation composition: only its integration task entrypoint (and tests) are exempt", () => {
+    for (const path of ["jobs/trigger/integration/mutations.ts", "tests/db/suites/mutations.ts"]) expect(COMPOSITION.test(path), path).toBe(true);
+    for (const path of ["jobs/trigger/integration/mutations.tsx", "jobs/trigger/integration/mutations.ts.old", "jobs/trigger/integration/mutations-v2.ts", "jobs/trigger/main/mutations.ts", "jobs/trigger/intelligence/mutations.ts", "jobs/mutations.ts", "jobs/connections.ts", "server/persistence/mutations.ts", "app/page.tsx"]) {
+      expect(COMPOSITION.test(path), path).toBe(false);
+    }
+  });
+});
 
 describe("read_content validation diagnostic dependency depth (Step 7G-H5.5-P5-B): reads only, denied by subtree", () => {
   const rule = config.forbidden.find((candidate) => candidate.name === "read-content-validation-reads-only") as { readonly from?: { readonly path?: string }; readonly to?: { readonly path?: string } } | undefined;

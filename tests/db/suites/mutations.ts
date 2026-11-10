@@ -15,13 +15,19 @@
  *                reply's provider id, two `system` audit events, three history rows, the reply confirmed; a lost
  *                response → OUTCOME_UNKNOWN → reconciliation through the READ port finds the reply → CONFIRMED (never
  *                a resend: exactly one reply on the platform); Monitor-only at execution time → BLOCKED, nothing sent
+ *   7B-13A       a Meta INSTAGRAM account evaluated with the PRODUCTIVE Meta catalog, executed through the composed
+ *                selection with the real Meta port on a fake fetch (never the network): with no grant →
+ *                PROVIDER_ACTIONS_DISABLED; with an exact LOCAL test-database grant → CAPABILITY_UNAVAILABLE (reply_public
+ *                is UNKNOWN_NOT_VALIDATED); never a credential opened, never a request
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SimulatorWorld, createSimulatorReadPort, parseScenario } from "@/integrations/providers/simulator";
 import { createSimulatorMutationPort } from "@/integrations/providers/simulator/mutation-port";
-import { SIMULATOR_CATALOG, evaluateAndStore, type FactsInput } from "@/modules/capability";
+import { createMetaGraphWriteTransport, type MetaGraphFetch } from "@/integrations/providers/meta/graph-transport";
+import { createMetaMutationPort } from "@/integrations/providers/meta/mutation-port";
+import { PLATFORM_CATALOG, SIMULATOR_CATALOG, evaluateAndStore, type FactsInput } from "@/modules/capability";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
 import type { DiscoveryProviders, ProviderCredentialAccess } from "@/modules/connections";
 import { parseUserId } from "@/domain/ids";
@@ -33,7 +39,9 @@ import { createPostgresUnitOfWork } from "@/server/persistence/postgres-unit-of-
 import { createActionPipeline, type ActionPipeline } from "@/server/pipeline";
 import { requestPublicReplyCommand } from "@/server/commands/mutations";
 import { inboxConversationCommand } from "@/server/queries/inbox";
-import { runExecuteIntent, runReconcileIntent, type MutationComposition } from "@/jobs/mutations";
+import { credentialUse, runExecuteIntent, runReconcileIntent, selectMutationPorts, type MutationComposition } from "@/jobs/mutations";
+import { CredentialUnreadable, executeIntent } from "@/mutations/executor/execute";
+import { credentialAuthority, executorStores } from "@/server/persistence/mutation-execution";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { FakeJobRuntime, type FakeHandler } from "../../support/fake-job-runtime";
 import { rawScenario } from "../../providers/support/fixtures";
@@ -950,6 +958,252 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       } finally {
         await authorize(true);
       }
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("Step 7B-13A: a Meta Instagram account through the composed selection (productive catalog, no network)", () => {
+    const IG_PERMISSIONS = ["business_management", "instagram_basic", "instagram_manage_comments", "pages_read_engagement", "pages_read_user_content", "pages_show_list", "public_profile"];
+    const INSTAGRAM = { key: "mutation.provider_action", qualifier: "instagram:public_reply", scope: "global" } as const;
+
+    /** A Meta connection with one ACTIVE Instagram account, evaluated with the PRODUCTIVE Meta catalog, and one audience comment. */
+    const metaInstagram = async (t: Tenant): Promise<{ readonly account: string; readonly comment: string; readonly reply: string }> => {
+      const connection = randomUUID();
+      const credential = randomUUID();
+      const asset = `1784140${String(Date.now()).slice(-8)}`;
+      await privileged.query(
+        `insert into connections.connections (id, organization_id, workspace_id, provider, status, active_credential_id, authorized_by, authorized_at, version, created_at, updated_at)
+         values ($1, $2, $3, 'meta', 'ACTIVE', null, $4, now(), 1, now(), now())`,
+        [connection, t.organizationId, t.workspaceId, t.users.OWNER],
+      );
+      await privileged.query(
+        `insert into credentials.provider_credentials (id, organization_id, workspace_id, connection_id, credential_version, envelope, created_at) values ($1, $2, $3, $4, 1, $5, now())`,
+        [credential, t.organizationId, t.workspaceId, connection, Buffer.concat([Buffer.from("5349504501", "hex"), randomBytes(64)])],
+      );
+      await privileged.query("update connections.connections set active_credential_id = $1 where id = $2", [credential, connection]);
+      const discovered = randomUUID();
+      await privileged.query(
+        `insert into connections.discovered_assets (id, organization_id, workspace_id, connection_id, platform, provider_asset_id, asset_class, display_name, last_seen_at, created_at, updated_at)
+         values ($1, $2, $3, $4, 'instagram', $5, 'content_bearing', 'Synthetic IG', now(), now(), now())`,
+        [discovered, t.organizationId, t.workspaceId, connection, asset],
+      );
+      const account = randomUUID();
+      await privileged.query(
+        `insert into connections.connected_accounts (id, organization_id, workspace_id, connection_id, platform, provider_asset_id, asset_class, status, activated_at, created_at, updated_at)
+         select $1, organization_id, workspace_id, connection_id, platform, provider_asset_id, asset_class, 'ACTIVE', now(), now(), now() from connections.discovered_assets where id = $2`,
+        [account, discovered],
+      );
+      const facts: FactsInput = { kind: "available", assetClass: "content_bearing", grantedPermissions: IG_PERMISSIONS, linkedAdAccountIds: [], accountIdentityKnown: true, obtainedAt: new Date() };
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx) =>
+        evaluateAndStore(createPostgresCapabilityStore(tx), { organizationId: t.organizationId, workspaceId: t.workspaceId, connectedAccountId: account, catalog: PLATFORM_CATALOG, platform: "instagram", assetClass: "content_bearing", facts, observations: [], evaluatedAt: new Date() }),
+      );
+      const content = randomUUID();
+      const media = `1780000${String(Date.now()).slice(-8)}`;
+      await privileged.query(
+        `insert into content.content_items (id, organization_id, workspace_id, platform, connected_account_id, provider_asset_id, provider_content_id, content_kind, reported_source, source_state, first_observed_at, latest_observed_at, created_at, updated_at)
+         values ($1, $2, $3, 'instagram', $4, $5, $6, 'post', 'organic', 'available', now(), now(), now(), now())`,
+        [content, t.organizationId, t.workspaceId, account, asset, media],
+      );
+      const author = randomUUID();
+      await privileged.query(`insert into interactions.authors (id, organization_id, workspace_id, platform, provider_author_id, role, label, created_at, updated_at) values ($1, $2, $3, 'instagram', $4, 'user', null, now(), now())`, [author, t.organizationId, t.workspaceId, `ig_u_${randomUUID().slice(0, 8)}`]);
+      const comment = randomUUID();
+      await privileged.query(
+        `insert into interactions.interactions (id, organization_id, workspace_id, platform, provider_interaction_id, connected_account_id, provider_asset_id, content_item_id, provider_content_id, observed, kind, author_id, author_role,
+           current_visibility, current_availability, provider_created_at, state_observed_at, first_observed_at, latest_observed_at, created_at, updated_at)
+         values ($1, $2, $3, 'instagram', $4, $5, $6, $7, $8, true, 'comment', $9, 'user', 'visible', 'available', now() - interval '1 hour', now(), now(), now(), now(), now())`,
+        [comment, t.organizationId, t.workspaceId, `1790000${String(Date.now()).slice(-8)}`, account, asset, content, media, author],
+      );
+      // Step 7B-13C (F1): a NESTED reply under that comment, as ingestion records one (kind reply, parent set).
+      const reply = randomUUID();
+      await privileged.query(
+        `insert into interactions.interactions (id, organization_id, workspace_id, platform, provider_interaction_id, connected_account_id, provider_asset_id, content_item_id, provider_content_id, observed, kind, parent_interaction_id, author_id, author_role,
+           current_visibility, current_availability, provider_created_at, state_observed_at, first_observed_at, latest_observed_at, created_at, updated_at)
+         values ($1, $2, $3, 'instagram', $4, $5, $6, $7, $8, true, 'reply', $9, $10, 'user', 'visible', 'available', now() - interval '30 minutes', now(), now(), now(), now(), now())`,
+        [reply, t.organizationId, t.workspaceId, `1791000${String(Date.now()).slice(-8)}`, account, asset, content, media, comment, author],
+      );
+      return { account, comment, reply };
+    };
+
+    /** A PENDING intent as an earlier request would have left it (the request side itself refuses today, see below). */
+    const queuedIntent = async (t: Tenant, ig: { readonly account: string; readonly comment: string }, target = ig.comment): Promise<string> => {
+      const id = randomUUID();
+      await privileged.query(
+        `insert into mutations.mutation_intents (id, organization_id, workspace_id, kind, request_type, target_interaction_id, connected_account_id, initiator_user_id, idempotency_key, status, attempt, capability_catalog_id, capability_catalog_revision, correlation_id, created_at, updated_at)
+         values ($1, $2, $3, 'reply_public', 'human', $4, $5, $6, $7, 'PENDING', 0, $8, $9, 'corr-7b13a-db-0001', now(), now())`,
+        [id, t.organizationId, t.workspaceId, target, ig.account, t.users.RESPONDER, `key-7b13a-${randomUUID()}`, PLATFORM_CATALOG.id, PLATFORM_CATALOG.revision],
+      );
+      await privileged.query(
+        `insert into mutations.outbound_replies (id, organization_id, workspace_id, intent_id, parent_interaction_id, connected_account_id, platform, text, created_at)
+         values ($1, $2, $3, $4, $5, $6, 'instagram', $7, now())`,
+        [randomUUID(), t.organizationId, t.workspaceId, id, target, ig.account, `${TEXT} 7B-13A`],
+      );
+      return id;
+    };
+
+    /** The integration plane's selection with the REAL Meta port on a fake fetch; the credential opener is a tripwire. */
+    const execution = () => {
+      const requests: string[] = [];
+      const opened: string[] = [];
+      const fetch: MetaGraphFetch = (url) => {
+        requests.push(url);
+        return Promise.reject(new Error("network forbidden in tests"));
+      };
+      const base: MutationComposition = {
+        access: { withCredential: (input) => { opened.push(input.credentialId); return Promise.reject(new Error("the credential must not be opened")); } },
+        reads: { read: () => undefined },
+        providers: selectMutationPorts({ simulator: undefined, instagram: createMetaMutationPort({ transport: createMetaGraphWriteTransport({ fetch, timeoutMs: 50 }) }) }),
+      };
+      const run = (t: Tenant, ig: { readonly account: string }, intentId: string) =>
+        runTenantStepJob(
+          { registry: PRODUCTION_TASKS, worker, logger },
+          TASK,
+          { v: 1, scope: "workspace", task: TASK, workspaceId: t.workspaceId, outboxId: randomUUID(), subjectIds: { connected_account_id: ig.account, mutation_intent_id: intentId }, correlationId: "corr-7b13a-db-0001", initiator: { type: "user", userId: t.users.RESPONDER } },
+          { runId: `run_7b13a_${randomUUID().slice(0, 8)}`, attempt: 1 },
+          (context) => runExecuteIntent(context, base),
+        );
+      return { requests, opened, run };
+    };
+
+    it("the productive Meta catalog stores reply_public UNKNOWN_NOT_VALIDATED for the Instagram account, and the request side refuses (no grant) before writing", async () => {
+      const t = await tenant();
+      const ig = await metaInstagram(t);
+      expect(await oracle("select state from capability.profile_entries where workspace_id = $1 and connected_account_id = $2 and capability = 'reply_public'", [t.workspaceId, ig.account])).toEqual([{ state: "UNKNOWN_NOT_VALIDATED" }]);
+      const refused = await request(t, t.users.RESPONDER, { targetInteractionId: ig.comment });
+      expect(refused.status === "ok" ? refused.value : refused).toMatchObject({ kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" });
+      expect(await oracle("select 1 from mutations.mutation_intents where workspace_id = $1 and connected_account_id = $2", [t.workspaceId, ig.account])).toHaveLength(0);
+    });
+
+    it("no instagram:public_reply grant (today's DEV state) → BLOCKED PROVIDER_ACTIONS_DISABLED: no credential, no request", async () => {
+      const t = await tenant();
+      const ig = await metaInstagram(t);
+      const id = await queuedIntent(t, ig);
+      const x = execution();
+      expect(await x.run(t, ig, id)).toEqual({ kind: "blocked", code: "PROVIDER_ACTIONS_DISABLED" });
+      expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "BLOCKED", attempt: 1, outcome_code: "PROVIDER_ACTIONS_DISABLED" })]);
+      expect([x.opened, x.requests]).toEqual([[], []]);
+    });
+
+    it("an exact LOCAL grant does not substitute the catalog: BLOCKED CAPABILITY_UNAVAILABLE, no credential, no request; the request side refuses too", async () => {
+      const t = await tenant();
+      const ig = await metaInstagram(t);
+      const id = await queuedIntent(t, ig);
+      const x = execution();
+      await withOperator((client) => setSwitch(client, INSTAGRAM, { enabled: true }, SWITCH_OPERATOR));
+      try {
+        const refused = await request(t, t.users.RESPONDER, { targetInteractionId: ig.comment });
+        expect(refused.status === "ok" ? refused.value : refused).toMatchObject({ kind: "refused", reason: "CAPABILITY_UNAVAILABLE" });
+        expect(await x.run(t, ig, id)).toEqual({ kind: "blocked", code: "CAPABILITY_UNAVAILABLE" });
+      } finally {
+        await withOperator((client) => clearSwitch(client, INSTAGRAM, SWITCH_OPERATOR));
+      }
+      expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "BLOCKED", outcome_code: "CAPABILITY_UNAVAILABLE" })]);
+      expect((await replyRow(t.workspaceId, id))[0]?.provider_reply_id).toBeNull();
+      expect([x.opened, x.requests]).toEqual([[], []]);
+    });
+
+    it("Step 7B-13C (F1): a manual request naming the canonical UUID of a NESTED Instagram reply is refused (TARGET_NOT_REPLYABLE) before anything is written", async () => {
+      const t = await tenant();
+      const ig = await metaInstagram(t);
+      const refused = await request(t, t.users.RESPONDER, { targetInteractionId: ig.reply });
+      expect(refused.status === "ok" ? refused.value : refused).toMatchObject({ kind: "refused", reason: "TARGET_NOT_REPLYABLE" });
+      expect(await oracle("select 1 from mutations.mutation_intents where workspace_id = $1", [t.workspaceId])).toHaveLength(0);
+    });
+
+    it("Step 7B-13C (F1): a queued intent on a nested Instagram reply is BLOCKED TARGET_NOT_REPLYABLE even with an exact LOCAL grant; a redelivery stays blocked; no credential, no request", async () => {
+      const t = await tenant();
+      const ig = await metaInstagram(t);
+      const id = await queuedIntent(t, ig, ig.reply);
+      const x = execution();
+      await withOperator((client) => setSwitch(client, INSTAGRAM, { enabled: true }, SWITCH_OPERATOR));
+      try {
+        expect(await x.run(t, ig, id)).toEqual({ kind: "blocked", code: "TARGET_NOT_REPLYABLE" });
+        expect(await x.run(t, ig, id)).toEqual({ kind: "noop", status: "BLOCKED" });
+      } finally {
+        await withOperator((client) => clearSwitch(client, INSTAGRAM, SWITCH_OPERATOR));
+      }
+      expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "BLOCKED", attempt: 1, outcome_code: "TARGET_NOT_REPLYABLE" })]);
+      expect([x.opened, x.requests]).toEqual([[], []]);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("Step 7B-13C (F3): the credential is authorized only for an ACTIVE connection, re-read in its own transaction", () => {
+    const authority = (workspaceId: string, connectedAccountId: string) => withWorkspaceJobScope(worker, workspaceId, (tx) => credentialAuthority(tx, { workspaceId, connectedAccountId }));
+    const activeCredential = async (t: Tenant): Promise<string> => must((await oracle<{ id: string }>("select active_credential_id as id from connections.connections where id = $1", [t.connection]))[0]?.id, "credential");
+
+    it("an ACTIVE connection authorizes exactly its own active credential for the account (unchanged behaviour)", async () => {
+      const t = await tenant();
+      const found = await authority(t.workspaceId, t.account);
+      expect(found).toMatchObject({ workspaceId: t.workspaceId, credentialId: await activeCredential(t), platform: "facebook", providerAssetId: "fb_page_aurora" });
+    });
+
+    it.each(["DEGRADED", "FAILED", "CONNECTING"])("a %s connection that still holds active_credential_id authorizes nothing", async (status) => {
+      const t = await tenant();
+      await privileged.query("update connections.connections set status = $1 where id = $2", [status, t.connection]);
+      expect((await oracle<{ id: string | null }>("select active_credential_id as id from connections.connections where id = $1", [t.connection]))[0]?.id).not.toBeNull();
+      expect(await authority(t.workspaceId, t.account)).toBeUndefined();
+    });
+
+    it("another workspace's account authorizes nothing (fails like a missing one); another connection's credential cannot even be referenced (composite FK)", async () => {
+      const t = await tenant();
+      const other = await tenant();
+      expect(await authority(t.workspaceId, other.account)).toBeUndefined();
+      expect((await sqlState(privileged.query("update connections.connections set active_credential_id = $1 where id = $2", [await activeCredential(other), t.connection]))).code).toBe("23503");
+      // Same workspace, another connection: also refused by the database.
+      const sibling = randomUUID();
+      const siblingCredential = randomUUID();
+      await privileged.query(
+        `insert into connections.connections (id, organization_id, workspace_id, provider, status, active_credential_id, authorized_by, authorized_at, version, created_at, updated_at)
+         values ($1, $2, $3, 'simulator', 'ACTIVE', null, $4, now(), 1, now(), now())`,
+        [sibling, t.organizationId, t.workspaceId, t.users.OWNER],
+      );
+      await privileged.query(
+        `insert into credentials.provider_credentials (id, organization_id, workspace_id, connection_id, credential_version, envelope, created_at) values ($1, $2, $3, $4, 1, $5, now())`,
+        [siblingCredential, t.organizationId, t.workspaceId, sibling, Buffer.concat([Buffer.from("5349504501", "hex"), randomBytes(64)])],
+      );
+      expect((await sqlState(privileged.query("update connections.connections set active_credential_id = $1 where id = $2", [siblingCredential, t.connection]))).code).toBe("23503");
+      expect(await authority(t.workspaceId, t.account)).toMatchObject({ credentialId: await activeCredential(t) });
+    });
+
+    it("the connection leaves ACTIVE after the executor's guard read and before the credential is authorized → BLOCKED CREDENTIAL_UNREADABLE: the envelope is never opened, zero provider calls", async () => {
+      const t = await tenant();
+      const created = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: `${TEXT} ${randomUUID()}` });
+      const id = created.status === "ok" && created.value.kind === "requested" ? created.value.intentId : "";
+      expect(id).not.toBe("");
+      await quietPendingOutbox((text, values) => privileged.query(text, values), "topic = $1 and workspace_id = $2", [TASK, t.workspaceId]);
+      const opened: string[] = [];
+      const providerCalls: string[] = [];
+      const access: ProviderCredentialAccess = { withCredential: (input) => { opened.push(input.credentialId); return Promise.reject(new Error("the envelope must not be opened")); } };
+      const port = { replyPublicly: () => { providerCalls.push("replyPublicly"); return Promise.reject(new Error("the provider must not be called")); } } as unknown as NonNullable<ReturnType<MutationComposition["providers"]["mutation"]>>;
+      const clock = { newId: randomUUID, now: () => new Date() };
+      const payload = { v: 1, scope: "workspace", task: TASK, workspaceId: t.workspaceId, outboxId: randomUUID(), subjectIds: { connected_account_id: t.account, mutation_intent_id: id }, correlationId: "corr-7b13c-f3-0001", initiator: { type: "user", userId: t.users.RESPONDER } };
+      const result = await runTenantStepJob({ registry: PRODUCTION_TASKS, worker, logger }, TASK, payload, { runId: "run_7b13c_f3", attempt: 1 }, (context) =>
+        executeIntent(
+          {
+            inScope: (work) => context.inScope((scope) => work(executorStores(scope, clock.newId))),
+            // The revocation lands exactly between the EXECUTING commit and the production credential authorization.
+            credentials: { withAccess: async (input, use) => {
+              await privileged.query("update connections.connections set status = 'DEGRADED' where id = $1", [t.connection]);
+              return credentialUse(context, access).withAccess(input, use);
+            } },
+            providers: { mutation: (provider) => (provider === "simulator" ? port : undefined) },
+            clock,
+          },
+          { workspaceId: t.workspaceId, intentId: id, runReference: "run_7b13c_f3" },
+        ));
+      expect(result).toEqual({ kind: "blocked", code: "CREDENTIAL_UNREADABLE" });
+      expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "BLOCKED", attempt: 1, outcome_code: "CREDENTIAL_UNREADABLE" })]);
+      expect([opened, providerCalls]).toEqual([[], []]);
+    });
+
+    it("a failure READING the authority fails closed: the opener is never reached (CredentialUnreadable is not claimed for an unreadable database)", async () => {
+      const opened: string[] = [];
+      const access: ProviderCredentialAccess = { withCredential: (input) => { opened.push(input.credentialId); return Promise.reject(new Error("unreachable")); } };
+      const failing = credentialUse({ inScope: () => Promise.reject(new Error("database unavailable")) }, access);
+      await expect(failing.withAccess({ workspaceId: randomUUID(), connectedAccountId: randomUUID() }, () => Promise.resolve("sent"))).rejects.toThrow("database unavailable");
+      const missing = credentialUse({ inScope: () => Promise.resolve(undefined) as never }, access);
+      await expect(missing.withAccess({ workspaceId: randomUUID(), connectedAccountId: randomUUID() }, () => Promise.resolve("sent"))).rejects.toBeInstanceOf(CredentialUnreadable);
+      expect(opened).toEqual([]);
     });
   });
 }

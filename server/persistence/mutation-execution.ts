@@ -110,7 +110,10 @@ export async function credentialAuthority(tx: DatabaseTransaction, input: { read
   const account = await connections.connectedAccounts.get(input.connectedAccountId);
   if (account === undefined || account.workspaceId !== input.workspaceId || account.status !== "ACTIVE") return undefined;
   const connection = await connections.connections.get(account.connectionId);
-  if (connection === undefined || connection.activeCredentialId === null) return undefined;
+  // Step 7B-13C (F3): the connection is re-checked ACTIVE in the transaction that authorizes opening the credential —
+  // a connection that left ACTIVE after the executor's guard read (DEGRADED/FAILED/CONNECTING may keep a credential id)
+  // never has its envelope opened.
+  if (connection === undefined || connection.status !== "ACTIVE" || connection.activeCredentialId === null) return undefined;
   const credential = await connections.credentials.load(connection.activeCredentialId);
   if (credential === undefined || credential.connectionId !== connection.id) return undefined;
   return { workspaceId: account.workspaceId, credentialId: connection.activeCredentialId, envelope: credential.envelope, platform: account.platform, providerAssetId: account.providerAssetId };

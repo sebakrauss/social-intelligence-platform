@@ -94,6 +94,33 @@ describe("7B-1: the request-time guard chain refuses before any write", () => {
     });
   }
 
+  it("Step 7B-13C (F1): Instagram admits a reply to a TOP-LEVEL comment only — decided on the persisted target, refused before any write", async () => {
+    const IG = { platform: "instagram", providerInteractionId: "17900000000000123", providerAssetId: "17841400000000001" } as const;
+    const IG_ACCOUNT = guardState({ account: { status: "ACTIVE", platform: "instagram", provider: "meta", providerAssetId: IG.providerAssetId, connectionStatus: "ACTIVE", credentialId: "c" } });
+    const refusedTargets: readonly [string, Parameters<typeof replyTarget>[0]][] = [
+      ["a nested reply", { ...IG, kind: "reply", parentProviderInteractionId: "17900000000000100" }],
+      ["a reply whose parent is unknown here", { ...IG, kind: "reply", parentProviderInteractionId: null }],
+      ["a 'comment' that names a parent (inconsistent data)", { ...IG, kind: "comment", parentProviderInteractionId: "17900000000000100" }],
+      ["an unknown kind", { ...IG, kind: "unknown", parentProviderInteractionId: null }],
+    ];
+    for (const [label, target] of refusedTargets) {
+      const stores = memoryStores(IG_ACCOUNT, [replyTarget(target)]);
+      expect(await requestPublicReply(stores, fixedClock(), context, request()), label).toEqual({ kind: "refused", reason: "TARGET_NOT_REPLYABLE" });
+      expect(stores.intentRows.size, label).toBe(0);
+      expect(stores.history, label).toEqual([]);
+      // Refused on the target's shape, before the authorization or the capability is even asked.
+      expect(stores.calls.filter((call) => call.startsWith("switch:") || call.startsWith("capability:")), label).toEqual([]);
+    }
+    // A top-level Instagram comment passes this rule (every other guard still applies).
+    const topLevel = memoryStores(IG_ACCOUNT, [replyTarget({ ...IG, kind: "comment", parentProviderInteractionId: null })]);
+    expect((await requestPublicReply(topLevel, fixedClock(), context, request())).kind).toBe("created");
+  });
+
+  it("Step 7B-13C (F1): Facebook (and the simulator's Facebook) keep their rule — a reply to a reply may be requested", async () => {
+    const stores = memoryStores(guardState(), [replyTarget({ kind: "reply", parentProviderInteractionId: "fb_c_009" })]);
+    expect((await requestPublicReply(stores, fixedClock(), context, request())).kind).toBe("created");
+  });
+
   it("AVAILABLE_WITH_LIMITATION is enough to request (the limitation is shown, not a refusal)", async () => {
     const stores = memoryStores(guardState({ capability: "AVAILABLE_WITH_LIMITATION" }));
     expect((await requestPublicReply(stores, fixedClock(), context, request())).kind).toBe("created");

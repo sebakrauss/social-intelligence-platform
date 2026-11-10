@@ -1,7 +1,9 @@
 /**
  * Step 7B-1 — static guards around the Platform Mutation Executor (TA §6.3 rule 3; §26; CLAUDE.md §9):
  *   - the provider MUTATION port is obtained in exactly one production file, the integration plane's composition
- *     (jobs/mutations.ts), and only the simulator implements it: no Meta or TikTok mutation adapter exists;
+ *     (jobs/mutations.ts); two adapters implement it — the simulator, and Meta's Instagram-only public reply (7B-11) —
+ *     and Step 7B-13A composes the Meta port for exactly provider "meta" + platform "instagram", with its own default
+ *     write transport (no injection, no second transport); Facebook and TikTok have no mutation port;
  *   - the web never reaches the executor: app/, ui/ and server/ (minus the job-side composition file) import no
  *     executor internals, and the job-side composition is imported by jobs/mutations.ts only;
  *   - the executor requests ONE kind (public reply): no hide / unhide / delete / block / private reply call exists;
@@ -25,15 +27,23 @@ const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/from\s+
 const strip = (code: string): string => code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("7B-1: the mutation port has one composition root and one implementation", () => {
-  it("only jobs/mutations.ts obtains a provider mutation implementation; only the simulator implements the port", () => {
+  it("only jobs/mutations.ts obtains a provider mutation implementation; the Meta port is composed there for Instagram only", () => {
     const users = sourceFiles(PRODUCTION).filter((file) => importsOf(file).some((specifier) => /providers\/(?!contract\/)[^/]+\/mutation-port/.test(specifier)));
     expect(users).toEqual(["jobs/mutations.ts"]);
-    // 7B-11: two implementations (the simulator, and Meta's Instagram-only public reply); jobs/mutations.ts composes ONLY
-    // the simulator until a gate connects Meta — the Meta port has no production importer at all.
+    // 7B-11: two implementations (the simulator, and Meta's Instagram-only public reply).
     const implementations = sourceFiles(["integrations/providers"]).filter((file) => !file.startsWith("integrations/providers/contract/") && /mutation/.test(file));
     expect(implementations).toEqual(["integrations/providers/meta/mutation-port.ts", "integrations/providers/simulator/mutation-port.ts"]);
-    expect(sourceFiles(PRODUCTION).filter((file) => importsOf(file).some((specifier) => /providers\/meta\/mutation-port/.test(specifier)))).toEqual([]);
-    expect(strip(codeOf("jobs/mutations.ts"))).not.toMatch(/createMetaMutationPort|providers\/meta/);
+    // Step 7B-13A: jobs/mutations.ts is the Meta port's ONLY production importer; it builds the port ONCE, with no
+    // options (the port's own Graph write transport — never an injected or second transport), never under the
+    // staging stub, and serves it for exactly provider "meta" + platform "instagram". It imports nothing else of Meta.
+    expect(sourceFiles(PRODUCTION).filter((file) => importsOf(file).some((specifier) => /providers\/meta\/mutation-port/.test(specifier)))).toEqual(["jobs/mutations.ts"]);
+    expect(importsOf("jobs/mutations.ts").filter((specifier) => /providers\/meta\//.test(specifier))).toEqual(["@/integrations/providers/meta/mutation-port"]);
+    const composition = strip(codeOf("jobs/mutations.ts"));
+    expect(composition.match(/createMetaMutationPort\(/g)).toHaveLength(1);
+    expect(composition).toMatch(/providerComposition\(environment\)\.kind === "staging_stub" \? undefined : createMetaMutationPort\(\);/);
+    expect(composition).toMatch(/if \(provider === "meta" && platform === "instagram"\) return ports\.instagram;/);
+    expect(composition.match(/ports\.instagram/g)).toHaveLength(1);
+    expect(composition).not.toMatch(/facebook|tiktok|graph-transport|MetaGraph|transport:/i);
     // F2 (7B-11 review): reads and the write are separate objects. The read port is typed on, and builds, the READ
     // transport only; the integration composition never names a write (the AST guard in provider-guards covers aliases).
     const readPort = strip(codeOf("integrations/providers/meta/read-port.ts"));

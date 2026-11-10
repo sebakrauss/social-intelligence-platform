@@ -11,7 +11,7 @@
  * as a key reuse — it never silently answers another request's intent.
  */
 import type { CapabilityAvailability } from "@/modules/capability";
-import { REPLY_TEXT_MAX_CHARS, type MutationIntent } from "../domain/intent";
+import { REPLY_TEXT_MAX_CHARS, publicReplyDepthAllowed, type MutationIntent } from "../domain/intent";
 import type { IntentStore, MutationClock, OutboundReply, OutboundReplyStore, ReplyTargets, RequestGuards } from "../ports";
 
 export { MUTATION_KINDS, INTENT_STATUSES, INTENT_OUTCOME_CODES, REPLY_TEXT_MAX_CHARS, type IntentOutcomeCode, type IntentStatus, type MutationIntent, type MutationKind } from "../domain/intent";
@@ -40,6 +40,7 @@ export type PublicReplyRefusal =
   | "TARGET_NOT_READ"
   | "TARGET_NOT_PRESENT"
   | "TARGET_OWN_ACCOUNT"
+  | "TARGET_NOT_REPLYABLE"
   | "TEXT_EMPTY"
   | "TEXT_TOO_LONG"
   | "ACCOUNT_INACTIVE"
@@ -80,6 +81,8 @@ export async function requestPublicReply(sources: MutationRequestSources, clock:
   if (!target.observed) return { kind: "refused", reason: "TARGET_NOT_READ" };
   if (target.presence !== "present") return { kind: "refused", reason: "TARGET_NOT_PRESENT" };
   if (target.ownAccount) return { kind: "refused", reason: "TARGET_OWN_ACCOUNT" };
+  // Step 7B-13C (F1): Instagram top-level comments only, on the persisted target (the UI's rule is never the authority).
+  if (!publicReplyDepthAllowed(target)) return { kind: "refused", reason: "TARGET_NOT_REPLYABLE" };
 
   if ((await sources.guards.providerActionAllowed(target.platform, "public_reply")) !== "allowed") return { kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" };
   const account = await sources.guards.account(target.connectedAccountId);

@@ -121,6 +121,7 @@ export const REPLY_REFUSAL_MESSAGES: { readonly [R in PublicReplyRefusal]: Messa
   TARGET_NOT_READ: "inbox.reply.refused.target_not_read",
   TARGET_NOT_PRESENT: "inbox.reply.refused.target_not_present",
   TARGET_OWN_ACCOUNT: "inbox.reply.refused.target_own_account",
+  TARGET_NOT_REPLYABLE: "inbox.reply.refused.target_not_replyable",
   TEXT_EMPTY: "inbox.reply.refused.text_empty",
   TEXT_TOO_LONG: "inbox.reply.refused.text_too_long",
   ACCOUNT_INACTIVE: "inbox.reply.refused.account_inactive",

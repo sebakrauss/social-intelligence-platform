@@ -29,7 +29,7 @@ import {
 } from "@/integrations/providers/contract/errors";
 import { providerObjectRef } from "@/integrations/providers/contract/identity";
 import { isPlatformKey } from "@/domain/platforms";
-import { assertTransition, type IntentOutcomeCode, type IntentStatus, type MutationIntent, OUTCOME_STATUS } from "../domain/intent";
+import { assertTransition, publicReplyDepthAllowed, type IntentOutcomeCode, type IntentStatus, type MutationIntent, OUTCOME_STATUS } from "../domain/intent";
 import type { CredentialUse, ExecutionGuards, IntentStore, MutationClock, MutationProviders, OutboundReply, OutboundReplyStore, ReplyTargets } from "../ports";
 
 export interface ExecutorStores {
@@ -90,7 +90,7 @@ export async function settle(
 }
 
 type Admitted =
-  | { readonly kind: "execute"; readonly intent: MutationIntent; readonly reply: OutboundReply; readonly target: { readonly providerInteractionId: string; readonly platform: string }; readonly provider: string }
+  | { readonly kind: "execute"; readonly intent: MutationIntent; readonly reply: OutboundReply; readonly target: { readonly providerInteractionId: string; readonly platform: string }; readonly provider: string; readonly accountPlatform: string }
   | { readonly kind: "done"; readonly result: ExecutionResult };
 
 /** Step 1: lock, re-check, mark EXECUTING. Returns what to do next. */
@@ -122,6 +122,8 @@ async function admit(stores: ExecutorStores, workspaceId: string, intentId: stri
   if (account.connectionStatus !== "ACTIVE" || account.credentialId === null) return block("CONNECTION_UNAVAILABLE");
   const target = await stores.targets.load(intent.targetInteractionId);
   if (target === undefined || !target.observed || target.presence !== "present" || target.ownAccount) return block("TARGET_NOT_PRESENT");
+  // Step 7B-13C (F1): re-checked on the persisted target at execution (a queued or redelivered intent never skips it).
+  if (!publicReplyDepthAllowed(target)) return block("TARGET_NOT_REPLYABLE");
   const reply = await stores.replies.getByIntent(intent.workspaceId, intent.id);
   if (reply === undefined) return block("TARGET_NOT_PRESENT");
   // Authority coherence: the intent's account OWNS the target, and the outbound reply names exactly that target and
@@ -133,7 +135,7 @@ async function admit(stores: ExecutorStores, workspaceId: string, intentId: stri
   if (capability.state !== "AVAILABLE" && capability.state !== "AVAILABLE_WITH_LIMITATION") return block("CAPABILITY_UNAVAILABLE");
 
   await settle(stores, intent, "EXECUTING", null, attempt, runReference, clock);
-  return { kind: "execute", intent: { ...intent, status: "EXECUTING", attempt, runReference }, reply, target: { providerInteractionId: target.providerInteractionId, platform: target.platform }, provider: account.provider };
+  return { kind: "execute", intent: { ...intent, status: "EXECUTING", attempt, runReference }, reply, target: { providerInteractionId: target.providerInteractionId, platform: target.platform }, provider: account.provider, accountPlatform: account.platform };
 }
 
 /**
@@ -156,7 +158,7 @@ export function classifyProviderError(error: unknown): { readonly status: "FAILE
 export async function executeIntent(deps: ExecutorDependencies, input: { readonly workspaceId: string; readonly intentId: string; readonly runReference: string }): Promise<ExecutionResult> {
   const admitted = await deps.inScope((stores) => admit(stores, input.workspaceId, input.intentId, input.runReference, deps.clock));
   if (admitted.kind === "done") return admitted.result;
-  const { intent, reply, target, provider } = admitted;
+  const { intent, reply, target, provider, accountPlatform } = admitted;
 
   const finish = (status: IntentStatus, code: IntentOutcomeCode | null, receipt?: PublicReplyReceipt): Promise<ExecutionResult> =>
     deps.inScope(async (stores) => {
@@ -184,7 +186,8 @@ export async function executeIntent(deps: ExecutorDependencies, input: { readonl
       return { kind: "failed", code: code ?? "PROVIDER_FAILURE" };
     });
 
-  const port = deps.providers.mutation(provider);
+  // The port for the account's provider AND platform — the pair the authorization was asked for (Step 7B-13A).
+  const port = deps.providers.mutation(provider, accountPlatform);
   if (port === undefined || !isPlatformKey(target.platform)) return finish("BLOCKED", "PROVIDER_MUTATION_UNSUPPORTED");
   const platform = target.platform;
 

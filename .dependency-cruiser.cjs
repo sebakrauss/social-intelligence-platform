@@ -671,9 +671,25 @@ module.exports = {
       name: "meta-read-integration-composition-only",
       severity: "error",
       comment: "Step 7G-E: the Meta read port and its Graph transport (the documented query-token exception) are composed only by the integration worker's provider composition (jobs/connections.ts, itself integration-plane only), and only the read port reaches the Graph transport. The hosted web, MAIN, other jobs code and the Meta authorization adapter never do.",
-      // 7B-11: the Meta mutation port (Instagram public reply) is the transport's second in-tree consumer; it has NO composer yet.
+      // 7B-11: the Meta mutation port (Instagram public reply) is the transport's second in-tree consumer; Step 7B-13A
+      // composes the PORT (never the transport) in jobs/mutations.ts — see meta-mutation-executor-composition-only.
       from: { pathNot: "^(jobs/connections\\.ts|integrations/providers/meta/(read-port|mutation-port)\\.ts|tests/)" },
       to: { path: "^integrations/providers/meta/(read-port|graph-transport)\\.ts$" },
+    },
+    {
+      name: "meta-mutation-executor-composition-only",
+      severity: "error",
+      comment: "Step 7B-13A: the Meta mutation port (Instagram public reply, the only Meta write) is composed by exactly one file — the integration plane's executor composition (jobs/mutations.ts, itself integration-plane only). The executor (mutations/), the web, MAIN, every other jobs file, other adapters and the Meta tree itself never import it.",
+      // Step 7B-13C (F4): an EXACT exception — the `$` keeps look-alikes (jobs/mutations.tsx, jobs/mutations.ts.old) out.
+      from: { pathNot: "^(jobs/mutations\\.ts$|tests/)" },
+      to: { path: "^integrations/providers/meta/mutation-port\\.ts$" },
+    },
+    {
+      name: "mutation-composition-integration-task-only",
+      severity: "error",
+      comment: "Step 7B-13C (F2): the production mutation composition (jobs/mutations.ts — the executor with its provider mutation ports and the credential opener) is imported ONLY by its INTEGRATION task entrypoint (jobs/trigger/integration/mutations.ts). MAIN, INTELLIGENCE, every other jobs file, server/ and the web never import it (jobs-are-entry-points also keeps non-jobs code out). Exact paths, both anchored.",
+      from: { pathNot: "^(jobs/trigger/integration/mutations\\.ts$|tests/)" },
+      to: { path: "^jobs/mutations\\.ts$" },
     },
     {
       name: "meta-adapter-no-platform",

@@ -42,6 +42,8 @@ export const INTENT_OUTCOME_CODES = [
   "ACCOUNT_INACTIVE",
   "TARGET_NOT_PRESENT",
   "TARGET_ACCOUNT_MISMATCH",
+  // Step 7B-13C (F1): the platform does not accept a reply on this target (Instagram: a nested reply, or an unknown kind).
+  "TARGET_NOT_REPLYABLE",
   "PROVIDER_ACTIONS_DISABLED",
   "PROVIDER_MUTATION_UNSUPPORTED",
   "CREDENTIAL_UNREADABLE",
@@ -139,6 +141,7 @@ export const OUTCOME_STATUS: { readonly [C in IntentOutcomeCode]: IntentStatus }
   ACCOUNT_INACTIVE: "BLOCKED",
   TARGET_NOT_PRESENT: "BLOCKED",
   TARGET_ACCOUNT_MISMATCH: "BLOCKED",
+  TARGET_NOT_REPLYABLE: "BLOCKED",
   PROVIDER_ACTIONS_DISABLED: "BLOCKED",
   PROVIDER_MUTATION_UNSUPPORTED: "BLOCKED",
   CREDENTIAL_UNREADABLE: "BLOCKED",
@@ -154,6 +157,17 @@ export const OUTCOME_STATUS: { readonly [C in IntentOutcomeCode]: IntentStatus }
   PROVIDER_ERROR_UNCLASSIFIED: "OUTCOME_UNKNOWN",
   REPLY_IDENTITY_CONFLICT: "OUTCOME_UNKNOWN",
 };
+
+/**
+ * Step 7B-13C (F1) — reply depth, decided on the PERSISTED target (never on anything the browser sends). Instagram
+ * accepts public replies on TOP-LEVEL comments only: an Instagram target is eligible only when it is recorded as a
+ * comment AND has no parent. A nested reply, an unknown kind or a parent on a "comment" (inconsistent data) is refused —
+ * insufficient or ambiguous data never passes. Other platforms keep their own rules (Facebook admits a reply to a reply).
+ */
+export function publicReplyDepthAllowed(target: { readonly platform: string; readonly kind: string; readonly parentProviderInteractionId: string | null }): boolean {
+  if (target.platform !== "instagram") return true;
+  return target.kind === "comment" && target.parentProviderInteractionId === null;
+}
 
 /**
  * Step 7B-5 — cross-intent safety for reconciliation. A reply found on the platform (same account, parent and text)

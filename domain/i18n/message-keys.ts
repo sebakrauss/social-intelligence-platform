@@ -165,6 +165,7 @@ export const MESSAGE_KEYS = [
   "inbox.reply.refused.target_not_read",
   "inbox.reply.refused.target_not_present",
   "inbox.reply.refused.target_own_account",
+  "inbox.reply.refused.target_not_replyable",
   "inbox.reply.refused.text_empty",
   "inbox.reply.refused.text_too_long",
   "inbox.reply.refused.account_inactive",

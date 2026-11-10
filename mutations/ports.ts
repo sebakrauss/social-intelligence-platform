@@ -119,9 +119,13 @@ export type RequestGuards = Pick<ExecutionGuards, "providerActionAllowed" | "rep
 /** The operational authorization of one platform:action (Step 7B-12A). Only "allowed" lets a mutation proceed. */
 export type ProviderActionDecision = "allowed" | "not_enabled" | "paused";
 
-/** The provider boundary as the executor sees it: a mutation port per provider, or none (fails closed). */
+/**
+ * The provider boundary as the executor sees it: a mutation port per provider AND platform of the account (the same
+ * platform the operational authorization was asked for), or none (fails closed). Step 7B-13A: a provider may write on
+ * one of its platforms only (Meta: Instagram), so the platform is part of the selection, never inferred by the port.
+ */
 export interface MutationProviders {
-  mutation(provider: string): ProviderMutationPort | undefined;
+  mutation(provider: string, platform: string): ProviderMutationPort | undefined;
 }
 
 /** Opens the credential for ONE provider call, outside any transaction (TA §39; the single credential-access function). */

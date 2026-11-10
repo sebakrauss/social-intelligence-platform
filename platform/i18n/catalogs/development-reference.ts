@@ -170,6 +170,7 @@ export const developmentReferenceCatalog: Catalog = {
   "inbox.reply.refused.target_not_read": "This comment hasn't been read yet, so it can't be replied to.",
   "inbox.reply.refused.target_not_present": "This comment is hidden or no longer on the platform.",
   "inbox.reply.refused.target_own_account": "This is your account's own message.",
+  "inbox.reply.refused.target_not_replyable": "Instagram only accepts replies to top-level comments.",
   "inbox.reply.refused.text_empty": "Write something before publishing.",
   "inbox.reply.refused.text_too_long": "The reply is over the length limit.",
   "inbox.reply.refused.account_inactive": "The account this conversation belongs to is no longer active here.",
