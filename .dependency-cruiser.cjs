@@ -671,7 +671,8 @@ module.exports = {
       name: "meta-read-integration-composition-only",
       severity: "error",
       comment: "Step 7G-E: the Meta read port and its Graph transport (the documented query-token exception) are composed only by the integration worker's provider composition (jobs/connections.ts, itself integration-plane only), and only the read port reaches the Graph transport. The hosted web, MAIN, other jobs code and the Meta authorization adapter never do.",
-      from: { pathNot: "^(jobs/connections\\.ts|integrations/providers/meta/read-port\\.ts|tests/)" },
+      // 7B-11: the Meta mutation port (Instagram public reply) is the transport's second in-tree consumer; it has NO composer yet.
+      from: { pathNot: "^(jobs/connections\\.ts|integrations/providers/meta/(read-port|mutation-port)\\.ts|tests/)" },
       to: { path: "^integrations/providers/meta/(read-port|graph-transport)\\.ts$" },
     },
     {

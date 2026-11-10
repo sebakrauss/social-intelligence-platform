@@ -29,9 +29,94 @@ import {
 import type { ProviderMutationPort } from "@/integrations/providers/contract/mutation-port";
 import { META_GRAPH_CURSOR_MAX_LENGTH } from "@/integrations/providers/meta/graph-transport";
 import { META_PAGE_CURSOR_PREFIX } from "@/integrations/providers/meta/read-port";
+import ts from "typescript";
 import { PLANE_ENVIRONMENT_GUARD, codeOf, codeWithoutPlaneRefusals, findReferences, sourceFiles } from "../support/source-scan";
 
 const root = path.resolve(import.meta.dirname, "../..");
+
+/**
+ * F2 (Step 7B-11 independent review): the Meta Graph WRITE is reachable from the Meta mutation port only. Parsed with the
+ * TypeScript compiler (not a text regex), over every runtime file:
+ *   - only the port may name the write (`createMetaGraphWriteTransport`, `MetaGraphWriteTransport`,
+ *     `createInstagramCommentReply`) — as an identifier, an import (aliases included: the IMPORTED name is checked), a
+ *     property, a string or template key;
+ *   - nobody (the port included) may take the transport module whole: no namespace, default, `export *`, dynamic import
+ *     or require of graph-transport, and nobody re-exports a write name;
+ *   - the port exports only its own factory and options (it can't hand the write transport out);
+ *   - inside graph-transport.ts, the READ factory never mentions the write or the POST helper.
+ */
+const META_TREE = "integrations/providers/meta";
+const GRAPH_TRANSPORT = `${META_TREE}/graph-transport.ts`;
+const META_MUTATION_PORT = `${META_TREE}/mutation-port.ts`;
+const WRITE_NAMES: ReadonlySet<string> = new Set(["createMetaGraphWriteTransport", "MetaGraphWriteTransport", "createInstagramCommentReply"]);
+const PORT_EXPORTS: ReadonlySet<string> = new Set(["createMetaMutationPort", "MetaMutationPortOptions"]);
+const isGraphTransportSpecifier = (specifier: string): boolean => /(^|\/)graph-transport(\.ts)?$/.test(specifier);
+
+/** The names an `export`-modified statement declares; anything without a plain name counts as an unnamed export. */
+function exportedNames(node: ts.Node): string[] {
+  if (ts.isVariableStatement(node)) return node.declarationList.declarations.map((declaration) => (ts.isIdentifier(declaration.name) ? declaration.name.text : "<destructured>"));
+  if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isEnumDeclaration(node)) return [node.name?.text ?? "<anonymous>"];
+  return ["<other>"];
+}
+
+function metaWriteBoundaryViolations(files: readonly { readonly path: string; readonly code: string }[]): string[] {
+  const violations: string[] = [];
+  for (const file of files) {
+    const source = ts.createSourceFile(file.path, file.code, ts.ScriptTarget.Latest, true, file.path.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const isPort = file.path === META_MUTATION_PORT;
+    const isTransport = file.path === GRAPH_TRANSPORT;
+    const flag = (node: ts.Node, what: string): void => {
+      violations.push(`${file.path}:${String(source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1)} ${what}`);
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && isGraphTransportSpecifier(node.moduleSpecifier.text)) {
+        const clause = node.importClause;
+        if (clause?.name !== undefined) flag(node, "default import of the Graph transport");
+        const bindings = clause?.namedBindings;
+        if (bindings !== undefined && ts.isNamespaceImport(bindings)) flag(node, "namespace import of the Graph transport");
+        if (bindings !== undefined && ts.isNamedImports(bindings)) {
+          for (const element of bindings.elements) {
+            const imported = (element.propertyName ?? element.name).text;
+            if (WRITE_NAMES.has(imported) && !isPort) flag(element, `imports the write (${imported})`);
+          }
+        }
+      }
+      if (ts.isExportDeclaration(node)) {
+        const from = node.moduleSpecifier !== undefined && ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : undefined;
+        if (from !== undefined && isGraphTransportSpecifier(from) && node.exportClause === undefined) flag(node, "export * of the Graph transport");
+        if (node.exportClause !== undefined && ts.isNamedExports(node.exportClause)) {
+          for (const element of node.exportClause.elements) {
+            const name = (element.propertyName ?? element.name).text;
+            if (WRITE_NAMES.has(name) || WRITE_NAMES.has(element.name.text)) flag(element, `re-exports the write (${name})`);
+            if (isPort && !PORT_EXPORTS.has(element.name.text)) flag(element, `the mutation port exports ${element.name.text}`);
+          }
+        }
+      }
+      if (ts.isCallExpression(node) && node.arguments.length > 0) {
+        const [first] = node.arguments;
+        const dynamic = node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require");
+        if (dynamic && first !== undefined && ts.isStringLiteralLike(first) && isGraphTransportSpecifier(first.text)) flag(node, "dynamic import of the Graph transport");
+      }
+      if (isPort && ts.canHaveModifiers(node) && ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true) {
+        for (const name of exportedNames(node)) if (!PORT_EXPORTS.has(name)) flag(node, `the mutation port exports ${name}`);
+      }
+      if (isPort && ts.isExportAssignment(node)) flag(node, "the mutation port has a default export");
+      if (!isPort && !isTransport && (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) && WRITE_NAMES.has(node.text)) flag(node, `names the write (${node.text})`);
+      if (!isPort && !isTransport && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && WRITE_NAMES.has(node.text)) flag(node, `names the write as a key ("${node.text}")`);
+      if (isTransport && ts.isFunctionDeclaration(node) && node.name?.text === "createMetaGraphTransport") {
+        const scan = (inner: ts.Node): void => {
+          if (ts.isIdentifier(inner) && (WRITE_NAMES.has(inner.text) || inner.text === "post")) flag(inner, `the read factory names ${inner.text}`);
+          if ((ts.isStringLiteral(inner) || ts.isNoSubstitutionTemplateLiteral(inner)) && (WRITE_NAMES.has(inner.text) || inner.text === "POST")) flag(inner, `the read factory names "${inner.text}"`);
+          ts.forEachChild(inner, scan);
+        };
+        if (node.body !== undefined) ts.forEachChild(node.body, scan);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  return violations;
+}
 
 // ── Type-level: the operation lists are exactly the port interfaces (both directions) ─────────────────────
 type ReadKeys = Exclude<keyof ProviderReadPort, "provider">;
@@ -158,11 +243,71 @@ describe("Meta authorization adapter (Step 7G-D): offline, authorization only", 
 
   const AUTHORIZATION_SIDE = [`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/oauth-transport.ts`];
 
-  it("the Meta tree is the authorization adapter and its token transport, the read port and its Graph transport, error normalization, the fixed endpoints and the pure webhook boundary (H6-F1)", () => {
-    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/graph-transport.ts`, `${META}/oauth-transport.ts`, `${META}/read-port.ts`, `${META}/webhooks.ts`]);
-    // The authorization side knows nothing of reads; nothing anywhere in the tree mutates, refreshes or proves.
+  const MUTATION_PORT = `${META}/mutation-port.ts`;
+
+  it("the Meta tree is the authorization adapter and its token transport, the read port and its Graph transport, error normalization, the fixed endpoints, the pure webhook boundary (H6-F1) and the Instagram-only mutation port (7B-11)", () => {
+    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/graph-transport.ts`, MUTATION_PORT, `${META}/oauth-transport.ts`, `${META}/read-port.ts`, `${META}/webhooks.ts`]);
+    // The authorization side knows nothing of reads; nothing in the tree refreshes or proves; only the mutation port mutates.
     for (const file of AUTHORIZATION_SIDE) expect(codeOf(file), file).not.toMatch(/discoverAssets|\/me\/accounts|instagram_business_account|ProviderReadPort/);
-    for (const file of files()) expect(codeOf(file), file).not.toMatch(/ProviderMutationPort|fb_exchange_token|appsecret_proof/);
+    for (const file of files()) expect(codeOf(file), file).not.toMatch(/fb_exchange_token|appsecret_proof/);
+    for (const file of files().filter((file) => file !== MUTATION_PORT)) expect(codeOf(file), file).not.toMatch(/ProviderMutationPort|replyPublicly|replyPrivately/);
+  });
+
+  it("the Meta mutation port (7B-11) is Instagram public reply only: one write edge, one request, every other operation refused before any request", () => {
+    const port = codeOf(MUTATION_PORT);
+    const transport = codeOf(`${META}/graph-transport.ts`);
+    // Exactly one write in the whole tree, and it is the replies edge; the token travels in the form body, never the URL.
+    expect([...transport.matchAll(/method: "(POST|PUT|DELETE|PATCH)"/g)].map((match) => match[1])).toEqual(["POST"]);
+    expect(transport).toMatch(/return post\(\[commentId, "replies"\], \[\["message", message\]\], userToken, createdReplyOf\);/);
+    expect(port).toMatch(/await transport\.createInstagramCommentReply\(access\.credential\.secret, commentId, text\)/);
+    expect([...port.matchAll(/transport\.\w+\(/g)]).toHaveLength(1);
+    // No Facebook write, no private reply, no state change, no block — and no retry loop around the one request.
+    expect(port).not.toMatch(/pageToken|getPageAccessToken|\/comments|for \(|while \(|retry|setTimeout/);
+    for (const refused of ["replyPrivately", "hide", "unhide", "delete", "block"]) expect(port).toMatch(new RegExp(`${refused}: \\(\\): Promise<ProviderResult<\\w+>> => unsupported\\("${refused}"\\)`));
+    // An uncertain result is OutcomeUnknown, never a failure: the only throw after the request is the unknown or the write mapping.
+    expect(port).toMatch(/if \(outcome\.kind === "unknown"\) throw new OutcomeUnknownError\(operation, outcome\.reason\);/);
+    expect(port).toMatch(/if \(outcome\.kind === "graph_error"\) throw metaGraphWriteError\(operation, outcome\.error, "reply_public"\);/);
+    expect(port).not.toMatch(/TransientError|RateLimitedError/);
+    // The secret is unwrapped only in the transport.
+    expect(port).not.toMatch(/\.expose\(\)|process\.env|console\./);
+    // F1: the write mapping is an allowlist (4xx + listed code + is_transient not true); there is no fallback to a failure.
+    const errors = codeOf(`${META}/errors.ts`);
+    const writeMapping = errors.slice(errors.indexOf("export function metaGraphWriteError"), errors.indexOf("const NO_PAGE_ROLE_SUBCODE"));
+    expect(writeMapping).not.toMatch(/metaGraphError\(|TransientError/);
+    expect(writeMapping.trimEnd().split("\n").slice(-2)[0]).toMatch(/^ {2}return new OutcomeUnknownError\(operation, "unrecognized_4xx_response"\);$/);
+  });
+
+  it("F2 (7B-11 review): the Graph WRITE is reachable from the Meta mutation port only — AST-checked over every runtime file (imports, aliases, namespaces, re-exports, dynamic imports, property and bracket access)", () => {
+    const runtime = sourceFiles(RUNTIME).map((file) => ({ path: file, code: codeOf(file) }));
+    expect(metaWriteBoundaryViolations(runtime)).toEqual([]);
+    // The one composition: the port imports the write factory, calls it once, and calls the write once.
+    const port = codeOf(MUTATION_PORT);
+    expect(port).toMatch(/import \{ createMetaGraphWriteTransport, META_INSTAGRAM_REPLY_MAX_CHARS, type MetaGraphWriteTransport \} from "\.\/graph-transport";/);
+    expect(port.match(/createMetaGraphWriteTransport\(/g)).toHaveLength(1);
+    expect(port.match(/\.createInstagramCommentReply\(/g)).toHaveLength(1);
+  });
+
+  it("F2 (7B-11 review): the write-boundary guard rejects every way a read consumer could reach the write", () => {
+    const READ_PORT = `${META}/read-port.ts`;
+    const CONNECTIONS = "jobs/connections.ts";
+    const attempts: readonly { readonly name: string; readonly path: string; readonly code: string }[] = [
+      { name: "named import + call", path: READ_PORT, code: `import { createMetaGraphWriteTransport } from "./graph-transport";\nconst w = createMetaGraphWriteTransport();\nvoid w;` },
+      { name: "aliased import", path: READ_PORT, code: `import { createMetaGraphWriteTransport as make } from "./graph-transport";\nvoid make;` },
+      { name: "type-only import of the write interface", path: CONNECTIONS, code: `import type { MetaGraphWriteTransport } from "@/integrations/providers/meta/graph-transport";\nexport type T = MetaGraphWriteTransport;` },
+      { name: "namespace import", path: READ_PORT, code: `import * as graph from "./graph-transport";\nvoid graph;` },
+      { name: "default import", path: READ_PORT, code: `import graph from "./graph-transport";\nvoid graph;` },
+      { name: "re-export from another module", path: CONNECTIONS, code: `export { createMetaGraphWriteTransport } from "@/integrations/providers/meta/graph-transport";` },
+      { name: "export star", path: CONNECTIONS, code: `export * from "@/integrations/providers/meta/graph-transport";` },
+      { name: "dynamic import", path: CONNECTIONS, code: `export async function f() { const m = await import("@/integrations/providers/meta/graph-transport"); return m; }` },
+      { name: "require", path: CONNECTIONS, code: `const m = require("@/integrations/providers/meta/graph-transport");\nvoid m;` },
+      { name: "property call on any object", path: READ_PORT, code: `export function f(t: any) { return t.createInstagramCommentReply("a", "b", "c"); }` },
+      { name: "bracket access", path: READ_PORT, code: `export function f(t: any) { return t["createInstagramCommentReply"]("a", "b", "c"); }` },
+      { name: "template-literal access", path: READ_PORT, code: "export function f(t: any) { return t[`createInstagramCommentReply`]; }" },
+      { name: "the port re-exports the write factory", path: MUTATION_PORT, code: `import { createMetaGraphWriteTransport } from "./graph-transport";\nexport { createMetaGraphWriteTransport };` },
+      { name: "the port exposes a write transport value", path: MUTATION_PORT, code: `import { createMetaGraphWriteTransport } from "./graph-transport";\nexport const leaked = createMetaGraphWriteTransport();` },
+      { name: "the read factory regains the write", path: `${META}/graph-transport.ts`, code: `export function createMetaGraphTransport() { return { createInstagramCommentReply() {} }; }\nexport function createMetaGraphWriteTransport() { return {}; }` },
+    ];
+    for (const attempt of attempts) expect(metaWriteBoundaryViolations([attempt]), attempt.name).not.toEqual([]);
   });
 
   it("reads no environment, and only the two narrow transports touch the network", () => {
@@ -253,8 +398,11 @@ describe("Meta read port (Step 7G-E; P5-B read_content): the contained query-tok
     expect(findReferences(real, [/\btoken\.expose\(\)/]).map(([file]) => file)).toEqual([`${META}/graph-transport.ts`]);
     // Step 7G-H5.5-P5-B: besides the query parameter, `access_token` names exactly the derived Page token's field
     // request and its one parser read; doc comments aside (stripped), nothing else in the transport mentions it.
-    expect(transport().match(/access_token/g)).toHaveLength(3);
-    expect(transport()).toMatch(/\["access_token", token\.expose\(\)\]/);
+    // Three read placements (query parameter, the Page-token field read and its parser) plus the ONE write placement (7B-11): inside the POST form body, never a URL.
+    expect(transport().match(/access_token/g)).toHaveLength(4);
+    expect(transport().match(/\["access_token", token\.expose\(\)\]/g)).toHaveLength(2);
+    expect(transport()).toMatch(/body: new URLSearchParams\(\[\.\.\.form, \["access_token", token\.expose\(\)\]\]\)\.toString\(\),/);
+    expect(transport()).not.toMatch(/url\.search = [^\n]*form/);
     expect(transport()).toMatch(/get\(\[pageId\], \[\["fields", "access_token"\]\], userToken, /);
     expect(transport()).toMatch(/const token = root\["access_token"\];\n {2}return typeof token === "string" && PAGE_ACCESS_TOKEN\.test\(token\) \? new SecretValue\(token\) : undefined;/);
     expect(codeOf(`${META}/read-port.ts`)).not.toMatch(/\.expose\(|access_token/);
@@ -398,7 +546,10 @@ describe("Meta read_interactions (Step 7G-H5.5-P12-B1): Facebook comments + repl
     expect(transport()).toMatch(/get\(\[mediaId, "comments"\], /);
     expect(transport()).toMatch(/export const META_FACEBOOK_COMMENTS_PAGE_LIMIT = 10;/);
     expect(transport()).toMatch(/export const META_INSTAGRAM_COMMENTS_PAGE_LIMIT = 10;/);
-    expect(transport()).not.toMatch(/"replies"|"reactions"|"likes"|"private_replies"|"ordered_comments"|"order"|"since"|"until"/);
+    // No replies READ edge: the only "replies" segment in the transport is the documented write (7B-11), never a get.
+    expect(transport()).not.toMatch(/get\(\[[^\]]*"replies"/);
+    expect(transport().match(/"replies"/g)).toHaveLength(1);
+    expect(transport()).not.toMatch(/"reactions"|"likes"|"private_replies"|"ordered_comments"|"order"|"since"|"until"/);
     for (const fields of ["id,from,message,created_time,parent,is_hidden", "id,from,text,timestamp,parent_id,hidden,media"]) expect(fields).not.toMatch(/\{|attachment|like|reaction|replies|permalink|private/);
   });
 

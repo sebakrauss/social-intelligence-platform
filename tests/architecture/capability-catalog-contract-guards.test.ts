@@ -341,7 +341,11 @@ describe("evidence records and implementation evidence", () => {
     expect(OFFLINE_IMPLEMENTED_OPERATIONS.filter((op) => op.capability === "read_interactions").map((op) => op.platform)).toEqual(["facebook", "instagram"]);
     // Step 7G-H5.5-P12-D2b: both are now LIVE-registered too, each on its own accepted record.
     expect(IMPLEMENTED_PLATFORM_OPERATIONS.filter((op) => op.capability === "read_interactions").map((op) => [op.platform, op.evidence])).toEqual([["facebook", FB_INTERACTIONS_RECORD_ID], ["instagram", IG_INTERACTIONS_RECORD_ID]]);
-    expect(existsSync(path.join(REPOSITORY_ROOT, "integrations/providers/meta/mutation-port.ts"))).toBe(false);
+    // 7B-11: the Instagram public-reply port EXISTS as code, but the catalog contract registers no mutation capability for
+    // Meta until its LIVE evidence record exists: reply_public stays UNKNOWN_NOT_VALIDATED on every Meta profile.
+    expect(existsSync(path.join(REPOSITORY_ROOT, "integrations/providers/meta/mutation-port.ts"))).toBe(true);
+    expect(OFFLINE_IMPLEMENTED_OPERATIONS.filter((op) => op.capability === "reply_public")).toEqual([]);
+    expect(IMPLEMENTED_PLATFORM_OPERATIONS.filter((op) => op.capability === "reply_public")).toEqual([]);
     for (const op of MUTATION_OPERATIONS) expect(metaOperationImplemented(op, readPort, false)).toBe(false);
     expect(metaOperationImplemented("notAnOperation", readPort, true)).toBe(false);
   });

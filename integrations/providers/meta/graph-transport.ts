@@ -24,6 +24,8 @@
  *   listInstagramComments GET https://graph.facebook.com/v25.0/{ig-media-id}/comments?fields=META_INSTAGRAM_COMMENT_FIELDS
  *                            &limit=META_INSTAGRAM_COMMENTS_PAGE_LIMIT[&after={cursor}]               (User token)
  *   getInstagramComment  GET https://graph.facebook.com/v25.0/{ig-comment-id}?fields=META_INSTAGRAM_COMMENT_FIELDS
+ *   createInstagramCommentReply POST https://graph.facebook.com/v25.0/{ig-comment-id}/replies  body: message, access_token
+ *                            (User token; Step 7B-11 — the ONLY write; one request per call, never retried here)
  *                                                                                                   (User token)
  *
  * Callers name an operation and pass a SecretValue token plus validated provider ids or a validated cursor — never a
@@ -45,7 +47,7 @@
 import { SecretValue } from "../contract/credential";
 import { isoInstant, parseProviderObjectId, type IsoInstant, type ProviderObjectId } from "../contract/identity";
 import { META_GRAPH_ORIGIN, META_GRAPH_VERSION } from "./endpoints";
-import { graphErrorFields, type MetaGraphErrorFields } from "./errors";
+import { graphErrorFields, graphErrorTransience, type MetaGraphErrorFields, type MetaGraphWriteErrorFields } from "./errors";
 
 /** The same reviewed bounds as the token exchange: the whole request within 10 s, at most 64 KiB of body. */
 export const META_GRAPH_TIMEOUT_MS = 10_000;
@@ -73,6 +75,35 @@ export type MetaGraphOutcome<T> =
   | { readonly kind: "graph_error"; readonly error: MetaGraphErrorFields }
   | { readonly kind: "transient"; readonly reason: "network" | "server_error" }
   | { readonly kind: "unreadable" };
+
+/**
+ * The outcome of ONE Graph write (Step 7B-11). A write has no "transient" and no "unreadable": once the request may
+ * have left, anything that is not a confirmed value or a recognizable Graph error is `unknown` — the platform may have
+ * applied it. The caller turns `unknown` into OutcomeUnknownError (R6), never into a failure or a retry.
+ */
+export type MetaGraphWriteOutcome<T> =
+  | { readonly kind: "ok"; readonly value: T }
+  /** A recognizable Graph error, with the HTTP status and `is_transient` the write classification needs (F1). */
+  | { readonly kind: "graph_error"; readonly error: MetaGraphWriteErrorFields }
+  | { readonly kind: "unknown"; readonly reason: MetaGraphWriteUnknownReason };
+
+export type MetaGraphWriteUnknownReason =
+  | "timeout"
+  | "network_error"
+  | "unexpected_redirect"
+  | "response_too_large"
+  | "response_not_utf8"
+  | "unrecognized_4xx_response"
+  | "unrecognized_5xx_response"
+  | "unrecognized_status_response";
+
+/** The reply Meta created: `{ "id": "<ig-comment-id>" }` (IG Comment reference, `POST /{ig-comment-id}/replies`). */
+export interface MetaInstagramCreatedReply {
+  readonly id: ProviderObjectId;
+}
+
+/** Instagram comment replies are capped by the platform at 2200 characters; a longer text never leaves. */
+export const META_INSTAGRAM_REPLY_MAX_CHARS = 2200;
 
 export interface MetaPageList {
   readonly pages: readonly MetaPage[];
@@ -250,6 +281,20 @@ export interface MetaGraphTransport {
   getInstagramComment(userToken: SecretValue, commentId: ProviderObjectId): Promise<MetaGraphOutcome<MetaInstagramComment>>;
 }
 
+/**
+ * The Graph WRITE transport (Step 7B-11; independent review F2): a separate object from the read transport above, so a
+ * read consumer never holds a write. Built only by createMetaGraphWriteTransport, which only the Meta mutation port may
+ * import (tests/architecture/provider-guards.test.ts, AST-based).
+ */
+export interface MetaGraphWriteTransport {
+  /**
+   * ONE `POST /{ig-comment-id}/replies` with `message` (User token, no derivation): the only Graph write. Exactly one
+   * request is sent per call and nothing is retried; the token and the text travel in the form body, never in the URL.
+   * The created reply's id is the only value read.
+   */
+  createInstagramCommentReply(userToken: SecretValue, commentId: ProviderObjectId, message: string): Promise<MetaGraphWriteOutcome<MetaInstagramCreatedReply>>;
+}
+
 /** A Meta permission name: lower-case identifier, bounded. Anything else is an unreadable response, never kept. */
 const PERMISSION_NAME = /^[a-z][a-z0-9_]{0,99}$/;
 const PERMISSION_STATUSES = ["granted", "declined", "expired"] as const;
@@ -273,12 +318,17 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
 /** A display string as reported: absent → "", a string → itself, anything else → undefined (malformed). */
 const displayString = (value: unknown): string | undefined => (value === undefined ? "" : typeof value === "string" ? value : undefined);
 
-/** The response body as UTF-8 text, or undefined when it exceeds the bound or isn't valid UTF-8. */
-async function boundedText(response: Response, maxBytes: number): Promise<string | undefined> {
+/** Why a response body could not be kept: it exceeded the bound, or it wasn't valid UTF-8. */
+type BodyProblem = { readonly problem: "response_too_large" | "response_not_utf8" };
+const TOO_LARGE: BodyProblem = Object.freeze({ problem: "response_too_large" });
+const NOT_UTF8: BodyProblem = Object.freeze({ problem: "response_not_utf8" });
+
+/** The response body as UTF-8 text, or the problem that prevented keeping it (a write names it; a read treats both as unreadable). */
+async function boundedBody(response: Response, maxBytes: number): Promise<string | BodyProblem> {
   const declared = Number(response.headers.get("content-length") ?? Number.NaN);
   if (Number.isFinite(declared) && declared > maxBytes) {
     await response.body?.cancel();
-    return undefined;
+    return TOO_LARGE;
   }
   if (response.body === null) return "";
   const reader = response.body.getReader();
@@ -290,7 +340,7 @@ async function boundedText(response: Response, maxBytes: number): Promise<string
     total += value.byteLength;
     if (total > maxBytes) {
       await reader.cancel();
-      return undefined;
+      return TOO_LARGE;
     }
     chunks.push(value);
   }
@@ -303,8 +353,14 @@ async function boundedText(response: Response, maxBytes: number): Promise<string
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    return undefined;
+    return NOT_UTF8;
   }
+}
+
+/** The response body as UTF-8 text, or undefined when it exceeds the bound or isn't valid UTF-8. */
+async function boundedText(response: Response, maxBytes: number): Promise<string | undefined> {
+  const body = await boundedBody(response, maxBytes);
+  return typeof body === "string" ? body : undefined;
 }
 
 function parseJson(text: string): unknown {
@@ -628,16 +684,30 @@ function instagramCommentListOf(body: unknown): MetaInstagramCommentList | undef
   return after === undefined ? undefined : Object.freeze({ comments: Object.freeze(comments), after });
 }
 
+/** `POST /{ig-comment-id}/replies` answers `{ "id": "…" }`: a provider id, nothing else is read. */
+function createdReplyOf(body: unknown): MetaInstagramCreatedReply | undefined {
+  const root = record(body);
+  const id = root === undefined ? undefined : parseProviderObjectId(root["id"]);
+  return id === undefined ? undefined : Object.freeze({ id });
+}
+
 /** `{ig-comment-id}?fields=…`: the echoed id must be the requested one. */
 function singleInstagramCommentOf(body: unknown, commentId: ProviderObjectId): MetaInstagramComment | undefined {
   const comment = instagramCommentOf(body);
   return comment?.id === commentId ? comment : undefined;
 }
 
+/** The one place the transport options become fetch, timeout and body bound — shared by the read and write transports. */
+function transportSettings(options: MetaGraphTransportOptions): { readonly fetchImpl: MetaGraphFetch; readonly timeoutMs: number; readonly maxBytes: number } {
+  return {
+    fetchImpl: options.fetch ?? ((url, init) => fetch(url, init)),
+    timeoutMs: options.timeoutMs ?? META_GRAPH_TIMEOUT_MS,
+    maxBytes: options.maxResponseBytes ?? META_GRAPH_RESPONSE_MAX_BYTES,
+  };
+}
+
 export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}): MetaGraphTransport {
-  const fetchImpl: MetaGraphFetch = options.fetch ?? ((url, init) => fetch(url, init));
-  const timeoutMs = options.timeoutMs ?? META_GRAPH_TIMEOUT_MS;
-  const maxBytes = options.maxResponseBytes ?? META_GRAPH_RESPONSE_MAX_BYTES;
+  const { fetchImpl, timeoutMs, maxBytes } = transportSettings(options);
 
   /** One GET of a fixed Graph path. `segments` are fixed names or validated provider ids; `query` excludes the token. */
   async function get<T>(segments: readonly string[], query: [string, string][], token: SecretValue, parse: (body: unknown) => T | undefined): Promise<MetaGraphOutcome<T>> {
@@ -724,4 +794,63 @@ export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}
       return get([commentId], [["fields", META_INSTAGRAM_COMMENT_FIELDS]], userToken, (body) => singleInstagramCommentOf(body, commentId));
     },
   };
+}
+
+/**
+ * The Graph WRITE transport (Step 7B-11; independent review F2): ONE operation, `createInstagramCommentReply`, built
+ * apart from the read transport so no read consumer ever holds it. The same fetch, timeout and body bound as reads.
+ */
+export function createMetaGraphWriteTransport(options: MetaGraphTransportOptions = {}): MetaGraphWriteTransport {
+  const { fetchImpl, timeoutMs, maxBytes } = transportSettings(options);
+
+  /**
+   * One POST of a fixed Graph path with a form body (Step 7B-11). Nothing is retried here, and once `fetchImpl` has
+   * been invoked every failure is `unknown`: the request may have reached the platform. The token leaves only inside
+   * the body; nothing of a thrown error (which may reference the request) is kept beyond its name.
+   */
+  async function post<T>(segments: readonly string[], form: [string, string][], token: SecretValue, parse: (body: unknown) => T | undefined): Promise<MetaGraphWriteOutcome<T>> {
+    const unknown = (reason: MetaGraphWriteUnknownReason): MetaGraphWriteOutcome<T> => Object.freeze({ kind: "unknown", reason });
+    let status: number;
+    let body: string | BodyProblem;
+    try {
+      const url = new URL(`/${META_GRAPH_VERSION}/${segments.map((segment) => encodeURIComponent(segment)).join("/")}`, META_GRAPH_ORIGIN);
+      const response = await fetchImpl(url.href, {
+        method: "POST",
+        redirect: "manual",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+        headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams([...form, ["access_token", token.expose()]]).toString(),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      status = response.status;
+      if (response.type === "opaqueredirect" || (status >= 300 && status < 400)) {
+        await response.body?.cancel();
+        return unknown("unexpected_redirect");
+      }
+      body = await boundedBody(response, maxBytes);
+    } catch (error) {
+      return unknown(error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network_error");
+    }
+    if (typeof body !== "string") return unknown(body.problem);
+    const parsed = parseJson(body);
+    if (status >= 200 && status < 300) {
+      const value = parse(parsed);
+      return value === undefined ? unknown("unrecognized_status_response") : Object.freeze({ kind: "ok", value });
+    }
+    const fields = graphErrorFields(parsed);
+    if (fields !== null) {
+      const error: MetaGraphWriteErrorFields = Object.freeze({ fields, httpStatus: status, isTransient: graphErrorTransience(parsed) });
+      return Object.freeze({ kind: "graph_error", error });
+    }
+    if (status >= 400 && status < 500) return unknown("unrecognized_4xx_response");
+    if (status >= 500 && status < 600) return unknown("unrecognized_5xx_response");
+    return unknown("unrecognized_status_response");
+  }
+
+  return Object.freeze({
+    createInstagramCommentReply(userToken, commentId, message) {
+      return post([commentId, "replies"], [["message", message]], userToken, createdReplyOf);
+    },
+  } satisfies MetaGraphWriteTransport);
 }

@@ -28,9 +28,21 @@ describe("7B-1: the mutation port has one composition root and one implementatio
   it("only jobs/mutations.ts obtains a provider mutation implementation; only the simulator implements the port", () => {
     const users = sourceFiles(PRODUCTION).filter((file) => importsOf(file).some((specifier) => /providers\/(?!contract\/)[^/]+\/mutation-port/.test(specifier)));
     expect(users).toEqual(["jobs/mutations.ts"]);
+    // 7B-11: two implementations (the simulator, and Meta's Instagram-only public reply); jobs/mutations.ts composes ONLY
+    // the simulator until a gate connects Meta — the Meta port has no production importer at all.
     const implementations = sourceFiles(["integrations/providers"]).filter((file) => !file.startsWith("integrations/providers/contract/") && /mutation/.test(file));
-    expect(implementations).toEqual(["integrations/providers/simulator/mutation-port.ts"]);
-    expect(sourceFiles(["integrations/providers/meta", "integrations/providers/tiktok"]).filter((file) => /replyPublicly|replyPrivately|\/comments["']|\/replies["']/.test(strip(codeOf(file))))).toEqual([]);
+    expect(implementations).toEqual(["integrations/providers/meta/mutation-port.ts", "integrations/providers/simulator/mutation-port.ts"]);
+    expect(sourceFiles(PRODUCTION).filter((file) => importsOf(file).some((specifier) => /providers\/meta\/mutation-port/.test(specifier)))).toEqual([]);
+    expect(strip(codeOf("jobs/mutations.ts"))).not.toMatch(/createMetaMutationPort|providers\/meta/);
+    // F2 (7B-11 review): reads and the write are separate objects. The read port is typed on, and builds, the READ
+    // transport only; the integration composition never names a write (the AST guard in provider-guards covers aliases).
+    const readPort = strip(codeOf("integrations/providers/meta/read-port.ts"));
+    expect(readPort).toMatch(/readonly transport\?: MetaGraphTransport;/);
+    expect(readPort).toMatch(/const transport = options\.transport \?\? createMetaGraphTransport\(\);/);
+    expect(readPort).not.toMatch(/MetaGraphWriteTransport|createMetaGraphWriteTransport|createInstagramCommentReply/);
+    expect(strip(codeOf("jobs/connections.ts"))).not.toMatch(/MetaGraphWriteTransport|createMetaGraphWriteTransport|createInstagramCommentReply|providers\/meta\/mutation-port/);
+    // The Meta write edge lives in exactly two files: the port (the call) and the Graph transport (the request).
+    expect(sourceFiles(["integrations/providers/meta", "integrations/providers/tiktok"]).filter((file) => /replyPublicly|replyPrivately|\/comments["']|"replies"/.test(strip(codeOf(file))))).toEqual(["integrations/providers/meta/graph-transport.ts", "integrations/providers/meta/mutation-port.ts"]);
   });
 
   it("the web never imports executor internals; the job-side composition is imported by jobs/mutations.ts only", () => {
