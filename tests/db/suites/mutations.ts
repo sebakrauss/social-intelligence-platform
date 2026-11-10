@@ -32,6 +32,7 @@ import { createLogger, type Logger } from "@/platform/observability";
 import { createPostgresUnitOfWork } from "@/server/persistence/postgres-unit-of-work";
 import { createActionPipeline, type ActionPipeline } from "@/server/pipeline";
 import { requestPublicReplyCommand } from "@/server/commands/mutations";
+import { inboxConversationCommand } from "@/server/queries/inbox";
 import { runExecuteIntent, runReconcileIntent, type MutationComposition } from "@/jobs/mutations";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { FakeJobRuntime, type FakeHandler } from "../../support/fake-job-runtime";
@@ -221,13 +222,23 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
     readonly base: MutationComposition;
     readonly clock: { readonly newId: () => string; readonly now: () => Date };
     readonly payloads: unknown[];
+    /** Step 7B-4: every call that reached the simulator's MUTATION port (the one external effect). */
+    readonly providerCalls: string[];
     readonly step: () => Promise<void>;
   }
   const harness = (): Harness => {
     const world = new SimulatorWorld(presentScenario());
     const clock = { newId: randomUUID, now: () => new Date(world.nowMs()) };
     const read = createSimulatorReadPort(world, { webhookSigningKey: "synthetic-webhook-signing-key-for-tests" });
-    const mutation = createSimulatorMutationPort(world);
+    const providerCalls: string[] = [];
+    const simulator = createSimulatorMutationPort(world);
+    const mutation: typeof simulator = {
+      ...simulator,
+      replyPublicly: (access, target, text, hint) => {
+        providerCalls.push(`replyPublicly:${target.id}`);
+        return simulator.replyPublicly(access, target, text, hint);
+      },
+    };
     const access: ProviderCredentialAccess = { withCredential: (_input, use) => use(world.credential("cred_meta_main")) };
     const reads: DiscoveryProviders = { read: (provider) => (provider === "simulator" ? read : undefined) };
     const base: MutationComposition = { access, reads, providers: { mutation: (provider) => (provider === "simulator" ? mutation : undefined) } };
@@ -246,8 +257,21 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       await runtime.drain();
       await sweepRunOutcomes(deliveryDeps());
     };
-    return { world, base, clock, payloads, step };
+    return { world, base, clock, payloads, providerCalls, step };
   };
+
+  /** Step 7B-4: a conversation anchored on the tenant's comment (as ingestion creates it), so the Inbox can read it. */
+  const conversationFor = async (t: Tenant): Promise<string> => {
+    const id = randomUUID();
+    await privileged.query(
+      `insert into conversations.conversations (id, organization_id, workspace_id, anchor_interaction_id, anchor_observed, workflow_state, created_by, created_at, updated_at)
+       values ($1, $2, $3, $4, true, 'OPEN', 'system_ingestion', now(), now())`,
+      [id, t.organizationId, t.workspaceId, t.comment],
+    );
+    await privileged.query("update interactions.interactions set conversation_id = $1 where workspace_id = $2 and id = $3", [id, t.workspaceId, t.comment]);
+    return id;
+  };
+  const inboxView = (t: Tenant, user: string, conversationId: string) => pipelineAs(user).run(inboxConversationCommand, { workspaceId: t.workspaceId, input: { conversationId } });
 
   const intentRow = (workspaceId: string, id: string) => oracle<{ status: string; attempt: number; run_reference: string | null; outcome_code: string | null; initiator_user_id: string }>("select status, attempt, run_reference, outcome_code, initiator_user_id from mutations.mutation_intents where workspace_id = $1 and id = $2", [workspaceId, id]);
   const historyRows = (workspaceId: string, id: string) => oracle<{ from_status: string | null; to_status: string; actor: string; outcome_code: string | null; attempt: number }>("select from_status, to_status, actor, outcome_code, attempt from mutations.mutation_intent_history where workspace_id = $1 and intent_id = $2 order by occurred_at, array_position(array['PENDING', 'EXECUTING', 'OUTCOME_UNKNOWN', 'CONFIRMED', 'FAILED', 'BLOCKED'], to_status)", [workspaceId, id]);
@@ -664,6 +688,121 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       expect((await historyRows(t.workspaceId, id)).map((r) => r.to_status)).toEqual(["PENDING", "EXECUTING", "OUTCOME_UNKNOWN"]);
       expect((await auditRows(id)).map((r) => r.action)).toEqual(["mutation_intent.created", "mutation_intent.executing", "mutation_intent.outcome_unknown"]);
       expect(h.world.interactions().filter((state) => state.text === text)).toHaveLength(1);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("Step 7B-4: the integrated walk — request → outbox → relay → executor → simulator → Inbox read, on PostgreSQL", () => {
+    const onlyThisWorkspace = (workspaceId: string) => quietPendingOutbox((text, values) => privileged.query(text, values), "topic = $1 and workspace_id <> $2", [TASK, workspaceId]);
+
+    it("one request becomes one PENDING intent (+ reply, history, audit, outbox) in one transaction; the relay delivers it; EXECUTING is persisted before the ONE simulator call; CONFIRMED carries the provider id; the Inbox reads 'sent' from the database — and a later canonical read-back of the same reply is not shown twice", async () => {
+      const h = harness();
+      const t = await tenant();
+      const conversation = await conversationFor(t);
+      const text = `${TEXT} walk ${randomUUID()}`;
+      // 1–3. the command, through the real pipeline (identity, membership, reply.public, Standard, target, account, capability, key).
+      const created = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text, idempotencyKey: `form-walk-${randomUUID().slice(0, 8)}` });
+      expect(created.status === "ok" ? created.value.kind : created).toBe("requested");
+      const id = created.status === "ok" && created.value.kind === "requested" ? created.value.intentId : "";
+      expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "PENDING", attempt: 0, run_reference: null, outcome_code: null, initiator_user_id: t.users.RESPONDER })]);
+      expect((await oracle<{ n: string }>("select count(*)::text as n from system.outbox where workspace_id = $1 and topic = $2 and status = 'PENDING'", [t.workspaceId, TASK]))[0]?.n).toBe("1");
+      // The Inbox already shows the requested reply as "sending": nothing is optimistic, this is the persisted PENDING row.
+      const before = await inboxView(t, t.users.RESPONDER, conversation);
+      expect(before.status === "ok" ? before.value.outbound.map((o) => [o.parentInteractionId === t.comment, o.state, o.text === text]) : before).toEqual([[true, "sending", true]]);
+      expect(before.status === "ok" ? before.value.reply.kind : before).toBe("available");
+      await onlyThisWorkspace(t.workspaceId);
+      // 4–7. the real relay → the fake runtime → the REAL integration handler → the simulator's mutation port, once.
+      expect(h.providerCalls).toEqual([]);
+      await h.step();
+      expect(h.providerCalls).toEqual(["replyPublicly:fb_c_010"]);
+      const row = must((await intentRow(t.workspaceId, id))[0], "intent");
+      expect(row).toMatchObject({ status: "CONFIRMED", attempt: 1, outcome_code: null });
+      expect(row.run_reference).not.toBeNull();
+      const reply = must((await replyRow(t.workspaceId, id))[0], "reply");
+      expect(reply.provider_reply_id).not.toBeNull();
+      expect(reply.confirmed_at).not.toBeNull();
+      expect(h.world.interaction(reply.provider_reply_id ?? "")).toMatchObject({ parent: "fb_c_010", text });
+      // 5. EXECUTING was persisted BEFORE the call: the history has the EXECUTING row with the run that then confirmed.
+      expect((await historyRows(t.workspaceId, id)).map((r) => [r.from_status, r.to_status, r.actor, r.attempt])).toEqual([[null, "PENDING", "web", 0], ["PENDING", "EXECUTING", "executor", 1], ["EXECUTING", "CONFIRMED", "executor", 1]]);
+      expect((await auditRows(id)).map((r) => [r.action, r.actor_type])).toEqual([["mutation_intent.created", "user"], ["mutation_intent.executing", "system"], ["mutation_intent.confirmed", "system"]]);
+      // 8. the Inbox reads the persisted CONFIRMED state as "sent", under the right comment, with the provider identity.
+      const after = await inboxView(t, t.users.RESPONDER, conversation);
+      expect(after.status === "ok" ? after.value.outbound.map((o) => [o.parentInteractionId === t.comment, o.state, o.confirmedAt !== null]) : after).toEqual([[true, "sent", true]]);
+      // A second relay pass re-delivers nothing: the row is DISPATCHED, the simulator was called once.
+      await h.step();
+      expect(h.providerCalls).toHaveLength(1);
+      // Later, the platform's own read-back of that reply arrives as a canonical member with the SAME provider id (as
+      // ingestion writes it): the thread shows the canonical member and no longer repeats the outbound row.
+      await privileged.query(`insert into interactions.authors (id, organization_id, workspace_id, platform, provider_author_id, role, label, created_at, updated_at) values ($1, $2, $3, 'facebook', 'fb_page_aurora', 'account_identity', null, now(), now()) on conflict do nothing`, [randomUUID(), t.organizationId, t.workspaceId]);
+      const brand = (await oracle<{ id: string }>("select id from interactions.authors where workspace_id = $1 and role = 'account_identity' limit 1", [t.workspaceId]))[0]?.id ?? "";
+      const canonical = randomUUID();
+      await privileged.query(
+        `insert into interactions.interactions (id, organization_id, workspace_id, platform, provider_interaction_id, connected_account_id, provider_asset_id, content_item_id, provider_content_id, observed, parent_interaction_id, kind, author_id, author_role, conversation_id,
+           current_visibility, current_availability, provider_created_at, state_observed_at, first_observed_at, latest_observed_at, created_at, updated_at)
+         values ($1, $2, $3, 'facebook', $4, $5, 'fb_page_aurora', $6, 'fb_post_boosted_02', true, $7, 'reply', $8, 'account_identity', $9, 'visible', 'available', now(), now(), now(), now(), now(), now())`,
+        [canonical, t.organizationId, t.workspaceId, reply.provider_reply_id, t.account, t.content, t.comment, brand, conversation],
+      );
+      const readBack = await inboxView(t, t.users.RESPONDER, conversation);
+      expect(readBack.status).toBe("ok");
+      if (readBack.status !== "ok") return;
+      expect(readBack.value.outbound).toEqual([]);
+      expect(readBack.value.thread.filter((member) => member.author === "own_account" && member.parentInteractionId === t.comment).map((member) => member.interactionId)).toEqual([canonical]);
+      // Members who can't reply see the same persisted states; a guest sees nothing (pipeline PERMISSION_DENIED).
+      const analyst = await inboxView(t, t.users.ANALYST_VIEWER, conversation);
+      expect(analyst.status === "ok" ? [analyst.value.reply.kind, analyst.value.outbound.length] : analyst).toEqual(["hidden", 0]);
+      const guest = await inboxView(t, t.users.CLIENT_GUEST, conversation);
+      expect(guest.status === "error" ? guest.error.code : guest).toBe("PERMISSION_DENIED");
+    });
+
+    it("a definite provider refusal (the target is gone at the platform) is FAILED after ONE call; a second delivery sends nothing", async () => {
+      const h = harness();
+      h.world.injectFaults([{ operation: "replyPublicly", on: 1, fault: { kind: "target_not_found" } }]);
+      const t = await tenant();
+      const created = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: `${TEXT} gone ${randomUUID()}` });
+      const id = created.status === "ok" && created.value.kind === "requested" ? created.value.intentId : "";
+      await onlyThisWorkspace(t.workspaceId);
+      await h.step();
+      expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "FAILED", attempt: 1, outcome_code: "TARGET_NOT_FOUND" })]);
+      expect(h.providerCalls).toHaveLength(1);
+      expect((await auditRows(id)).map((r) => [r.action, r.outcome])).toEqual([["mutation_intent.created", "succeeded"], ["mutation_intent.executing", "succeeded"], ["mutation_intent.failed", "failed"]]);
+      await h.step();
+      expect(h.providerCalls).toHaveLength(1);
+      const conversation = await conversationFor(t);
+      const view = await inboxView(t, t.users.RESPONDER, conversation);
+      expect(view.status === "ok" ? view.value.outbound.map((o) => o.state) : view).toEqual(["failed"]);
+    });
+
+    it("a redelivered run after EXECUTING never sends again: the intent becomes OUTCOME_UNKNOWN (RUN_INTERRUPTED) with ZERO provider calls, and the Inbox shows 'checking'", async () => {
+      const h = harness();
+      const t = await tenant();
+      const created = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: `${TEXT} crash ${randomUUID()}` });
+      const id = created.status === "ok" && created.value.kind === "requested" ? created.value.intentId : "";
+      await onlyThisWorkspace(t.workspaceId);
+      // The first run died right after committing EXECUTING (the only state a crash between the two transactions can
+      // leave); its outbox row is then delivered again — exactly what the run-outcome sweeper does for a lost run.
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx) => tx.execute(`update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_crashed' where id = '${id}'` as never));
+      await h.step();
+      expect(h.providerCalls).toEqual([]);
+      expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", attempt: 1, outcome_code: "RUN_INTERRUPTED" })]);
+      expect((await historyRows(t.workspaceId, id)).map((r) => [r.to_status, r.outcome_code])).toEqual([["PENDING", null], ["OUTCOME_UNKNOWN", "RUN_INTERRUPTED"]]);
+      const conversation = await conversationFor(t);
+      const view = await inboxView(t, t.users.RESPONDER, conversation);
+      expect(view.status === "ok" ? view.value.outbound.map((o) => o.state) : view).toEqual(["checking"]);
+      // No automatic resend ever: the same real payload delivered once more is a noop (still 0 calls), and
+      // reconciliation is not invoked here (Step 7B-4 leaves it unwired; its cross-intent blocker stands).
+      const payload = must(h.payloads.at(-1), "payload");
+      await runTenantStepJob({ registry: PRODUCTION_TASKS, worker, logger }, TASK, payload, { runId: "run_redelivered_2", attempt: 1 }, (context) => runExecuteIntent(context, h.base, { clock: h.clock }));
+      expect(h.providerCalls).toEqual([]);
+      expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", outcome_code: "RUN_INTERRUPTED" })]);
+    });
+
+    it("the Inbox's reply affordance follows the real guards: Monitor-only → unavailable (mode), a role without reply.public → hidden", async () => {
+      const t = await tenant("MONITOR_ONLY");
+      const conversation = await conversationFor(t);
+      const owner = await inboxView(t, t.users.OWNER, conversation);
+      expect(owner.status === "ok" ? owner.value.reply : owner).toEqual({ kind: "unavailable", reason: "monitor_only", platform: "facebook" });
+      const analyst = await inboxView(t, t.users.ANALYST_VIEWER, conversation);
+      expect(analyst.status === "ok" ? analyst.value.reply : analyst).toEqual({ kind: "hidden" });
     });
   });
 }
