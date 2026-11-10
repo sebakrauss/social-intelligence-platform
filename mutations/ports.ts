@@ -6,7 +6,7 @@
 import type { ProviderAccess } from "@/integrations/providers/contract/dto";
 import type { ProviderObjectRef } from "@/integrations/providers/contract/identity";
 import type { ProviderMutationPort } from "@/integrations/providers/contract/mutation-port";
-import type { IntentOutcomeCode, IntentStatus, IntentTransition, MutationIntent } from "./domain/intent";
+import type { CompetingIntent, IntentOutcomeCode, IntentStatus, IntentTransition, MutationIntent } from "./domain/intent";
 
 /** The canonical interaction a reply targets, as persistence knows it (never a browser-supplied provider id). */
 export interface ReplyTarget {
@@ -60,6 +60,13 @@ export interface IntentStore {
   /** Applies one admitted transition: status, attempt, run reference, outcome code, updated time. */
   transition(workspaceId: string, intentId: string, next: { readonly status: IntentStatus; readonly attempt: number; readonly runReference: string | null; readonly outcomeCode: IntentOutcomeCode | null; readonly at: Date }): Promise<void>;
   appendHistory(workspaceId: string, intentId: string, transition: IntentTransition & { readonly id: string; readonly correlationId: string; readonly at: Date }): Promise<void>;
+  /**
+   * Step 7B-5: every OTHER intent of the same workspace, account and target — the candidates that may have produced a
+   * reply found on the platform (the pure rule decides which are plausible). Text is deliberately NOT a criterion: the
+   * platform may normalize it, so two requests with different texts can still be the same published reply.
+   * Read in the SAME transaction as the confirmation it guards.
+   */
+  competitorsFor(workspaceId: string, intent: { readonly id: string; readonly connectedAccountId: string; readonly targetInteractionId: string }): Promise<readonly CompetingIntent[]>;
 }
 
 /** One outbound reply with its intent's state, as the Inbox shows it (Step 7B-3): text, closed state, identifiers. */
@@ -119,7 +126,8 @@ export interface CredentialUse {
  *   found      exactly ONE reply by the account identity, under the parent, with the exact text, created at or after the
  *              attempt (small clock skew allowed), in a listing that was read to its END;
  *   none       the complete listing shows no such reply — which is NOT evidence that it was never published;
- *   ambiguous  more than one candidate: no identity can be assigned safely.
+ *   ambiguous  more than one candidate, or any such reply whose creation time the provider did not state reliably
+ *              (it cannot be placed before or after the attempt): no identity can be assigned safely.
  * An unreadable, incomplete or failed listing throws: the caller keeps the outcome unknown.
  */
 export type ReplyLookupResult = { readonly kind: "found"; readonly providerReplyId: string } | { readonly kind: "none" } | { readonly kind: "ambiguous" };

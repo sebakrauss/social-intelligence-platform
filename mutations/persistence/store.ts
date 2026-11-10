@@ -4,7 +4,7 @@
  * history, confirmation). RLS decides visibility — a row of another workspace is simply absent — and the grants decide
  * what each role may change (0027). Every write names the workspace explicitly (R5).
  */
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { DatabaseTransaction } from "@/platform/db";
 import { isIntentOutcomeCode, isIntentStatus, MUTATION_KINDS, MUTATION_REQUEST_TYPES, type MutationIntent } from "../domain/intent";
 import type { IntentStore, OutboundReply, OutboundReplyStore } from "../ports";
@@ -84,6 +84,16 @@ export function createPostgresIntentStore(tx: DatabaseTransaction): IntentStore 
         .where(and(eq(mutationIntents.workspaceId, workspaceId), eq(mutationIntents.id, intentId)))
         .returning({ id: mutationIntents.id });
       if (updated.length !== 1) corrupt("transition");
+    },
+    async competitorsFor(workspaceId, intent) {
+      // Same workspace (explicit, and the bound worker's RLS), same account, same target; the text is NOT compared.
+      const rows = await tx
+        .select({ id: mutationIntents.id, status: mutationIntents.status, providerReplyId: outboundReplies.providerReplyId })
+        .from(mutationIntents)
+        .leftJoin(outboundReplies, and(eq(outboundReplies.workspaceId, mutationIntents.workspaceId), eq(outboundReplies.intentId, mutationIntents.id)))
+        .where(and(eq(mutationIntents.workspaceId, workspaceId), ne(mutationIntents.id, intent.id), eq(mutationIntents.connectedAccountId, intent.connectedAccountId), eq(mutationIntents.targetInteractionId, intent.targetInteractionId)))
+        .orderBy(asc(mutationIntents.createdAt), asc(mutationIntents.id));
+      return rows.map((row) => ({ id: row.id, status: isIntentStatus(row.status) ? row.status : corrupt("status"), hasProviderIdentity: row.providerReplyId !== null }));
     },
     async appendHistory(workspaceId, intentId, transition) {
       await tx.insert(mutationIntentHistory).values({

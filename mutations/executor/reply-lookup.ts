@@ -4,7 +4,9 @@
  * authored by the account identity, replying to exactly the parent, the exact text we sent, and created at or after
  * the attempt (a small clock skew is tolerated; nothing older counts). The listing must be read to its END within a
  * bounded number of pages; otherwise the lookup throws and the caller keeps the outcome unknown. More than one
- * candidate is `ambiguous`; zero is `none` — and `none` is NOT proof that the reply was never published.
+ * candidate is `ambiguous`, and so is ANY own match whose creation time the provider did not state (absent or
+ * unparseable): it can be neither placed after the attempt nor ruled out, so nothing is ever attributed around it.
+ * Zero candidates is `none` — and `none` is NOT proof that the reply was never published.
  */
 import type { InteractionDto, Page, ProviderAccess, ProviderReadPort } from "@/integrations/providers/contract";
 import { isoInstant, type PageCursor } from "@/integrations/providers/contract";
@@ -31,15 +33,19 @@ export function createReadPortReplyLookup(reads: { readonly read: (provider: str
       const earliest = since.getTime() - LOOKUP_SKEW_MS;
       const window = { from: isoInstant(new Date(since.getTime() - LOOKUP_WINDOW_SLACK_MS)), to: isoInstant(now()) };
       const candidates: string[] = [];
+      let untimed = 0;
       let cursor: PageCursor | null = null;
       for (let page = 0; page < LOOKUP_MAX_PAGES; page += 1) {
         const listed: Page<InteractionDto> = (await port.listInteractions(access, { kind: "content", content: target.content }, window, cursor)).data;
         for (const item of listed.items) {
-          const createdAt = item.timestamps.createdAt === null ? null : Date.parse(item.timestamps.createdAt);
           const ownReply = item.parent?.id === target.parent.id && item.author.role === "account_identity" && item.text === text && item.availability !== "removed_at_source";
-          if (ownReply && createdAt !== null && createdAt >= earliest) candidates.push(item.ref.id);
+          if (!ownReply) continue;
+          const createdAt = item.timestamps.createdAt === null ? Number.NaN : Date.parse(item.timestamps.createdAt);
+          if (Number.isNaN(createdAt)) untimed += 1;
+          else if (createdAt >= earliest) candidates.push(item.ref.id);
         }
         if (listed.next.kind === "end") {
+          if (untimed > 0) return { kind: "ambiguous" };
           const [single, ...rest] = candidates;
           if (single === undefined) return { kind: "none" };
           return rest.length === 0 ? { kind: "found", providerReplyId: single } : { kind: "ambiguous" };

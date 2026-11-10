@@ -144,6 +144,12 @@ export function memoryStores(state: GuardState = guardState(), targets: readonly
         calls.push(`transition:${next.status}`);
         return Promise.resolve();
       },
+      competitorsFor: (workspaceId, intent) =>
+        Promise.resolve(
+          [...intentRows.values()]
+            .filter((row) => row.workspaceId === workspaceId && row.id !== intent.id && row.connectedAccountId === intent.connectedAccountId && row.targetInteractionId === intent.targetInteractionId)
+            .map((row) => ({ id: row.id, status: row.status, hasProviderIdentity: (replyRows.get(key(workspaceId, row.id))?.providerReplyId ?? null) !== null })),
+        ),
       appendHistory: (_workspaceId, intentId, transition) => {
         history.push({ ...transition, intentId });
         return Promise.resolve();

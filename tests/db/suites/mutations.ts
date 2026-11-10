@@ -805,4 +805,72 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       expect(analyst.status === "ok" ? analyst.value.reply : analyst).toEqual({ kind: "hidden" });
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("Step 7B-5: cross-intent reconciliation safety on PostgreSQL (two intents, same account, comment and text)", () => {
+    const onlyThisWorkspace = (workspaceId: string) => quietPendingOutbox((text, values) => privileged.query(text, values), "topic = $1 and workspace_id <> $2", [TASK, workspaceId]);
+    const reconcile = (h: Harness, intentId: string, runId: string) =>
+      runTenantStepJob({ registry: PRODUCTION_TASKS, worker, logger }, TASK, must(h.payloads.at(-1), "payload"), { runId, attempt: 1 }, (context) => runReconcileIntent(context, h.base, { intentId, provider: "simulator" }, { clock: h.clock }));
+
+    it("A unknown without publishing, B published and lost its answer: reconciling A and B — sequentially and concurrently — keeps both OUTCOME_UNKNOWN, links no identity, sends nothing", async () => {
+      const h = harness();
+      const t = await tenant();
+      const text = `${TEXT} ab ${randomUUID()}`;
+      // A: requested first; its run dies right after EXECUTING, so its redelivery records RUN_INTERRUPTED with no call.
+      const a = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text, idempotencyKey: `form-a-${randomUUID().slice(0, 8)}` });
+      const aId = a.status === "ok" && a.value.kind === "requested" ? a.value.intentId : "";
+      await onlyThisWorkspace(t.workspaceId);
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx) => tx.execute(`update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_a_crashed' where id = '${aId}'` as never));
+      await h.step();
+      expect(h.providerCalls).toEqual([]);
+      expect(await intentRow(t.workspaceId, aId)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", outcome_code: "RUN_INTERRUPTED" })]);
+      // B: same account, target and text, another form; it really publishes and loses the answer.
+      const b = await request(t, t.users.OWNER, { targetInteractionId: t.comment, text, idempotencyKey: `form-b-${randomUUID().slice(0, 8)}` });
+      const bId = b.status === "ok" && b.value.kind === "requested" ? b.value.intentId : "";
+      h.world.injectFaults([{ operation: "replyPublicly", on: 1, fault: { kind: "outcome_unknown" } }]);
+      await h.step();
+      expect(h.providerCalls).toEqual(["replyPublicly:fb_c_010"]);
+      expect(await intentRow(t.workspaceId, bId)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", outcome_code: "RESPONSE_LOST" })]);
+      expect(h.world.interactions().filter((state) => state.text === text)).toHaveLength(1);
+      h.world.advanceClock(60);
+      // Sequential: each sees the other as a plausible producer of the one reply.
+      expect(await reconcile(h, aId, "run_rec_a")).toEqual({ kind: "still_unknown", reason: "competing_intents" });
+      expect(await reconcile(h, bId, "run_rec_b")).toEqual({ kind: "still_unknown", reason: "competing_intents" });
+      // Concurrent: the same, on two worker transactions at once.
+      expect(await Promise.all([reconcile(h, aId, "run_rec_a2"), reconcile(h, bId, "run_rec_b2")])).toEqual([{ kind: "still_unknown", reason: "competing_intents" }, { kind: "still_unknown", reason: "competing_intents" }]);
+      for (const id of [aId, bId]) {
+        expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN" })]);
+        expect((await replyRow(t.workspaceId, id))[0]?.provider_reply_id).toBeNull();
+      }
+      expect(h.providerCalls).toHaveLength(1);
+      expect((await oracle<{ n: string }>("select count(*)::text as n from mutations.outbound_replies where workspace_id = $1 and provider_reply_id is not null", [t.workspaceId]))[0]?.n).toBe("0");
+      expect((await oracle<{ n: string }>("select count(*)::text as n from audit.audit_events where target_type = 'mutation_intent' and target_id in ($1, $2) and action in ('mutation_intent.confirmed', 'mutation_intent.reconciled')", [aId, bId]))[0]?.n).toBe("0");
+    });
+
+    it("an unambiguous reply (no competitor) still confirms through reconciliation; a competitor already holding the identity blocks another claim", async () => {
+      const h = harness();
+      const t = await tenant();
+      const text = `${TEXT} single ${randomUUID()}`;
+      const only = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text });
+      const onlyId = only.status === "ok" && only.value.kind === "requested" ? only.value.intentId : "";
+      await onlyThisWorkspace(t.workspaceId);
+      h.world.injectFaults([{ operation: "replyPublicly", on: 1, fault: { kind: "outcome_unknown" } }]);
+      await h.step();
+      h.world.advanceClock(60);
+      const confirmed = await reconcile(h, onlyId, "run_rec_single");
+      expect(confirmed.kind).toBe("confirmed");
+      const linkedId = (await replyRow(t.workspaceId, onlyId))[0]?.provider_reply_id ?? "";
+      expect(linkedId).not.toBe("");
+      // A later intent with the same text, left unknown without publishing, finds that reply: it belongs to someone else.
+      const late = await request(t, t.users.OWNER, { targetInteractionId: t.comment, text });
+      const lateId = late.status === "ok" && late.value.kind === "requested" ? late.value.intentId : "";
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx) => tx.execute(`update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_late_crashed' where id = '${lateId}'` as never));
+      await h.step();
+      expect(h.providerCalls).toHaveLength(1);
+      expect(await reconcile(h, lateId, "run_rec_late")).toEqual({ kind: "still_unknown", reason: "identity_linked_elsewhere" });
+      expect((await replyRow(t.workspaceId, lateId))[0]?.provider_reply_id).toBeNull();
+      // The identity index is the last word: even a privileged second link of the same provider reply is refused.
+      expect(await sqlState(privileged.query("update mutations.outbound_replies set provider_reply_id = $1, confirmed_at = now() where intent_id = $2", [linkedId, lateId]))).toMatchObject({ code: "23505", constraint: "outbound_replies_provider_identity" });
+    });
+  });
 }

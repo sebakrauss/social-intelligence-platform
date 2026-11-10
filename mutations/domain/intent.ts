@@ -155,6 +155,27 @@ export const OUTCOME_STATUS: { readonly [C in IntentOutcomeCode]: IntentStatus }
   REPLY_IDENTITY_CONFLICT: "OUTCOME_UNKNOWN",
 };
 
+/**
+ * Step 7B-5 — cross-intent safety for reconciliation. A reply found on the platform (same account, parent and text)
+ * can be attributed to an intent ONLY when no other intent of the same workspace, account, target and text could
+ * plausibly have produced it. A competitor is plausible when it may have reached the provider without a provider
+ * identity of its own: EXECUTING (a call in flight or lost), OUTCOME_UNKNOWN (a call whose answer was lost), or
+ * CONFIRMED without a provider identity (a receipt that named no reply). PENDING never called; BLOCKED never called;
+ * FAILED is the contract's definite non-publication; CONFIRMED with an identity owns a different reply (or the same
+ * one, which the identity index refuses). Plausibility is decided by STATE and IDENTITY only: a provider's timestamp
+ * and our own clock are independent, so no competitor is ever excluded by comparing them (a lagging provider clock
+ * would otherwise hide the real producer).
+ */
+export interface CompetingIntent {
+  readonly id: string;
+  readonly status: IntentStatus;
+  readonly hasProviderIdentity: boolean;
+}
+
+export function isPlausibleProducer(competitor: CompetingIntent): boolean {
+  return competitor.status === "EXECUTING" || competitor.status === "OUTCOME_UNKNOWN" || (competitor.status === "CONFIRMED" && !competitor.hasProviderIdentity);
+}
+
 /** The reply text limits the executor enforces before any provider sees it (the smallest platform limit applies). */
 export const REPLY_TEXT_MAX_CHARS = 2200;
 
