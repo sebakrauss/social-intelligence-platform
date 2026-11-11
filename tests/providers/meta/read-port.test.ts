@@ -339,12 +339,14 @@ describe("Meta read port · Graph transport security (the contained query-token 
     expect(META_GRAPH_RESPONSE_MAX_BYTES).toBe(65_536);
   });
 
-  it("the transport exposes exactly fourteen typed operations (P5-B adds three, P11-B two, P12-B1 four): no URL, path or next-link input", () => {
+  it("the transport exposes exactly fifteen typed operations (P5-B adds three, P11-B two, P12-B1 four, 7B-14C1 one read for the preflight diagnostic): no URL, path or next-link input", () => {
     const transport = createMetaGraphTransport({ fetch: () => Promise.reject(new Error("unused")) });
     expect(Object.keys(transport).sort()).toEqual([
       "getComment", "getInstagramAccount", "getInstagramComment", "getInstagramMedia", "getPage", "getPageAccessToken", "getPageInstagram", "getPost",
-      "listInstagramComments", "listInstagramMedia", "listPages", "listPermissions", "listPostComments", "listPublishedPosts",
+      "listInstagramCommentReplies", "listInstagramComments", "listInstagramMedia", "listPages", "listPermissions", "listPostComments", "listPublishedPosts",
     ]);
+    // Step 7B-14C1: the replies read takes no cursor — a second page can never be requested.
+    expect(transport.listInstagramCommentReplies.length).toBe(2);
   });
 
   const outcomes: readonly (readonly [string, Reply, ProviderErrorKind, Record<string, unknown>, { readonly timeoutMs?: number; readonly maxResponseBytes?: number }])[] = [

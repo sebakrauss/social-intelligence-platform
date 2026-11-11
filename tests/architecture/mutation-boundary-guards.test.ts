@@ -87,7 +87,8 @@ describe("7B-1: the task, its topic and its release", () => {
     expect(PRODUCTION_TASKS.tasks.filter((t) => t.name.startsWith("mutations."))).toHaveLength(1);
     expect(readdirSync(path.join(REPOSITORY_ROOT, "jobs/trigger/integration"))).toContain("mutations.ts");
     expect(codeOf("jobs/trigger/integration/mutations.ts")).toMatch(/defineTenantStepTask\(PRODUCTION_TASKS, "mutations\.execute_intent"/);
-    expect(RELEASE_PLANES.find((plane) => plane.plane === "integration")?.expectedTasks).toBe(8);
+    // 8 since 7B-1 (the executor); 9 since 7B-14C1 (the read-only Instagram reply preflight diagnostic — no mutation task).
+    expect(RELEASE_PLANES.find((plane) => plane.plane === "integration")?.expectedTasks).toBe(9);
     // Members append the topic (the web request); 0021's internal inventory does not name it.
     expect(codeOf("db/migrations/0021_outbox_internal_topics.sql")).not.toMatch(/mutations\.execute_intent/);
   });

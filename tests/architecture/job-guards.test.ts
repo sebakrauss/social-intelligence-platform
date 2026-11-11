@@ -101,7 +101,7 @@ describe("dispatch path", () => {
     expect(users(/\brunSystemJob\(/).filter((file) => !file.startsWith("platform/jobs/"))).toEqual(["jobs/trigger/main/system.ts"]);
     // Step 7E.7-B: the one direct task outside the wrappers is the integration-only KMS diagnostic (no registry entry,
     // no schedule — tests/unit/jobs/integration-kms-diagnostic.test.ts).
-    expect(users(/\btask\(\{/)).toEqual(["jobs/trigger/define.ts", "jobs/trigger/integration/kms-worker-auth-diagnostic.ts", "jobs/trigger/integration/read-content-validation.ts", "jobs/trigger/integration/read-interactions-validation.ts", "jobs/trigger/main/delivery.ts", "jobs/trigger/main/provider-events.ts"]);
+    expect(users(/\btask\(\{/)).toEqual(["jobs/trigger/define.ts", "jobs/trigger/integration/instagram-reply-preflight.ts", "jobs/trigger/integration/kms-worker-auth-diagnostic.ts", "jobs/trigger/integration/read-content-validation.ts", "jobs/trigger/integration/read-interactions-validation.ts", "jobs/trigger/main/delivery.ts", "jobs/trigger/main/provider-events.ts"]);
     // Step H6-F3: the provider-event router and purge are scheduled system tasks too (through the same runner).
     expect(users(/\bschedules\.task\(/)).toEqual(["jobs/trigger/main/delivery.ts", "jobs/trigger/main/provider-events.ts"]);
     expect(codeOf("jobs/trigger/define.ts")).toMatch(/runTenantJob\(/);

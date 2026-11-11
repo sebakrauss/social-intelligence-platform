@@ -8,3 +8,6 @@ import { workerIdentity } from "./integration-aws-identity";
 export const composedIdentity = workerIdentity;
 import { createMetaReadPort } from "../integrations/providers/meta/read-port";
 export const composedMetaRead = createMetaReadPort;
+// Step 7B-14C1: the integration composition builds the read-only Instagram reply preflight reader.
+import { createInstagramReplyPreflight } from "../integrations/providers/meta/instagram-reply-preflight";
+export const composedPreflight = createInstagramReplyPreflight;

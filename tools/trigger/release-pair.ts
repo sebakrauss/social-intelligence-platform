@@ -38,7 +38,7 @@ export interface PlaneDefinition {
 
 /** The closed release table, in deploy order: INTEGRATION, INTELLIGENCE, then MAIN — never reordered, never one alone. */
 export const RELEASE_PLANES: readonly PlaneDefinition[] = Object.freeze([
-  Object.freeze({ plane: "integration", config: "trigger.integration.config.ts", projectRefFlag: "--integration-project-ref", expectedTasks: 8 }),
+  Object.freeze({ plane: "integration", config: "trigger.integration.config.ts", projectRefFlag: "--integration-project-ref", expectedTasks: 9 }),
   Object.freeze({ plane: "intelligence", config: "trigger.intelligence.config.ts", projectRefFlag: "--intelligence-project-ref", expectedTasks: 1 }),
   Object.freeze({ plane: "main", config: "trigger.config.ts", projectRefFlag: "--main-project-ref", expectedTasks: 11 }),
 ] as const);

@@ -246,7 +246,8 @@ describe("Meta authorization adapter (Step 7G-D): offline, authorization only", 
   const MUTATION_PORT = `${META}/mutation-port.ts`;
 
   it("the Meta tree is the authorization adapter and its token transport, the read port and its Graph transport, error normalization, the fixed endpoints, the pure webhook boundary (H6-F1) and the Instagram-only mutation port (7B-11)", () => {
-    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/graph-transport.ts`, MUTATION_PORT, `${META}/oauth-transport.ts`, `${META}/read-port.ts`, `${META}/webhooks.ts`]);
+    // Step 7B-14C1: + the read-only Instagram reply preflight reader (operator diagnostic; read transport only).
+    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/graph-transport.ts`, `${META}/instagram-reply-preflight.ts`, MUTATION_PORT, `${META}/oauth-transport.ts`, `${META}/read-port.ts`, `${META}/webhooks.ts`]);
     // The authorization side knows nothing of reads; nothing in the tree refreshes or proves; only the mutation port mutates.
     for (const file of AUTHORIZATION_SIDE) expect(codeOf(file), file).not.toMatch(/discoverAssets|\/me\/accounts|instagram_business_account|ProviderReadPort/);
     for (const file of files()) expect(codeOf(file), file).not.toMatch(/fb_exchange_token|appsecret_proof/);
@@ -546,9 +547,16 @@ describe("Meta read_interactions (Step 7G-H5.5-P12-B1): Facebook comments + repl
     expect(transport()).toMatch(/get\(\[mediaId, "comments"\], /);
     expect(transport()).toMatch(/export const META_FACEBOOK_COMMENTS_PAGE_LIMIT = 10;/);
     expect(transport()).toMatch(/export const META_INSTAGRAM_COMMENTS_PAGE_LIMIT = 10;/);
-    // No replies READ edge: the only "replies" segment in the transport is the documented write (7B-11), never a get.
-    expect(transport()).not.toMatch(/get\(\[[^\]]*"replies"/);
-    expect(transport().match(/"replies"/g)).toHaveLength(1);
+    // Replies: the documented write (7B-11) and, since Step 7B-14C1, exactly ONE read of the replies edge — one fixed
+    // whitelist, one fixed limit, no cursor parameter — that the READ PORT never calls: only the operator's read-only
+    // Instagram reply preflight reader does (its own guards below).
+    expect(transport().match(/get\(\[[^\]]*"replies"/g)).toEqual(['get([commentId, "replies"']);
+    expect(transport().match(/"replies"/g)).toHaveLength(2);
+    expect(transport()).toMatch(/get\(\[commentId, "replies"\], \[\["fields", META_INSTAGRAM_REPLY_FIELDS\], \["limit", String\(META_INSTAGRAM_REPLIES_PAGE_LIMIT\)\]\], userToken, instagramReplyListOf\);/);
+    expect(transport()).toMatch(/export const META_INSTAGRAM_REPLY_FIELDS = "id,from,timestamp,parent_id";/);
+    expect(transport()).toMatch(/listInstagramCommentReplies\(userToken: SecretValue, commentId: ProviderObjectId\): Promise<MetaGraphOutcome<MetaInstagramReplyList>>;/);
+    expect(readPort()).not.toMatch(/listInstagramCommentReplies|META_INSTAGRAM_REPLY/);
+    expect("id,from,timestamp,parent_id").not.toMatch(/\{|text|attachment|like|reaction|replies|permalink|private/);
     expect(transport()).not.toMatch(/"reactions"|"likes"|"private_replies"|"ordered_comments"|"order"|"since"|"until"/);
     for (const fields of ["id,from,message,created_time,parent,is_hidden", "id,from,text,timestamp,parent_id,hidden,media"]) expect(fields).not.toMatch(/\{|attachment|like|reaction|replies|permalink|private/);
   });
@@ -782,5 +790,38 @@ describe("interaction re-reads require listed provenance (Step 7G-H5.5-P12-C9): 
       } else expect(argument, file).toMatch(/^\{ kind: "listed", listed: /);
     }
     expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Instagram reply preflight reader (Step 7B-14C1): Graph READS on an allowlist, never a write", () => {
+  const READER = "integrations/providers/meta/instagram-reply-preflight.ts";
+  const RUNTIME = ["app", "ui", "server", "platform", "jobs", "modules", "integrations", "domain", "mutations", "ai"];
+
+  it("imports only the contract's credential/identity types, the endpoints, the shared Graph READ error normalizer and the READ transport factory", () => {
+    const imports = [...codeOf(READER).matchAll(/^import [^;]+ from "([^"]+)";/gm)].map((match) => match[1]);
+    expect(imports).toEqual(["../contract/credential", "../contract/identity", "./endpoints", "./errors", "./graph-transport"]);
+    // Step 7B-14C3 (F1): the reader reuses the read port's normalizer — the READ one only, never the write classification.
+    expect(codeOf(READER)).toMatch(/^import \{ metaGraphReadError \} from "\.\/errors";$/m);
+    expect(codeOf(READER)).not.toMatch(/metaGraphWriteError|metaGraphError\(|OutcomeUnknownError/);
+    expect(codeOf(READER)).toMatch(/import \{ createMetaGraphTransport, type MetaGraphOutcome, type MetaGraphTransport \} from "\.\/graph-transport";/);
+  });
+
+  it("holds the read transport narrowed to its allowlist and calls nothing else on it", () => {
+    const code = codeOf(READER);
+    expect(code).toMatch(/export type InstagramReplyPreflightTransport = Pick<MetaGraphTransport, InstagramReplyPreflightOperation>;/);
+    expect(code).toMatch(/const transport: InstagramReplyPreflightTransport = options\.transport \?\? createMetaGraphTransport\(\);/);
+    const called = [...new Set([...code.matchAll(/\btransport\.(\w+)\(/g)].map((match) => match[1]))].sort();
+    expect(called).toEqual(["getInstagramAccount", "getInstagramComment", "getInstagramMedia", "getPageInstagram", "listInstagramCommentReplies", "listInstagramComments", "listPages", "listPermissions"]);
+    // No write, no Page token, no fetch of its own, no HTTP method, no cursor.
+    expect(code).not.toMatch(/createMetaGraphWriteTransport|MetaGraphWriteTransport|createInstagramCommentReply|mutation-port|ProviderMutationPort|replyPublicly|getPageAccessToken|fetch\(|method:|"POST"|"PUT"|"PATCH"|"DELETE"|after: [a-z]|expose\(\)/);
+  });
+
+  it("is composed only by jobs/connections.ts and typed only by the diagnostic module; no runtime file reaches the replies read otherwise", () => {
+    const runtime = sourceFiles(RUNTIME);
+    expect(findReferences(runtime, [/meta\/instagram-reply-preflight/]).map(([file]) => file).sort()).toEqual(["jobs/connections.ts", "jobs/integration-instagram-reply-preflight.ts"]);
+    expect(findReferences(runtime, [/\bcreateInstagramReplyPreflight\(/]).map(([file]) => file).sort()).toEqual(["integrations/providers/meta/instagram-reply-preflight.ts", "jobs/connections.ts"]);
+    expect(findReferences(runtime, [/\blistInstagramCommentReplies\b/]).map(([file]) => file).sort()).toEqual(["integrations/providers/meta/graph-transport.ts", "integrations/providers/meta/instagram-reply-preflight.ts"]);
+    // The diagnostic never names the write path, the executor or the mutation composition.
+    expect(codeOf("jobs/integration-instagram-reply-preflight.ts")).not.toMatch(/mutation-port|createMetaMutationPort|executeIntent|jobs\/mutations|\.\/mutations"|createInstagramCommentReply|graph-transport/);
   });
 });

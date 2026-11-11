@@ -220,6 +220,23 @@ const EXPECTED_VIOLATIONS: readonly (readonly [string, string, string])[] = [
   ["read-interactions-validation-reads-only", "jobs/integration-read-interactions-validation.ts", "integrations/providers/meta/oauth-transport.ts"],
   ["meta-authorization-web-composition-only", "jobs/integration-read-interactions-validation.ts", "integrations/providers/meta/oauth-transport.ts"],
   ["read-interactions-validation-reads-only", "jobs/integration-read-interactions-validation.ts", "integrations/providers/contract/mutation-port.ts"],
+  // Instagram reply preflight/observe diagnostic (Step 7B-14C1): its own module, task and lookup; read-only reader only
+  ["instagram-reply-preflight-module-task-only", "jobs/trigger/main/uses-instagram-reply-preflight.ts", "jobs/integration-instagram-reply-preflight.ts"],
+  ["instagram-reply-preflight-module-task-only", "server/uses-instagram-reply-preflight.ts", "jobs/integration-instagram-reply-preflight.ts"],
+  ["jobs-are-entry-points", "server/uses-instagram-reply-preflight.ts", "jobs/integration-instagram-reply-preflight.ts"],
+  ["instagram-reply-preflight-task-thin", "jobs/trigger/integration/instagram-reply-preflight.ts", "jobs/connections.ts"],
+  ["instagram-reply-preflight-task-thin", "jobs/trigger/integration/instagram-reply-preflight.ts", "integrations/providers/meta/instagram-reply-preflight.ts"],
+  ["meta-instagram-reply-preflight-diagnostic-only", "jobs/trigger/integration/instagram-reply-preflight.ts", "integrations/providers/meta/instagram-reply-preflight.ts"],
+  ["instagram-reply-preflight-reads-only", "jobs/integration-instagram-reply-preflight.ts", "modules/capability/index.ts"],
+  ["instagram-reply-preflight-reads-only", "jobs/integration-instagram-reply-preflight.ts", "mutations/executor.ts"],
+  ["instagram-reply-preflight-reads-only", "jobs/integration-instagram-reply-preflight.ts", "integrations/providers/meta/mutation-port.ts"],
+  ["meta-mutation-executor-composition-only", "jobs/integration-instagram-reply-preflight.ts", "integrations/providers/meta/mutation-port.ts"],
+  ["instagram-reply-preflight-reads-only", "jobs/integration-instagram-reply-preflight.ts", "integrations/providers/meta/graph-transport.ts"],
+  ["meta-read-integration-composition-only", "jobs/integration-instagram-reply-preflight.ts", "integrations/providers/meta/graph-transport.ts"],
+  ["instagram-reply-preflight-reads-only", "jobs/integration-instagram-reply-preflight.ts", "integrations/providers/contract/mutation-port.ts"],
+  ["meta-instagram-reply-preflight-diagnostic-only", "mutations/uses-instagram-reply-preflight.ts", "integrations/providers/meta/instagram-reply-preflight.ts"],
+  ["provider-implementations-composed-only", "mutations/uses-instagram-reply-preflight.ts", "integrations/providers/meta/instagram-reply-preflight.ts"],
+  ["instagram-reply-preflight-lookup-diagnostic-only", "server/uses-instagram-reply-preflight-lookup.ts", "server/persistence/instagram-reply-preflight.ts"],
   // Integration worker AWS identity (Step 7G-H5.6B): no first-party STS; the adapter only in the integration composition
   ["no-first-party-sts", "server/assumes-role.ts", "../../../../node_modules/@aws-sdk/client-sts/dist-es/index.js"],
   ["integration-worker-identity-composition-only", "jobs/trigger/main/uses-worker-identity.ts", "jobs/integration-aws-identity.ts"],
@@ -354,6 +371,35 @@ describe("read_interactions validation diagnostic dependency depth (Step 7G-H5.5
     expect(find("read-interactions-validation-reads-only")?.from?.path).toBe("^jobs/integration-read-interactions-validation\\.ts$");
     expect(find("read-interactions-validation-reads-only")?.to?.path).toBe(find("read-content-validation-reads-only")?.to?.path);
     expect(find("read-interactions-validation-task-thin")?.to?.path).toBe(find("read-content-validation-task-thin")?.to?.path?.replace("integration-read-content-validation", "integration-read-interactions-validation"));
+  });
+});
+
+describe("Instagram reply preflight diagnostic dependency depth (Step 7B-14C1): the read diagnostics' denial plus exactly two read-only additions", () => {
+  const find = (name: string) => config.forbidden.find((candidate) => candidate.name === name) as { readonly from?: { readonly path?: string }; readonly to?: { readonly path?: string } } | undefined;
+
+  it("applies to the diagnostic module only; the denial differs from the read_content one only by the lookup owner and the Meta reader", () => {
+    expect(find("instagram-reply-preflight-reads-only")?.from?.path).toBe("^jobs/integration-instagram-reply-preflight\\.ts$");
+    const readContent = find("read-content-validation-reads-only")?.to?.path ?? "";
+    expect(find("instagram-reply-preflight-reads-only")?.to?.path).toBe(
+      readContent.replace("persistence/connections)", "persistence/instagram-reply-preflight)").replace("meta/endpoints\\.ts$", "meta/(endpoints|instagram-reply-preflight)\\.ts$"),
+    );
+    expect(find("instagram-reply-preflight-task-thin")?.to?.path).toBe(find("read-content-validation-task-thin")?.to?.path?.replace("integration-read-content-validation", "integration-instagram-reply-preflight"));
+  });
+
+  it.each([
+    "integrations/providers/meta/graph-transport.ts",
+    "integrations/providers/meta/mutation-port.ts",
+    "integrations/providers/meta/read-port.ts",
+    "integrations/providers/contract/mutation-port.ts",
+    "mutations/executor/execute.ts",
+    "jobs/mutations.ts",
+    "server/persistence/connections.ts",
+    "server/persistence/mutations.ts",
+    "modules/capability/index.ts",
+    "platform/outbox/index.ts",
+    "jobs/registry.ts",
+  ])("denies %s", (target) => {
+    expect(new RegExp(find("instagram-reply-preflight-reads-only")?.to?.path ?? "^$").test(target)).toBe(true);
   });
 });
 

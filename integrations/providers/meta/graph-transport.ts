@@ -2,8 +2,8 @@
  * The Meta Graph READ transport for discoverAssets (Step 7G-E; design/phase-7g/meta-provider/README.md, E1 — the
  * implementation authority), describeAccount (Step 7G-H5.5, contract H55), Facebook Page read_content (Step
  * 7G-H5.5-P5-B, README › read_content), Instagram professional-account read_content (Step 7G-H5.5-P11-B, README ›
- * Instagram read_content) and Meta read_interactions (Step 7G-H5.5-P12-B1, README › read_interactions). Fourteen typed
- * operations, nothing else:
+ * Instagram read_content), Meta read_interactions (Step 7G-H5.5-P12-B1, README › read_interactions) and the Instagram
+ * reply preflight's replies read (Step 7B-14C1, operator diagnostic only). Fifteen typed operations, nothing else:
  *
  *   listPages            GET https://graph.facebook.com/v25.0/me/accounts?fields=id,name[&after={cursor}]
  *   getPageInstagram     GET https://graph.facebook.com/v25.0/{page-id}?fields=instagram_business_account
@@ -24,6 +24,8 @@
  *   listInstagramComments GET https://graph.facebook.com/v25.0/{ig-media-id}/comments?fields=META_INSTAGRAM_COMMENT_FIELDS
  *                            &limit=META_INSTAGRAM_COMMENTS_PAGE_LIMIT[&after={cursor}]               (User token)
  *   getInstagramComment  GET https://graph.facebook.com/v25.0/{ig-comment-id}?fields=META_INSTAGRAM_COMMENT_FIELDS
+ *   listInstagramCommentReplies GET https://graph.facebook.com/v25.0/{ig-comment-id}/replies?fields=META_INSTAGRAM_REPLY_FIELDS
+ *                            &limit=META_INSTAGRAM_REPLIES_PAGE_LIMIT        (User token; ONE page, no cursor accepted)
  *   createInstagramCommentReply POST https://graph.facebook.com/v25.0/{ig-comment-id}/replies  body: message, access_token
  *                            (User token; Step 7B-11 — the ONLY write; one request per call, never retried here)
  *                                                                                                   (User token)
@@ -248,6 +250,33 @@ export interface MetaInstagramCommentList {
   readonly after: MetaGraphCursor | null;
 }
 
+/**
+ * The minimum fields of the replies under ONE IG Comment (Step 7B-14C1; `GET /{ig-comment-id}/replies`), read only by
+ * the operator's Instagram reply preflight/observe diagnostic: never `text`, `replies`, `like_count`, `user` or a field
+ * expansion. `from` is read for its `id` and `username` (compared, never reported), `parent_id` for its id only.
+ */
+export const META_INSTAGRAM_REPLY_FIELDS = "id,from,timestamp,parent_id";
+/** One provider page of `{ig-comment-id}/replies`: fixed. A comment with more replies is reported incomplete, never paged. */
+export const META_INSTAGRAM_REPLIES_PAGE_LIMIT = 25;
+
+/** One reply under an IG Comment exactly as the whitelist reads it: closed fields, no text. */
+export interface MetaInstagramReply {
+  readonly id: ProviderObjectId;
+  /** `from.id`: the author (required). */
+  readonly fromId: ProviderObjectId;
+  /** `from.username` as reported; null when absent. Untrusted text. */
+  readonly fromUsername: string | null;
+  readonly timestamp: IsoInstant;
+  /** `parent_id` as reported; null when absent. */
+  readonly parentId: ProviderObjectId | null;
+}
+
+export interface MetaInstagramReplyList {
+  readonly replies: readonly MetaInstagramReply[];
+  /** The next page's cursor, or null when the provider reports no next page (`paging.next` absent). Never fetched. */
+  readonly after: MetaGraphCursor | null;
+}
+
 export interface MetaGraphTransport {
   listPages(token: SecretValue, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaPageList>>;
   /** The linked Instagram professional account id, or null when the Page has none. */
@@ -279,6 +308,11 @@ export interface MetaGraphTransport {
   listInstagramComments(userToken: SecretValue, mediaId: ProviderObjectId, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaInstagramCommentList>>;
   /** One IG Comment node (User token), its echoed id checked. */
   getInstagramComment(userToken: SecretValue, commentId: ProviderObjectId): Promise<MetaGraphOutcome<MetaInstagramComment>>;
+  /**
+   * ONE page of the replies under an IG Comment (User token, Step 7B-14C1): no cursor parameter exists, so a second page
+   * can never be requested; `after` only tells the caller the listing is incomplete.
+   */
+  listInstagramCommentReplies(userToken: SecretValue, commentId: ProviderObjectId): Promise<MetaGraphOutcome<MetaInstagramReplyList>>;
 }
 
 /**
@@ -697,6 +731,36 @@ function singleInstagramCommentOf(body: unknown, commentId: ProviderObjectId): M
   return comment?.id === commentId ? comment : undefined;
 }
 
+/** One reply by whitelist: id, from.id, from.username, timestamp, parent_id — never its text. */
+function instagramReplyOf(value: unknown): MetaInstagramReply | undefined {
+  const reply = record(value);
+  if (reply === undefined) return undefined;
+  const from = record(reply["from"]);
+  const id = parseProviderObjectId(reply["id"]);
+  const fromId = parseProviderObjectId(from?.["id"]);
+  const fromUsername = optionalString(from?.["username"]);
+  const timestamp = parseGraphDatetime(reply["timestamp"]);
+  const parentId = optionalId(reply["parent_id"]);
+  if (id === undefined || fromId === undefined || fromUsername === undefined || timestamp === undefined || parentId === undefined) return undefined;
+  return Object.freeze({ id, fromId, fromUsername, timestamp, parentId });
+}
+
+/** `{ig-comment-id}/replies`: `data[]` of replies (whitelist) and the shared continuation. More than the limit is not the documented shape. */
+function instagramReplyListOf(body: unknown): MetaInstagramReplyList | undefined {
+  const root = record(body);
+  if (root === undefined || !Array.isArray(root["data"])) return undefined;
+  const data = root["data"] as readonly unknown[];
+  if (data.length > META_INSTAGRAM_REPLIES_PAGE_LIMIT) return undefined;
+  const replies: MetaInstagramReply[] = [];
+  for (const item of data) {
+    const reply = instagramReplyOf(item);
+    if (reply === undefined) return undefined;
+    replies.push(reply);
+  }
+  const after = afterOf(root);
+  return after === undefined ? undefined : Object.freeze({ replies: Object.freeze(replies), after });
+}
+
 /** The one place the transport options become fetch, timeout and body bound — shared by the read and write transports. */
 function transportSettings(options: MetaGraphTransportOptions): { readonly fetchImpl: MetaGraphFetch; readonly timeoutMs: number; readonly maxBytes: number } {
   return {
@@ -792,6 +856,9 @@ export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}
     },
     getInstagramComment(userToken, commentId) {
       return get([commentId], [["fields", META_INSTAGRAM_COMMENT_FIELDS]], userToken, (body) => singleInstagramCommentOf(body, commentId));
+    },
+    listInstagramCommentReplies(userToken, commentId) {
+      return get([commentId, "replies"], [["fields", META_INSTAGRAM_REPLY_FIELDS], ["limit", String(META_INSTAGRAM_REPLIES_PAGE_LIMIT)]], userToken, instagramReplyListOf);
     },
   };
 }

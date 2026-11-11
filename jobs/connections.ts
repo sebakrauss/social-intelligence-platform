@@ -47,6 +47,7 @@ import { parseCorrelationId } from "@/domain/correlation";
 import { parseWorkspaceId } from "@/domain/ids";
 import { NonRetryableJobError, type TenantStepJobContext } from "@/platform/jobs";
 import { providerCredential, type ProviderReadPort } from "@/integrations/providers/contract";
+import { createInstagramReplyPreflight, type InstagramReplyPreflight } from "@/integrations/providers/meta/instagram-reply-preflight";
 import { createMetaReadPort } from "@/integrations/providers/meta/read-port";
 import { createStagingStubReadPort } from "@/integrations/providers/staging-stub";
 import { readKmsKeyringConfig, selectCredentialCrypto } from "@/server/connections/environment";
@@ -191,6 +192,16 @@ export function composeReadContentValidation(environment: Environment, attempts:
  */
 export function composeReadInteractionsValidation(environment: Environment, attempts: AwsSingleAttempt): { readonly access: ProviderCredentialAccess; readonly read: ProviderReadPort } {
   return composeReadContentValidation(environment, attempts);
+}
+
+/**
+ * The Instagram reply preflight/observe diagnostic's composition (Step 7B-14C1; jobs/integration-instagram-reply-
+ * preflight.ts): exactly the read diagnostics' credential access — this plane's opener and worker identity with ONE KMS
+ * attempt, delegated so the opener stays composed in one place — and the Meta read-only preflight reader (Graph GETs on
+ * an allowlist; never the write transport, never a mutation port).
+ */
+export function composeInstagramReplyPreflight(environment: Environment, attempts: AwsSingleAttempt): { readonly access: ProviderCredentialAccess; readonly preflight: InstagramReplyPreflight } {
+  return { access: composeReadContentValidation(environment, attempts).access, preflight: createInstagramReplyPreflight() };
 }
 
 /** Discovery dependencies for one run: the composed access/providers and this run's scoped steps. */

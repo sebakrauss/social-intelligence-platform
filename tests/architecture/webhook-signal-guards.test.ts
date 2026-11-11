@@ -108,7 +108,8 @@ describe("H6-F1 → H6-F3: scope", () => {
     expect(PRODUCTION_TASKS.tasks.map((t) => t.name).filter((n) => /webhook|provider_event|process_signal|purge/.test(n)).sort()).toEqual(["ingestion.process_signals", "ingestion.purge_provider_events", "ingestion.route_provider_events"]);
     // H6-F4: the tenant consumer of the routed rows.
     expect(PRODUCTION_TASKS.tenant("ingestion.process_signals")?.executionPlane).toBe("main");
-    expect(RELEASE_PLANES.map((p) => [p.plane, p.expectedTasks])).toEqual([["integration", 8], ["intelligence", 1], ["main", 11]]);
+    // Step 7B-14C1: INTEGRATION 9 (+ the read-only Instagram reply preflight diagnostic).
+    expect(RELEASE_PLANES.map((p) => [p.plane, p.expectedTasks])).toEqual([["integration", 9], ["intelligence", 1], ["main", 11]]);
     // The verify token: read by the web receiver's config only; refused by both jobs planes.
     expect(sourceFiles(PRODUCTION).filter((file) => /PROVIDER_META_WEBHOOK_VERIFY_TOKEN/.test(codeOf(file))).sort()).toEqual(["jobs/plane-environment.ts", "server/webhooks/meta-config.ts"]);
     // The App Secret still reaches only the web's Meta app configuration; no jobs-plane code names the webhook secret.
