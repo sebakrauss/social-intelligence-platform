@@ -11,6 +11,9 @@
  *                            return undefined — they belong to retry/health and never rewrite a profile.
  *   evaluateAndStore         pure evaluation → digest of the inputs → stale-safe write.
  *   capabilityAvailability   stored row for the target + connection health → effective availability (overlay).
+ *   catalogValidationPending Step 7B-14G1: whether a capability is unusable ONLY because the catalog has not validated
+ *                            it (the one basis a one-time validation authorization may stand in for). Never changes
+ *                            the effective availability above, never makes anything AVAILABLE.
  */
 import { createHash } from "node:crypto";
 import type { ConnectionStatus } from "@/domain/connections";
@@ -31,6 +34,7 @@ import {
 import {
   type ANY,
   isCapabilityKey,
+  isCoherentProfileShape,
   type CapabilityAssetClass,
   type CapabilityContentKind,
   type CapabilityKey,
@@ -167,4 +171,34 @@ export async function capabilityAvailability(
   if (header !== undefined && !isCurrentProfile(header, input.provider)) return refused("PROFILE_STALE", header.evaluatedAt);
   const entries = header === undefined ? [] : await store.entries(input.connectedAccountId);
   return effectiveAvailability(resolveEntry(entries, input.capability, input.contentKind, input.source), input.connection, input.capability, header?.evaluatedAt ?? null);
+}
+
+/**
+ * Step 7B-14G1 (design 7B-14B) — true ONLY when the capability is unusable for exactly one reason: the catalog has not
+ * validated it. That is: the account ACTIVE, the connection ACTIVE (healthy), a stored profile that is current for the
+ * provider's catalog, and the row resolved for this exact target scope coherent, UNKNOWN_NOT_VALIDATED, with the single
+ * reason CATALOG_NOT_VALIDATED. Anything else — no profile, a stale one, an incoherent row, missing or inconsistent
+ * account facts, NOT_AUTHORIZED, UNSUPPORTED, a usable capability, an unhealthy connection — is false.
+ *
+ * It answers a question; it grants nothing. capabilityAvailability is unchanged (the capability stays UNAVAILABLE /
+ * CAPABILITY_NOT_VALIDATED for everyone); only an executor-bound, one-time validation authorization may act on this.
+ */
+export async function catalogValidationPending(
+  store: CapabilityReadStore,
+  input: {
+    readonly connectedAccountId: string;
+    readonly accountStatus: "ACTIVE" | "INACTIVE";
+    readonly provider: string;
+    readonly capability: CapabilityKey;
+    readonly contentKind: CapabilityContentKind | typeof ANY;
+    readonly source: CapabilitySource | typeof ANY;
+    readonly connection: ConnectionStatus;
+  },
+): Promise<boolean> {
+  if (input.accountStatus !== "ACTIVE" || input.connection !== "ACTIVE") return false;
+  const header = await store.header(input.connectedAccountId);
+  if (header === undefined || !isCurrentProfile(header, input.provider)) return false;
+  const entry = resolveEntry(await store.entries(input.connectedAccountId), input.capability, input.contentKind, input.source);
+  if (entry === undefined || !isCoherentProfileShape(entry)) return false;
+  return entry.state === "UNKNOWN_NOT_VALIDATED" && entry.reasons.length === 1 && entry.reasons[0] === "CATALOG_NOT_VALIDATED";
 }

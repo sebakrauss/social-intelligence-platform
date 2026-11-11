@@ -54,7 +54,7 @@ describe("7B-1: a created request", () => {
   it("the dispatch names the executor's topic, the workspace, the intent and the account — identifiers only, never the text", () => {
     const clock = fixedClock();
     const intent = { ...replyTarget(), id: "8b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d" };
-    const dispatch = executeIntentDispatch({ id: "9b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5e", now: clock.now(), intent: { id: intent.id, organizationId: ORGANIZATION, workspaceId: WORKSPACE, kind: "reply_public", requestType: "human", targetInteractionId: TARGET, connectedAccountId: intent.connectedAccountId, initiatorUserId: USER, idempotencyKey: "form-render-0001", status: "PENDING", attempt: 0, runReference: null, outcomeCode: null, capabilityCatalogId: "simulator", capabilityCatalogRevision: 2, correlationId: CORRELATION, createdAt: clock.now(), updatedAt: clock.now() } });
+    const dispatch = executeIntentDispatch({ id: "9b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5e", now: clock.now(), intent: { id: intent.id, organizationId: ORGANIZATION, workspaceId: WORKSPACE, kind: "reply_public", requestType: "human", targetInteractionId: TARGET, connectedAccountId: intent.connectedAccountId, initiatorUserId: USER, idempotencyKey: "form-render-0001", status: "PENDING", attempt: 0, runReference: null, outcomeCode: null, capabilityCatalogId: "simulator", capabilityCatalogRevision: 2, correlationId: CORRELATION, createdAt: clock.now(), updatedAt: clock.now(), validationAuthorizationId: null } });
     expect(dispatch.topic).toBe(EXECUTE_INTENT_TASK);
     expect(dispatch.topic).toBe("mutations.execute_intent");
     expect(Object.keys(dispatch.subjectIds).sort()).toEqual(["connected_account_id", "mutation_intent_id"]);

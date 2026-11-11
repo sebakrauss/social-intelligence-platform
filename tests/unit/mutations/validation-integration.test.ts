@@ -1,0 +1,587 @@
+/**
+ * Step 7B-14G1 — the one-time validation authorization integrated into the ONE request and executor path, offline:
+ *
+ *   decision   decideValidationAdmission is fail-closed: absent / another workspace, organization, account, target,
+ *              initiator, operation or platform / revoked / expired (database verdict) / consumed / bound elsewhere /
+ *              target already validated / a non-first attempt all refuse; a pause or the emergency block always
+ *              vetoes; only a catalog that has not validated reply_public may be stood in for (never NOT_AUTHORIZED,
+ *              UNSUPPORTED, stale, …); a missing grant may be stood in for
+ *   request    an ordinary request is unchanged (no grant → PROVIDER_ACTIONS_DISABLED; UNKNOWN → CAPABILITY_UNAVAILABLE);
+ *              with an admitting authorization the intent is created naming it; every refusal writes nothing and names
+ *              ONE closed reason; the key's payload includes the authorization
+ *   executor   admitted → EXECUTING → exactly ONE call → CONFIRMED; every refusal is BLOCKED from PENDING with ZERO
+ *              calls and no credential; F: a revocation or expiry that lands between the check and the EXECUTING commit
+ *              ends BLOCKED in a new transaction (never a fictitious revocation for an infrastructure failure);
+ *              X2: a second consumption refused for the target ends BLOCKED; PRE-LIVE-1: a pause or a mode change after
+ *              EXECUTING ends BLOCKED before the credential opens; X1: a rewritten row is never sent; OUTCOME_UNKNOWN and
+ *              a redelivered run never send again; PRE-LIVE-2: an unauthorizable credential blocks before spending
+ *
+ * Synthetic data only; the provider is the REAL Meta port on the REAL write transport with a FAKE fetch (never the network).
+ */
+import { describe, expect, it } from "vitest";
+import { CredentialInvalidError } from "@/integrations/providers/contract/errors";
+import { providerCredential } from "@/integrations/providers/contract/credential";
+import { providerObjectRef } from "@/integrations/providers/contract/identity";
+import { createMetaGraphWriteTransport, type MetaGraphFetch } from "@/integrations/providers/meta/graph-transport";
+import { createMetaMutationPort } from "@/integrations/providers/meta/mutation-port";
+import {
+  VALIDATION_AUTHORIZATION_OPERATION,
+  decideValidationAdmission,
+  validationNoLongerAdmits,
+  type ValidationAdmissionInput,
+  type ValidationAuthorization,
+  type ValidationAuthorizationReading,
+} from "@/mutations/domain/validation-authorization";
+import { CredentialUnreadable, executeIntent, type ExecutorDependencies, type ExecutorStores } from "@/mutations/executor/execute";
+import type { CredentialUse, OutboundReply, ProviderActionDecision, ValidationExecutionReads } from "@/mutations/ports";
+import { requestPublicReply, type PublicReplyRequest } from "@/mutations/request";
+import { ACCOUNT, CORRELATION, ORGANIZATION, OTHER_WORKSPACE, TARGET, USER, WORKSPACE, fixedClock, guardState, memoryStores, pendingIntent, replyTarget, statusesOf, type MemoryStores } from "./support";
+
+const AUTHORIZATION = "c1c2c3c4-5f60-4a7b-8c9d-0e1f2a3b4c5d";
+const OTHER = "d1d2d3d4-5f60-4a7b-8c9d-0e1f2a3b4c5d";
+const IG_ASSET = "17841400000000001";
+const IG_COMMENT = "17900000000000001";
+const IG_REPLY = "17900000000000099";
+const RUN = "run_7b14g1_0001";
+const TEXT = "Gracias por escribirnos (7B-14G1).";
+const now = new Date("2026-11-11T12:00:00.000Z");
+
+function authorization(overrides: Partial<ValidationAuthorization> = {}): ValidationAuthorization {
+  return {
+    id: AUTHORIZATION,
+    organizationId: ORGANIZATION,
+    workspaceId: WORKSPACE,
+    connectedAccountId: ACCOUNT,
+    targetInteractionId: TARGET,
+    initiatorUserId: USER,
+    ...VALIDATION_AUTHORIZATION_OPERATION,
+    preflightRunReference: "run_preflight_synthetic",
+    preflightCompletedAt: new Date(now.getTime() - 5 * 60_000),
+    issuedBy: "ops.synthetic",
+    issueReason: "test",
+    issuedAt: now,
+    expiresAt: new Date(now.getTime() + 60 * 60_000),
+    revokedAt: null,
+    revokedBy: null,
+    revocationReason: null,
+    intentId: null,
+    boundAt: null,
+    consumedAt: null,
+    ...overrides,
+  };
+}
+const reading = (overrides: Partial<ValidationAuthorization> = {}, expired = false): ValidationAuthorizationReading => ({ authorization: authorization(overrides), expired });
+
+// ── 1 · the pure decision ───────────────────────────────────────────────────────────────────────────────────────
+describe("7B-14G1: decideValidationAdmission is the one, fail-closed place", () => {
+  const requestInput = (overrides: Partial<ValidationAdmissionInput> = {}): ValidationAdmissionInput => ({
+    phase: "request",
+    subject: { intentId: null, organizationId: ORGANIZATION, workspaceId: WORKSPACE, connectedAccountId: ACCOUNT, targetInteractionId: TARGET, initiatorUserId: USER, kind: "reply_public", attempt: 0 },
+    reading: reading(),
+    account: { provider: "meta", platform: "instagram" },
+    targetPlatform: "instagram",
+    providerAction: "not_enabled",
+    capability: { usable: false, catalogValidationPending: true },
+    consumedElsewhere: false,
+    ...overrides,
+  });
+  const executionInput = (overrides: Partial<ValidationAdmissionInput> = {}): ValidationAdmissionInput =>
+    requestInput({ phase: "execution", subject: { ...requestInput().subject, intentId: "i-1" }, reading: reading({ intentId: "i-1", boundAt: now }), ...overrides });
+  const decide = (input: ValidationAdmissionInput) => decideValidationAdmission(input);
+
+  it("admits exactly the authorized scope, standing in for a missing grant and an unvalidated catalog (request and execution)", () => {
+    expect(decide(requestInput())).toEqual({ kind: "admit" });
+    expect(decide(executionInput())).toEqual({ kind: "admit" });
+    // An existing exact grant and a usable capability need no substitution — the authorization must still be valid.
+    expect(decide(requestInput({ providerAction: "allowed", capability: { usable: true, catalogValidationPending: false } }))).toEqual({ kind: "admit" });
+  });
+
+  it.each([
+    ["absent / invisible (RLS) / another workspace's", { reading: undefined }],
+    ["another workspace", { reading: reading({ workspaceId: OTHER_WORKSPACE }) }],
+    ["another organization", { reading: reading({ organizationId: OTHER }) }],
+    ["another account", { reading: reading({ connectedAccountId: OTHER }) }],
+    ["another comment", { reading: reading({ targetInteractionId: OTHER }) }],
+    ["another initiator", { reading: reading({ initiatorUserId: OTHER }) }],
+    ["expired (database verdict)", { reading: reading({}, true) }],
+    ["revoked", { reading: reading({ revokedAt: now, revokedBy: "ops.synthetic", revocationReason: "test" }) }],
+    ["consumed", { reading: reading({ intentId: "i-0", boundAt: now, consumedAt: now }) }],
+    ["already bound to another intent", { reading: reading({ intentId: "i-0", boundAt: now }) }],
+    ["a target already validated by another authorization", { consumedElsewhere: true }],
+    ["a Facebook account", { account: { provider: "meta", platform: "facebook" } }],
+    ["a simulator account", { account: { provider: "simulator", platform: "instagram" } }],
+    ["a Facebook target", { targetPlatform: "facebook" }],
+    ["another operation on the authorization", { reading: { authorization: { ...authorization(), kind: "hide" as never }, expired: false } }],
+    ["another platform on the authorization", { reading: { authorization: { ...authorization(), platform: "facebook" as never }, expired: false } }],
+  ] as const)("refuses the authorization (request): %s", (_name, overrides) => {
+    expect(decide(requestInput(overrides as Partial<ValidationAdmissionInput>))).toEqual({ kind: "refuse", reason: "authorization" });
+  });
+
+  it("refuses another operation on the intent, and at execution anything but THIS bound, never-attempted intent", () => {
+    expect(decide(requestInput({ subject: { ...requestInput().subject, kind: "hide" } }))).toEqual({ kind: "refuse", reason: "authorization" });
+    expect(decide(executionInput({ reading: reading({ intentId: "i-other", boundAt: now }) }))).toEqual({ kind: "refuse", reason: "authorization" });
+    expect(decide(executionInput({ reading: reading() }))).toEqual({ kind: "refuse", reason: "authorization" });
+    expect(decide(executionInput({ subject: { ...executionInput().subject, attempt: 1 } }))).toEqual({ kind: "refuse", reason: "authorization" });
+    // At request time an intent id is never present.
+    expect(decide(requestInput({ subject: { ...requestInput().subject, intentId: "i-1" } }))).toEqual({ kind: "refuse", reason: "authorization" });
+  });
+
+  it("a pause or the emergency block ALWAYS vetoes, even with a valid authorization and an exact grant elsewhere", () => {
+    expect(decide(requestInput({ providerAction: "paused" }))).toEqual({ kind: "refuse", reason: "provider_action" });
+    expect(decide(executionInput({ providerAction: "paused" }))).toEqual({ kind: "refuse", reason: "provider_action" });
+  });
+
+  it("only an unvalidated catalog is stood in for: any other unusable capability refuses", () => {
+    expect(decide(requestInput({ capability: { usable: false, catalogValidationPending: false } }))).toEqual({ kind: "refuse", reason: "capability" });
+    expect(decide(executionInput({ capability: { usable: false, catalogValidationPending: false } }))).toEqual({ kind: "refuse", reason: "capability" });
+  });
+
+  it("validationNoLongerAdmits decides the recovery on data only", () => {
+    expect(validationNoLongerAdmits(reading({ intentId: "i-1", boundAt: now }), "i-1", false)).toBe(false);
+    expect(validationNoLongerAdmits(undefined, "i-1", false)).toBe(true);
+    expect(validationNoLongerAdmits(reading({ intentId: "i-1", boundAt: now, revokedAt: now, revokedBy: "ops.synthetic", revocationReason: "test" }), "i-1", false)).toBe(true);
+    expect(validationNoLongerAdmits(reading({ intentId: "i-1", boundAt: now }, true), "i-1", false)).toBe(true);
+    expect(validationNoLongerAdmits(reading({ intentId: "i-1", boundAt: now, consumedAt: now }), "i-1", false)).toBe(true);
+    expect(validationNoLongerAdmits(reading({ intentId: "i-2", boundAt: now }), "i-1", false)).toBe(true);
+    expect(validationNoLongerAdmits(reading({ intentId: "i-1", boundAt: now }), "i-1", true)).toBe(true);
+  });
+});
+
+// ── harness: Instagram account, validation reads, the Meta port on a fake fetch ────────────────────────────────────
+interface ValidationState {
+  reading: ValidationAuthorizationReading | undefined;
+  pending: boolean;
+  consumedElsewhere: boolean;
+  credentialReady: boolean;
+  providerAction: ProviderActionDecision[];
+}
+
+function igStores(state: Partial<ValidationState> = {}, options: { readonly withValidation?: boolean; readonly capability?: "AVAILABLE" | "UNAVAILABLE" } = {}) {
+  const v: ValidationState = { reading: undefined, pending: true, consumedElsewhere: false, credentialReady: true, providerAction: ["not_enabled"], ...state };
+  const stores: MemoryStores = memoryStores(
+    guardState({ capability: options.capability ?? "UNAVAILABLE", account: { status: "ACTIVE", platform: "instagram", provider: "meta", providerAssetId: IG_ASSET, connectionStatus: "ACTIVE", credentialId: "cred-1" } }),
+    [replyTarget({ platform: "instagram", providerInteractionId: IG_COMMENT, providerAssetId: IG_ASSET, kind: "comment", parentProviderInteractionId: null })],
+  );
+  // The exact provider-action decisions, in order (the last one repeats): "not_enabled" is today's DEV state.
+  let switchReads = 0;
+  const guards = { ...stores.guards, providerActionAllowed: (platform: string, action: string) => {
+    stores.calls.push(`switch:${platform}:${action}`);
+    return Promise.resolve(v.providerAction[Math.min(switchReads++, v.providerAction.length - 1)] ?? "paused");
+  } };
+  const validation: ValidationExecutionReads = {
+    authorization: (workspaceId, id) => {
+      stores.calls.push("validation:read");
+      const current = v.reading;
+      return Promise.resolve(current !== undefined && current.authorization.workspaceId === workspaceId && current.authorization.id === id ? current : undefined);
+    },
+    catalogValidationPending: () => Promise.resolve(v.pending),
+    consumedElsewhere: () => Promise.resolve(v.consumedElsewhere),
+    credentialReady: () => {
+      stores.calls.push("validation:credential_ready");
+      return Promise.resolve(v.credentialReady);
+    },
+  };
+  const composed: MemoryStores & ExecutorStores = Object.assign(stores, { guards, ...(options.withValidation === false ? {} : { validation }) });
+  return { stores: composed, v };
+}
+
+function metaHarness(answer: "created" | "lost" | { readonly status: number; readonly body: unknown } = "created") {
+  const posts: string[] = [];
+  const fetch: MetaGraphFetch = (url) => {
+    posts.push(new URL(url).pathname);
+    if (answer === "lost") return Promise.reject(new Error("socket hang up"));
+    const response = answer === "created" ? { status: 200, body: { id: IG_REPLY } } : answer;
+    return Promise.resolve(new Response(JSON.stringify(response.body), { status: response.status, headers: { "content-type": "application/json" } }));
+  };
+  const port = createMetaMutationPort({ transport: createMetaGraphWriteTransport({ fetch, timeoutMs: 100 }) });
+  return { posts, port };
+}
+
+function seed(stores: MemoryStores, overrides: Parameters<typeof pendingIntent>[1] = {}) {
+  const clock = fixedClock();
+  const intent = pendingIntent(clock, { validationAuthorizationId: AUTHORIZATION, capabilityCatalogId: "platform", capabilityCatalogRevision: 5, ...overrides });
+  stores.intentRows.set(`${intent.workspaceId}:${intent.id}`, intent);
+  const reply: OutboundReply = { id: clock.newId(), organizationId: ORGANIZATION, workspaceId: WORKSPACE, intentId: intent.id, parentInteractionId: TARGET, connectedAccountId: ACCOUNT, platform: "instagram", text: TEXT, providerReplyId: null, confirmedAt: null, createdAt: clock.now() };
+  stores.replyRows.set(`${WORKSPACE}:${intent.id}`, reply);
+  stores.history.push({ intentId: intent.id, from: null, to: "PENDING", attempt: 0, actor: "web", code: null, runReference: null });
+  return { intent, clock };
+}
+
+function deps(stores: ExecutorStores & MemoryStores, clock: ReturnType<typeof fixedClock>, port: ReturnType<typeof metaHarness>["port"], options: { readonly opened?: string[]; readonly credentials?: CredentialUse; readonly inScope?: ExecutorDependencies["inScope"] } = {}): ExecutorDependencies {
+  const opened = options.opened ?? [];
+  return {
+    inScope: options.inScope ?? ((work) => work(stores)),
+    credentials: options.credentials ?? {
+      withAccess: (input, use) => {
+        opened.push(input.connectedAccountId);
+        stores.calls.push("credential:open");
+        return use({ credential: providerCredential("cred-synthetic", "synthetic-user-token"), account: providerObjectRef("instagram", "asset", IG_ASSET) });
+      },
+    },
+    providers: { mutation: (provider, platform) => (provider === "meta" && platform === "instagram" ? port : undefined) },
+    clock,
+  };
+}
+
+const intentOf = (stores: MemoryStores, id: string) => stores.intentRows.get(`${WORKSPACE}:${id}`);
+
+// ── 2 · the request side ────────────────────────────────────────────────────────────────────────────────────────
+describe("7B-14G1: the request side", () => {
+  const context = { organizationId: ORGANIZATION, workspaceId: WORKSPACE, userId: USER, correlationId: CORRELATION };
+  const request = (overrides: Partial<PublicReplyRequest> = {}): PublicReplyRequest => ({ targetInteractionId: TARGET, text: TEXT, idempotencyKey: "form-render-14g1-0001", ...overrides });
+  const nothingWritten = (stores: MemoryStores): void => {
+    expect([stores.intentRows.size, stores.replyRows.size, stores.history.length]).toEqual([0, 0, 0]);
+  };
+
+  it("(1, 24) an ordinary request is unchanged: no grant → PROVIDER_ACTIONS_DISABLED, and the validation reads are never consulted", async () => {
+    const { stores } = igStores({ reading: reading() });
+    expect(await requestPublicReply(stores, fixedClock(), context, request())).toEqual({ kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" });
+    expect(stores.calls).not.toContain("validation:read");
+    nothingWritten(stores);
+    // With an exact grant, the unvalidated catalog still refuses an ordinary request.
+    const granted = igStores({ reading: reading(), providerAction: ["allowed"] });
+    expect(await requestPublicReply(granted.stores, fixedClock(), context, request())).toEqual({ kind: "refused", reason: "CAPABILITY_UNAVAILABLE" });
+    nothingWritten(granted.stores);
+  });
+
+  it("(13) an admitting authorization creates the PENDING intent naming it, with the stored catalog it relied on", async () => {
+    const { stores } = igStores({ reading: reading() });
+    const outcome = await requestPublicReply(stores, fixedClock(), context, request({ validationAuthorizationId: AUTHORIZATION }));
+    expect(outcome.kind).toBe("created");
+    if (outcome.kind !== "created") return;
+    expect(outcome.intent).toMatchObject({ status: "PENDING", attempt: 0, validationAuthorizationId: AUTHORIZATION, initiatorUserId: USER, targetInteractionId: TARGET, connectedAccountId: ACCOUNT });
+    expect(stores.history).toHaveLength(1);
+  });
+
+  it.each([
+    ["(2) a non-existent id", { reading: undefined }],
+    ["(3) another workspace's", { reading: reading({ workspaceId: OTHER_WORKSPACE }) }],
+    ["(4) another account's", { reading: reading({ connectedAccountId: OTHER }) }],
+    ["(5) another comment's", { reading: reading({ targetInteractionId: OTHER }) }],
+    ["(6) another initiator's", { reading: reading({ initiatorUserId: OTHER }) }],
+    ["(7) an expired", { reading: reading({}, true) }],
+    ["(8) a revoked", { reading: reading({ revokedAt: now, revokedBy: "ops.synthetic", revocationReason: "test" }) }],
+    ["(9) a consumed", { reading: reading({ intentId: OTHER, boundAt: now, consumedAt: now }) }],
+    ["(10) an already bound", { reading: reading({ intentId: OTHER, boundAt: now }) }],
+  ] as const)("%s authorization is refused with ONE closed reason; nothing is written", async (_name, state) => {
+    const { stores } = igStores(state);
+    expect(await requestPublicReply(stores, fixedClock(), context, request({ validationAuthorizationId: AUTHORIZATION }))).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    nothingWritten(stores);
+  });
+
+  it("(11) a nested Instagram reply or an own message is refused BEFORE the authorization is even read", async () => {
+    const { stores } = igStores({ reading: reading() });
+    stores.targetRows.set(TARGET, replyTarget({ platform: "instagram", kind: "reply", parentProviderInteractionId: IG_COMMENT }));
+    expect(await requestPublicReply(stores, fixedClock(), context, request({ validationAuthorizationId: AUTHORIZATION }))).toEqual({ kind: "refused", reason: "TARGET_NOT_REPLYABLE" });
+    stores.targetRows.set(TARGET, replyTarget({ platform: "instagram", ownAccount: true }));
+    expect(await requestPublicReply(stores, fixedClock(), context, request({ validationAuthorizationId: AUTHORIZATION }))).toEqual({ kind: "refused", reason: "TARGET_OWN_ACCOUNT" });
+    expect(stores.calls).not.toContain("validation:read");
+    nothingWritten(stores);
+  });
+
+  it("(12, 22) a Facebook account is refused; a pause vetoes; any capability state but an unvalidated catalog refuses; no validation reads → refused", async () => {
+    const facebook = igStores({ reading: reading() });
+    facebook.stores.guardState.account = { status: "ACTIVE", platform: "facebook", provider: "meta", providerAssetId: "fb_1", connectionStatus: "ACTIVE", credentialId: "cred-1" };
+    facebook.stores.targetRows.set(TARGET, replyTarget({ platform: "facebook" }));
+    expect(await requestPublicReply(facebook.stores, fixedClock(), context, request({ validationAuthorizationId: AUTHORIZATION }))).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    const paused = igStores({ reading: reading(), providerAction: ["paused"] });
+    expect(await requestPublicReply(paused.stores, fixedClock(), context, request({ validationAuthorizationId: AUTHORIZATION }))).toEqual({ kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" });
+    const notAuthorized = igStores({ reading: reading(), pending: false });
+    expect(await requestPublicReply(notAuthorized.stores, fixedClock(), context, request({ validationAuthorizationId: AUTHORIZATION }))).toEqual({ kind: "refused", reason: "CAPABILITY_UNAVAILABLE" });
+    const unwired = igStores({ reading: reading() }, { withValidation: false });
+    expect(await requestPublicReply(unwired.stores, fixedClock(), context, request({ validationAuthorizationId: AUTHORIZATION }))).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    for (const s of [facebook, paused, notAuthorized, unwired]) nothingWritten(s.stores);
+  });
+
+  it("the idempotency key's payload includes the authorization: same → existing; with vs without → key reuse", async () => {
+    const { stores } = igStores({ reading: reading() });
+    const clock = fixedClock();
+    expect((await requestPublicReply(stores, clock, context, request({ validationAuthorizationId: AUTHORIZATION }))).kind).toBe("created");
+    expect((await requestPublicReply(stores, clock, context, request({ validationAuthorizationId: AUTHORIZATION }))).kind).toBe("existing");
+    expect(await requestPublicReply(stores, clock, context, request())).toEqual({ kind: "refused", reason: "IDEMPOTENCY_KEY_REUSED" });
+    expect(stores.intentRows.size).toBe(1);
+  });
+});
+
+// ── 3 · the executor ────────────────────────────────────────────────────────────────────────────────────────────
+describe("7B-14G1: the executor honours a bound authorization only within its bounds", () => {
+  const bound = (intentId: string, overrides: Partial<ValidationAuthorization> = {}, expired = false) => reading({ intentId, boundAt: now, ...overrides }, expired);
+
+  it("(13) admitted → EXECUTING before the ONE Meta POST → CONFIRMED with the created reply's id; no grant and an UNKNOWN catalog stood in for", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const meta = metaHarness();
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "confirmed", providerReplyId: IG_REPLY });
+    expect(meta.posts).toEqual([`/v25.0/${IG_COMMENT}/replies`]);
+    expect(statusesOf(stores)).toEqual(["PENDING", "EXECUTING", "CONFIRMED"]);
+    // The credential is checked (read only) before EXECUTING, opened only after it, once.
+    const calls = stores.calls.filter((c) => c === "validation:credential_ready" || c === "transition:EXECUTING" || c === "credential:open");
+    expect(calls).toEqual(["validation:credential_ready", "transition:EXECUTING", "credential:open"]);
+  });
+
+  it.each([
+    ["(2) gone or invisible", undefined],
+    ["(7) expired (database verdict)", "expired"],
+    ["(8) revoked", "revoked"],
+    ["(9) consumed", "consumed"],
+    ["(10) bound to another intent", "elsewhere"],
+    ["(6) another initiator", "initiator"],
+    ["(4) another account", "account"],
+  ] as const)("%s → BLOCKED VALIDATION_AUTHORIZATION_UNAVAILABLE from PENDING: zero POSTs, no credential", async (_name, variant) => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = variant === undefined ? undefined
+      : variant === "expired" ? bound(intent.id, {}, true)
+        : variant === "revoked" ? bound(intent.id, { revokedAt: now, revokedBy: "ops.synthetic", revocationReason: "test" })
+          : variant === "consumed" ? bound(intent.id, { consumedAt: now })
+            : variant === "elsewhere" ? bound(OTHER)
+              : variant === "initiator" ? bound(intent.id, { initiatorUserId: OTHER })
+                : bound(intent.id, { connectedAccountId: OTHER });
+    const meta = metaHarness();
+    const opened: string[] = [];
+    expect(await executeIntent(deps(stores, clock, meta.port, { opened }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    expect(intentOf(stores, intent.id)).toMatchObject({ status: "BLOCKED", attempt: 1, outcomeCode: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    expect([meta.posts, opened]).toEqual([[], []]);
+    expect(statusesOf(stores)).toEqual(["PENDING", "BLOCKED"]);
+  });
+
+  it("(21, X2) a target already validated by another consumed authorization → BLOCKED, never eligible again", async () => {
+    const { stores, v } = igStores({ consumedElsewhere: true });
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const meta = metaHarness();
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: "run_again" })).toEqual({ kind: "noop", status: "BLOCKED" });
+    expect(meta.posts).toEqual([]);
+  });
+
+  it("(22) a pause / the emergency block vetoes; (12) a non-validation capability state refuses; an unwired executor blocks", async () => {
+    for (const [state, options, code] of [
+      [{ providerAction: ["paused"] as ProviderActionDecision[] }, {}, "PROVIDER_ACTIONS_DISABLED"],
+      [{ pending: false }, {}, "CAPABILITY_UNAVAILABLE"],
+      [{}, { withValidation: false }, "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+    ] as const) {
+      const { stores, v } = igStores(state, options);
+      const { intent, clock } = seed(stores);
+      v.reading = bound(intent.id);
+      const meta = metaHarness();
+      expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code });
+      expect(meta.posts).toEqual([]);
+    }
+  });
+
+  it("an ordinary intent is unchanged: no grant → PROVIDER_ACTIONS_DISABLED, and the validation reads are never consulted", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores, { validationAuthorizationId: null });
+    v.reading = bound(intent.id);
+    const meta = metaHarness();
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code: "PROVIDER_ACTIONS_DISABLED" });
+    expect(stores.calls.filter((c) => c.startsWith("validation:"))).toEqual([]);
+    expect(meta.posts).toEqual([]);
+  });
+
+  it("(23, PRE-LIVE-2) an unauthorizable credential blocks BEFORE EXECUTING (nothing spent); a credential failure after EXECUTING never grants another try", async () => {
+    const before = igStores({ credentialReady: false });
+    const first = seed(before.stores);
+    before.v.reading = bound(first.intent.id);
+    const meta = metaHarness();
+    expect(await executeIntent(deps(before.stores, first.clock, meta.port), { workspaceId: WORKSPACE, intentId: first.intent.id, runReference: RUN })).toEqual({ kind: "blocked", code: "CREDENTIAL_UNREADABLE" });
+    expect(statusesOf(before.stores)).toEqual(["PENDING", "BLOCKED"]);
+
+    const after = igStores();
+    const second = seed(after.stores);
+    after.v.reading = bound(second.intent.id);
+    const credentials: CredentialUse = { withAccess: () => Promise.reject(new CredentialUnreadable()) };
+    expect(await executeIntent(deps(after.stores, second.clock, meta.port, { credentials }), { workspaceId: WORKSPACE, intentId: second.intent.id, runReference: RUN })).toEqual({ kind: "blocked", code: "CREDENTIAL_UNREADABLE" });
+    expect(statusesOf(after.stores)).toEqual(["PENDING", "EXECUTING", "BLOCKED"]);
+    // Consumed at EXECUTING (the database's), never re-armed: the next delivery does nothing.
+    after.v.reading = bound(second.intent.id, { consumedAt: now });
+    expect(await executeIntent(deps(after.stores, second.clock, meta.port), { workspaceId: WORKSPACE, intentId: second.intent.id, runReference: "run_again" })).toEqual({ kind: "noop", status: "BLOCKED" });
+    // A credential the provider rejects (after the call) is FAILED — still one call, never a retry.
+    const rejected = igStores();
+    const third = seed(rejected.stores);
+    rejected.v.reading = bound(third.intent.id);
+    const credentialRejected: CredentialUse = { withAccess: () => Promise.reject(new CredentialInvalidError("replyPublicly", "revoked")) };
+    expect(await executeIntent(deps(rejected.stores, third.clock, meta.port, { credentials: credentialRejected }), { workspaceId: WORKSPACE, intentId: third.intent.id, runReference: RUN })).toEqual({ kind: "failed", code: "CREDENTIAL_INVALID" });
+    expect(meta.posts).toEqual([]);
+  });
+
+  it("(16, F) a revocation landing between the check and the EXECUTING commit (the consume trigger refuses) → BLOCKED in a new transaction, zero POSTs", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const transition = stores.intents.transition.bind(stores.intents);
+    stores.intents.transition = (workspaceId, id, next) => {
+      if (next.status === "EXECUTING") {
+        v.reading = bound(intent.id, { revokedAt: now, revokedBy: "ops.synthetic", revocationReason: "test" });
+        return Promise.reject(new Error("the validation authorization is revoked"));
+      }
+      return transition(workspaceId, id, next);
+    };
+    const meta = metaHarness();
+    const opened: string[] = [];
+    expect(await executeIntent(deps(stores, clock, meta.port, { opened }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    expect(intentOf(stores, intent.id)).toMatchObject({ status: "BLOCKED", attempt: 1 });
+    expect(statusesOf(stores)).toEqual(["PENDING", "BLOCKED"]);
+    expect([meta.posts, opened]).toEqual([[], []]);
+  });
+
+  it("(17, F) an expiry crossing between the check and the EXECUTING commit → BLOCKED, zero POSTs", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const transition = stores.intents.transition.bind(stores.intents);
+    stores.intents.transition = (workspaceId, id, next) => {
+      if (next.status === "EXECUTING") {
+        v.reading = bound(intent.id, {}, true);
+        return Promise.reject(new Error("the validation authorization is expired"));
+      }
+      return transition(workspaceId, id, next);
+    };
+    const meta = metaHarness();
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    expect(meta.posts).toEqual([]);
+  });
+
+  it("(21, X2) a second consumption refused by the unique index (another authorization consumed meanwhile) → BLOCKED, never left PENDING", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const transition = stores.intents.transition.bind(stores.intents);
+    stores.intents.transition = (workspaceId, id, next) => {
+      if (next.status === "EXECUTING") {
+        v.consumedElsewhere = true;
+        return Promise.reject(new Error("duplicate key value violates unique constraint"));
+      }
+      return transition(workspaceId, id, next);
+    };
+    const meta = metaHarness();
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    expect(intentOf(stores, intent.id)?.status).toBe("BLOCKED");
+    expect(meta.posts).toEqual([]);
+  });
+
+  it("an infrastructure failure at the EXECUTING commit is NEVER recorded as a revocation: the original error, the intent still PENDING, zero POSTs", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const transition = stores.intents.transition.bind(stores.intents);
+    const failure = new Error("connection terminated unexpectedly");
+    stores.intents.transition = (workspaceId, id, next) => (next.status === "EXECUTING" ? Promise.reject(failure) : transition(workspaceId, id, next));
+    const meta = metaHarness();
+    await expect(executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).rejects.toBe(failure);
+    expect(intentOf(stores, intent.id)).toMatchObject({ status: "PENDING", attempt: 0, outcomeCode: null });
+    expect(meta.posts).toEqual([]);
+    // The recovery transaction itself failing re-throws the ORIGINAL error too.
+    let scopes = 0;
+    const inScope: ExecutorDependencies["inScope"] = (work) => (++scopes === 2 ? Promise.reject(new Error("database unavailable")) : work(stores));
+    await expect(executeIntent(deps(stores, clock, meta.port, { inScope }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).rejects.toBe(failure);
+    expect(intentOf(stores, intent.id)?.status).toBe("PENDING");
+  });
+
+  it("an ordinary intent's failure propagates exactly as before (no recovery transaction, no validation read)", async () => {
+    const { stores } = igStores({ providerAction: ["allowed"] }, { capability: "AVAILABLE" });
+    const { intent, clock } = seed(stores, { validationAuthorizationId: null });
+    const transition = stores.intents.transition.bind(stores.intents);
+    const failure = new Error("connection terminated unexpectedly");
+    stores.intents.transition = (workspaceId, id, next) => (next.status === "EXECUTING" ? Promise.reject(failure) : transition(workspaceId, id, next));
+    let scopes = 0;
+    const inScope: ExecutorDependencies["inScope"] = (work) => {
+      scopes += 1;
+      return work(stores);
+    };
+    await expect(executeIntent(deps(stores, clock, metaHarness().port, { inScope }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).rejects.toBe(failure);
+    expect(scopes).toBe(1);
+    expect(stores.calls.filter((c) => c.startsWith("validation:"))).toEqual([]);
+  });
+
+  it("(22, PRE-LIVE-1) a pause or a mode change after EXECUTING and before the call → BLOCKED from EXECUTING, the credential never opened", async () => {
+    for (const [change, code] of [["pause", "PROVIDER_ACTIONS_DISABLED"], ["mode", "MODE_NOT_STANDARD"]] as const) {
+      const { stores, v } = igStores({ providerAction: change === "pause" ? ["not_enabled", "paused"] : ["not_enabled"] });
+      const { intent, clock } = seed(stores);
+      v.reading = bound(intent.id);
+      let scopes = 0;
+      const inScope: ExecutorDependencies["inScope"] = (work) => {
+        if (++scopes === 2 && change === "mode") stores.guardState.mode = "MONITOR_ONLY";
+        return work(stores);
+      };
+      const meta = metaHarness();
+      const opened: string[] = [];
+      expect(await executeIntent(deps(stores, clock, meta.port, { inScope, opened }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code });
+      expect(statusesOf(stores)).toEqual(["PENDING", "EXECUTING", "BLOCKED"]);
+      expect([meta.posts, opened]).toEqual([[], []]);
+    }
+  });
+
+  it("(20, X1) a row rewritten under EXECUTING (another run reference or attempt) is never sent: no POST, no transition", async () => {
+    for (const rewrite of [{ runReference: "run_forged" }, { attempt: 2 }]) {
+      const { stores, v } = igStores();
+      const { intent, clock } = seed(stores);
+      v.reading = bound(intent.id);
+      let scopes = 0;
+      const inScope: ExecutorDependencies["inScope"] = (work) => {
+        if (++scopes === 2) {
+          const row = intentOf(stores, intent.id);
+          if (row !== undefined) stores.intentRows.set(`${WORKSPACE}:${intent.id}`, { ...row, ...rewrite });
+        }
+        return work(stores);
+      };
+      const meta = metaHarness();
+      expect(await executeIntent(deps(stores, clock, meta.port, { inScope }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "noop", status: "EXECUTING" });
+      expect(meta.posts).toEqual([]);
+      expect(statusesOf(stores)).toEqual(["PENDING", "EXECUTING"]);
+    }
+  });
+
+  it("(20, X1) the stores refuse a same-status rewrite and a transition from a status the row is not in", async () => {
+    const { stores } = igStores();
+    const { intent } = seed(stores);
+    const at = new Date();
+    await expect(stores.intents.transition(WORKSPACE, intent.id, { from: "PENDING", status: "PENDING", attempt: 1, runReference: "run_x", outcomeCode: null, at })).rejects.toThrow(/incoherent transition/);
+    await expect(stores.intents.transition(WORKSPACE, intent.id, { from: "EXECUTING", status: "OUTCOME_UNKNOWN", attempt: 1, runReference: "run_x", outcomeCode: "RUN_INTERRUPTED", at })).rejects.toThrow(/incoherent transition/);
+    expect(intentOf(stores, intent.id)?.status).toBe("PENDING");
+  });
+
+  it("(18) a lost response → OUTCOME_UNKNOWN after ONE POST; every later delivery sends nothing", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const meta = metaHarness("lost");
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "outcome_unknown", code: "RESPONSE_LOST" });
+    v.reading = bound(intent.id, { consumedAt: now });
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: "run_again" })).toEqual({ kind: "noop", status: "OUTCOME_UNKNOWN" });
+    expect(meta.posts).toHaveLength(1);
+  });
+
+  it("(19) a redelivered run after EXECUTING never sends: OUTCOME_UNKNOWN (RUN_INTERRUPTED), zero POSTs", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    stores.intentRows.set(`${WORKSPACE}:${intent.id}`, { ...intent, status: "EXECUTING", attempt: 1, runReference: RUN });
+    v.reading = bound(intent.id, { consumedAt: now });
+    const meta = metaHarness();
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: "run_redelivered" })).toEqual({ kind: "outcome_unknown", code: "RUN_INTERRUPTED" });
+    expect(meta.posts).toEqual([]);
+  });
+
+  it("(15) two runs racing on one authorized intent without row locks: the compare-and-set admits ONE EXECUTING; at most ONE POST", async () => {
+    // In memory there is no FOR UPDATE: both runs read PENDING. The store's compare-and-set (X1) refuses the second
+    // PENDING → EXECUTING, whose recovery finds the intent no longer PENDING and re-throws (nothing recorded, nothing
+    // sent). The real row-lock interleaving is in the PostgreSQL suite.
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const meta = metaHarness();
+    const results = await Promise.allSettled([
+      executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: "run_a" }),
+      executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: "run_b" }),
+    ]);
+    expect(meta.posts).toHaveLength(1);
+    expect(stores.history.filter((row) => row.to === "EXECUTING")).toHaveLength(1);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(results.find((r) => r.status === "fulfilled")).toMatchObject({ value: { kind: "confirmed" } });
+    const rejected = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(rejected?.reason).toBeInstanceOf(Error);
+    expect((rejected?.reason as Error).message).toMatch(/incoherent transition/);
+  });
+});

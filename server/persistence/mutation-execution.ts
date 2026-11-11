@@ -11,7 +11,10 @@
  *   - the audit record of each outcome, actor `system`, identifiers and closed codes only — in the SAME transaction
  *     as the transition it records (TA §13, §41);
  *   - the credential authority read (connection → active credential → envelope) the job's credential use opens
- *     OUTSIDE any transaction (TA §39).
+ *     OUTSIDE any transaction (TA §39);
+ *   - Step 7B-14G1: the validation reads (0028, read-only): the shared ones, plus whether another authorization already
+ *     validated the target and whether the credential would be authorized (PRE-LIVE-2) — both read in the admit
+ *     transaction before anything is spent. Nothing here writes an authorization.
  */
 import { createAuditEvent, type AuditLog } from "@/modules/audit";
 import { createPostgresAuditLog } from "@/modules/audit/persistence";
@@ -20,11 +23,11 @@ import type { ConnectionWorkerStore } from "@/modules/connections";
 import { createPostgresConnectionWorkerStore } from "@/modules/connections/persistence";
 import type { WorkspaceId } from "@/domain/ids";
 import type { ExecutorStores, IntentOutcomeEvent } from "@/mutations/executor/execute";
-import { createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace, initiatorWorkspaceRole, workspaceModeForExecution } from "@/mutations/persistence";
-import type { ExecutionGuards } from "@/mutations/ports";
+import { anotherValidationConsumedForTarget, createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace, initiatorWorkspaceRole, workspaceModeForExecution } from "@/mutations/persistence";
+import type { ExecutionGuards, ValidationExecutionReads } from "@/mutations/ports";
 import type { DatabaseTransaction } from "@/platform/db";
 import type { TenantJobScope } from "@/platform/jobs";
-import { replyTargets, sharedGuards } from "./mutations";
+import { replyTargets, sharedGuards, validationReads, type AuthorityReads } from "./mutations";
 
 const refuseWrite = (): never => {
   throw new Error("mutation executor authority reads are read-only");
@@ -73,7 +76,18 @@ export function executorStores(scope: Pick<TenantJobScope, "tx">, newId: () => s
   const { tx } = scope;
   const connections = connectionsAuthority(tx);
   const capability = createPostgresCapabilityStore(tx);
-  const shared = sharedGuards(tx, { account: (id) => connections.connectedAccounts.get(id), connection: (id) => connections.connections.get(id), capability: { header: capability.header, entries: capability.entries } });
+  const reads: AuthorityReads = { account: (id) => connections.connectedAccounts.get(id), connection: (id) => connections.connections.get(id), capability: { header: capability.header, entries: capability.entries } };
+  const shared = sharedGuards(tx, reads);
+  const validation: ValidationExecutionReads = {
+    ...validationReads(tx, reads),
+    async consumedElsewhere(workspaceId, targetInteractionId, authorizationId) {
+      // Fail closed: a caller naming another workspace than the bound one is answered "consumed" (refuses).
+      if (workspaceId !== (await currentWorkspace(tx))) return true;
+      return anotherValidationConsumedForTarget(tx, workspaceId, targetInteractionId, authorizationId);
+    },
+    // PRE-LIVE-2: the same authority the credential use re-reads before opening — here only read, never opened.
+    credentialReady: async (workspaceId, connectedAccountId) => (await credentialAuthority(tx, { workspaceId, connectedAccountId })) !== undefined,
+  };
   const guards: ExecutionGuards = {
     ...shared,
     initiatorRole: (_workspaceId, userId) => initiatorWorkspaceRole(tx, userId),
@@ -90,6 +104,7 @@ export function executorStores(scope: Pick<TenantJobScope, "tx">, newId: () => s
     targets: replyTargets(tx),
     guards,
     record: recordOutcome(createPostgresAuditLog(tx), newId),
+    validation,
   };
 }
 

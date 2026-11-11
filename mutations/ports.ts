@@ -8,6 +8,7 @@ import type { ProviderObjectRef } from "@/integrations/providers/contract/identi
 import type { ProviderMutationPort } from "@/integrations/providers/contract/mutation-port";
 import type { MutationAction } from "@/platform/flags";
 import type { CompetingIntent, IntentOutcomeCode, IntentStatus, IntentTransition, MutationIntent } from "./domain/intent";
+import type { ValidationAuthorizationReading } from "./domain/validation-authorization";
 
 /** The canonical interaction a reply targets, as persistence knows it (never a browser-supplied provider id). */
 export interface ReplyTarget {
@@ -58,8 +59,12 @@ export interface IntentStore {
   get(workspaceId: string, intentId: string): Promise<MutationIntent | undefined>;
   /** Row-locked read (FOR UPDATE): one executor at a time per intent. */
   lock(workspaceId: string, intentId: string): Promise<MutationIntent | undefined>;
-  /** Applies one admitted transition: status, attempt, run reference, outcome code, updated time. */
-  transition(workspaceId: string, intentId: string, next: { readonly status: IntentStatus; readonly attempt: number; readonly runReference: string | null; readonly outcomeCode: IntentOutcomeCode | null; readonly at: Date }): Promise<void>;
+  /**
+   * Applies one admitted transition: status, attempt, run reference, outcome code, updated time. Step 7B-14G1 (X1):
+   * `from` is the status the caller locked and checked; the write applies only while the row is still in it, and a
+   * transition to the same status is refused (no rewrite of attempt or run reference under an unchanged status).
+   */
+  transition(workspaceId: string, intentId: string, next: { readonly from: IntentStatus; readonly status: IntentStatus; readonly attempt: number; readonly runReference: string | null; readonly outcomeCode: IntentOutcomeCode | null; readonly at: Date }): Promise<void>;
   appendHistory(workspaceId: string, intentId: string, transition: IntentTransition & { readonly id: string; readonly correlationId: string; readonly at: Date }): Promise<void>;
   /**
    * Step 7B-5: every OTHER intent of the same workspace, account and target — the candidates that may have produced a
@@ -115,6 +120,35 @@ export interface ExecutionGuards {
 
 /** What the request side checks before creating an intent: the same guards, minus the runtime-only ones. */
 export type RequestGuards = Pick<ExecutionGuards, "providerActionAllowed" | "replyCapability" | "account">;
+
+/**
+ * Step 7B-14G1 — the reads the bounded validation exception needs (0028), composed only where an intent may name an
+ * authorization (the web's request side; the job's executor). Never called for an ordinary intent. Where it is not
+ * composed, an intent naming an authorization is refused (fail closed). Read-only: issuance, revocation, binding and
+ * consumption are never written from here (operator tooling; the 0028 triggers).
+ */
+export interface ValidationAuthorityReads {
+  /** The authorization as RLS lets THIS transaction see it, with the database's expiry verdict; undefined when absent or invisible. */
+  authorization(workspaceId: string, authorizationId: string): Promise<ValidationAuthorizationReading | undefined>;
+  /**
+   * Whether reply_public for the account and the TARGET's scope is unusable ONLY because the catalog has not validated
+   * it: the account and its connection ACTIVE, the stored profile current for the provider's catalog, and the resolved
+   * row coherent, UNKNOWN_NOT_VALIDATED with exactly CATALOG_NOT_VALIDATED. Anything else (or any doubt) is false.
+   */
+  catalogValidationPending(connectedAccountId: string, scope: { readonly contentKind: string; readonly reportedSource: string }): Promise<boolean>;
+}
+
+/** The executor's validation reads (bound worker): the request side's, plus two only the worker can answer. */
+export interface ValidationExecutionReads extends ValidationAuthorityReads {
+  /** Whether ANOTHER authorization of this workspace for the same target and operation was ever consumed (committed). */
+  consumedElsewhere(workspaceId: string, targetInteractionId: string, authorizationId: string): Promise<boolean>;
+  /**
+   * PRE-LIVE-2: whether the account's active credential would be authorized for opening (account ACTIVE in this
+   * workspace, connection ACTIVE, its active credential row present) — read in the admit transaction, BEFORE the
+   * authorization is consumed. Nothing is decrypted here: a key or provider failure after consumption stays possible.
+   */
+  credentialReady(workspaceId: string, connectedAccountId: string): Promise<boolean>;
+}
 
 /** The operational authorization of one platform:action (Step 7B-12A). Only "allowed" lets a mutation proceed. */
 export type ProviderActionDecision = "allowed" | "not_enabled" | "paused";

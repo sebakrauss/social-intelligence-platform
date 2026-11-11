@@ -9,16 +9,20 @@
  *
  * Capability is the real resolver over the stored profile (never inferred); the `mutation.provider_action` switch is
  * read per `<platform>:public_reply` and fails safe (disabled).
+ *
+ * Step 7B-14G1: the validation reads of 0028 (read-only, RLS-scoped: a member sees ONLY the authorization naming them as
+ * initiator in the bound workspace) and the capability module's narrow "catalog not validated" answer. Nothing here
+ * issues, revokes, binds or consumes an authorization.
  */
-import { capabilityAvailability, type CapabilityReadStore } from "@/modules/capability";
+import { capabilityAvailability, catalogValidationPending, type CapabilityReadStore } from "@/modules/capability";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
 import type { ConnectedAccount, Connection } from "@/modules/connections";
 import { createPostgresConnectionStore } from "@/modules/connections/persistence";
 import { createPostgresContentItemReadStore } from "@/modules/content/persistence";
 import { CAPABILITY_CONTENT_KINDS, CAPABILITY_SOURCES, type CapabilityContentKind, type CapabilitySource } from "@/modules/capability";
 import { loadInteractionReplyTarget, type InteractionReplyTargetRow } from "@/modules/interactions/persistence";
-import { createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace } from "@/mutations/persistence";
-import type { MutationRequestSources, ReplyTarget, ReplyTargets, RequestGuards } from "@/mutations/request";
+import { createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace, readValidationAuthorizationForAdmission } from "@/mutations/persistence";
+import type { MutationRequestSources, ReplyTarget, ReplyTargets, RequestGuards, ValidationAuthorityReads } from "@/mutations/request";
 import { readSwitchRows, type DatabaseTransaction } from "@/platform/db";
 import { resolveSwitch } from "@/platform/flags";
 
@@ -122,14 +126,46 @@ export function sharedGuards(tx: DatabaseTransaction, reads: AuthorityReads): Re
   };
 }
 
+/**
+ * Step 7B-14G1 — the validation reads both sides share, over this transaction: the authorization of the BOUND workspace
+ * only (another workspace's id answers undefined without a query), with the database's expiry verdict; and whether
+ * reply_public is unusable ONLY because the catalog has not validated it (the capability module decides; false on any
+ * missing account, connection or profile).
+ */
+export function validationReads(tx: DatabaseTransaction, reads: AuthorityReads): ValidationAuthorityReads {
+  return {
+    async authorization(workspaceId, authorizationId) {
+      if (workspaceId !== (await currentWorkspace(tx))) return undefined;
+      return readValidationAuthorizationForAdmission(tx, workspaceId, authorizationId);
+    },
+    async catalogValidationPending(connectedAccountId, scope) {
+      const account = await reads.account(connectedAccountId);
+      const connection = account === undefined ? undefined : await reads.connection(account.connectionId);
+      if (account === undefined || connection === undefined) return false;
+      const { contentKind, source } = capabilityScopeOf(scope);
+      return catalogValidationPending(reads.capability, {
+        connectedAccountId,
+        accountStatus: account.status,
+        provider: connection.provider,
+        capability: "reply_public",
+        contentKind,
+        source,
+        connection: connection.status,
+      });
+    },
+  };
+}
+
 /** The web's request side (user scope). */
 export function mutationRequestSources(tx: DatabaseTransaction): MutationRequestSources {
   const connections = createPostgresConnectionStore(tx);
   const capability = createPostgresCapabilityStore(tx);
+  const reads: AuthorityReads = { account: (id) => connections.connectedAccounts.get(id), connection: (id) => connections.connections.get(id), capability: { header: capability.header, entries: capability.entries } };
   return {
     intents: createPostgresIntentStore(tx),
     replies: createPostgresOutboundReplyStore(tx),
     targets: replyTargets(tx),
-    guards: sharedGuards(tx, { account: (id) => connections.connectedAccounts.get(id), connection: (id) => connections.connections.get(id), capability: { header: capability.header, entries: capability.entries } }),
+    guards: sharedGuards(tx, reads),
+    validation: validationReads(tx, reads),
   };
 }

@@ -129,6 +129,7 @@ export const REPLY_REFUSAL_MESSAGES: { readonly [R in PublicReplyRefusal]: Messa
   CAPABILITY_UNAVAILABLE: "inbox.reply.refused.capability_unavailable",
   PROVIDER_ACTIONS_DISABLED: "inbox.reply.refused.provider_actions_disabled",
   IDEMPOTENCY_KEY_REUSED: "inbox.reply.refused.idempotency_key_reused",
+  VALIDATION_AUTHORIZATION_UNAVAILABLE: "inbox.reply.refused.validation_authorization_unavailable",
 };
 export const REPLY_BLOCKED_MESSAGES: { readonly [C in ReplyBlockedCode]: MessageKey } = {
   PERMISSION_DENIED: "inbox.reply.blocked.permission_denied",

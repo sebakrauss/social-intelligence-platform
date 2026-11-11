@@ -38,6 +38,7 @@ function toIntent(row: typeof mutationIntents.$inferSelect): MutationIntent {
     correlationId: row.correlationId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    validationAuthorizationId: row.validationAuthorizationId,
   };
 }
 
@@ -69,6 +70,9 @@ export function createPostgresIntentStore(tx: DatabaseTransaction): IntentStore 
         correlationId: intent.correlationId,
         createdAt: intent.createdAt,
         updatedAt: intent.updatedAt,
+        // Step 7B-14G1: an authorized intent is bound by 0028's AFTER INSERT trigger in THIS statement's transaction
+        // (the authorization row locked FOR UPDATE); a refused binding fails the insert and writes nothing.
+        validationAuthorizationId: intent.validationAuthorizationId,
       });
     },
     async findByIdempotencyKey(workspaceId, idempotencyKey) {
@@ -78,10 +82,14 @@ export function createPostgresIntentStore(tx: DatabaseTransaction): IntentStore 
     get: (workspaceId, intentId) => one(workspaceId, intentId, false),
     lock: (workspaceId, intentId) => one(workspaceId, intentId, true),
     async transition(workspaceId, intentId, next) {
+      // Step 7B-14G1 (X1): never a same-status rewrite of attempt / run reference, and only from the status the caller
+      // locked and checked (compare-and-set). The executor always passes the locked row's status, so a valid
+      // transition is unchanged; anything else fails loudly and writes nothing.
+      if (next.from === next.status) corrupt("transition");
       const updated = await tx
         .update(mutationIntents)
         .set({ status: next.status, attempt: next.attempt, runReference: next.runReference, outcomeCode: next.outcomeCode, updatedAt: next.at })
-        .where(and(eq(mutationIntents.workspaceId, workspaceId), eq(mutationIntents.id, intentId)))
+        .where(and(eq(mutationIntents.workspaceId, workspaceId), eq(mutationIntents.id, intentId), eq(mutationIntents.status, next.from)))
         .returning({ id: mutationIntents.id });
       if (updated.length !== 1) corrupt("transition");
     },

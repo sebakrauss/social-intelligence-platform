@@ -72,6 +72,7 @@ export {
   CapabilityCatalogError,
   SIMULATOR_CATALOG_ENVIRONMENTS,
   capabilityAvailability,
+  catalogValidationPending,
   evaluateAndStore,
   factsFromDescription,
   inputDigest,

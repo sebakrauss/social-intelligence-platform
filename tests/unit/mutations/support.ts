@@ -95,6 +95,7 @@ export function pendingIntent(clock: MutationClock, overrides: Partial<MutationI
     correlationId: CORRELATION,
     createdAt: now,
     updatedAt: now,
+    validationAuthorizationId: null,
     ...overrides,
   };
 }
@@ -140,6 +141,8 @@ export function memoryStores(state: GuardState = guardState(), targets: readonly
       transition: (workspaceId, id, next) => {
         const row = intentRows.get(key(workspaceId, id));
         if (row === undefined) return Promise.reject(new Error("missing intent"));
+        // Step 7B-14G1 (X1): the same compare-and-set as the PostgreSQL store — from the locked status, never to itself.
+        if (next.from === next.status || row.status !== next.from) return Promise.reject(new Error("mutation persistence: incoherent transition"));
         intentRows.set(key(workspaceId, id), { ...row, status: next.status, attempt: next.attempt, runReference: next.runReference, outcomeCode: next.outcomeCode, updatedAt: next.at });
         calls.push(`transition:${next.status}`);
         return Promise.resolve();

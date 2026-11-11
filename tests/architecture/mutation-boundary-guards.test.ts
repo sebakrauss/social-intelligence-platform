@@ -10,7 +10,8 @@
  *   - the task is registered on the integration plane, lane 1, single attempt, serial per account; its topic is a
  *     member topic (the web appends it) and its Trigger file lives in the integration directory;
  *   - the productive Meta catalog still publishes no `reply_public`: real Meta replies stay unavailable (7B-1 scope);
- *   - the command declares reply.public + Standard mode and validates exactly three fields; 0027 lets a member insert
+ *   - the command declares reply.public + Standard mode and validates exactly three fields (plus, since 7B-14G1, one
+ *     optional validated UUID — a validation authorization reference); 0027 lets a member insert
  *     PENDING only and grants no member UPDATE on intents.
  */
 import { readdirSync } from "node:fs";
@@ -101,11 +102,12 @@ describe("7B-1: the task, its topic and its release", () => {
 });
 
 describe("7B-1: the request command and 0027", () => {
-  it("the command declares reply.public and Standard mode, validates exactly three fields, appends only the executor dispatch", () => {
+  it("the command declares reply.public and Standard mode, validates exactly three fields plus one OPTIONAL validated UUID (7B-14G1), appends only the executor dispatch", () => {
     const command = codeOf("server/commands/mutations.ts");
     expect(command).toMatch(/permission: "reply\.public",/);
     expect(command).toMatch(/requiresStandardMode: true,/);
-    expect(command).toMatch(/validate: object\(\{ targetInteractionId: uuid, text: text\(\{ min: 1, max: REPLY_TEXT_MAX_CHARS \}\), idempotencyKey: text\(\{ min: 8, max: 128, pattern: IDEMPOTENCY_KEY \}\) \}\),/);
+    // Step 7B-14G1: the fourth field is optional and a validated UUID — a reference, never a permission.
+    expect(command).toMatch(/validate: object\(\{ targetInteractionId: uuid, text: text\(\{ min: 1, max: REPLY_TEXT_MAX_CHARS \}\), idempotencyKey: text\(\{ min: 8, max: 128, pattern: IDEMPOTENCY_KEY \}\), validationAuthorizationId: optional\(uuid\) \}\),/);
     expect([...command.matchAll(/outbox\.append\(/g)]).toHaveLength(1);
     expect(command).toMatch(/tx\.outbox\.append\(executeIntentDispatch\(/);
     expect(command).not.toMatch(/tx\.connections|tx\.audit|sql`|replyPublicly|mutation-port/);
@@ -166,13 +168,73 @@ describe("7B-14F1: the one-time validation authorization foundation (0028) is pe
     expect(sql).not.toMatch(/operational_switches|capability\.|system\.outbox|provider_action|grant [^;]*(insert|update|delete)/);
   });
 
-  it("no request, executor, web, job or provider code knows the authorization yet (only its domain type and read adapter)", () => {
-    const knows = sourceFiles(PRODUCTION).filter((file) => /validation_authorization|validationAuthorization|ValidationAuthorization|validation-authorization/.test(strip(codeOf(file))));
-    expect(knows.filter((file) => !file.startsWith("db/"))).toEqual(["mutations/domain/validation-authorization.ts", "mutations/persistence/validation-authorizations.ts"]);
-    // Nothing in production imports either file: no runtime entry point (web, executor, job) reaches the foundation yet.
-    const importers = sourceFiles(PRODUCTION).filter((file) => importsOf(file).some((specifier) => /validation-authorization/.test(specifier)));
-    expect(importers).toEqual(["mutations/persistence/validation-authorizations.ts"]);
-    // The intent mapping the request and executor use does not name the binding column (it stays NULL on their writes).
-    expect(strip(codeOf("mutations/persistence/tables.ts"))).not.toMatch(/validation/i);
+});
+
+/**
+ * Step 7B-14G1 replaces the 7B-14F1 inertness pin ("nobody knows the authorization yet") with the integration's boundary:
+ * the authorization reaches exactly the one request path and the one executor, read-only, through one pure decision —
+ * and no other code (UI, Server Action, job, provider, AI) learns of it, and nothing outside the migrations can write it.
+ */
+describe("7B-14G1: the validation authorization is integrated into the ONE request and executor path, read-only", () => {
+  const KNOWS = /validation_authorization|validationAuthorization|ValidationAuthorization|validation-authorization|catalogValidationPending|ValidationExecutionReads|ValidationAuthorityReads|validationReads|anotherValidationConsumedForTarget/;
+
+  it("exactly these production files know it (no UI, Server Action, job, provider or AI code)", () => {
+    const knows = sourceFiles(PRODUCTION).filter((file) => !file.startsWith("db/") && KNOWS.test(strip(codeOf(file))));
+    expect(knows).toEqual([
+      "domain/i18n/message-keys.ts",
+      "modules/capability/application/evaluation.ts",
+      "modules/capability/index.ts",
+      "mutations/domain/intent.ts",
+      "mutations/domain/validation-authorization.ts",
+      "mutations/executor/execute.ts",
+      "mutations/persistence/index.ts",
+      "mutations/persistence/store.ts",
+      "mutations/persistence/tables.ts",
+      "mutations/persistence/validation-authorizations.ts",
+      "mutations/ports.ts",
+      "mutations/request/index.ts",
+      "platform/i18n/catalogs/development-reference.ts",
+      "server/commands/mutations.ts",
+      "server/inbox/inbox.ts",
+      "server/persistence/mutation-execution.ts",
+      "server/persistence/mutations.ts",
+    ]);
+    // The Inbox Server Action still reads exactly its five fields: no browser path names an authorization in this step.
+    expect(strip(codeOf("server/inbox/actions.ts"))).not.toMatch(/validation/i);
+    for (const file of sourceFiles(["app", "ui", "jobs", "integrations", "ai"])) expect(strip(codeOf(file)), file).not.toMatch(KNOWS);
+  });
+
+  it("nothing outside the migrations can write an authorization: no insert / update / delete / locking read, in any form", () => {
+    const writes = /(insert\s+into|update|delete\s+from)\s+mutations\.validation_authorizations|\.(insert|update|delete)\(\s*validationAuthorizations\b/i;
+    expect(sourceFiles(PRODUCTION).filter((file) => !file.startsWith("db/migrations/") && writes.test(strip(codeOf(file))))).toEqual([]);
+    const adapter = strip(codeOf("mutations/persistence/validation-authorizations.ts"));
+    expect(adapter).not.toMatch(/\.(insert|update|delete)\(|\.for\(|for update|for share|set_config|app\.operator_id/i);
+    // The worker's UPDATE grant (0027) never covered the binding column, and 0028 adds no grant but SELECT.
+    expect(codeOf("db/migrations/0027_mutation_intents.sql")).toMatch(/grant update \(status, attempt, run_reference, outcome_code, updated_at\) on mutations\.mutation_intents to app_worker;/);
+  });
+
+  it("one pure decision, used by exactly the request and the executor; the capability answer is a separate, narrow read", () => {
+    const users = sourceFiles(PRODUCTION).filter((file) => /decideValidationAdmission\(/.test(strip(codeOf(file))) && file !== "mutations/domain/validation-authorization.ts");
+    expect(users).toEqual(["mutations/executor/execute.ts", "mutations/request/index.ts"]);
+    // The effective capability resolver is unchanged: catalogValidationPending is never consulted by capabilityAvailability.
+    const evaluation = strip(codeOf("modules/capability/application/evaluation.ts"));
+    const availability = evaluation.slice(evaluation.indexOf("export async function capabilityAvailability"), evaluation.indexOf("export async function catalogValidationPending"));
+    expect(availability).not.toMatch(/catalogValidationPending|CATALOG_NOT_VALIDATED/);
+    // The productive catalog still publishes no reply_public (r5): the exception never makes it AVAILABLE.
+    expect(JSON.stringify(PLATFORM_CATALOG)).not.toMatch(/reply_public/);
+  });
+
+  it("the exception never substitutes a pause or the emergency block, and is decided before EXECUTING", () => {
+    const domain = strip(codeOf("mutations/domain/validation-authorization.ts"));
+    expect(domain).toMatch(/if \(input\.providerAction === "paused"\) return refuse\("provider_action"\);/);
+    expect(domain).toMatch(/if \(!input\.capability\.usable && !input\.capability\.catalogValidationPending\) return refuse\("capability"\);/);
+    const executor = strip(codeOf("mutations/executor/execute.ts"));
+    // The ordinary refusals are untouched for an intent without an authorization.
+    expect(executor).toMatch(/if \(authorizationId === null && providerAction !== "allowed"\) return block\("PROVIDER_ACTIONS_DISABLED"\);/);
+    expect(executor).toMatch(/if \(authorizationId === null\) \{\s*if \(!usable\) return block\("CAPABILITY_UNAVAILABLE"\);/);
+    // The verdict and PRE-LIVE-2 come before the EXECUTING settle; the final gate before the ONE provider call.
+    expect(executor.indexOf("validationVerdict(stores.validation")).toBeLessThan(executor.indexOf('await settle(stores, intent, "EXECUTING"'));
+    expect(executor.indexOf("credentialReady(")).toBeLessThan(executor.indexOf('await settle(stores, intent, "EXECUTING"'));
+    expect(executor.indexOf("finalValidationGate(stores, intent")).toBeLessThan(executor.indexOf(".replyPublicly("));
   });
 });

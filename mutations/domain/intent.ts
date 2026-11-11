@@ -47,6 +47,10 @@ export const INTENT_OUTCOME_CODES = [
   "PROVIDER_ACTIONS_DISABLED",
   "PROVIDER_MUTATION_UNSUPPORTED",
   "CREDENTIAL_UNREADABLE",
+  // Step 7B-14G1: the intent names a one-time validation authorization that does not (or no longer) admit it — absent,
+  // invisible, another scope or operation, revoked, expired, consumed, bound elsewhere, or its target already validated.
+  // One closed code for every case: the outcome never tells which (no oracle about another tenant's or member's rows).
+  "VALIDATION_AUTHORIZATION_UNAVAILABLE",
   // FAILED: the provider definitely refused or could not create the reply
   "PROVIDER_REJECTED",
   "TARGET_NOT_ELIGIBLE",
@@ -91,6 +95,12 @@ export interface MutationIntent {
   readonly correlationId: string;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+  /**
+   * Step 7B-14G1 (0028): the ONE validation authorization this intent was requested under, or null for every ordinary
+   * intent. Written once, at insert (the database binds it in the same transaction and never lets it change); it never
+   * widens anything by itself — see ./validation-authorization (decideValidationAdmission).
+   */
+  readonly validationAuthorizationId: string | null;
 }
 
 export interface IntentTransition {
@@ -145,6 +155,7 @@ export const OUTCOME_STATUS: { readonly [C in IntentOutcomeCode]: IntentStatus }
   PROVIDER_ACTIONS_DISABLED: "BLOCKED",
   PROVIDER_MUTATION_UNSUPPORTED: "BLOCKED",
   CREDENTIAL_UNREADABLE: "BLOCKED",
+  VALIDATION_AUTHORIZATION_UNAVAILABLE: "BLOCKED",
   PROVIDER_REJECTED: "FAILED",
   TARGET_NOT_ELIGIBLE: "FAILED",
   TARGET_NOT_FOUND: "FAILED",

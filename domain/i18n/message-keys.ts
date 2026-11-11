@@ -173,6 +173,7 @@ export const MESSAGE_KEYS = [
   "inbox.reply.refused.capability_unavailable",
   "inbox.reply.refused.provider_actions_disabled",
   "inbox.reply.refused.idempotency_key_reused",
+  "inbox.reply.refused.validation_authorization_unavailable",
   "inbox.reply.blocked.permission_denied",
   "inbox.reply.blocked.mode_blocked",
   "inbox.reply.blocked.not_found",

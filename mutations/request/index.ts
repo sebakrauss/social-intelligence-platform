@@ -6,16 +6,26 @@
  * transaction: the intent (PENDING), the outbound reply (text, sending), the first history row and the outbox row
  * that will execute it. Nothing is sent from here; the web deployment has no execution path.
  *
- * Idempotency: the key is unique per workspace; the same key with the SAME payload (initiator, target, text) returns the
- * existing intent unchanged (R6: domain idempotency is authoritative); the same key with a different payload is refused
- * as a key reuse — it never silently answers another request's intent.
+ * Idempotency: the key is unique per workspace; the same key with the SAME payload (initiator, target, text,
+ * validation authorization) returns the existing intent unchanged (R6: domain idempotency is authoritative); the same
+ * key with a different payload is refused as a key reuse — it never silently answers another request's intent.
+ *
+ * Step 7B-14G1 — an OPTIONAL one-time validation authorization (0028). Without one, nothing here changed: the same
+ * guards, in the same order, with the same refusals (no grant → PROVIDER_ACTIONS_DISABLED; catalog not validated →
+ * CAPABILITY_UNAVAILABLE). With one, the request is admitted only when decideValidationAdmission says so (exact scope,
+ * live, unbound — read through RLS, which shows a member ONLY the authorization naming them as initiator), and then it
+ * may stand in for exactly a missing grant and an unvalidated catalog — never a pause, the emergency block or any other
+ * capability state. Any refusal about the authorization itself is ONE closed reason (no oracle). The intent is inserted
+ * naming it, and 0028's trigger binds it in the same statement's transaction (a concurrent binding or a revocation that
+ * committed first makes the insert fail: nothing is written).
  */
 import type { CapabilityAvailability } from "@/modules/capability";
 import { REPLY_TEXT_MAX_CHARS, publicReplyDepthAllowed, type MutationIntent } from "../domain/intent";
-import type { IntentStore, MutationClock, OutboundReply, OutboundReplyStore, ReplyTargets, RequestGuards } from "../ports";
+import { decideValidationAdmission } from "../domain/validation-authorization";
+import type { IntentStore, MutationClock, OutboundReply, OutboundReplyStore, ReplyTargets, RequestGuards, ValidationAuthorityReads } from "../ports";
 
 export { MUTATION_KINDS, INTENT_STATUSES, INTENT_OUTCOME_CODES, REPLY_TEXT_MAX_CHARS, type IntentOutcomeCode, type IntentStatus, type MutationIntent, type MutationKind } from "../domain/intent";
-export type { IntentStore, OutboundReply, OutboundReplyStore, OutboundReplyView, ProviderActionDecision, ReplyTarget, ReplyTargets, RequestGuards } from "../ports";
+export type { IntentStore, OutboundReply, OutboundReplyStore, OutboundReplyView, ProviderActionDecision, ReplyTarget, ReplyTargets, RequestGuards, ValidationAuthorityReads } from "../ports";
 
 /** The outbox topic the request appends; the job runtime registers the task of the same name (lane 1). */
 export const EXECUTE_INTENT_TASK = "mutations.execute_intent";
@@ -25,6 +35,8 @@ export interface MutationRequestSources {
   readonly replies: OutboundReplyStore;
   readonly targets: ReplyTargets;
   readonly guards: RequestGuards;
+  /** Step 7B-14G1: the validation reads; absent → a request naming an authorization is refused (fail closed). */
+  readonly validation?: ValidationAuthorityReads;
 }
 
 export interface PublicReplyRequest {
@@ -33,6 +45,8 @@ export interface PublicReplyRequest {
   readonly text: string;
   /** Server-issued per form render; unique per workspace. */
   readonly idempotencyKey: string;
+  /** Step 7B-14G1: an operator-issued one-time validation authorization (validated UUID), or absent for every ordinary request. */
+  readonly validationAuthorizationId?: string;
 }
 
 export type PublicReplyRefusal =
@@ -47,7 +61,9 @@ export type PublicReplyRefusal =
   | "CONNECTION_UNAVAILABLE"
   | "CAPABILITY_UNAVAILABLE"
   | "PROVIDER_ACTIONS_DISABLED"
-  | "IDEMPOTENCY_KEY_REUSED";
+  | "IDEMPOTENCY_KEY_REUSED"
+  /** Step 7B-14G1: the named validation authorization does not admit this request (one reason for every case). */
+  | "VALIDATION_AUTHORIZATION_UNAVAILABLE";
 
 export type PublicReplyOutcome =
   | { readonly kind: "created"; readonly intent: MutationIntent; readonly reply: OutboundReply }
@@ -64,10 +80,12 @@ export interface RequestContext {
 const CAPABILITY_OK: ReadonlySet<CapabilityAvailability["state"]> = new Set(["AVAILABLE", "AVAILABLE_WITH_LIMITATION"]);
 
 export async function requestPublicReply(sources: MutationRequestSources, clock: MutationClock, context: RequestContext, request: PublicReplyRequest): Promise<PublicReplyOutcome> {
+  const authorizationId = request.validationAuthorizationId ?? null;
   const existing = await sources.intents.findByIdempotencyKey(context.workspaceId, request.idempotencyKey);
   if (existing !== undefined) {
     const existingReply = await sources.replies.getByIntent(context.workspaceId, existing.id);
-    const samePayload = existing.initiatorUserId === context.userId && existing.targetInteractionId === request.targetInteractionId && existingReply?.text === request.text;
+    const samePayload = existing.initiatorUserId === context.userId && existing.targetInteractionId === request.targetInteractionId && existingReply?.text === request.text
+      && existing.validationAuthorizationId === authorizationId;
     return samePayload ? { kind: "existing", intent: existing } : { kind: "refused", reason: "IDEMPOTENCY_KEY_REUSED" };
   }
 
@@ -84,12 +102,37 @@ export async function requestPublicReply(sources: MutationRequestSources, clock:
   // Step 7B-13C (F1): Instagram top-level comments only, on the persisted target (the UI's rule is never the authority).
   if (!publicReplyDepthAllowed(target)) return { kind: "refused", reason: "TARGET_NOT_REPLYABLE" };
 
-  if ((await sources.guards.providerActionAllowed(target.platform, "public_reply")) !== "allowed") return { kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" };
+  const providerAction = await sources.guards.providerActionAllowed(target.platform, "public_reply");
+  // Ordinary request: exactly as before — no grant (or a pause) refuses here.
+  if (authorizationId === null && providerAction !== "allowed") return { kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" };
   const account = await sources.guards.account(target.connectedAccountId);
   if (account === undefined || account.status !== "ACTIVE") return { kind: "refused", reason: "ACCOUNT_INACTIVE" };
   if (account.connectionStatus !== "ACTIVE") return { kind: "refused", reason: "CONNECTION_UNAVAILABLE" };
-  const capability = await sources.guards.replyCapability(target.connectedAccountId, { contentKind: target.contentKind, reportedSource: target.reportedSource });
-  if (!CAPABILITY_OK.has(capability.state)) return { kind: "refused", reason: "CAPABILITY_UNAVAILABLE" };
+  const scope = { contentKind: target.contentKind, reportedSource: target.reportedSource };
+  const capability = await sources.guards.replyCapability(target.connectedAccountId, scope);
+  const usable = CAPABILITY_OK.has(capability.state);
+  if (authorizationId === null) {
+    if (!usable) return { kind: "refused", reason: "CAPABILITY_UNAVAILABLE" };
+  } else {
+    // Step 7B-14G1: the bounded exception, decided in ONE pure place on what the database answered.
+    const validation = sources.validation;
+    if (validation === undefined) return { kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" };
+    const decision = decideValidationAdmission({
+      phase: "request",
+      subject: { intentId: null, organizationId: context.organizationId, workspaceId: context.workspaceId, connectedAccountId: target.connectedAccountId, targetInteractionId: target.interactionId, initiatorUserId: context.userId, kind: "reply_public", attempt: 0 },
+      reading: await validation.authorization(context.workspaceId, authorizationId),
+      account: { provider: account.provider, platform: account.platform },
+      targetPlatform: target.platform,
+      providerAction,
+      capability: { usable, catalogValidationPending: usable ? false : await validation.catalogValidationPending(target.connectedAccountId, scope) },
+      consumedElsewhere: false,
+    });
+    if (decision.kind === "refuse") {
+      if (decision.reason === "provider_action") return { kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" };
+      if (decision.reason === "capability") return { kind: "refused", reason: "CAPABILITY_UNAVAILABLE" };
+      return { kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" };
+    }
+  }
 
   const now = clock.now();
   const intent: MutationIntent = {
@@ -111,6 +154,7 @@ export async function requestPublicReply(sources: MutationRequestSources, clock:
     correlationId: context.correlationId,
     createdAt: now,
     updatedAt: now,
+    validationAuthorizationId: authorizationId,
   };
   const reply: OutboundReply = {
     id: clock.newId(),

@@ -26,6 +26,9 @@ export const mutationIntents = mutations.table("mutation_intents", {
   correlationId: text("correlation_id").notNull(),
   createdAt: at("created_at").notNull(),
   updatedAt: at("updated_at").notNull(),
+  // Step 7B-14G1 (0028): NULL for every ordinary intent; written once at insert, bound by the database in the same
+  // transaction, immutable afterwards (consume trigger). Not in any worker UPDATE grant.
+  validationAuthorizationId: uuid("validation_authorization_id"),
 });
 
 export const mutationIntentHistory = mutations.table("mutation_intent_history", {
