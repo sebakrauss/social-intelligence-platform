@@ -526,6 +526,14 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     policies: ["member_read SELECT authenticated", "member_request INSERT authenticated", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
     privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["SELECT", "UPDATE(confirmed_at)", "UPDATE(provider_reply_id)"] },
   },
+  // Step 7B-14F1 (0028): one-time LIVE validation authorizations. Runtimes only READ (the designated initiator their own;
+  // the bound worker its workspace's); the owner reads and transitions through the intent triggers only; the operator
+  // tooling issues and revokes. No runtime INSERT, UPDATE or DELETE.
+  "mutations.validation_authorizations": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "owner_read SELECT app_owner", "owner_transition UPDATE app_owner", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["SELECT"] },
+  },
   "t26_fixture.conversations": {
     class: "test_fixture",
     policies: ["user_content ALL authenticated", "worker_bound ALL app_worker"],
@@ -624,4 +632,9 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "mutations.initiator_workspace_role(uuid)": ["app_worker"],
   "mutations.workspace_mode_for_execution()": ["app_worker"],
   "mutations.intent_mode_guard()": [],
+  // Step 7B-14F1 (0028): trigger functions only (nobody executes them directly): the authorization's own guard (invoker),
+  // the intent's binding (AFTER INSERT) and consumption at the transition into EXECUTING (BEFORE UPDATE).
+  "mutations.validation_authorization_guard()": [],
+  "mutations.bind_validation_authorization()": [],
+  "mutations.consume_validation_authorization()": [],
 };

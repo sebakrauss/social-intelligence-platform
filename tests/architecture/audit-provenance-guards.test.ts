@@ -153,9 +153,10 @@ describe("H6-C3d: 0020's scope", () => {
     expect(sql.toLowerCase()).not.toMatch(/\b(insert into|update|delete from|truncate|alter table|create table|drop|audit_events_action_check)\b/);
   });
 
-  it("no later migration changes audit policy or vocabulary — except 0027 (Step 7B-1), which widens the vocabulary and extends append_own by the request's event only", () => {
+  it("no later migration changes audit policy or vocabulary — except 0027 (Step 7B-1), which widens the vocabulary and extends append_own by the request's event only; 0028 names no audit object", () => {
     const later = migrationNames().filter((name) => name > M0020);
-    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", M0027]);
+    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", M0027, "0028_mutation_validation_authorizations.sql"]);
+    expect(code("0028_mutation_validation_authorizations.sql").toLowerCase().replace(/--[^\n]*/g, " ")).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
     // 0027's audit statements are exactly: the two exact widenings (drop / add NOT VALID / validate, lint-verified) and
     // the one ALTER POLICY; no audit row is read or written, no audit grant or other audit policy changes.
     const m27 = code(M0027).toLowerCase().replace(/--[^\n]*/g, " ");

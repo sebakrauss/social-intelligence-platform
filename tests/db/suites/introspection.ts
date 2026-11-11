@@ -12,6 +12,7 @@ import { APPLICATION_SCHEMAS, FUNCTION_EXECUTE, RESTRICTIVE_POLICIES, SCHEMA_USA
 import { auditEvents } from "@/modules/audit/persistence";
 import { authorityConflicts, reconciliationRuns, reconciliationSlices, reconciliationWatermarks } from "@/modules/ingestion/persistence";
 import { invitations, organizationMemberships, organizations, workspaceMemberships, workspaces } from "@/modules/tenancy/persistence";
+import { validationAuthorizations } from "@/mutations/persistence/validation-authorizations";
 import { outbox } from "@/platform/db";
 import { privilegedPool, type DbTarget } from "../support/target";
 
@@ -148,7 +149,9 @@ export function defineIntrospectionSuite(getTarget: () => DbTarget): void {
   describe("Drizzle mappings match the migrated tables", () => {
     const mapped: readonly PgTable[] = [organizations, workspaces, organizationMemberships, workspaceMemberships, invitations, auditEvents, outbox,
       // Step H6-C2 (0018): the reconciliation runtime tables.
-      reconciliationRuns, reconciliationSlices, reconciliationWatermarks, authorityConflicts];
+      reconciliationRuns, reconciliationSlices, reconciliationWatermarks, authorityConflicts,
+      // Step 7B-14F1 (0028): the one-time validation authorizations.
+      validationAuthorizations];
     for (const table of mapped) {
       const config = getTableConfig(table);
       it(`${config.schema ?? "public"}.${config.name}`, async () => {

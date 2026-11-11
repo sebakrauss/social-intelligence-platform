@@ -133,3 +133,46 @@ describe("7B-1: the request command and 0027", () => {
     expect(sql).not.toMatch(/grant [^;]*delete|'automation'|'bulk'/);
   });
 });
+
+describe("7B-14F1: the one-time validation authorization foundation (0028) is persistent and inert", () => {
+  const sql = codeOf("db/migrations/0028_mutation_validation_authorizations.sql").toLowerCase().replace(/--[^\n]*/g, " ").replace(/\s+/g, " ");
+
+  it("0028: read-only grants, forced RLS, single use by unique keys, scope by composite keys, triggers only (no EXECUTE)", () => {
+    // Runtimes READ only; nothing else is granted on the table, and no function is granted to anyone.
+    expect([...sql.matchAll(/grant [^;]*;/g)].map((m) => m[0])).toEqual(["grant select on mutations.validation_authorizations to authenticated, app_worker;"]);
+    expect(sql).toMatch(/alter table mutations\.validation_authorizations force row level security/);
+    // At most 2 hours, never open-ended; exactly meta + instagram + reply_public.
+    expect(sql).toMatch(/expires_at timestamptz not null,/);
+    expect(sql).toMatch(/constraint validation_authorizations_lifetime check \(expires_at > issued_at and expires_at <= issued_at \+ interval '2 hours'\)/);
+    expect(sql).toMatch(/provider text not null check \(provider in \('meta'\)\), platform text not null check \(platform in \('instagram'\)\), kind text not null check \(kind in \('reply_public'\)\)/);
+    // One intent per authorization (both sides) and one authorization per intent (one immutable column).
+    expect(sql).toMatch(/create unique index mutation_intents_one_per_validation_authorization on mutations\.mutation_intents \(workspace_id, validation_authorization_id\) where validation_authorization_id is not null/);
+    expect(sql).toMatch(/constraint validation_authorizations_one_intent unique \(workspace_id, intent_id\)/);
+    expect(sql).toMatch(/alter table mutations\.mutation_intents add column validation_authorization_id uuid;/);
+    // Scope coherence: the intent's workspace, account, target, initiator and kind are the authorization's own.
+    expect(sql).toMatch(/foreign key \(workspace_id, validation_authorization_id, connected_account_id, target_interaction_id, initiator_user_id, kind\) references mutations\.validation_authorizations \(workspace_id, id, connected_account_id, target_interaction_id, initiator_user_id, kind\)/);
+    // Binding on insert, consumption on the transition into EXECUTING, the authorization's own guard on every write.
+    expect(sql).toMatch(/create trigger bind_validation_authorization after insert on mutations\.mutation_intents for each row when \(new\.validation_authorization_id is not null\) execute function mutations\.bind_validation_authorization\(\)/);
+    expect(sql).toMatch(/create trigger consume_validation_authorization before update on mutations\.mutation_intents for each row execute function mutations\.consume_validation_authorization\(\)/);
+    expect(sql).toMatch(/create trigger validation_authorization_guard before insert or update or delete on mutations\.validation_authorizations for each row execute function mutations\.validation_authorization_guard\(\)/);
+    // Step 7B-14F2: one consumed authorization per target, for ever (guard + declarative backstop); issuance only under
+    // READ COMMITTED; an authorized intent enters EXECUTING only from PENDING and reaches a provider outcome only consumed.
+    expect(sql).toMatch(/create unique index validation_authorizations_one_consumed_per_target on mutations\.validation_authorizations \(workspace_id, target_interaction_id, kind\) where consumed_at is not null/);
+    expect(sql).toMatch(/if pg_catalog\.current_setting\('transaction_isolation'\) <> 'read committed' then raise exception/);
+    expect(sql).toMatch(/and v\.kind = new\.kind and v\.consumed_at is not null\) then raise exception 'a validation authorization was already consumed for this target'/);
+    expect(sql).toMatch(/if old\.status <> 'pending' then raise exception 'an authorized intent enters executing only from pending'/);
+    expect(sql).toMatch(/if new\.status in \('confirmed', 'failed', 'outcome_unknown'\) and v_auth\.consumed_at is null then raise exception/);
+    // Nothing here touches switches, capability, outbox or tasks.
+    expect(sql).not.toMatch(/operational_switches|capability\.|system\.outbox|provider_action|grant [^;]*(insert|update|delete)/);
+  });
+
+  it("no request, executor, web, job or provider code knows the authorization yet (only its domain type and read adapter)", () => {
+    const knows = sourceFiles(PRODUCTION).filter((file) => /validation_authorization|validationAuthorization|ValidationAuthorization|validation-authorization/.test(strip(codeOf(file))));
+    expect(knows.filter((file) => !file.startsWith("db/"))).toEqual(["mutations/domain/validation-authorization.ts", "mutations/persistence/validation-authorizations.ts"]);
+    // Nothing in production imports either file: no runtime entry point (web, executor, job) reaches the foundation yet.
+    const importers = sourceFiles(PRODUCTION).filter((file) => importsOf(file).some((specifier) => /validation-authorization/.test(specifier)));
+    expect(importers).toEqual(["mutations/persistence/validation-authorizations.ts"]);
+    // The intent mapping the request and executor use does not name the binding column (it stays NULL on their writes).
+    expect(strip(codeOf("mutations/persistence/tables.ts"))).not.toMatch(/validation/i);
+  });
+});

@@ -194,9 +194,10 @@ describe("H6-F4d: confirm marks", () => {
     expect(PRODUCTION_TASKS.tasks.find((task) => task.name === "ingestion.purge_provider_events")?.executionPlane).toBe("main");
   });
 
-  it("no H6 migration after 0023: the later ones are H7's classification (0024), intelligence (0025) and call-intent (0026) persistence and 7B-1's mutation intents (0027), which name no ingestion object", () => {
+  it("no H6 migration after 0023: the later ones are H7's classification (0024), intelligence (0025) and call-intent (0026) persistence and 7B-1's mutation intents (0027) and 7B-14F1's validation authorizations (0028), which name no ingestion object", () => {
     const migrations = readdirSync("db/migrations").filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql"]);
+    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql"]);
+    expect(readFileSync("db/migrations/0028_mutation_validation_authorizations.sql", "utf8").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|signal_marks|process_signals|system\./);
     expect(readFileSync("db/migrations/0026_ai_call_intents.sql", "utf8").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|signal_marks|process_signals|system\./);
     expect(readFileSync("db/migrations/0027_mutation_intents.sql", "utf8").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|signal_marks|process_signals|system\./);
     const later = readFileSync("db/migrations/0024_classification_persistence.sql", "utf8").replace(/--[^\n]*/g, " ");
