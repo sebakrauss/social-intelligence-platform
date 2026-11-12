@@ -41,7 +41,7 @@ function credentials(stores: MemoryStores): CredentialUse {
   return {
     withAccess: (_input, use) => {
       stores.calls.push("credential:open");
-      return use(sim.access("cred_meta_main", SIM_ASSET));
+      return use(sim.access("cred_meta_main", SIM_ASSET), { credentialId: "cred-1" });
     },
   };
 }

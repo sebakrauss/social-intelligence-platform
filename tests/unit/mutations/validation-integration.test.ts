@@ -26,13 +26,15 @@ import { createMetaGraphWriteTransport, type MetaGraphFetch } from "@/integratio
 import { createMetaMutationPort } from "@/integrations/providers/meta/mutation-port";
 import {
   VALIDATION_AUTHORIZATION_OPERATION,
+  decideFinalSend,
   decideValidationAdmission,
+  type FinalSendInput,
   validationNoLongerAdmits,
   type ValidationAdmissionInput,
   type ValidationAuthorization,
   type ValidationAuthorizationReading,
 } from "@/mutations/domain/validation-authorization";
-import { CredentialUnreadable, executeIntent, type ExecutorDependencies, type ExecutorStores } from "@/mutations/executor/execute";
+import { CredentialUnreadable, ROLES_WITH_PUBLIC_REPLY, executeIntent, type ExecutorDependencies, type ExecutorStores } from "@/mutations/executor/execute";
 import type { CredentialUse, OutboundReply, ProviderActionDecision, ValidationExecutionReads } from "@/mutations/ports";
 import { requestPublicReply, type PublicReplyRequest } from "@/mutations/request";
 import { ACCOUNT, CORRELATION, ORGANIZATION, OTHER_WORKSPACE, TARGET, USER, WORKSPACE, fixedClock, guardState, memoryStores, pendingIntent, replyTarget, statusesOf, type MemoryStores } from "./support";
@@ -153,11 +155,13 @@ interface ValidationState {
   pending: boolean;
   consumedElsewhere: boolean;
   credentialReady: boolean;
+  /** The account's authorized credential id NOW (null: none is); the fake opener opens "cred-1". */
+  activeCredential: string | null;
   providerAction: ProviderActionDecision[];
 }
 
 function igStores(state: Partial<ValidationState> = {}, options: { readonly withValidation?: boolean; readonly capability?: "AVAILABLE" | "UNAVAILABLE" } = {}) {
-  const v: ValidationState = { reading: undefined, pending: true, consumedElsewhere: false, credentialReady: true, providerAction: ["not_enabled"], ...state };
+  const v: ValidationState = { reading: undefined, pending: true, consumedElsewhere: false, credentialReady: true, activeCredential: "cred-1", providerAction: ["not_enabled"], ...state };
   const stores: MemoryStores = memoryStores(
     guardState({ capability: options.capability ?? "UNAVAILABLE", account: { status: "ACTIVE", platform: "instagram", provider: "meta", providerAssetId: IG_ASSET, connectionStatus: "ACTIVE", credentialId: "cred-1" } }),
     [replyTarget({ platform: "instagram", providerInteractionId: IG_COMMENT, providerAssetId: IG_ASSET, kind: "comment", parentProviderInteractionId: null })],
@@ -172,13 +176,21 @@ function igStores(state: Partial<ValidationState> = {}, options: { readonly with
     authorization: (workspaceId, id) => {
       stores.calls.push("validation:read");
       const current = v.reading;
-      return Promise.resolve(current !== undefined && current.authorization.workspaceId === workspaceId && current.authorization.id === id ? current : undefined);
+      if (current === undefined || current.authorization.workspaceId !== workspaceId || current.authorization.id !== id) return Promise.resolve(undefined);
+      // As 0028's consume trigger does: the transition of its bound intent into EXECUTING spends it (write-once).
+      const bound = current.authorization.intentId;
+      const consumed = bound !== null && stores.history.some((h) => h.intentId === bound && h.to === "EXECUTING");
+      return Promise.resolve(consumed && current.authorization.consumedAt === null ? { ...current, authorization: { ...current.authorization, consumedAt: now } } : current);
     },
     catalogValidationPending: () => Promise.resolve(v.pending),
     consumedElsewhere: () => Promise.resolve(v.consumedElsewhere),
     credentialReady: () => {
       stores.calls.push("validation:credential_ready");
       return Promise.resolve(v.credentialReady);
+    },
+    activeCredential: () => {
+      stores.calls.push("validation:active_credential");
+      return Promise.resolve(v.activeCredential === null ? undefined : { credentialId: v.activeCredential, platform: "instagram", providerAssetId: IG_ASSET });
     },
   };
   const composed: MemoryStores & ExecutorStores = Object.assign(stores, { guards, ...(options.withValidation === false ? {} : { validation }) });
@@ -215,7 +227,7 @@ function deps(stores: ExecutorStores & MemoryStores, clock: ReturnType<typeof fi
       withAccess: (input, use) => {
         opened.push(input.connectedAccountId);
         stores.calls.push("credential:open");
-        return use({ credential: providerCredential("cred-synthetic", "synthetic-user-token"), account: providerObjectRef("instagram", "asset", IG_ASSET) });
+        return use({ credential: providerCredential("cred-synthetic", "synthetic-user-token"), account: providerObjectRef("instagram", "asset", IG_ASSET) }, { credentialId: "cred-1" });
       },
     },
     providers: { mutation: (provider, platform) => (provider === "meta" && platform === "instagram" ? port : undefined) },
@@ -583,5 +595,212 @@ describe("7B-14G1: the executor honours a bound authorization only within its bo
     const rejected = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
     expect(rejected?.reason).toBeInstanceOf(Error);
     expect((rejected?.reason as Error).message).toMatch(/incoherent transition/);
+  });
+});
+
+// ── 4 · Step 7B-14H1: the final gate AFTER the key service opened the credential, BEFORE the request leaves ──────────
+describe("7B-14H1: decideFinalSend is the one, fail-closed last decision", () => {
+  const INTENT = "e1e2e3e4-5f60-4a7b-8c9d-0e1f2a3b4c5d";
+  const base = (): FinalSendInput => ({
+    expected: { intentId: INTENT, organizationId: ORGANIZATION, workspaceId: WORKSPACE, connectedAccountId: ACCOUNT, targetInteractionId: TARGET, initiatorUserId: USER, validationAuthorizationId: AUTHORIZATION, attempt: 1, runReference: RUN, accountPlatform: "instagram" },
+    current: { status: "EXECUTING", attempt: 1, runReference: RUN, validationAuthorizationId: AUTHORIZATION },
+    reading: reading({ intentId: INTENT, boundAt: now, consumedAt: now }),
+    consumedElsewhere: false,
+    initiatorRole: "RESPONDER",
+    replyingRoles: ROLES_WITH_PUBLIC_REPLY,
+    mode: "STANDARD",
+    account: { status: "ACTIVE", platform: "instagram", provider: "meta", providerAssetId: IG_ASSET, connectionStatus: "ACTIVE", credentialId: "cred-1" },
+    providerAction: "not_enabled",
+    target: { present: true, replyable: true, connectedAccountId: ACCOUNT, workspaceId: WORKSPACE, platform: "instagram" },
+    capability: { usable: false, catalogValidationPending: true },
+    credential: { opened: { credentialId: "cred-1", platform: "instagram", providerAssetId: IG_ASSET }, active: { credentialId: "cred-1", platform: "instagram", providerAssetId: IG_ASSET } },
+  });
+  const decide = (change: (input: FinalSendInput) => FinalSendInput) => decideFinalSend(change(base()));
+
+  it("sends only with every live read coherent; a missing grant is stood in for, an exact grant too", () => {
+    expect(decideFinalSend(base())).toEqual({ kind: "send" });
+    expect(decide((i) => ({ ...i, providerAction: "allowed" }))).toEqual({ kind: "send" });
+    expect(decide((i) => ({ ...i, capability: { usable: true, catalogValidationPending: false } }))).toEqual({ kind: "send" });
+    // Before opening (no credential part) the same chain decides.
+    const { credential, ...beforeOpen } = base();
+    expect(credential).toBeDefined();
+    expect(decideFinalSend(beforeOpen)).toEqual({ kind: "send" });
+  });
+
+  it("(7, X1) a row that is no longer exactly this run's EXECUTING is never sent and never recorded", () => {
+    for (const current of [undefined, { status: "OUTCOME_UNKNOWN", attempt: 1, runReference: RUN, validationAuthorizationId: AUTHORIZATION }, { status: "EXECUTING", attempt: 2, runReference: RUN, validationAuthorizationId: AUTHORIZATION }, { status: "EXECUTING", attempt: 1, runReference: "run_other", validationAuthorizationId: AUTHORIZATION }, { status: "EXECUTING", attempt: 1, runReference: RUN, validationAuthorizationId: OTHER }]) {
+      expect(decide((i) => ({ ...i, current }))).toEqual({ kind: "not_this_run" });
+    }
+  });
+
+  it.each([
+    ["the authorization unreadable", (i: FinalSendInput): FinalSendInput => ({ ...i, reading: undefined }), "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+    ["the authorization not consumed (incoherent with EXECUTING)", (i: FinalSendInput) => ({ ...i, reading: reading({ intentId: INTENT, boundAt: now }) }), "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+    ["the authorization bound to another intent", (i: FinalSendInput) => ({ ...i, reading: reading({ intentId: OTHER, boundAt: now, consumedAt: now }) }), "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+    ["the authorization revoked", (i: FinalSendInput) => ({ ...i, reading: reading({ intentId: INTENT, boundAt: now, consumedAt: now, revokedAt: now, revokedBy: "ops.synthetic", revocationReason: "test" }) }), "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+    ["the authorization expired (database verdict)", (i: FinalSendInput) => ({ ...i, reading: reading({ intentId: INTENT, boundAt: now, consumedAt: now }, true) }), "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+    ["the authorization for another initiator", (i: FinalSendInput) => ({ ...i, reading: reading({ intentId: INTENT, boundAt: now, consumedAt: now, initiatorUserId: OTHER }) }), "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+    ["the target validated by another authorization", (i: FinalSendInput) => ({ ...i, consumedElsewhere: true }), "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+    ["(4) the initiator no longer a member", (i: FinalSendInput) => ({ ...i, initiatorRole: undefined }), "INITIATOR_NOT_MEMBER"],
+    ["(4) the initiator lost the replying role", (i: FinalSendInput) => ({ ...i, initiatorRole: "ANALYST_VIEWER" }), "PERMISSION_DENIED"],
+    ["(1) the workspace Monitor-only", (i: FinalSendInput) => ({ ...i, mode: "MONITOR_ONLY" as const }), "MODE_NOT_STANDARD"],
+    ["the workspace mode unreadable", (i: FinalSendInput) => ({ ...i, mode: undefined }), "MODE_NOT_STANDARD"],
+    ["(5) the account inactive", (i: FinalSendInput) => ({ ...i, account: i.account === undefined ? undefined : { ...i.account, status: "INACTIVE" } }), "ACCOUNT_INACTIVE"],
+    ["(5) the account gone", (i: FinalSendInput) => ({ ...i, account: undefined }), "ACCOUNT_INACTIVE"],
+    ["(2, 3) a pause or the emergency block (never stood in for)", (i: FinalSendInput) => ({ ...i, providerAction: "paused" as const }), "PROVIDER_ACTIONS_DISABLED"],
+    ["(5) the connection degraded", (i: FinalSendInput) => ({ ...i, account: i.account === undefined ? undefined : { ...i.account, connectionStatus: "DEGRADED" } }), "CONNECTION_UNAVAILABLE"],
+    ["the target hidden or gone", (i: FinalSendInput) => ({ ...i, target: undefined }), "TARGET_NOT_PRESENT"],
+    ["the target no longer replyable", (i: FinalSendInput) => ({ ...i, target: i.target === undefined ? undefined : { ...i.target, replyable: false } }), "TARGET_NOT_REPLYABLE"],
+    ["a capability state other than the catalog's pending validation", (i: FinalSendInput) => ({ ...i, capability: { usable: false, catalogValidationPending: false } }), "CAPABILITY_UNAVAILABLE"],
+    ["(6) the credential replaced after it was opened", (i: FinalSendInput) => ({ ...i, credential: { opened: { credentialId: "cred-1", platform: "instagram", providerAssetId: IG_ASSET }, active: { credentialId: "cred-2", platform: "instagram", providerAssetId: IG_ASSET } } }), "CREDENTIAL_UNREADABLE"],
+    ["(6) the credential no longer authorized (removed, its connection or account no longer ACTIVE)", (i: FinalSendInput) => ({ ...i, credential: { opened: { credentialId: "cred-1", platform: "instagram", providerAssetId: IG_ASSET }, active: undefined } }), "CREDENTIAL_UNREADABLE"],
+    ["(6) the opener did not say which credential it opened", (i: FinalSendInput) => ({ ...i, credential: { opened: { credentialId: undefined, platform: "instagram", providerAssetId: IG_ASSET }, active: { credentialId: "cred-1", platform: "instagram", providerAssetId: IG_ASSET } } }), "CREDENTIAL_UNREADABLE"],
+    ["the opened credential names another account", (i: FinalSendInput) => ({ ...i, credential: { opened: { credentialId: "cred-1", platform: "instagram", providerAssetId: "17841400000000002" }, active: { credentialId: "cred-1", platform: "instagram", providerAssetId: IG_ASSET } } }), "TARGET_ACCOUNT_MISMATCH"],
+  ] as const)("%s → refuse %s", (_name, change, code) => {
+    expect(decide(change)).toEqual({ kind: "refuse", code });
+  });
+});
+
+describe("7B-14H1: the executor re-checks after the credential is opened and before the ONE POST", () => {
+  const bound = (intentId: string) => reading({ intentId, boundAt: now });
+  /** A credential use whose key service hands the credential over, then `between` runs, then the executor's callback. */
+  const opening = (stores: MemoryStores, opened: string[], between: () => void | Promise<void>, credentialId = "cred-1"): CredentialUse => ({
+    withAccess: async (input, use) => {
+      opened.push(input.connectedAccountId);
+      stores.calls.push("credential:open");
+      await between();
+      return use({ credential: providerCredential("cred-synthetic", "synthetic-user-token"), account: providerObjectRef("instagram", "asset", IG_ASSET) }, { credentialId });
+    },
+  });
+
+  it.each([
+    ["(1) the workspace turns Monitor-only", "MODE_NOT_STANDARD"],
+    ["(2) an exact provider-action pause", "PROVIDER_ACTIONS_DISABLED"],
+    ["(4) the initiator loses the replying role", "PERMISSION_DENIED"],
+    ["(4) the initiator leaves the workspace", "INITIATOR_NOT_MEMBER"],
+    ["(5) the account is deactivated", "ACCOUNT_INACTIVE"],
+    ["(5) the connection degrades", "CONNECTION_UNAVAILABLE"],
+    ["(6) the credential is replaced", "CREDENTIAL_UNREADABLE"],
+    ["(6) the credential is invalidated (no authorized credential)", "CREDENTIAL_UNREADABLE"],
+    ["the comment is hidden", "TARGET_NOT_PRESENT"],
+  ] as const)("%s between the key service and the POST → BLOCKED %s: ZERO POSTs, consumed, never re-armed", async (name, code) => {
+    const { stores, v } = igStores({ providerAction: name.includes("pause") ? ["not_enabled", "not_enabled", "paused"] : ["not_enabled"] });
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const opened: string[] = [];
+    const change = (): void => {
+      const s = stores.guardState;
+      const account = s.account;
+      if (name.includes("Monitor-only")) s.mode = "MONITOR_ONLY";
+      if (name.includes("loses")) s.role = "ANALYST_VIEWER";
+      if (name.includes("leaves")) s.role = undefined;
+      if (name.includes("deactivated") && account !== undefined) s.account = { ...account, status: "INACTIVE" };
+      if (name.includes("degrades") && account !== undefined) s.account = { ...account, connectionStatus: "DEGRADED" };
+      if (name.includes("replaced")) v.activeCredential = "cred-2";
+      if (name.includes("invalidated")) v.activeCredential = null;
+      if (name.includes("hidden")) stores.targetRows.set(TARGET, { ...(stores.targetRows.get(TARGET) as NonNullable<ReturnType<typeof stores.targetRows.get>>), presence: "hidden" });
+    };
+    const meta = metaHarness();
+    expect(await executeIntent(deps(stores, clock, meta.port, { credentials: opening(stores, opened, change) }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code });
+    expect(meta.posts).toEqual([]);
+    expect(opened).toHaveLength(1);
+    expect(statusesOf(stores)).toEqual(["PENDING", "EXECUTING", "BLOCKED"]);
+    expect(intentOf(stores, intent.id)).toMatchObject({ status: "BLOCKED", attempt: 1, outcomeCode: code });
+    // The refusal is recorded AFTER the credential was opened (the second gate), never before.
+    expect(stores.calls.indexOf("credential:open")).toBeLessThan(stores.calls.lastIndexOf("transition:BLOCKED"));
+    // Nothing ever sends it again.
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: "run_redelivered" })).toEqual({ kind: "noop", status: "BLOCKED" });
+    expect(meta.posts).toEqual([]);
+  });
+
+  it("(7, X1) attempt or run reference rewritten between the key service and the POST → nothing sent, nothing recorded", async () => {
+    for (const rewrite of [{ runReference: "run_forged" }, { attempt: 2 }]) {
+      const { stores, v } = igStores();
+      const { intent, clock } = seed(stores);
+      v.reading = bound(intent.id);
+      const opened: string[] = [];
+      const key = `${WORKSPACE}:${intent.id}`;
+      const meta = metaHarness();
+      const result = await executeIntent(deps(stores, clock, meta.port, { credentials: opening(stores, opened, () => { stores.intentRows.set(key, { ...(stores.intentRows.get(key) as NonNullable<ReturnType<typeof stores.intentRows.get>>), ...rewrite }); }) }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN });
+      expect(result).toEqual({ kind: "noop", status: "EXECUTING" });
+      expect([meta.posts, opened.length]).toEqual([[], 1]);
+      expect(statusesOf(stores)).toEqual(["PENDING", "EXECUTING"]);
+    }
+  });
+
+  it("(8) a database failure DURING the final check fails closed: no POST, no refusal recorded, the original error; the row stays for reconciliation and a redelivery sends nothing", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const failure = new Error("connection terminated unexpectedly");
+    let scopes = 0;
+    const inScope: ExecutorDependencies["inScope"] = (work) => {
+      scopes += 1;
+      // Scope 3 = the gate after opening: a read inside it fails.
+      if (scopes === 3) return work({ ...stores, guards: { ...stores.guards, workspaceMode: () => Promise.reject(failure) } });
+      return work(stores);
+    };
+    const meta = metaHarness();
+    const opened: string[] = [];
+    await expect(executeIntent(deps(stores, clock, meta.port, { inScope, opened }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).rejects.toBe(failure);
+    expect([meta.posts, opened.length]).toEqual([[], 1]);
+    // Never a fictitious refusal, never an OUTCOME_UNKNOWN for a request that did not leave, never PENDING again.
+    expect(statusesOf(stores)).toEqual(["PENDING", "EXECUTING"]);
+    expect(intentOf(stores, intent.id)).toMatchObject({ status: "EXECUTING", attempt: 1, runReference: RUN, outcomeCode: null });
+    expect(await executeIntent(deps(stores, clock, meta.port), { workspaceId: WORKSPACE, intentId: intent.id, runReference: "run_redelivered" })).toEqual({ kind: "outcome_unknown", code: "RUN_INTERRUPTED" });
+    expect(meta.posts).toEqual([]);
+  });
+
+  it("(9) the key service fails → BLOCKED CREDENTIAL_UNREADABLE before any POST and before the second gate; consumed, never re-armed", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const meta = metaHarness();
+    const kmsDown: CredentialUse = { withAccess: () => Promise.reject(new CredentialUnreadable()) };
+    expect(await executeIntent(deps(stores, clock, meta.port, { credentials: kmsDown }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "blocked", code: "CREDENTIAL_UNREADABLE" });
+    expect(meta.posts).toEqual([]);
+    expect(stores.calls).not.toContain("validation:active_credential");
+    expect(statusesOf(stores)).toEqual(["PENDING", "EXECUTING", "BLOCKED"]);
+  });
+
+  it("(10, 11, 12) a valid credential and every control intact → exactly ONE POST after the second gate; neither a redelivery nor an OUTCOME_UNKNOWN ever sends again", async () => {
+    const { stores, v } = igStores();
+    const { intent, clock } = seed(stores);
+    v.reading = bound(intent.id);
+    const meta = metaHarness();
+    const opened: string[] = [];
+    let postsAtGate = -1;
+    const credentials = opening(stores, opened, () => undefined);
+    const original = stores.validation as ValidationExecutionReads;
+    const watched: ExecutorStores & MemoryStores = Object.assign(stores, { validation: { ...original, activeCredential: (w: string, a: string) => { postsAtGate = meta.posts.length; return original.activeCredential(w, a); } } });
+    expect(await executeIntent(deps(watched, clock, meta.port, { credentials }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "confirmed", providerReplyId: IG_REPLY });
+    expect(postsAtGate).toBe(0);
+    expect(meta.posts).toHaveLength(1);
+    expect(await executeIntent(deps(watched, clock, meta.port, { credentials }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "noop", status: "CONFIRMED" });
+
+    const lost = igStores();
+    const seeded = seed(lost.stores);
+    lost.v.reading = bound(seeded.intent.id);
+    const lostMeta = metaHarness("lost");
+    expect(await executeIntent(deps(lost.stores, seeded.clock, lostMeta.port), { workspaceId: WORKSPACE, intentId: seeded.intent.id, runReference: RUN })).toEqual({ kind: "outcome_unknown", code: "RESPONSE_LOST" });
+    for (const run of [RUN, "run_redelivered"]) {
+      expect(await executeIntent(deps(lost.stores, seeded.clock, lostMeta.port), { workspaceId: WORKSPACE, intentId: seeded.intent.id, runReference: run })).toEqual({ kind: "noop", status: "OUTCOME_UNKNOWN" });
+    }
+    expect(lostMeta.posts).toHaveLength(1);
+  });
+
+  it("(13) an ordinary intent (no authorization) is unchanged: admit, open, ONE call, finish — no gate, no validation read", async () => {
+    const { stores } = igStores({ providerAction: ["allowed"] }, { capability: "AVAILABLE" });
+    const { intent, clock } = seed(stores, { validationAuthorizationId: null });
+    let scopes = 0;
+    const inScope: ExecutorDependencies["inScope"] = (work) => {
+      scopes += 1;
+      return work(stores);
+    };
+    const meta = metaHarness();
+    expect(await executeIntent(deps(stores, clock, meta.port, { inScope }), { workspaceId: WORKSPACE, intentId: intent.id, runReference: RUN })).toEqual({ kind: "confirmed", providerReplyId: IG_REPLY });
+    expect(scopes).toBe(2);
+    expect(meta.posts).toHaveLength(1);
+    expect(stores.calls.filter((c) => c.startsWith("validation:"))).toEqual([]);
   });
 });

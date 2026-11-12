@@ -143,7 +143,7 @@ function harness(setup: Setup = {}) {
         if (setup.credential === "unreadable") return Promise.reject(new CredentialUnreadable());
         opened.push(input.connectedAccountId);
         stores.calls.push("credential:open");
-        return use(access);
+        return use(access, { credentialId: "cred-1" });
       },
     },
     providers: selectMutationPorts({ simulator: undefined, instagram }),

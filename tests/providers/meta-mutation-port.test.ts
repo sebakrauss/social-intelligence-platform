@@ -299,7 +299,7 @@ describe("integration — executor + Meta Instagram port (fake fetch, in-memory 
     const opened: string[] = [];
     const deps: ExecutorDependencies = {
       inScope: (work) => work(stores),
-      credentials: { withAccess: (input, use) => { opened.push(input.connectedAccountId); return use(access); } },
+      credentials: { withAccess: (input, use) => { opened.push(input.connectedAccountId); return use(access, { credentialId: "cred-1" }); } },
       providers: { mutation: (provider) => (provider === "meta" ? port : undefined) },
       clock,
     };

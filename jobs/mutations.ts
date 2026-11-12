@@ -49,7 +49,8 @@ export function credentialUse(context: Pick<TenantStepJobContext, "inScope">, ac
         return await access.withCredential({ workspaceId: authority.workspaceId, credentialId: authority.credentialId, envelope: authority.envelope }, (credential) => {
           progress.opened = true;
           const providerAccess: ProviderAccess = { credential, account };
-          return use(providerAccess);
+          // Step 7B-14H1: the opened credential's identity (identifiers only) for the executor's final gate.
+          return use(providerAccess, { credentialId: authority.credentialId });
         });
       } catch (error) {
         // Only a failure BEFORE the provider call is about the credential; a provider error passes through untouched.

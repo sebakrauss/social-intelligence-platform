@@ -183,6 +183,128 @@ export function validationNoLongerAdmits(reading: ValidationAuthorizationReading
   return authorization.revokedAt !== null || reading.expired || authorization.consumedAt !== null || authorization.intentId !== intentId || consumedElsewhere;
 }
 
+/**
+ * Step 7B-14H1 (PRE-LIVE-1) — what the executor read, in ONE short transaction, immediately before the ONE provider call
+ * of an AUTHORIZED intent. It runs twice: before the credential is opened ("before_open") and again after the key
+ * service handed the credential over and before the request leaves ("after_open", with the opened credential's identity).
+ */
+export interface FinalSendInput {
+  /** What THIS run committed EXECUTING (the intent as admitted). */
+  readonly expected: {
+    readonly intentId: string;
+    readonly organizationId: string;
+    readonly workspaceId: string;
+    readonly connectedAccountId: string;
+    readonly targetInteractionId: string;
+    readonly initiatorUserId: string;
+    readonly validationAuthorizationId: string;
+    readonly attempt: number;
+    readonly runReference: string;
+    /** The account platform the operational authorization was asked for at admit. */
+    readonly accountPlatform: string;
+  };
+  /** The intent row as locked now; undefined when it is gone. */
+  readonly current: { readonly status: string; readonly attempt: number; readonly runReference: string | null; readonly validationAuthorizationId: string | null } | undefined;
+  readonly reading: ValidationAuthorizationReading | undefined;
+  readonly consumedElsewhere: boolean;
+  readonly initiatorRole: string | undefined;
+  readonly replyingRoles: ReadonlySet<string>;
+  readonly mode: "STANDARD" | "MONITOR_ONLY" | undefined;
+  readonly account: { readonly status: string; readonly platform: string; readonly provider: string; readonly providerAssetId: string; readonly connectionStatus: string; readonly credentialId: string | null } | undefined;
+  readonly providerAction: "allowed" | "not_enabled" | "paused";
+  /** The persisted target as the executor's guards judge it (undefined: gone or invisible). */
+  readonly target: { readonly present: boolean; readonly replyable: boolean; readonly connectedAccountId: string; readonly workspaceId: string; readonly platform: string } | undefined;
+  readonly capability: { readonly usable: boolean; readonly catalogValidationPending: boolean };
+  /**
+   * "after_open" only: the identity of the credential the key service opened for THIS call, and the account's credential
+   * as it is authorized NOW (the active credential of an ACTIVE connection and account).
+   */
+  readonly credential?: {
+    readonly opened: { readonly credentialId: string | undefined; readonly platform: string; readonly providerAssetId: string };
+    readonly active: { readonly credentialId: string; readonly platform: string; readonly providerAssetId: string } | undefined;
+  };
+}
+
+/** X1: the locked row is still exactly what THIS run committed — EXECUTING, same attempt, run reference and authorization. */
+export function isThisRunsExecution(expected: Pick<FinalSendInput["expected"], "attempt" | "runReference" | "validationAuthorizationId">, current: FinalSendInput["current"]): boolean {
+  return current !== undefined && current.status === "EXECUTING" && current.attempt === expected.attempt && current.runReference === expected.runReference && current.validationAuthorizationId === expected.validationAuthorizationId;
+}
+
+/** The closed BLOCKED codes a final refusal records (existing vocabulary only: nothing new is invented here). */
+export type FinalSendRefusal =
+  | "VALIDATION_AUTHORIZATION_UNAVAILABLE"
+  | "INITIATOR_NOT_MEMBER"
+  | "PERMISSION_DENIED"
+  | "MODE_NOT_STANDARD"
+  | "ACCOUNT_INACTIVE"
+  | "PROVIDER_ACTIONS_DISABLED"
+  | "CONNECTION_UNAVAILABLE"
+  | "TARGET_NOT_PRESENT"
+  | "TARGET_NOT_REPLYABLE"
+  | "TARGET_ACCOUNT_MISMATCH"
+  | "CAPABILITY_UNAVAILABLE"
+  | "CREDENTIAL_UNREADABLE";
+
+export type FinalSendDecision = { readonly kind: "send" } | { readonly kind: "not_this_run" } | { readonly kind: "refuse"; readonly code: FinalSendRefusal };
+
+/**
+ * Step 7B-14H1 (PRE-LIVE-1) — the last decision before the ONE provider call of an AUTHORIZED intent. Pure, fail-closed.
+ *   not_this_run  the row is no longer exactly what this run committed (status EXECUTING, attempt, run reference,
+ *                 authorization): another run or a rewrite touched it — nothing is sent, nothing is recorded (the row is
+ *                 left to reconciliation; X1);
+ *   refuse        a CONFIRMED prohibition read now: the authorization is no longer this intent's consumed, unrevoked,
+ *                 unexpired one for exactly this scope; the initiator lost the replying role; the workspace left
+ *                 Standard; the account, its connection or the target is no longer eligible; a pause or the emergency
+ *                 block applies (never stood in for: only "not_enabled" is); the capability is unusable for any reason
+ *                 other than the catalog's pending validation; or (after_open) the opened credential is no longer the
+ *                 account's authorized credential (replaced, removed, its connection or account no longer ACTIVE), or
+ *                 names another account;
+ *   send          nothing above.
+ * It decides nothing about an unreadable state: a read that FAILED never reaches this function (the caller fails
+ * closed without recording a refusal).
+ */
+export function decideFinalSend(input: FinalSendInput): FinalSendDecision {
+  const refuse = (code: FinalSendRefusal): FinalSendDecision => ({ kind: "refuse", code });
+  const { expected } = input;
+  if (!isThisRunsExecution(expected, input.current)) return { kind: "not_this_run" };
+  // The authorization: this intent's, consumed by THIS EXECUTING commit, never revoked, not expired (database clock),
+  // exactly this operation and scope, and its target validated by no other authorization.
+  const { provider, platform, kind } = VALIDATION_AUTHORIZATION_OPERATION;
+  const reading = input.reading;
+  if (reading === undefined) return refuse("VALIDATION_AUTHORIZATION_UNAVAILABLE");
+  const a = reading.authorization;
+  if (a.id !== expected.validationAuthorizationId || (a.provider as string) !== provider || (a.platform as string) !== platform || (a.kind as string) !== kind) return refuse("VALIDATION_AUTHORIZATION_UNAVAILABLE");
+  if (a.workspaceId !== expected.workspaceId || a.organizationId !== expected.organizationId || a.connectedAccountId !== expected.connectedAccountId || a.targetInteractionId !== expected.targetInteractionId || a.initiatorUserId !== expected.initiatorUserId) {
+    return refuse("VALIDATION_AUTHORIZATION_UNAVAILABLE");
+  }
+  if (a.intentId !== expected.intentId || a.boundAt === null || a.consumedAt === null || a.revokedAt !== null || reading.expired || input.consumedElsewhere) return refuse("VALIDATION_AUTHORIZATION_UNAVAILABLE");
+  // The initiator, the workspace mode, the account.
+  if (input.initiatorRole === undefined) return refuse("INITIATOR_NOT_MEMBER");
+  if (!input.replyingRoles.has(input.initiatorRole)) return refuse("PERMISSION_DENIED");
+  if (input.mode !== "STANDARD") return refuse("MODE_NOT_STANDARD");
+  const account = input.account;
+  if (account === undefined || account.status !== "ACTIVE") return refuse("ACCOUNT_INACTIVE");
+  if (account.provider !== provider || account.platform !== platform || account.platform !== expected.accountPlatform) return refuse("VALIDATION_AUTHORIZATION_UNAVAILABLE");
+  // A pause or the emergency block always vetoes; only a missing grant is stood in for by the authorization.
+  if (input.providerAction === "paused") return refuse("PROVIDER_ACTIONS_DISABLED");
+  if (account.connectionStatus !== "ACTIVE" || account.credentialId === null) return refuse("CONNECTION_UNAVAILABLE");
+  // The target, as persisted now.
+  const target = input.target;
+  if (target === undefined || !target.present) return refuse("TARGET_NOT_PRESENT");
+  if (!target.replyable) return refuse("TARGET_NOT_REPLYABLE");
+  if (target.connectedAccountId !== expected.connectedAccountId || target.workspaceId !== expected.workspaceId || target.platform !== platform) return refuse("TARGET_ACCOUNT_MISMATCH");
+  if (!input.capability.usable && !input.capability.catalogValidationPending) return refuse("CAPABILITY_UNAVAILABLE");
+  // After the key service handed the credential over: it must still be the account's authorized credential.
+  if (input.credential !== undefined) {
+    const { opened, active } = input.credential;
+    if (active === undefined || opened.credentialId === undefined || opened.credentialId !== active.credentialId || opened.credentialId !== account.credentialId) return refuse("CREDENTIAL_UNREADABLE");
+    if (opened.platform !== active.platform || opened.providerAssetId !== active.providerAssetId || active.providerAssetId !== account.providerAssetId || active.platform !== account.platform) {
+      return refuse("TARGET_ACCOUNT_MISMATCH");
+    }
+  }
+  return { kind: "send" };
+}
+
 export function isValidationAuthorizationIssueReason(value: unknown): value is ValidationAuthorizationIssueReason {
   return typeof value === "string" && (VALIDATION_AUTHORIZATION_ISSUE_REASONS as readonly string[]).includes(value);
 }

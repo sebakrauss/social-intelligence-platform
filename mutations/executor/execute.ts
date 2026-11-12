@@ -27,9 +27,14 @@
  *     consume trigger raises — or a second consumption for the target — the unique index raises): a NEW transaction
  *     re-reads, and records BLOCKED only when the database now shows the authorization no longer admits the intent;
  *     anything else is re-thrown untouched (never a fictitious revocation), and the intent stays PENDING (F, X2);
- *   - after EXECUTING, immediately before the credential is opened and the provider called: one short transaction
- *     re-checks that the row is still exactly this run's EXECUTING (attempt and run reference — X1), that no pause or
- *     emergency block now applies, and that the workspace is still Standard (PRE-LIVE-1). Otherwise nothing is sent.
+ *   - after EXECUTING, twice — before the credential is opened, and (Step 7B-14H1) again after the key service handed it
+ *     over and before the request leaves — one short transaction re-checks the whole chain on live reads (sendGate): the
+ *     row is still exactly this run's EXECUTING (X1), the authorization this intent's consumed one, the initiator, the
+ *     mode, the account and connection, no pause or emergency block, the target, the capability and (after opening)
+ *     the opened credential still the account's authorized one (PRE-LIVE-1). Otherwise nothing is sent. A check that
+ *     cannot be completed fails closed: no call and no recorded refusal (the row stays for reconciliation).
+ *     Residual (cannot be closed without holding a transaction across the HTTP call): a change committed after the
+ *     second gate's reads, while the request is leaving, does not recall it.
  * Consumption is the 0028 trigger's, in the EXECUTING transaction; once consumed it is never re-armed: an uncertain
  * outcome stays OUTCOME_UNKNOWN (reconciliation looks, never resends), and nothing returns an intent to PENDING.
  */
@@ -47,8 +52,8 @@ import {
 import { providerObjectRef } from "@/integrations/providers/contract/identity";
 import { isPlatformKey } from "@/domain/platforms";
 import { assertTransition, publicReplyDepthAllowed, type IntentOutcomeCode, type IntentStatus, type MutationIntent, OUTCOME_STATUS } from "../domain/intent";
-import { decideValidationAdmission, validationNoLongerAdmits } from "../domain/validation-authorization";
-import type { CredentialUse, ExecutionGuards, IntentStore, MutationClock, MutationProviders, OutboundReply, OutboundReplyStore, ProviderActionDecision, ReplyTarget, ReplyTargets, ValidationExecutionReads } from "../ports";
+import { decideFinalSend, decideValidationAdmission, isThisRunsExecution, validationNoLongerAdmits, type FinalSendDecision } from "../domain/validation-authorization";
+import type { CredentialUse, ExecutionGuards, IntentStore, MutationClock, MutationProviders, OpenedCredential, OutboundReply, OutboundReplyStore, ProviderActionDecision, ReplyTarget, ReplyTargets, ValidationExecutionReads } from "../ports";
 
 export interface ExecutorStores {
   readonly intents: IntentStore;
@@ -233,29 +238,89 @@ async function blockRefusedValidation(stores: ExecutorStores, input: { readonly 
   return { kind: "blocked", code: "VALIDATION_AUTHORIZATION_UNAVAILABLE" };
 }
 
+/** The opened credential as the final gate compares it (identifiers only). */
+interface OpenedForCall {
+  readonly credentialId: string | undefined;
+  readonly platform: string;
+  readonly providerAssetId: string;
+}
+
 /**
- * Step 7B-14G1 (PRE-LIVE-1, X1): the last transaction before the credential is opened and the provider is called, for
- * an AUTHORIZED intent only. The row must still be exactly what this run committed (EXECUTING, same attempt, same run
- * reference) — any other state means another run or a rewrite touched it: nothing is sent and the row is left to
- * reconciliation. A pause / the emergency block, or a workspace no longer Standard, ends it BLOCKED (EXECUTING →
- * BLOCKED) without a call; the authorization stays consumed (never re-armed). undefined: proceed to the ONE call.
+ * Step 7B-14G1 / 7B-14H1 (PRE-LIVE-1, X1): one short transaction immediately before the ONE provider call of an
+ * AUTHORIZED intent, run twice — before the credential is opened, and again after the key service handed it over and
+ * before the request leaves (`opened` given). It re-reads, live: the row (still exactly this run's EXECUTING, same
+ * attempt, run reference and authorization — otherwise nothing is sent and the row is left to reconciliation), the
+ * authorization (this intent's, consumed, unrevoked, unexpired), the initiator's role, the workspace mode (SHARE-locked
+ * by the definer), the account and its connection, the exact provider-action decision (a pause or the emergency block
+ * vetoes; only a missing grant is stood in for), the persisted target, the capability, and — after opening — that the
+ * opened credential is still the account's authorized credential. A refusal ends BLOCKED (EXECUTING →
+ * BLOCKED, admitted by 0027 and 0028) with no call; the authorization stays consumed (never re-armed).
+ * undefined: proceed. A failed READ throws (never a refusal): the caller fails closed without recording anything.
+ * The transaction commits BEFORE the request: nothing is held open across the provider call.
  */
-async function finalValidationGate(stores: ExecutorStores, intent: MutationIntent, accountPlatform: string, runReference: string, clock: MutationClock): Promise<ExecutionResult | undefined> {
+async function sendGate(stores: ExecutorStores, intent: MutationIntent, accountPlatform: string, runReference: string, clock: MutationClock, opened?: OpenedForCall): Promise<ExecutionResult | undefined> {
   const current = await stores.intents.lock(intent.workspaceId, intent.id);
   if (current === undefined) return { kind: "noop", status: "missing" };
-  if (current.status !== "EXECUTING" || current.attempt !== intent.attempt || current.runReference !== runReference || current.validationAuthorizationId !== intent.validationAuthorizationId) {
-    return { kind: "noop", status: current.status };
+  const authorizationId = intent.validationAuthorizationId;
+  if (authorizationId === null) return { kind: "noop", status: current.status };
+  const expected = {
+    intentId: intent.id,
+    organizationId: intent.organizationId,
+    workspaceId: intent.workspaceId,
+    connectedAccountId: intent.connectedAccountId,
+    targetInteractionId: intent.targetInteractionId,
+    initiatorUserId: intent.initiatorUserId,
+    validationAuthorizationId: authorizationId,
+    attempt: intent.attempt,
+    runReference,
+    accountPlatform,
+  };
+  // X1 first: a row that is no longer this run's is never touched further (no other read, nothing recorded).
+  if (!isThisRunsExecution(expected, current)) return { kind: "noop", status: current.status };
+  const validation = stores.validation;
+  let decision: FinalSendDecision;
+  if (validation === undefined) {
+    decision = { kind: "refuse", code: "VALIDATION_AUTHORIZATION_UNAVAILABLE" };
+  } else {
+    const target = await stores.targets.load(intent.targetInteractionId);
+    const scope = target === undefined ? undefined : { contentKind: target.contentKind, reportedSource: target.reportedSource };
+    const capability = scope === undefined ? undefined : await stores.guards.replyCapability(intent.connectedAccountId, scope);
+    const usable = capability !== undefined && (capability.state === "AVAILABLE" || capability.state === "AVAILABLE_WITH_LIMITATION");
+    decision = decideFinalSend({
+      expected,
+      current,
+      reading: await validation.authorization(intent.workspaceId, authorizationId),
+      consumedElsewhere: await validation.consumedElsewhere(intent.workspaceId, intent.targetInteractionId, authorizationId),
+      initiatorRole: await stores.guards.initiatorRole(intent.workspaceId, intent.initiatorUserId),
+      replyingRoles: ROLES_WITH_PUBLIC_REPLY,
+      mode: await stores.guards.workspaceMode(intent.workspaceId),
+      account: await stores.guards.account(intent.connectedAccountId),
+      providerAction: await stores.guards.providerActionAllowed(accountPlatform, "public_reply"),
+      target:
+        target === undefined
+          ? undefined
+          : {
+              present: target.observed && target.presence === "present" && !target.ownAccount,
+              replyable: publicReplyDepthAllowed(target),
+              connectedAccountId: target.connectedAccountId,
+              workspaceId: target.workspaceId,
+              platform: target.platform,
+            },
+      capability: { usable, catalogValidationPending: usable || scope === undefined ? false : await validation.catalogValidationPending(intent.connectedAccountId, scope) },
+      ...(opened === undefined ? {} : { credential: { opened, active: await validation.activeCredential(intent.workspaceId, intent.connectedAccountId) } }),
+    });
   }
-  if ((await stores.guards.providerActionAllowed(accountPlatform, "public_reply")) === "paused") {
-    await settle(stores, current, "BLOCKED", "PROVIDER_ACTIONS_DISABLED", current.attempt, runReference, clock);
-    return { kind: "blocked", code: "PROVIDER_ACTIONS_DISABLED" };
-  }
-  if ((await stores.guards.workspaceMode(current.workspaceId)) !== "STANDARD") {
-    await settle(stores, current, "BLOCKED", "MODE_NOT_STANDARD", current.attempt, runReference, clock);
-    return { kind: "blocked", code: "MODE_NOT_STANDARD" };
-  }
-  return undefined;
+  if (decision.kind === "send") return undefined;
+  if (decision.kind === "not_this_run") return { kind: "noop", status: current.status };
+  await settle(stores, current, "BLOCKED", decision.code, current.attempt, runReference, clock);
+  return { kind: "blocked", code: decision.code };
 }
+
+/** What the credential callback answers: the call was made (receipt), or it was not (a recorded result, or a failed check). */
+type CallOutcome =
+  | { readonly sent: true; readonly receipt: PublicReplyReceipt }
+  | { readonly sent: false; readonly result: ExecutionResult }
+  | { readonly sent: false; readonly checkFailed: unknown };
 
 /** Executes one intent for one run. Never throws for a provider failure; every path ends recorded. */
 export async function executeIntent(deps: ExecutorDependencies, input: { readonly workspaceId: string; readonly intentId: string; readonly runReference: string }): Promise<ExecutionResult> {
@@ -304,23 +369,45 @@ export async function executeIntent(deps: ExecutorDependencies, input: { readonl
   if (port === undefined || !isPlatformKey(target.platform)) return finish("BLOCKED", "PROVIDER_MUTATION_UNSUPPORTED");
   const platform = target.platform;
 
-  if (intent.validationAuthorizationId !== null) {
-    const gate = await deps.inScope((stores) => finalValidationGate(stores, intent, accountPlatform, input.runReference, deps.clock));
+  const authorized = intent.validationAuthorizationId !== null;
+  if (authorized) {
+    // Before the credential is opened: nothing is decrypted for an intent that may no longer be sent.
+    const gate = await deps.inScope((stores) => sendGate(stores, intent, accountPlatform, input.runReference, deps.clock));
     if (gate !== undefined) return gate;
   }
 
-  let receipt: PublicReplyReceipt;
+  let call: CallOutcome;
   try {
-    receipt = await deps.credentials.withAccess({ workspaceId: intent.workspaceId, connectedAccountId: intent.connectedAccountId }, async (access) => {
+    call = await deps.credentials.withAccess({ workspaceId: intent.workspaceId, connectedAccountId: intent.connectedAccountId }, async (access, opened): Promise<CallOutcome> => {
+      if (authorized) {
+        // Step 7B-14H1 (PRE-LIVE-1): the key service has handed the credential over; the request has NOT left. One more
+        // short transaction (committed before the call) re-reads everything that may have changed meanwhile.
+        // An opener that (against its contract) names no credential is refused by the gate, never trusted.
+        const openedId = (opened as OpenedCredential | undefined)?.credentialId;
+        let gate: ExecutionResult | undefined;
+        try {
+          gate = await deps.inScope((stores) =>
+            sendGate(stores, intent, accountPlatform, input.runReference, deps.clock, { credentialId: openedId, platform: access.account.platform, providerAssetId: access.account.id }),
+          );
+        } catch (error) {
+          // The check could not be completed: fail closed — no call, no refusal recorded (never a fictitious
+          // revocation), no new attempt. The intent stays this run's EXECUTING for reconciliation (a redelivery records
+          // OUTCOME_UNKNOWN / RUN_INTERRUPTED and sends nothing).
+          return { sent: false, checkFailed: error };
+        }
+        if (gate !== undefined) return { sent: false, result: gate };
+      }
       const result = await port.replyPublicly(access, providerObjectRef(platform, "interaction", target.providerInteractionId), reply.text, { key: `${intent.workspaceId}:${intent.id}` });
-      return result.data;
+      return { sent: true, receipt: result.data };
     });
   } catch (error) {
     if (error instanceof CredentialUnreadable) return finish("BLOCKED", "CREDENTIAL_UNREADABLE");
     const outcome = classifyProviderError(error);
     return finish(outcome.status, outcome.code);
   }
-  return finish("CONFIRMED", null, receipt);
+  if (call.sent) return finish("CONFIRMED", null, call.receipt);
+  if ("checkFailed" in call) throw call.checkFailed;
+  return call.result;
 }
 
 /** The composition raises this when the credential cannot be opened BEFORE any provider call. */

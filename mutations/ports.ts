@@ -148,6 +148,25 @@ export interface ValidationExecutionReads extends ValidationAuthorityReads {
    * authorization is consumed. Nothing is decrypted here: a key or provider failure after consumption stays possible.
    */
   credentialReady(workspaceId: string, connectedAccountId: string): Promise<boolean>;
+  /**
+   * Step 7B-14H1 (PRE-LIVE-1/2): the account's credential as it is authorized NOW — the connection's active credential
+   * of an ACTIVE account and ACTIVE connection in this workspace (the authority the credential use opens) — as
+   * identifiers only (never the envelope, never a secret); undefined when none is. Read in the final gate after the
+   * credential was opened. A stored expiry is not consulted (Step 7G-H5.5-P12-C0-R5F).
+   */
+  activeCredential(workspaceId: string, connectedAccountId: string): Promise<ActiveCredentialIdentity | undefined>;
+}
+
+/** Identifiers of the credential a call is made with (never its envelope or its secret). */
+export interface ActiveCredentialIdentity {
+  readonly credentialId: string;
+  readonly platform: string;
+  readonly providerAssetId: string;
+}
+
+/** What the credential access tells the caller about the credential it opened for THIS call (identifiers only). */
+export interface OpenedCredential {
+  readonly credentialId: string;
 }
 
 /** The operational authorization of one platform:action (Step 7B-12A). Only "allowed" lets a mutation proceed. */
@@ -162,9 +181,15 @@ export interface MutationProviders {
   mutation(provider: string, platform: string): ProviderMutationPort | undefined;
 }
 
-/** Opens the credential for ONE provider call, outside any transaction (TA §39; the single credential-access function). */
+/**
+ * Opens the credential for ONE provider call, outside any transaction (TA §39; the single credential-access function).
+ * Step 7B-14H1: `use` also receives the identity of the credential that was opened (identifiers only), so the executor
+ * can re-check — after the key service handed it over, before the request leaves — that it is still the account's
+ * authorized credential. A failure BEFORE `use` is the composition's CredentialUnreadable; whatever `use` throws or
+ * returns passes through untouched.
+ */
 export interface CredentialUse {
-  withAccess<T>(input: { readonly workspaceId: string; readonly connectedAccountId: string }, use: (access: ProviderAccess) => Promise<T>): Promise<T>;
+  withAccess<T>(input: { readonly workspaceId: string; readonly connectedAccountId: string }, use: (access: ProviderAccess, opened: OpenedCredential) => Promise<T>): Promise<T>;
 }
 
 /**

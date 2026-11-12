@@ -234,24 +234,41 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
     readonly opened: string[];
     readonly run: (t: Tenant, intentId: string, options?: {
       readonly runId?: string;
-      /** Called before each deps.inScope (1 = admit, 2 = final gate / recovery, 3 = finish). */
+      /**
+       * Called before each deps.inScope. Authorized intent (Step 7B-14H1): 1 = admit, 2 = gate before the credential is
+       * opened (or the F/X2 recovery), 3 = gate after it was opened, 4 = finish. The credential use's own authority read
+       * runs in the job context directly (not counted).
+       */
       readonly beforeScope?: (n: number) => Promise<void>;
-      readonly wrap?: (stores: ExecutorStores) => ExecutorStores;
+      readonly wrap?: (stores: ExecutorStores, n: number) => ExecutorStores;
       readonly beforeCredential?: () => Promise<void>;
+      /** Step 7B-14H1: runs inside the (synthetic) key service AFTER it handed the credential over, BEFORE the executor's callback. */
+      readonly afterOpen?: () => Promise<void>;
+      /** Step 7B-14H1: the key service fails (as a KMS Decrypt outage would) before handing anything over. */
+      readonly keyServiceFails?: boolean;
     }) => Promise<ExecutionResult>;
   }
   /** The real worker composition with the REAL Meta port on a FAKE fetch, and a synthetic credential opener. */
-  const execution = (answer: "created" | "lost" = "created"): Run => {
+  const execution = (answer: "created" | "lost" = "created", hooks: { readonly onPost?: () => Promise<void> } = {}): Run => {
     const posts: string[] = [];
     const opened: string[] = [];
-    const fetch: MetaGraphFetch = (url) => {
+    const fetch: MetaGraphFetch = async (url) => {
       posts.push(new URL(url).pathname);
+      await hooks.onPost?.();
       if (answer === "lost") return Promise.reject(new Error("socket hang up"));
       return Promise.resolve(new Response(JSON.stringify({ id: `1799999${String(posts.length).padStart(8, "0")}` }), { status: 200, headers: { "content-type": "application/json" } }));
     };
     const providers = selectMutationPorts({ simulator: undefined, instagram: createMetaMutationPort({ transport: createMetaGraphWriteTransport({ fetch, timeoutMs: 100 }) }) });
-    const access: ProviderCredentialAccess = { withCredential: (input, use) => { opened.push(input.credentialId); return use(providerCredential("cred-synthetic", "synthetic-user-token")); } };
     const run: Run["run"] = (t, intentId, options = {}) => {
+      const access: ProviderCredentialAccess = {
+        withCredential: async (input, use) => {
+          if (options.keyServiceFails === true) throw Object.assign(new Error("KMS Decrypt: service unavailable (synthetic)"), { name: "KMSInternalException" });
+          opened.push(input.credentialId);
+          const credential = providerCredential("cred-synthetic", "synthetic-user-token");
+          await options.afterOpen?.();
+          return use(credential);
+        },
+      };
       const runId = options.runId ?? `run_7b14g1_${randomUUID().slice(0, 8)}`;
       const clock = { newId: randomUUID, now: () => new Date() };
       const payload = { v: 1, scope: "workspace", task: TASK, workspaceId: t.workspaceId, outboxId: randomUUID(), subjectIds: { connected_account_id: t.ig.account, mutation_intent_id: intentId }, correlationId: "corr-7b14g1-db-0001", initiator: { type: "user", userId: t.users.RESPONDER } };
@@ -265,7 +282,7 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
               await options.beforeScope?.(scopes);
               return context.inScope((scope) => {
                 const stores = executorStores(scope, clock.newId);
-                return work(options.wrap === undefined ? stores : options.wrap(stores));
+                return work(options.wrap === undefined ? stores : options.wrap(stores, scopes));
               });
             },
             credentials: { withAccess: async (input, use) => {
@@ -560,7 +577,8 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
       const id = await issue(t);
       const intentId = await requested(t, id);
       const x = execution();
-      await expect(x.run(t, intentId, { beforeScope: (n) => (n === 3 ? Promise.reject(new Error("worker crashed")) : Promise.resolve()) })).rejects.toThrow("worker crashed");
+      // Step 7B-14H1: the finish transaction of an authorized intent is scope 4 (a second gate runs after opening).
+      await expect(x.run(t, intentId, { beforeScope: (n) => (n === 4 ? Promise.reject(new Error("worker crashed")) : Promise.resolve()) })).rejects.toThrow("worker crashed");
       expect(x.posts).toHaveLength(1);
       expect(await intentRow(t, intentId)).toMatchObject({ status: "EXECUTING" });
       expect(await x.run(t, intentId, { runId: "run_redelivered_0001" })).toEqual({ kind: "outcome_unknown", code: "RUN_INTERRUPTED" });
@@ -639,6 +657,187 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
       expect(await oracle("select count(*)::int as n from mutations.validation_authorizations where workspace_id = $1 and target_interaction_id = $2 and consumed_at is not null", [t.workspaceId, t.ig.comment])).toEqual([{ n: 1 }]);
       expect([x.posts, x.opened]).toEqual([[], []]);
       expect(await x.run(t, secondIntent)).toEqual({ kind: "noop", status: "BLOCKED" });
+    });
+  });
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("5 · Step 7B-14H1: the final gate AFTER the key service opened the credential, BEFORE the POST", () => {
+    const replaceCredential = async (t: Tenant): Promise<string> => {
+      const credential = randomUUID();
+      const version = (await oracle<{ v: number }>("select coalesce(max(credential_version), 0)::int + 1 as v from credentials.provider_credentials where workspace_id = $1 and connection_id = $2", [t.workspaceId, t.connection]))[0]?.v ?? 2;
+      await privileged.query(
+        `insert into credentials.provider_credentials (id, organization_id, workspace_id, connection_id, credential_version, envelope, created_at)
+         values ($1, $2, $3, $4, $5, $6, now())`,
+        [credential, t.organizationId, t.workspaceId, t.connection, version, Buffer.concat([Buffer.from("5349504501", "hex"), randomBytes(64)])],
+      );
+      await privileged.query("update connections.connections set active_credential_id = $1 where id = $2", [credential, t.connection]);
+      return credential;
+    };
+    const consumed = async (t: Tenant, id: string) => (await authorizationRow(t, id))?.consumed;
+
+    interface Change { readonly name: string; readonly code: string; readonly change: (t: Tenant) => Promise<void>; readonly undo?: () => Promise<void> }
+    const changes: readonly Change[] = [
+      { name: "(1) the workspace turns Monitor-only", code: "MODE_NOT_STANDARD", change: async (t) => { await privileged.query("update tenancy.workspaces set mode = 'MONITOR_ONLY' where id = $1", [t.workspaceId]); } },
+      { name: "(2) an exact provider-action pause", code: "PROVIDER_ACTIONS_DISABLED", change: async () => { await withClient((client) => setSwitch(client, INSTAGRAM, { enabled: false }, SWITCH_OPERATOR)); }, undo: async () => { await withClient((client) => clearSwitch(client, INSTAGRAM, SWITCH_OPERATOR)); } },
+      { name: "(3) the global wildcard emergency block", code: "PROVIDER_ACTIONS_DISABLED", change: async () => { await withClient((client) => setSwitch(client, WILDCARD, { enabled: false }, SWITCH_OPERATOR)); }, undo: async () => { await withClient((client) => clearSwitch(client, WILDCARD, SWITCH_OPERATOR)); } },
+      { name: "(4) the initiator loses the replying role", code: "PERMISSION_DENIED", change: async (t) => { await privileged.query("update tenancy.workspace_memberships set role = 'ANALYST_VIEWER' where workspace_id = $1 and user_id = $2", [t.workspaceId, t.users.RESPONDER]); } },
+      { name: "(5) the account is deactivated", code: "ACCOUNT_INACTIVE", change: async (t) => { await privileged.query("update connections.connected_accounts set status = 'INACTIVE', deactivated_at = now(), deactivation_reason = 'DISCONNECTED' where id = $1", [t.ig.account]); } },
+      { name: "(5) the connection degrades", code: "CONNECTION_UNAVAILABLE", change: async (t) => { await privileged.query("update connections.connections set status = 'DEGRADED' where id = $1", [t.connection]); } },
+      { name: "(6) the credential is replaced (rotation)", code: "CREDENTIAL_UNREADABLE", change: async (t) => { await replaceCredential(t); } },
+      { name: "(6) the credential is invalidated (its connection FAILED: re-authorization required)", code: "CONNECTION_UNAVAILABLE", change: async (t) => { await privileged.query("update connections.connections set status = 'FAILED' where id = $1", [t.connection]); } },
+    ];
+    it.each(changes)("$name between the key service and the POST → BLOCKED $code: the credential opened ONCE, ZERO POSTs; consumed, never re-armed", async ({ code, change, undo }) => {
+      const t = await tenant();
+      const id = await issue(t);
+      const intentId = await requested(t, id);
+      const x = execution();
+      try {
+        expect(await x.run(t, intentId, { afterOpen: () => change(t) })).toEqual({ kind: "blocked", code });
+      } finally {
+        await undo?.();
+      }
+      expect(x.posts).toEqual([]);
+      expect(x.opened).toHaveLength(1);
+      expect(await intentRow(t, intentId)).toMatchObject({ status: "BLOCKED", attempt: 1, outcome_code: code });
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING", "BLOCKED"]);
+      expect(await consumed(t, id)).toBe(true);
+      expect(await x.run(t, intentId)).toEqual({ kind: "noop", status: "BLOCKED" });
+      expect(x.posts).toEqual([]);
+      expect(await providerActionState()).toEqual({ rows: 0, decisions: 18, allowed: 0 });
+    });
+
+    it("(7, X1) attempt / run reference rewritten after the credential was opened → nothing sent, nothing recorded", async () => {
+      const t = await tenant();
+      const id = await issue(t);
+      const intentId = await requested(t, id);
+      const x = execution();
+      const rewrite = async (): Promise<void> => {
+        await withWorkspaceJobScope(worker, t.workspaceId, (tx: DatabaseTransaction) =>
+          tx.execute(sql`update mutations.mutation_intents set run_reference = 'run_forged_h1', attempt = 2 where workspace_id = ${t.workspaceId} and id = ${intentId} and status = 'EXECUTING'`));
+      };
+      expect(await x.run(t, intentId, { afterOpen: rewrite })).toEqual({ kind: "noop", status: "EXECUTING" });
+      expect([x.posts, x.opened.length]).toEqual([[], 1]);
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING"]);
+      expect(await x.run(t, intentId)).toEqual({ kind: "outcome_unknown", code: "RUN_INTERRUPTED" });
+      expect(x.posts).toEqual([]);
+    });
+
+    it("(8) a database failure DURING the final check fails closed: no POST, no refusal, no outcome recorded; a redelivery records OUTCOME_UNKNOWN and sends nothing", async () => {
+      const t = await tenant();
+      const id = await issue(t);
+      const intentId = await requested(t, id);
+      const x = execution();
+      const failing = (stores: ExecutorStores, n: number): ExecutorStores =>
+        n !== 3 ? stores : { ...stores, guards: { ...stores.guards, workspaceMode: () => Promise.reject(new Error("connection terminated unexpectedly")) } };
+      await expect(x.run(t, intentId, { wrap: failing })).rejects.toThrow("connection terminated unexpectedly");
+      expect([x.posts, x.opened.length]).toEqual([[], 1]);
+      expect(await intentRow(t, intentId)).toMatchObject({ status: "EXECUTING", attempt: 1, outcome_code: null });
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING"]);
+      expect(await consumed(t, id)).toBe(true);
+      // The same failure when the transaction itself cannot even start.
+      const t2 = await tenant();
+      const id2 = await issue(t2);
+      const intent2 = await requested(t2, id2);
+      const y = execution();
+      await expect(y.run(t2, intent2, { beforeScope: (n) => (n === 3 ? Promise.reject(new Error("pool exhausted")) : Promise.resolve()) })).rejects.toThrow("pool exhausted");
+      expect([y.posts, y.opened.length]).toEqual([[], 1]);
+      expect(await historyOf(t2, intent2)).toEqual(["PENDING", "EXECUTING"]);
+      // Never a second attempt: redelivered, the row becomes OUTCOME_UNKNOWN (reconciliation looks, never resends).
+      expect(await x.run(t, intentId, { runId: "run_redelivered_h1" })).toEqual({ kind: "outcome_unknown", code: "RUN_INTERRUPTED" });
+      expect(x.posts).toEqual([]);
+    });
+
+    it("(9) the key service fails before handing the credential over → BLOCKED CREDENTIAL_UNREADABLE, zero POSTs; consumed, never re-armed", async () => {
+      const t = await tenant();
+      const id = await issue(t);
+      const intentId = await requested(t, id);
+      const x = execution();
+      expect(await x.run(t, intentId, { keyServiceFails: true })).toEqual({ kind: "blocked", code: "CREDENTIAL_UNREADABLE" });
+      expect([x.posts, x.opened]).toEqual([[], []]);
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING", "BLOCKED"]);
+      expect(await consumed(t, id)).toBe(true);
+      expect(await x.run(t, intentId)).toEqual({ kind: "noop", status: "BLOCKED" });
+      expect(x.posts).toEqual([]);
+    });
+
+    it("(10) the credential opened and every control intact → the second gate reads the opened credential BEFORE the ONE synthetic POST → CONFIRMED", async () => {
+      const t = await tenant();
+      const id = await issue(t);
+      const intentId = await requested(t, id);
+      const x = execution();
+      const postsAtGate: number[] = [];
+      const spy = (stores: ExecutorStores, n: number): ExecutorStores => {
+        const validation = stores.validation;
+        if (n !== 3 || validation === undefined) return stores;
+        return { ...stores, validation: { ...validation, activeCredential: (w, a) => { postsAtGate.push(x.posts.length); return validation.activeCredential(w, a); } } };
+      };
+      const result = await x.run(t, intentId, { wrap: spy });
+      expect(result).toMatchObject({ kind: "confirmed" });
+      expect(postsAtGate).toEqual([0]);
+      expect(x.posts).toEqual([`/v25.0/${t.ig.commentProviderId}/replies`]);
+      expect(x.opened).toHaveLength(1);
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING", "CONFIRMED"]);
+    });
+
+    it("(11, 12) the SAME run redelivered after its POST (no outcome recorded) sends nothing; an OUTCOME_UNKNOWN is never retried", async () => {
+      const t = await tenant();
+      const id = await issue(t);
+      const intentId = await requested(t, id);
+      const x = execution();
+      const runId = "run_h1_same_0001";
+      await expect(x.run(t, intentId, { runId, beforeScope: (n) => (n === 4 ? Promise.reject(new Error("worker crashed after the POST")) : Promise.resolve()) })).rejects.toThrow("worker crashed after the POST");
+      expect(x.posts).toHaveLength(1);
+      expect(await x.run(t, intentId, { runId })).toEqual({ kind: "outcome_unknown", code: "RUN_INTERRUPTED" });
+      for (const again of [runId, "run_h1_other_0001"]) expect(await x.run(t, intentId, { runId: again })).toEqual({ kind: "noop", status: "OUTCOME_UNKNOWN" });
+      expect(x.posts).toHaveLength(1);
+      expect(await consumed(t, id)).toBe(true);
+    });
+
+    it("concurrency: a Monitor-only change racing the second gate is either seen or waits for it (SHARE lock): here it commits while the gate waits → BLOCKED, zero POSTs", async () => {
+      const t = await tenant();
+      const id = await issue(t);
+      const intentId = await requested(t, id);
+      const x = execution();
+      const client = await privileged.connect();
+      let committer: Promise<boolean> = Promise.resolve(false);
+      try {
+        const hold = async (): Promise<void> => {
+          await client.query("begin");
+          await client.query("update tenancy.workspaces set mode = 'MONITOR_ONLY' where id = $1", [t.workspaceId]);
+          // Commit only once the gate's SHARE lock is seen waiting behind this uncommitted update.
+          committer = (async () => {
+            let waited = false;
+            for (let i = 0; i < 200 && !waited; i += 1) {
+              const waiting = await oracle<{ n: number }>("select count(*)::int as n from pg_locks where locktype = 'transactionid' and not granted");
+              waited = (waiting[0]?.n ?? 0) > 0;
+              if (!waited) await sleep(20);
+            }
+            await client.query("commit");
+            return waited;
+          })();
+        };
+        expect(await x.run(t, intentId, { afterOpen: hold })).toEqual({ kind: "blocked", code: "MODE_NOT_STANDARD" });
+        // The gate really waited behind the uncommitted change (it was not merely run after it).
+        expect(await committer).toBe(true);
+      } finally {
+        await client.query("rollback").catch(() => undefined);
+        client.release();
+      }
+      expect([x.posts, x.opened.length]).toEqual([[], 1]);
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING", "BLOCKED"]);
+    });
+
+    it("residual window (documented, not closable without a transaction across the HTTP call): a pause committed AFTER the second gate, while the request is leaving, does not recall it", async () => {
+      const t = await tenant();
+      const id = await issue(t);
+      const intentId = await requested(t, id);
+      const x = execution("created", { onPost: async () => { await withClient((client) => setSwitch(client, WILDCARD, { enabled: false }, SWITCH_OPERATOR)); } });
+      try {
+        expect(await x.run(t, intentId)).toMatchObject({ kind: "confirmed" });
+      } finally {
+        await withClient((client) => clearSwitch(client, WILDCARD, SWITCH_OPERATOR));
+      }
+      expect(x.posts).toHaveLength(1);
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING", "CONFIRMED"]);
     });
   });
 }

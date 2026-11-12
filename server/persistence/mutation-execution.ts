@@ -24,7 +24,7 @@ import { createPostgresConnectionWorkerStore } from "@/modules/connections/persi
 import type { WorkspaceId } from "@/domain/ids";
 import type { ExecutorStores, IntentOutcomeEvent } from "@/mutations/executor/execute";
 import { anotherValidationConsumedForTarget, createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace, initiatorWorkspaceRole, workspaceModeForExecution } from "@/mutations/persistence";
-import type { ExecutionGuards, ValidationExecutionReads } from "@/mutations/ports";
+import type { ActiveCredentialIdentity, ExecutionGuards, ValidationExecutionReads } from "@/mutations/ports";
 import type { DatabaseTransaction } from "@/platform/db";
 import type { TenantJobScope } from "@/platform/jobs";
 import { replyTargets, sharedGuards, validationReads, type AuthorityReads } from "./mutations";
@@ -86,7 +86,9 @@ export function executorStores(scope: Pick<TenantJobScope, "tx">, newId: () => s
       return anotherValidationConsumedForTarget(tx, workspaceId, targetInteractionId, authorizationId);
     },
     // PRE-LIVE-2: the same authority the credential use re-reads before opening — here only read, never opened.
-    credentialReady: async (workspaceId, connectedAccountId) => (await credentialAuthority(tx, { workspaceId, connectedAccountId })) !== undefined,
+    credentialReady: async (workspaceId, connectedAccountId) => (await authorizedCredential(tx, { workspaceId, connectedAccountId })) !== undefined,
+    // Step 7B-14H1 (PRE-LIVE-1): identifiers only, for the final gate after the credential was opened.
+    activeCredential: (workspaceId, connectedAccountId) => authorizedCredential(tx, { workspaceId, connectedAccountId }),
   };
   const guards: ExecutionGuards = {
     ...shared,
@@ -114,6 +116,18 @@ export interface CredentialAuthority {
   readonly envelope: Uint8Array;
   readonly platform: string;
   readonly providerAssetId: string;
+}
+
+/**
+ * Step 7B-14H1 — the validation path's view of the account's credential: exactly the authority the credential use opens
+ * (account and connection ACTIVE in this workspace, the connection's active credential row) — identifiers only, never
+ * the envelope. A stored credential expiry is deliberately NOT read (Step 7G-H5.5-P12-C0-R5F: it has no runtime reader;
+ * the provider stays the authority on a token's validity).
+ */
+async function authorizedCredential(tx: DatabaseTransaction, input: { readonly workspaceId: string; readonly connectedAccountId: string }): Promise<ActiveCredentialIdentity | undefined> {
+  const authority = await credentialAuthority(tx, input);
+  if (authority === undefined) return undefined;
+  return { credentialId: authority.credentialId, platform: authority.platform, providerAssetId: authority.providerAssetId };
 }
 
 /**
