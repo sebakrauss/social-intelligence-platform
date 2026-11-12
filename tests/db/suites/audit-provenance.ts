@@ -341,10 +341,10 @@ export function defineAuditProvenanceSuite(getTarget: () => DbTarget): void {
       for (const action of COMMAND_BOUND_ELSEWHERE) expect(admitted.has(action), action).toBe(false);
     });
 
-    it("the helper is a definer owned by app_owner with an empty search_path, executable by authenticated only", async () => {
+    it("the helper is a definer owned by app_owner with search_path pinned to pg_catalog, pg_temp (R4a, 0031), executable by authenticated only", async () => {
       const [fn] = (await privileged.query<{ owner: string; secdef: boolean; config: string[] | null }>(
         "select pg_get_userbyid(p.proowner) as owner, p.prosecdef as secdef, p.proconfig as config from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'audit' and p.proname = 'bound_workspace_organization'")).rows;
-      expect(fn).toEqual({ owner: "app_owner", secdef: true, config: ['search_path=""'] });
+      expect(fn).toEqual({ owner: "app_owner", secdef: true, config: ["search_path=pg_catalog, pg_temp"] });
       for (const [role, expected] of [["authenticated", true], ["app_worker", false], ["app_system", false], ["anon", false], ["public", false]] as const) {
         expect((await privileged.query<{ ok: boolean }>("select has_function_privilege($1, 'audit.bound_workspace_organization()', 'EXECUTE') as ok", [role])).rows[0]?.ok, role).toBe(expected);
       }

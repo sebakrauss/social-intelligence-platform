@@ -35,6 +35,10 @@
  *     cannot be completed fails closed: no call and no recorded refusal (the row stays for reconciliation).
  *     Residual (cannot be closed without holding a transaction across the HTTP call): a change committed after the
  *     second gate's reads, while the request is leaving, does not recall it.
+ *   - Step 7B-14I3H (H1) — before EXECUTING and in both gates: the account's authorized credential (and, after opening,
+ *     the opened one) must be EXACTLY the credential the authorization's PREFLIGHT examined, as the database persisted and
+ *     linked that evidence (never a value from a payload or a browser). A replaced credential, another connection, or
+ *     missing / foreign / inconsistent evidence sends nothing (before EXECUTING: BLOCKED from PENDING, nothing spent).
  * Consumption is the 0028 trigger's, in the EXECUTING transaction; once consumed it is never re-armed: an uncertain
  * outcome stays OUTCOME_UNKNOWN (reconciliation looks, never resends), and nothing returns an intent to PENDING.
  */
@@ -52,7 +56,7 @@ import {
 import { providerObjectRef } from "@/integrations/providers/contract/identity";
 import { isPlatformKey } from "@/domain/platforms";
 import { assertTransition, publicReplyDepthAllowed, type IntentOutcomeCode, type IntentStatus, type MutationIntent, OUTCOME_STATUS } from "../domain/intent";
-import { decideFinalSend, decideValidationAdmission, isThisRunsExecution, validationNoLongerAdmits, type FinalSendDecision } from "../domain/validation-authorization";
+import { decideFinalSend, decideValidationAdmission, examinedCredentialRefusal, isThisRunsExecution, validationNoLongerAdmits, type FinalSendDecision, type ValidationAuthorizationReading } from "../domain/validation-authorization";
 import type { CredentialUse, ExecutionGuards, IntentStore, MutationClock, MutationProviders, OpenedCredential, OutboundReply, OutboundReplyStore, ProviderActionDecision, ReplyTarget, ReplyTargets, ValidationExecutionReads } from "../ports";
 
 export interface ExecutorStores {
@@ -126,6 +130,7 @@ type Admitted =
 async function validationVerdict(
   validation: ValidationExecutionReads,
   intent: MutationIntent & { readonly validationAuthorizationId: string },
+  reading: ValidationAuthorizationReading | undefined,
   account: { readonly provider: string; readonly platform: string },
   target: ReplyTarget,
   providerAction: ProviderActionDecision,
@@ -135,7 +140,7 @@ async function validationVerdict(
   const decision = decideValidationAdmission({
     phase: "execution",
     subject: { intentId: intent.id, organizationId: intent.organizationId, workspaceId: intent.workspaceId, connectedAccountId: intent.connectedAccountId, targetInteractionId: intent.targetInteractionId, initiatorUserId: intent.initiatorUserId, kind: intent.kind, attempt: intent.attempt },
-    reading: await validation.authorization(intent.workspaceId, intent.validationAuthorizationId),
+    reading,
     account,
     targetPlatform: target.platform,
     providerAction,
@@ -195,9 +200,20 @@ async function admit(stores: ExecutorStores, workspaceId: string, intentId: stri
   } else {
     // Step 7B-14G1: the bounded exception, re-decided on live reads; then PRE-LIVE-2 before anything is spent.
     if (stores.validation === undefined) return block("VALIDATION_AUTHORIZATION_UNAVAILABLE");
-    const verdict = await validationVerdict(stores.validation, { ...intent, validationAuthorizationId: authorizationId }, account, target, providerAction, usable);
+    const reading = await stores.validation.authorization(intent.workspaceId, authorizationId);
+    const verdict = await validationVerdict(stores.validation, { ...intent, validationAuthorizationId: authorizationId }, reading, account, target, providerAction, usable);
     if (verdict !== undefined) return block(verdict);
     if (!(await stores.validation.credentialReady(intent.workspaceId, intent.connectedAccountId))) return block("CREDENTIAL_UNREADABLE");
+    // Step 7B-14I3H (H1): the credential that would be opened is exactly the one the authorization's PREFLIGHT examined
+    // (persisted evidence, linked by the database) — refused here, from PENDING, before anything is spent.
+    if (reading === undefined) return block("VALIDATION_AUTHORIZATION_UNAVAILABLE");
+    const examined = examinedCredentialRefusal({
+      authorization: reading.authorization,
+      preflight: await stores.validation.examinedCredential(intent.workspaceId, authorizationId),
+      active: await stores.validation.activeCredential(intent.workspaceId, intent.connectedAccountId),
+      accountCredentialId: account.credentialId,
+    });
+    if (examined !== undefined) return block(examined);
   }
 
   // For an authorized intent, 0028's consume trigger spends the authorization in THIS update, before the call (R6).
@@ -286,6 +302,7 @@ async function sendGate(stores: ExecutorStores, intent: MutationIntent, accountP
     const scope = target === undefined ? undefined : { contentKind: target.contentKind, reportedSource: target.reportedSource };
     const capability = scope === undefined ? undefined : await stores.guards.replyCapability(intent.connectedAccountId, scope);
     const usable = capability !== undefined && (capability.state === "AVAILABLE" || capability.state === "AVAILABLE_WITH_LIMITATION");
+    const active = await validation.activeCredential(intent.workspaceId, intent.connectedAccountId);
     decision = decideFinalSend({
       expected,
       current,
@@ -307,7 +324,9 @@ async function sendGate(stores: ExecutorStores, intent: MutationIntent, accountP
               platform: target.platform,
             },
       capability: { usable, catalogValidationPending: usable || scope === undefined ? false : await validation.catalogValidationPending(intent.connectedAccountId, scope) },
-      ...(opened === undefined ? {} : { credential: { opened, active: await validation.activeCredential(intent.workspaceId, intent.connectedAccountId) } }),
+      // Step 7B-14I3H (H1): the evidence linked to the authorization and the account's authorized credential, live.
+      examined: { preflight: await validation.examinedCredential(intent.workspaceId, authorizationId), active },
+      ...(opened === undefined ? {} : { credential: { opened, active } }),
     });
   }
   if (decision.kind === "send") return undefined;

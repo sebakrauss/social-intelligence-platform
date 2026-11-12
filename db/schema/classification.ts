@@ -543,10 +543,12 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   // Step 7B-14I2 (0029): the PREFLIGHT evidence (written by the bound worker's definer at the end of a completed preflight
   // run; used once by the operator's issuance definer) and the operator's append-only log. No runtime role holds any
   // privilege on either: only the owner's definers touch them.
+  // Step 7B-14I3H (0030, H1): the bound worker READS the used evidence of its bound workspace (worker_read: identifiers,
+  // verdict and time — the executor binds the credential it opens to the one the PREFLIGHT examined). No runtime writes.
   "mutations.validation_preflights": {
     class: "workspace_tenant",
-    policies: ["owner_read SELECT app_owner", "owner_record INSERT app_owner", "owner_use UPDATE app_owner"],
-    privileges: {},
+    policies: ["owner_read SELECT app_owner", "owner_record INSERT app_owner", "owner_use UPDATE app_owner", "worker_read SELECT app_worker"],
+    privileges: { app_worker: ["SELECT"] },
   },
   "mutations.validation_operator_events": {
     class: "append_only_history",
@@ -579,6 +581,38 @@ export const RESTRICTIVE_POLICIES: readonly string[] = [
   // Step H7-D1c (0025)
   "system.outbox no_direct_intelligence_routing", "classification.assessments no_shadow_member_reads",
 ];
+
+/**
+ * TA §11 R4a (Step 7B-14P1, 0031): the ONLY function configuration an application function may carry — pg_catalog first
+ * for every builtin type and relation, the session's temporary schema LAST (never first, never for functions or
+ * operators). An empty search_path is NOT safe: PostgreSQL still searches pg_temp first for relation and type names.
+ * Every function in an application schema — SECURITY DEFINER or INVOKER (triggers, CHECK predicates and helpers run
+ * under a definer's identity too) — pins exactly this.
+ */
+export const PRIVILEGED_SEARCH_PATH_CONFIG = "search_path=pg_catalog, pg_temp";
+
+/**
+ * Step 7B-14I3H (0030, H2): the first functions pinned to PRIVILEGED_SEARCH_PATH_CONFIG — the ones an operator session
+ * compiles or runs, and the authorization's own triggers and evidence definer. 0031 (Step 7B-14P1) pinned every other
+ * application function the same way (R4a); this list remains the record of what 0030 itself changed.
+ */
+export const CATALOG_FIRST_SEARCH_PATH_FUNCTIONS: readonly string[] = Object.freeze([
+  "app.bind_workspace(uuid)",
+  "app.current_workspace()",
+  "app.current_workspace_organization()",
+  "app_private.context_seal(text,text)",
+  "mutations.bind_validation_authorization()",
+  "mutations.consume_validation_authorization()",
+  "mutations.issue_validation_authorization(uuid,uuid,uuid,text,integer,boolean)",
+  "mutations.record_validation_preflight(uuid,uuid,uuid,uuid,text,text,integer,boolean,boolean,integer,integer,boolean)",
+  "mutations.revoke_validation_authorization(uuid,uuid,text)",
+  "mutations.validation_authorization_guard()",
+  "mutations.validation_authorization_status(uuid,uuid)",
+  "mutations.validation_operator_bind(uuid)",
+  "mutations.validation_operator_event_guard()",
+  "mutations.validation_operator_login()",
+  "mutations.validation_preflight_guard()",
+]);
 
 /** EXECUTE grants per function (non-owner grantees). Every function in an application schema is listed. */
 export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]>> = {

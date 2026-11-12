@@ -29,7 +29,7 @@ import { createPostgresCapabilityStore } from "@/modules/capability/persistence"
 import type { ProviderCredentialAccess } from "@/modules/connections";
 import { parseUserId } from "@/domain/ids";
 import { MUTATION_ACTIONS, resolveSwitch } from "@/platform/flags";
-import { postgresError, withWorkspaceJobScope, type DatabaseTransaction, type RuntimeDatabase } from "@/platform/db";
+import { postgresError, withUserScope, withWorkspaceJobScope, type DatabaseTransaction, type RuntimeDatabase } from "@/platform/db";
 import { runTenantStepJob } from "@/platform/jobs";
 import { createLogger, type Logger } from "@/platform/observability";
 import { createPostgresIntentStore } from "@/mutations/persistence";
@@ -185,16 +185,59 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
     return { organizationId, workspaceId, users, connection, ig: await instagramAccount(organizationId, workspaceId, connection) };
   };
 
-  /** Issues as the operator tooling would (privileged, declared); returns the id. */
-  const issue = (t: Tenant, options: { readonly account?: string; readonly target?: string; readonly initiator?: string; readonly lifetime?: string } = {}): Promise<string> => {
+  /**
+   * Issues as the operator tooling would (privileged, declared); returns the id. Step 7B-14I3H (H1): like 0029's issuance,
+   * the authorization rests on PREFLIGHT evidence linked to it — a passed row that examined the account's connection and
+   * its active credential, with the run reference and recording instant the authorization copies — all in ONE transaction.
+   */
+  interface EvidenceShape {
+    /** Step 7B-14I3H (H1) adversarial shapes: what the linked evidence claims it examined. */
+    readonly account?: string;
+    readonly connection?: string;
+    readonly credential?: string;
+    readonly runReference?: string;
+  }
+  const issue = (t: Tenant, options: { readonly account?: string; readonly target?: string; readonly initiator?: string; readonly lifetime?: string; readonly evidence?: false | EvidenceShape } = {}): Promise<string> => {
     const id = randomUUID();
+    const account = options.account ?? t.ig.account;
+    const target = options.target ?? t.ig.comment;
+    const shape: EvidenceShape = options.evidence === false || options.evidence === undefined ? {} : options.evidence;
     return asOperator(OPERATOR, async (client) => {
+      if (options.evidence === false) {
+        await client.query(
+          `insert into mutations.validation_authorizations (id, organization_id, workspace_id, connected_account_id, target_interaction_id, initiator_user_id, provider, platform, kind,
+             preflight_run_reference, preflight_completed_at, expires_at)
+           values ($1, $2, $3, $4, $5, $6, 'meta', 'instagram', 'reply_public', $7, now() - interval '5 minutes', now() + $8::interval)`,
+          [id, t.organizationId, t.workspaceId, account, target, options.initiator ?? t.users.RESPONDER, PREFLIGHT, options.lifetime ?? "60 minutes"],
+        );
+        return id;
+      }
+      const evidence = randomUUID();
+      // A foreign account or comment cannot carry evidence (its keys refuse it): the authorization insert then fails on
+      // its own keys exactly as before, so the evidence insert runs in a savepoint.
+      await client.query("savepoint evidence");
+      const examined = (await client.query<{ recorded_at: Date }>(
+        `insert into mutations.validation_preflights (id, organization_id, workspace_id, connected_account_id, target_interaction_id, connection_id, credential_id, run_reference, status, checks_verified,
+           required_permissions_granted, replies_complete, replies_by_managed_account, replies_unattributed, stopped_early, token_type, recorded_at)
+         select $1, $2, $3, coalesce($7::uuid, $4::uuid), $5, coalesce($8::uuid, a.connection_id), coalesce($9::uuid, c.active_credential_id, gen_random_uuid()), $6, 'VERIFIED', 10, true, true, 0, 0, false, 'NOT_VERIFIED',
+                clock_timestamp() - interval '5 minutes'
+           from connections.connected_accounts a join connections.connections c on c.id = a.connection_id where a.id = $4
+         returning recorded_at`,
+        [evidence, t.organizationId, t.workspaceId, account, target, shape.runReference ?? PREFLIGHT, shape.account ?? null, shape.connection ?? null, shape.credential ?? null],
+      ).then(async (result) => {
+        await client.query("release savepoint evidence");
+        return result;
+      }, async () => {
+        await client.query("rollback to savepoint evidence");
+        return { rows: [] };
+      })).rows[0];
       await client.query(
         `insert into mutations.validation_authorizations (id, organization_id, workspace_id, connected_account_id, target_interaction_id, initiator_user_id, provider, platform, kind,
            preflight_run_reference, preflight_completed_at, expires_at)
-         values ($1, $2, $3, $4, $5, $6, 'meta', 'instagram', 'reply_public', $7, now() - interval '5 minutes', now() + $8::interval)`,
-        [id, t.organizationId, t.workspaceId, options.account ?? t.ig.account, options.target ?? t.ig.comment, options.initiator ?? t.users.RESPONDER, PREFLIGHT, options.lifetime ?? "60 minutes"],
+         values ($1, $2, $3, $4, $5, $6, 'meta', 'instagram', 'reply_public', $7, coalesce($9::timestamptz, now() - interval '5 minutes'), now() + $8::interval)`,
+        [id, t.organizationId, t.workspaceId, account, target, options.initiator ?? t.users.RESPONDER, PREFLIGHT, options.lifetime ?? "60 minutes", examined?.recorded_at ?? null],
       );
+      if (examined !== undefined) await client.query("update mutations.validation_preflights set authorization_id = $1, used_at = clock_timestamp() where workspace_id = $2 and id = $3", [id, t.workspaceId, evidence]);
       return id;
     });
   };
@@ -981,6 +1024,166 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
       const x = execution();
       expect(await x.run(t, intentId)).toEqual({ kind: "noop", status: "OUTCOME_UNKNOWN" });
       expect(x.posts).toEqual([]);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("7B-14I3H (H1) · the credential opened for the ONE POST is exactly the one the PREFLIGHT examined", () => {
+    /** Replaces the connection's active credential (a rotation), as the connections module would. */
+    const rotate = async (t: Tenant): Promise<string> => {
+      const fresh = randomUUID();
+      await privileged.query("insert into credentials.provider_credentials (id, organization_id, workspace_id, connection_id, credential_version, envelope, created_at) values ($1, $2, $3, $4, 2, $5, now())",
+        [fresh, t.organizationId, t.workspaceId, t.connection, Buffer.concat([Buffer.from("5349504501", "hex"), randomBytes(64)])]);
+      await privileged.query("update connections.connections set active_credential_id = $1 where id = $2", [fresh, t.connection]);
+      return fresh;
+    };
+    const activeCredential = async (t: Tenant) => (await oracle<{ id: string }>("select active_credential_id as id from connections.connections where id = $1", [t.connection]))[0]?.id ?? "";
+    /** The real 0029 path: the worker records the evidence, a validation operator login issues from it. */
+    const issueFromPreflight = async (t: Tenant): Promise<string> => {
+      const preflightId = randomUUID();
+      const credential = await activeCredential(t);
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx: DatabaseTransaction) => recordValidationPreflight(tx, {
+        id: preflightId, connectedAccountId: t.ig.account, targetInteractionId: t.ig.comment, credentialId: credential, runReference: `run_7b14i3h_${randomUUID().slice(0, 8)}`,
+        status: "VERIFIED", checksVerified: 10, requiredPermissionsGranted: true, repliesComplete: true, repliesByManagedAccount: 0, repliesUnattributed: 0, stoppedEarly: false,
+      }));
+      const client = await (await operatorLogin(privileged, getTarget(), "validation_operator_h1"))();
+      try {
+        await client.query("begin transaction isolation level read committed");
+        await client.query("set local role app_validation_operator");
+        const row = (await client.query<{ authorization_id: string }>("select authorization_id from mutations.issue_validation_authorization($1, $2, $3, 'test', 60, true)", [t.workspaceId, preflightId, t.users.RESPONDER])).rows[0];
+        await client.query("commit");
+        return row?.authorization_id ?? "";
+      } finally {
+        await client.end();
+      }
+    };
+
+    it("(A) issued through 0029 from a PREFLIGHT that examined the active credential: EXECUTING → ONE POST → CONFIRMED", async () => {
+      const t = await tenant();
+      const id = await issueFromPreflight(t);
+      const intentId = await requested(t, id);
+      const x = execution();
+      expect(await x.run(t, intentId)).toMatchObject({ kind: "confirmed" });
+      expect(x.posts).toHaveLength(1);
+      expect(await authorizationRow(t, id)).toMatchObject({ consumed: true });
+    });
+
+    it("(B) the credential rotated after issuance, before the run: BLOCKED from PENDING — zero POSTs, nothing opened, the authorization NOT consumed", async () => {
+      const t = await tenant();
+      const id = await issueFromPreflight(t);
+      const intentId = await requested(t, id);
+      await rotate(t);
+      const x = execution();
+      expect(await x.run(t, intentId)).toEqual({ kind: "blocked", code: "CREDENTIAL_UNREADABLE" });
+      expect([x.posts, x.opened]).toEqual([[], []]);
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "BLOCKED"]);
+      expect(await authorizationRow(t, id)).toMatchObject({ consumed: false });
+    });
+
+    it("(B) rotated after EXECUTING, before the key service: the first gate refuses — zero POSTs, nothing decrypted", async () => {
+      const t = await tenant();
+      const intentId = await requested(t, await issue(t));
+      const x = execution();
+      expect(await x.run(t, intentId, { beforeScope: async (n) => { if (n === 2) await rotate(t); } })).toEqual({ kind: "blocked", code: "CREDENTIAL_UNREADABLE" });
+      expect([x.posts, x.opened]).toEqual([[], []]);
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING", "BLOCKED"]);
+    });
+
+    it("(B) rotated between the first gate and the credential read: the NEW credential is opened, but it is not the examined one — the second gate refuses, zero POSTs", async () => {
+      const t = await tenant();
+      const intentId = await requested(t, await issue(t));
+      const x = execution();
+      let fresh = "";
+      expect(await x.run(t, intentId, { beforeCredential: async () => { fresh = await rotate(t); } })).toEqual({ kind: "blocked", code: "CREDENTIAL_UNREADABLE" });
+      expect(x.opened).toEqual([fresh]);
+      expect(x.posts).toEqual([]);
+    });
+
+    it("(C) rotated after the key service opened the credential: the second gate refuses — zero POSTs", async () => {
+      const t = await tenant();
+      const intentId = await requested(t, await issue(t));
+      const x = execution();
+      expect(await x.run(t, intentId, { afterOpen: async () => { await rotate(t); } })).toEqual({ kind: "blocked", code: "CREDENTIAL_UNREADABLE" });
+      expect(x.opened).toHaveLength(1);
+      expect(x.posts).toEqual([]);
+    });
+
+    it.each([
+      ["(D) evidence of another account of the workspace", "account", "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+      ["(D) evidence of another connection", "connection", "CREDENTIAL_UNREADABLE"],
+      ["(E) evidence of another run than the authorization's", "run", "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+      ["(E) no evidence linked at all", "none", "VALIDATION_AUTHORIZATION_UNAVAILABLE"],
+      ["(F) evidence that examined another credential of the connection (the current authority otherwise coherent)", "credential", "CREDENTIAL_UNREADABLE"],
+    ] as const)("%s: BLOCKED %s from PENDING, zero POSTs, nothing opened, NOT consumed", async (name, kind, code) => {
+      const t = await tenant();
+      let evidence: false | EvidenceShape = false;
+      if (kind === "account") evidence = { account: (await instagramAccount(t.organizationId, t.workspaceId, t.connection)).account };
+      if (kind === "connection") evidence = { connection: randomUUID() };
+      if (kind === "run") evidence = { runReference: "run_7b14i3h_forged" };
+      if (kind === "credential") {
+        const older = randomUUID();
+        await privileged.query("insert into credentials.provider_credentials (id, organization_id, workspace_id, connection_id, credential_version, envelope, created_at) values ($1, $2, $3, $4, 3, $5, now() - interval '1 day')",
+          [older, t.organizationId, t.workspaceId, t.connection, Buffer.concat([Buffer.from("5349504501", "hex"), randomBytes(64)])]);
+        evidence = { credential: older };
+      }
+      {
+        const id = await issue(t, { evidence });
+        const intentId = await requested(t, id);
+        const x = execution();
+        expect(await x.run(t, intentId), name).toEqual({ kind: "blocked", code });
+        expect([x.posts, x.opened], name).toEqual([[], []]);
+        expect(await historyOf(t, intentId), name).toEqual(["PENDING", "BLOCKED"]);
+        expect(await authorizationRow(t, id), name).toMatchObject({ consumed: false });
+      }
+    });
+
+    it("(O) two concurrent runs and a redelivery of one authorized intent: at most ONE POST", async () => {
+      const t = await tenant();
+      const intentId = await requested(t, await issue(t));
+      const x = execution();
+      await Promise.allSettled([x.run(t, intentId, { runId: "run_h1_a" }), x.run(t, intentId, { runId: "run_h1_b" })]);
+      await x.run(t, intentId, { runId: "run_h1_redelivered" }).catch(() => undefined);
+      expect(x.posts.length).toBeLessThanOrEqual(1);
+      expect((await historyOf(t, intentId)).filter((s) => s === "EXECUTING")).toHaveLength(1);
+    });
+
+    it("(P) the evidence read FAILS in the last gate: no POST, nothing recorded; the row stays EXECUTING and a redelivery sends nothing", async () => {
+      const t = await tenant();
+      const intentId = await requested(t, await issue(t));
+      const x = execution();
+      const failure = new Error("evidence read failed (synthetic)");
+      const wrap = (stores: ExecutorStores, n: number): ExecutorStores => {
+        const validation = stores.validation;
+        if (n !== 3 || validation === undefined) return stores;
+        return { ...stores, validation: { ...validation, examinedCredential: () => Promise.reject(failure) } };
+      };
+      await expect(x.run(t, intentId, { wrap })).rejects.toThrow();
+      expect(x.opened).toHaveLength(1);
+      expect(x.posts).toEqual([]);
+      expect(await intentRow(t, intentId)).toMatchObject({ status: "EXECUTING", attempt: 1 });
+      expect(await x.run(t, intentId, { runId: "run_h1_redelivered" })).toEqual({ kind: "outcome_unknown", code: "RUN_INTERRUPTED" });
+      expect(x.posts).toEqual([]);
+    });
+
+    it("the evidence is readable by the bound worker only when USED and of its own workspace; never by the web", async () => {
+      const t = await tenant();
+      const other = await tenant();
+      const id = await issue(t);
+      const unused = randomUUID();
+      const credential = await activeCredential(t);
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx: DatabaseTransaction) => recordValidationPreflight(tx, {
+        id: unused, connectedAccountId: t.ig.account, targetInteractionId: t.ig.otherComment, credentialId: credential, runReference: "run_unused", status: "VERIFIED", checksVerified: 10,
+        requiredPermissionsGranted: true, repliesComplete: true, repliesByManagedAccount: 0, repliesUnattributed: 0, stoppedEarly: false,
+      }));
+      expect(await oracle("select count(*)::int as n from mutations.validation_preflights where workspace_id = $1", [t.workspaceId])).toEqual([{ n: 2 }]);
+      const seen = await withWorkspaceJobScope(worker, t.workspaceId, async (tx: DatabaseTransaction) => (await tx.execute<{ authorization_id: string | null }>(sql`select authorization_id from mutations.validation_preflights`)).rows);
+      expect(seen).toEqual([{ authorization_id: id }]);
+      const foreign = await withWorkspaceJobScope(worker, other.workspaceId, async (tx: DatabaseTransaction) => (await tx.execute(sql`select 1 from mutations.validation_preflights where workspace_id = ${t.workspaceId}`)).rows);
+      expect(foreign).toEqual([]);
+      const reads = await withWorkspaceJobScope(worker, other.workspaceId, async (tx: DatabaseTransaction) => executorStores({ tx }, randomUUID).validation?.examinedCredential(t.workspaceId, id));
+      expect(reads).toBeUndefined();
+      const webRead = await withUserScope(web, { sub: t.users.OWNER, role: "authenticated" }, t.workspaceId, (tx) => tx.execute(sql`select 1 from mutations.validation_preflights`)).then(() => "ok", (error: unknown) => postgresError(error)?.code);
+      expect(webRead).toBe("42501");
     });
   });
 }

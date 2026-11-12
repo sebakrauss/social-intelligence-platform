@@ -2,8 +2,10 @@
  * Static database guards that run in every CI build without a database (TA §64–§65; R1, R4, R8; F-S6).
  *
  *   migration lint     — no destructive statements, no session-level context, no passwords, every table
- *                        classified with RLS enabled AND forced, every SECURITY DEFINER pinned to an
- *                        empty search_path, nothing granted to anon/service_role/PUBLIC/login roles;
+ *                        classified with RLS enabled AND forced, every function pinned to
+ *                        search_path = pg_catalog, pg_temp (TA §11 R4a; 0031 re-pinned the functions earlier
+ *                        migrations created with the unsafe empty path), nothing granted to
+ *                        anon/service_role/PUBLIC/login roles;
  *   F-S6 role guard    — no file in the repository drops, renames or terminates pooled login roles;
  *   credential guard   — no service-role key anywhere in runtime configuration, and the privileged
  *                        migration URL is read only by migration/provisioning tooling and tests.
@@ -14,7 +16,19 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { TABLE_CLASSIFICATION } from "@/db/schema/classification";
 import { readMigrations } from "@/tools/db/migrations";
+import { SAFE_SEARCH_PATH as SAFE_PATH, searchPathOnlyMigrationProblems } from "../support/search-path-migration";
 import { WEB_ENVIRONMENT_GUARD, codeWithoutForbiddenList } from "../support/source-scan";
+
+/** TA §11 R4a: the migration that re-pinned every pre-existing function; from it on, only the safe path is accepted. */
+const R4A_MIGRATION = "0031_privileged_name_resolution_hardening.sql";
+
+/** Every function definition in a normalized migration: where, which, and the search_path its header pins (if any). */
+function* functionDefinitions(sql: string): Generator<{ at: number; name: string; pin: string | undefined }> {
+  for (const match of sql.matchAll(/create (?:or replace )?function ([a-z_]+\.[a-z_]+)\(.*?\bas \$\$/g)) {
+    const pin = /\bset search_path\s*(?:=|to)\s*('[^']*'|[a-z_]+(?:\s*,\s*[a-z_]+)*)/.exec(match[0])?.[1];
+    yield { at: match.index, name: match[1] ?? "", pin: pin?.replace(/\s*,\s*/g, ", ") };
+  }
+}
 
 const root = path.resolve(import.meta.dirname, "../..");
 const FIXTURE = "tests/db/support/t26-fixture.sql";
@@ -635,13 +649,71 @@ describe("migration lint", () => {
     }
   });
 
-  it("pins every SECURITY DEFINER function to an empty search_path", () => {
-    for (const source of sqlSources()) {
-      for (const match of source.sql.matchAll(/create function ([a-z_]+\.[a-z_]+)\(.*?\bas \$\$/g)) {
-        const header = match[0];
-        if (header.includes("security definer")) expect(header, `${source.name}: ${match[1] ?? ""}`).toContain("set search_path = ''");
+  // TA §11 R4a (Step 7B-14P1). An empty search_path is NOT safe: PostgreSQL still searches the session's temporary schema
+  // FIRST for relation and type names. Every function — SECURITY DEFINER or INVOKER (triggers, CHECK predicates and
+  // helpers run under a definer's identity too) — pins exactly `pg_catalog, pg_temp`. Migrations up to 0030 created
+  // functions with '' and 0031 re-pinned every one of them; from 0031 on, '' (or any other path) is refused outright.
+  describe("R4a · privileged name resolution", () => {
+    it("every function a migration creates pins a search_path: the safe one, or — only before 0031 — the empty one", () => {
+      for (const source of sqlSources()) {
+        for (const definition of functionDefinitions(source.sql)) {
+          const label = `${source.name}: ${definition.name}`;
+          expect(definition.pin, `${label} pins no search_path`).toBeDefined();
+          if (source.name >= R4A_MIGRATION) expect(definition.pin, label).toBe(SAFE_PATH);
+          else expect([SAFE_PATH, "''"], label).toContain(definition.pin);
+        }
       }
-    }
+    });
+
+    it("every ALTER FUNCTION … SET search_path pins exactly pg_catalog, pg_temp; nothing resets, inherits or re-widens a function's path", () => {
+      for (const source of sqlSources()) {
+        for (const match of source.sql.matchAll(/alter function ([a-z_]+\.[a-z_]+)\([^)]*\) set search_path\s*(?:=|to)\s*([^;]+);/g)) {
+          expect((match[2] ?? "").trim(), `${source.name}: ${match[1] ?? ""}`).toBe(SAFE_PATH);
+        }
+        expect(source.sql, source.name).not.toMatch(/alter function [^;]*\breset\b|search_path\s+from\s+current|alter (?:role|database) [^;]*\bset search_path\b|\bset search_path\b[^;]*"\$user"/);
+      }
+    });
+
+    it("after the last migration, EVERY function's effective pin is pg_catalog, pg_temp (re-pins follow creations, in order)", () => {
+      const effective = new Map<string, string | undefined>();
+      for (const source of sqlSources()) {
+        const events = [
+          ...[...functionDefinitions(source.sql)].map((definition) => ({ at: definition.at, name: definition.name, pin: definition.pin })),
+          ...[...source.sql.matchAll(/alter function ([a-z_]+\.[a-z_]+)\([^)]*\) set search_path\s*(?:=|to)\s*([^;]+);/g)].map((match) => ({ at: match.index, name: match[1] ?? "", pin: (match[2] ?? "").trim() })),
+        ].sort((a, b) => a.at - b.at);
+        for (const event of events) effective.set(event.name, event.pin);
+      }
+      expect(effective.size).toBeGreaterThanOrEqual(67);
+      expect([...effective].filter(([, pin]) => pin !== SAFE_PATH).map(([name]) => name)).toEqual([]);
+    });
+
+    it("0031 changes NOTHING but search_path pins: one ALTER FUNCTION per function, catalog-only pre/post checks, no body, grant, role, policy or table change", () => {
+      const r4a = sqlSources().find((source) => source.name === R4A_MIGRATION);
+      expect(r4a).toBeDefined();
+      expect(searchPathOnlyMigrationProblems(readMigrations().find((migration) => migration.name === R4A_MIGRATION)?.sql ?? "")).toEqual([]);
+      // Exactly the 52 functions 0001–0029 left on '' (0030 re-pinned 15 of the 67 itself).
+      const repinned = [...(r4a?.sql ?? "").matchAll(/alter function ([a-z_]+\.[a-z_]+)\(/g)].map((match) => match[1]);
+      expect(new Set(repinned).size).toBe(repinned.length);
+      expect(repinned).toHaveLength(52);
+    });
+
+    it("the search-path-only shape check is strict (adversarial)", () => {
+      const base = "do $$ begin perform 1 from pg_catalog.pg_proc; end $$;\nset role app_owner;\nalter function app.f(uuid) set search_path = pg_catalog, pg_temp;\nreset role;\n";
+      expect(searchPathOnlyMigrationProblems(base)).toEqual([]);
+      for (const extra of [
+        "grant execute on function app.f(uuid) to app_worker;",
+        "alter function app.f(uuid) security invoker;",
+        "alter function app.f(uuid) owner to app_worker;",
+        "alter function app.f(uuid) set search_path = '';",
+        "alter function app.f(uuid) set search_path = public, pg_catalog;",
+        "create or replace function app.f(p uuid) returns int language sql set search_path = pg_catalog, pg_temp as $$ select 1 $$;",
+        "alter table app.t no force row level security;",
+        "do $$ begin perform 1 from credentials.provider_credentials; end $$;",
+        "set role app_worker;",
+      ]) {
+        expect(searchPathOnlyMigrationProblems(`${base}${extra}\n`).length, extra).toBeGreaterThan(0);
+      }
+    });
   });
 
   it("switches roles only to fixed literals", () => {

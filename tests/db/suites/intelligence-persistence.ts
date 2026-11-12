@@ -128,11 +128,11 @@ export function defineIntelligencePersistenceSuite(getTarget: () => DbTarget): v
   describe("schema", () => {
     it("1 · 3 · 24. 0025 is the 25th applied migration (0026, H7-D1e2b, 0027, Step 7B-1, and 0028, Step 7B-14F1, follow); the three new tables are owned by app_owner with RLS enabled AND forced", async () => {
       const applied = await oracle<{ name: string }>("select name from app_migrations.applied order by name");
-      expect(applied).toHaveLength(29);
+      expect(applied).toHaveLength(31);
       expect(applied[24]?.name).toBe("0025_intelligence_persistence.sql");
       expect(applied[25]?.name).toBe("0026_ai_call_intents.sql");
       expect(applied[26]?.name).toBe("0027_mutation_intents.sql");
-      expect(applied.at(-1)?.name).toBe("0029_validation_operator_path.sql");
+      expect(applied.at(-1)?.name).toBe("0031_privileged_name_resolution_hardening.sql");
       const tables = await oracle<{ t: string; owner: string; rls: boolean; forced: boolean }>(
         `select c.relname as t, pg_get_userbyid(c.relowner) as owner, c.relrowsecurity as rls, c.relforcerowsecurity as forced
            from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'classification' and c.relname = any($1::text[]) order by 1`, [[...NEW_TABLES]]);

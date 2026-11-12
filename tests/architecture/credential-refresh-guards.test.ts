@@ -10,6 +10,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { codeOf, sourceFiles } from "../support/source-scan";
+import { r4aMigrationShapeProblems } from "../support/search-path-migration";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const PRODUCTION_ROOTS = ["app", "server", "modules", "domain", "platform", "integrations", "jobs", "mutations", "ai", "ui", "tools"];
@@ -39,7 +40,9 @@ describe("the continuation is created only by a successful re-authorization", ()
   it("no database function produces a discovery authority (the web completion is the only producer)", () => {
     const migrations = readdirSync(path.join(root, "db/migrations")).filter((f) => f.endsWith(".sql"));
     for (const file of migrations) expect(readFileSync(path.join(root, "db/migrations", file), "utf8"), file).not.toMatch(/connections\.discover_assets|capability_refresh_credential_id/);
-    expect(migrations.sort().at(-1)).toBe("0029_validation_operator_path.sql");
+    expect(migrations.sort().at(-1)).toBe("0031_privileged_name_resolution_hardening.sql");
+    // Step 7B-14P1 (TA §11 R4a): 0031 names functions of every domain, but only to re-pin their search_path.
+    expect(r4aMigrationShapeProblems()).toEqual([]);
   });
 
   it("the continuation is read only from the run's subjects, by the discovery handler — never inferred from status, version or history", () => {

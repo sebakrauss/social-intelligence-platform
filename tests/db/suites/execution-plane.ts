@@ -439,7 +439,7 @@ export function defineExecutionPlaneSuite(getTarget: () => DbTarget): void {
   });
 
   describe("introspection", () => {
-    it("the guard is an invoker BEFORE row trigger on INSERT and UPDATE OF execution_plane, claimed_until, with an empty search_path", async () => {
+    it("the guard is an invoker BEFORE row trigger on INSERT and UPDATE OF execution_plane, claimed_until, with search_path pinned to pg_catalog, pg_temp (R4a, 0031)", async () => {
       const [trigger] = await q<{ definition: string; enabled: string }>(
         "select pg_get_triggerdef(t.oid) as definition, t.tgenabled::text as enabled from pg_trigger t where t.tgrelid = 'system.outbox'::regclass and t.tgname = 'outbox_execution_plane_guard'");
       expect(trigger?.enabled).toBe("O");
@@ -447,7 +447,7 @@ export function defineExecutionPlaneSuite(getTarget: () => DbTarget): void {
       const [fn] = await q<{ definer: boolean; config: string[] | null }>(
         "select p.prosecdef as definer, p.proconfig::text[] as config from pg_proc p where p.oid = 'system.outbox_execution_plane_guard()'::regprocedure");
       expect(fn?.definer).toBe(false);
-      expect(fn?.config ?? []).toContain('search_path=""');
+      expect(fn?.config ?? []).toEqual(["search_path=pg_catalog, pg_temp"]);
     });
 
     it("only app_system may write the column; no runtime role can update topic; nobody else may update the plane", async () => {

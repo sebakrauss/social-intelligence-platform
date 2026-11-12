@@ -16,6 +16,10 @@ const THROUGH = "0027_mutation_intents.sql";
 const M0028 = "0028_mutation_validation_authorizations.sql";
 /** Step 7B-14I2: the operator path follows, applied by the same runner (expand-only; touches no row of this era). */
 const M0029 = "0029_validation_operator_path.sql";
+/** Step 7B-14I3H: the operator-path hardening follows (expand-only; touches no row of any era). */
+const M0030 = "0030_validation_operator_hardening.sql";
+// Step 7B-14P1: privileged name-resolution hardening (R4a).
+const M0031 = "0031_privileged_name_resolution_hardening.sql";
 const OLD = { organizationId: randomUUID(), workspaceId: randomUUID(), user: randomUUID(), account: randomUUID(), interaction: randomUUID(), pending: randomUUID(), unknown: randomUUID() };
 
 describe("0027 → 0028 upgrade with 0027-era intents", () => {
@@ -42,7 +46,7 @@ describe("0027 → 0028 upgrade with 0027-era intents", () => {
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied.at(-1)).toBe(THROUGH);
     expect(status.applied).toHaveLength(27);
-    expect(status.pending.map((m) => m.name)).toEqual([M0028, M0029]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0028, M0029, M0030, M0031]);
   });
 
   it("seeds the 0027-era shapes", async () => {
@@ -78,8 +82,8 @@ describe("0027 → 0028 upgrade with 0027-era intents", () => {
 
   it("the real runner applies exactly 0028; every 0027-era row keeps its values and names no authorization; a re-run is a no-op", async () => {
     const before = await snapshot();
-    expect(await applyMigrations(client, readMigrations())).toEqual([M0028, M0029]);
-    expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(29);
+    expect(await applyMigrations(client, readMigrations())).toEqual([M0028, M0029, M0030, M0031]);
+    expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(31);
     expect(await snapshot()).toEqual(before);
     expect(await rows("select count(*)::int as n from mutations.mutation_intents where validation_authorization_id is not null")).toEqual([{ n: 0 }]);
     expect(await rows("select count(*)::int as n from mutations.validation_authorizations")).toEqual([{ n: 0 }]);

@@ -248,11 +248,11 @@ export function defineReconciliationRequestSuite(getTarget: () => DbTarget): voi
 
   // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
   describe("the boundary itself", () => {
-    it("24–25. a SECURITY DEFINER owned by app_owner, empty search_path, no PUBLIC EXECUTE — only authenticated and app_worker", async () => {
+    it("24–25. a SECURITY DEFINER owned by app_owner, search_path pinned to pg_catalog, pg_temp (R4a, 0031), no PUBLIC EXECUTE — only authenticated and app_worker", async () => {
       const [fn] = await oracle<{ owner: string; secdef: boolean; config: string[] | null; acl: string }>(
         `select pg_get_userbyid(p.proowner) as owner, p.prosecdef as secdef, p.proconfig as config, p.proacl::text as acl
            from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'ingestion' and p.proname = 'request_reconciliation'`);
-      expect(fn).toMatchObject({ owner: "app_owner", secdef: true, config: ['search_path=""'] });
+      expect(fn).toMatchObject({ owner: "app_owner", secdef: true, config: ["search_path=pg_catalog, pg_temp"] });
       const grantees = [...(fn?.acl ?? "").matchAll(/(?:^|[{,])([^=,{}]*)=([A-Za-z]*)\//g)].map((m) => [m[1], m[2]]);
       expect(grantees.filter(([grantee]) => grantee === "")).toEqual([]);
       expect(grantees.map(([grantee]) => grantee).sort()).toEqual(["app_owner", "app_worker", "authenticated"]);

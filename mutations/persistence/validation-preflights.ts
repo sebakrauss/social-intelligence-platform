@@ -4,11 +4,12 @@
  * evidence a completed preflight run records, and its ONE write path: the bound worker's definer
  * `mutations.record_validation_preflight`. The database re-checks that the examined account, connection and credential
  * are still the active ones, takes the time from its own clock and derives `passed` itself (a generated column).
- * Nothing here reads, issues, revokes, binds or consumes an authorization.
+ * Nothing here issues, revokes, binds or consumes an authorization; Step 7B-14I3H adds ONE read (the executor's H1 binding).
  */
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { boolean, integer, pgSchema, smallint, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { DatabaseTransaction } from "@/platform/db";
+import type { ValidationPreflightBinding } from "../domain/validation-authorization";
 
 const mutations = pgSchema("mutations");
 const at = (name: string) => timestamp(name, { withTimezone: true });
@@ -48,6 +49,33 @@ export const validationOperatorEvents = mutations.table("validation_operator_eve
   tokenTypeNotVerifiedAccepted: boolean("token_type_not_verified_accepted"),
   recordedAt: at("recorded_at").notNull(),
 });
+
+/**
+ * Step 7B-14I3H (H1) — the evidence an authorization was issued from, as the bound worker may read it (0030: SELECT for
+ * app_worker on USED evidence of the bound workspace only): the ONE row whose write-once authorization_id names it.
+ * undefined when none — or, defensively, more than one (the 0029 unique key forbids it) — is visible. Identifiers only.
+ */
+export async function readValidationPreflightBinding(tx: DatabaseTransaction, workspaceId: string, authorizationId: string): Promise<ValidationPreflightBinding | undefined> {
+  const rows = await tx
+    .select({
+      preflightId: validationPreflights.id,
+      authorizationId: validationPreflights.authorizationId,
+      workspaceId: validationPreflights.workspaceId,
+      connectedAccountId: validationPreflights.connectedAccountId,
+      targetInteractionId: validationPreflights.targetInteractionId,
+      connectionId: validationPreflights.connectionId,
+      credentialId: validationPreflights.credentialId,
+      runReference: validationPreflights.runReference,
+      recordedAt: validationPreflights.recordedAt,
+      passed: validationPreflights.passed,
+    })
+    .from(validationPreflights)
+    .where(and(eq(validationPreflights.workspaceId, workspaceId), eq(validationPreflights.authorizationId, authorizationId)))
+    .limit(2);
+  const row = rows.length === 1 ? rows[0] : undefined;
+  if (row === undefined || row.authorizationId === null) return undefined;
+  return { ...row, authorizationId: row.authorizationId };
+}
 
 /** What ONE completed preflight run records: identifiers of what it examined and closed counts — never text or a secret. */
 export interface ValidationPreflightEvidence {

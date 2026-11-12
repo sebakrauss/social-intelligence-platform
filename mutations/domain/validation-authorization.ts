@@ -184,6 +184,58 @@ export function validationNoLongerAdmits(reading: ValidationAuthorizationReading
 }
 
 /**
+ * Step 7B-14I3H (H1) — the PREFLIGHT evidence an authorization was issued from, as the database persisted it (0029:
+ * mutations.validation_preflights, linked by its write-once authorization_id; identifiers, the closed verdict and the
+ * recording instant only). Read by the executor from the bound workspace, never from a payload, a browser or a task.
+ */
+export interface ValidationPreflightBinding {
+  readonly preflightId: string;
+  readonly authorizationId: string;
+  readonly workspaceId: string;
+  readonly connectedAccountId: string;
+  readonly targetInteractionId: string;
+  /** The connection and the credential the PREFLIGHT run examined (the connection's active credential then). */
+  readonly connectionId: string;
+  readonly credentialId: string;
+  readonly runReference: string;
+  readonly recordedAt: Date;
+  readonly passed: boolean;
+}
+
+/** The account's credential as it is authorized NOW (the active credential of its ACTIVE connection), identifiers only. */
+export interface AuthorizedCredentialIdentity {
+  readonly credentialId: string;
+  readonly connectionId: string;
+}
+
+/**
+ * Step 7B-14I3H (H1) — the credential that may be opened for an AUTHORIZED intent is exactly the one its PREFLIGHT
+ * examined. Pure, fail-closed; answers the refusal code, or undefined when the binding holds:
+ *   VALIDATION_AUTHORIZATION_UNAVAILABLE  no evidence is linked to the authorization, or it is not this authorization's
+ *       own (another authorization, workspace, account or target; another run reference or recording instant than the
+ *       ones copied into the authorization at issuance), or it did not pass;
+ *   CREDENTIAL_UNREADABLE                 the account has no authorized credential now, or it is not the examined one
+ *       (replaced, re-pointed to another connection), or the account's active credential differs from it.
+ * Used before EXECUTING (nothing is spent on a refusal), and in both final gates (before and after the key service
+ * opened the credential); after opening, the opened credential is additionally compared with the authorized one.
+ */
+export function examinedCredentialRefusal(input: {
+  readonly authorization: Pick<ValidationAuthorization, "id" | "workspaceId" | "connectedAccountId" | "targetInteractionId" | "preflightRunReference" | "preflightCompletedAt">;
+  readonly preflight: ValidationPreflightBinding | undefined;
+  readonly active: AuthorizedCredentialIdentity | undefined;
+  /** The connection's active credential as the account guard read it (null: none). */
+  readonly accountCredentialId: string | null;
+}): "VALIDATION_AUTHORIZATION_UNAVAILABLE" | "CREDENTIAL_UNREADABLE" | undefined {
+  const { authorization: a, preflight: p, active } = input;
+  if (p === undefined) return "VALIDATION_AUTHORIZATION_UNAVAILABLE";
+  if (p.authorizationId !== a.id || p.workspaceId !== a.workspaceId || p.connectedAccountId !== a.connectedAccountId || p.targetInteractionId !== a.targetInteractionId) return "VALIDATION_AUTHORIZATION_UNAVAILABLE";
+  if (p.runReference !== a.preflightRunReference || p.recordedAt.getTime() !== a.preflightCompletedAt.getTime() || !p.passed) return "VALIDATION_AUTHORIZATION_UNAVAILABLE";
+  if (active === undefined || input.accountCredentialId === null) return "CREDENTIAL_UNREADABLE";
+  if (active.credentialId !== p.credentialId || active.connectionId !== p.connectionId || input.accountCredentialId !== p.credentialId) return "CREDENTIAL_UNREADABLE";
+  return undefined;
+}
+
+/**
  * Step 7B-14H1 (PRE-LIVE-1) — what the executor read, in ONE short transaction, immediately before the ONE provider call
  * of an AUTHORIZED intent. It runs twice: before the credential is opened ("before_open") and again after the key
  * service handed the credential over and before the request leaves ("after_open", with the opened credential's identity).
@@ -215,6 +267,14 @@ export interface FinalSendInput {
   /** The persisted target as the executor's guards judge it (undefined: gone or invisible). */
   readonly target: { readonly present: boolean; readonly replyable: boolean; readonly connectedAccountId: string; readonly workspaceId: string; readonly platform: string } | undefined;
   readonly capability: { readonly usable: boolean; readonly catalogValidationPending: boolean };
+  /**
+   * Step 7B-14I3H (H1), both gates: the PREFLIGHT evidence linked to the authorization, and the account's credential as
+   * it is authorized NOW. The credential to be (or just) opened must be the examined one.
+   */
+  readonly examined: {
+    readonly preflight: ValidationPreflightBinding | undefined;
+    readonly active: AuthorizedCredentialIdentity | undefined;
+  };
   /**
    * "after_open" only: the identity of the credential the key service opened for THIS call, and the account's credential
    * as it is authorized NOW (the active credential of an ACTIVE connection and account).
@@ -256,9 +316,11 @@ export type FinalSendDecision = { readonly kind: "send" } | { readonly kind: "no
  *                 unexpired one for exactly this scope; the initiator lost the replying role; the workspace left
  *                 Standard; the account, its connection or the target is no longer eligible; a pause or the emergency
  *                 block applies (never stood in for: only "not_enabled" is); the capability is unusable for any reason
- *                 other than the catalog's pending validation; or (after_open) the opened credential is no longer the
- *                 account's authorized credential (replaced, removed, its connection or account no longer ACTIVE), or
- *                 names another account;
+ *                 other than the catalog's pending validation; the account's authorized credential is not the one its
+ *                 PREFLIGHT examined, or the evidence linked to the authorization is missing or not its own (Step
+ *                 7B-14I3H, H1); or (after_open) the opened credential is no longer the account's authorized credential
+ *                 (replaced, removed, its connection or account no longer ACTIVE), is not the examined one, or names
+ *                 another account;
  *   send          nothing above.
  * It decides nothing about an unreadable state: a read that FAILED never reaches this function (the caller fails
  * closed without recording a refusal).
@@ -294,10 +356,15 @@ export function decideFinalSend(input: FinalSendInput): FinalSendDecision {
   if (!target.replyable) return refuse("TARGET_NOT_REPLYABLE");
   if (target.connectedAccountId !== expected.connectedAccountId || target.workspaceId !== expected.workspaceId || target.platform !== platform) return refuse("TARGET_ACCOUNT_MISMATCH");
   if (!input.capability.usable && !input.capability.catalogValidationPending) return refuse("CAPABILITY_UNAVAILABLE");
-  // After the key service handed the credential over: it must still be the account's authorized credential.
+  // Step 7B-14I3H (H1): the account's authorized credential is still exactly the one the PREFLIGHT examined.
+  const examined = examinedCredentialRefusal({ authorization: a, preflight: input.examined.preflight, active: input.examined.active, accountCredentialId: account.credentialId });
+  if (examined !== undefined) return refuse(examined);
+  // After the key service handed the credential over: it must still be the account's authorized credential — and so
+  // (above) the examined one.
   if (input.credential !== undefined) {
     const { opened, active } = input.credential;
     if (active === undefined || opened.credentialId === undefined || opened.credentialId !== active.credentialId || opened.credentialId !== account.credentialId) return refuse("CREDENTIAL_UNREADABLE");
+    if (opened.credentialId !== input.examined.preflight?.credentialId) return refuse("CREDENTIAL_UNREADABLE");
     if (opened.platform !== active.platform || opened.providerAssetId !== active.providerAssetId || active.providerAssetId !== account.providerAssetId || active.platform !== account.platform) {
       return refuse("TARGET_ACCOUNT_MISMATCH");
     }

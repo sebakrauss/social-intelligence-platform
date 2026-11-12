@@ -8,7 +8,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { describeValidationCommand, parseValidationCommand, type ValidationCommand } from "../../../tools/ops/validation-authorization-command.ts";
 import { operatorSessionProblems, refusalLine, runValidationCall } from "../../../tools/ops/validation-authorizations.ts";
-import { checkValidationOperatorTarget, VALIDATION_OPERATOR_URL } from "../../../tools/db/validation-operator-target.ts";
+import { checkValidationOperatorTarget, validationOperatorClient, VALIDATION_OPERATOR_URL, verifyOperatorEndpoint } from "../../../tools/db/validation-operator-target.ts";
+import { parseDatabaseUrl } from "../../../platform/db/connection.ts";
 
 const W = "24782ada-316d-49ae-b6d4-e017ba4f84f1";
 const P = "11111111-1111-4111-8111-111111111111";
@@ -84,6 +85,46 @@ describe("7B-14I2: the identity fence (before any connection)", () => {
   it("refuses an unpinned development project", () => {
     expect(checkValidationOperatorTarget(env(pooler("validation_operator_seba")), createHash("sha256").update("other").digest("hex")).ok).toBe(false);
   });
+
+  // Step 7B-14I3H (H3): a local endpoint proves nothing about the project behind it.
+  it("accepts the pinned project's direct host (and only that host)", () => {
+    expect(checkValidationOperatorTarget(env(`postgresql://validation_operator_seba:${PASSWORD}@db.${REF}.supabase.co:5432/postgres`), pin).ok).toBe(true);
+    expect(checkValidationOperatorTarget(env(`postgresql://validation_operator_seba:${PASSWORD}@db.zzzzzzzzzzzzzzzzzzzz.supabase.co:5432/postgres`), pin).ok).toBe(false);
+  });
+
+  it.each([
+    ["(M) localhost claiming to be DEV (a tunnel / port forward)", `postgresql://validation_operator_seba:${PASSWORD}@localhost:5432/postgres`],
+    ["(M) 127.0.0.1 with the pinned project's login tenant", `postgresql://validation_operator_seba.${REF}:${PASSWORD}@127.0.0.1:6544/postgres`],
+    ["(M) ::1", `postgresql://validation_operator_seba:${PASSWORD}@[::1]:5432/postgres`],
+    ["(M) localhost on the pooler port", `postgresql://validation_operator_seba.${REF}:${PASSWORD}@localhost:5432/postgres`],
+    ["(N) an IP literal", `postgresql://validation_operator_seba.${REF}:${PASSWORD}@10.0.0.7:5432/postgres`],
+    ["(N) a host alias of the pinned project", `postgresql://validation_operator_seba.${REF}:${PASSWORD}@dev-db.internal:5432/postgres`],
+    ["(N) a look-alike pooler host", `postgresql://validation_operator_seba.${REF}:${PASSWORD}@aws-0-sa-east-1.pooler.supabase.com.evil.example:5432/postgres`],
+    ["(N) another project's direct host with the pinned tenant in the login", `postgresql://validation_operator_seba.${REF}:${PASSWORD}@db.zzzzzzzzzzzzzzzzzzzz.supabase.co:5432/postgres`],
+  ] as const)("refuses %s — no local or development bypass, nothing printed", (_name, url) => {
+    const fence = checkValidationOperatorTarget(env(url), pin);
+    expect(fence.ok).toBe(false);
+    expect(fence.lines.join("\n")).not.toMatch(/secret-marker|abcdefghijklmnopqrst/);
+  });
+
+  it("(M) a local target never yields a client, even if handed over directly", () => {
+    const local = parseDatabaseUrl(`postgresql://validation_operator_seba:${PASSWORD}@127.0.0.1:5432/postgres`, VALIDATION_OPERATOR_URL);
+    expect(validationOperatorClient(local, env(undefined))).toEqual({ problem: expect.stringMatching(/no verifiable project identity/) as unknown });
+  });
+
+  it("(N) after connecting: only an authorized TLS session whose certificate names the expected host passes", () => {
+    const target = parseDatabaseUrl(pooler("validation_operator_seba"), VALIDATION_OPERATOR_URL);
+    const certificate = (altnames: string) => ({ subject: { CN: altnames.replace(/^DNS:/, "") }, subjectaltname: altnames }) as never;
+    const socket = (over: Partial<{ encrypted: boolean; authorized: boolean; altnames: string }> = {}) => ({
+      encrypted: over.encrypted ?? true, authorized: over.authorized ?? true, getPeerCertificate: () => certificate(over.altnames ?? "DNS:*.pooler.supabase.com"),
+    });
+    expect(verifyOperatorEndpoint(socket(), target)).toEqual([]);
+    expect(verifyOperatorEndpoint(undefined, target)).toHaveLength(1);
+    expect(verifyOperatorEndpoint(socket({ encrypted: false }), target)).toHaveLength(1);
+    expect(verifyOperatorEndpoint(socket({ authorized: false }), target)).toHaveLength(1);
+    expect(verifyOperatorEndpoint(socket({ altnames: "DNS:evil.example" }), target)).toHaveLength(1);
+    expect(verifyOperatorEndpoint({ encrypted: true, authorized: true, getPeerCertificate: () => ({}) }, target)).toHaveLength(1);
+  });
 });
 
 /** A fake client recording every statement; answers by statement shape. */
@@ -94,7 +135,8 @@ function fakeClient(session: Record<string, unknown> = {}) {
     query: (text: string, values: readonly unknown[] = []) => {
       statements.push({ text, values });
       if (text.includes("from pg_catalog.pg_roles r where r.rolname = session_user")) {
-        return Promise.resolve({ rows: [{ login: "validation_operator_seba", rolsuper: false, rolbypassrls: false, rolcreaterole: false, rolcreatedb: false, rolreplication: false, rolinherit: false, operator: true, isolation: "read committed", ...session }] });
+        return Promise.resolve({ rows: [{ login: "validation_operator_seba", rolsuper: false, rolbypassrls: false, rolcreaterole: false, rolcreatedb: false, rolreplication: false, rolinherit: false, operator: true, isolation: "read committed",
+          memberships: 1, exact_membership: true, acted_through: false, role_settings: false, foreign_objects: false, can_create: false, ...session }] });
       }
       if (text.includes("issue_validation_authorization")) return Promise.resolve({ rows: [{ authorization_id: A, expires_at: new Date("2026-11-12T16:00:00Z") }] });
       if (text.includes("revoke_validation_authorization")) return Promise.resolve({ rows: [{ revoked_at: new Date("2026-11-12T15:10:00Z") }] });
@@ -107,7 +149,10 @@ function fakeClient(session: Record<string, unknown> = {}) {
 describe("7B-14I2: the session check and the three fixed calls", () => {
   it("a validation operator session passes; the migration role, BYPASSRLS, INHERIT, a non-member, a misnamed login do not", async () => {
     expect(await operatorSessionProblems(fakeClient() as never)).toEqual([]);
-    for (const session of [{ login: "postgres", rolbypassrls: true, rolcreaterole: true }, { rolbypassrls: true }, { rolinherit: true }, { operator: false }, { login: "operator_seba" }, { isolation: "serializable" }]) {
+    for (const session of [{ login: "postgres", rolbypassrls: true, rolcreaterole: true }, { rolbypassrls: true }, { rolinherit: true }, { operator: false }, { login: "operator_seba" }, { isolation: "serializable" },
+      // Step 7B-14I3H (H4): a second membership, an INHERIT / ADMIN / no-SET membership, a role acting through the login,
+      // per-role settings, owned objects or direct grants, CREATE anywhere.
+      { memberships: 2 }, { exact_membership: false }, { acted_through: true }, { role_settings: true }, { foreign_objects: true }, { can_create: true }]) {
       expect((await operatorSessionProblems(fakeClient(session) as never)).length, JSON.stringify(session)).toBeGreaterThan(0);
     }
   });

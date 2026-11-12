@@ -23,6 +23,7 @@ import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { RELEASE_PLANES } from "@/tools/trigger/release-pair";
 import { outboxRuns } from "@/platform/db";
 import { PLANE_ENVIRONMENT_GUARD, codeOf, codeWithoutForbiddenList, codeWithoutPlaneRefusals, findReferences, sourceFiles, WEB_ENVIRONMENT_GUARD } from "../support/source-scan";
+import { R4A_MIGRATION, r4aMigrationShapeProblems } from "../support/search-path-migration";
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(import.meta.dirname, "../..");
@@ -200,6 +201,11 @@ describe("the persisted plane selects the runtime; no cross-plane fallback", () 
     const later = readdirSync(path.join(root, "db/migrations")).filter((file) => file.endsWith(".sql") && file >= "0012");
     for (const file of later) {
       const text = readFileSync(path.join(root, "db/migrations", file), "utf8");
+      // Step 7B-14P1 (TA §11 R4a): 0031 names system.outbox_execution_plane_guard() only to re-pin its search_path.
+      if (file === R4A_MIGRATION) {
+        expect(r4aMigrationShapeProblems()).toEqual([]);
+        continue;
+      }
       if (file !== "0025_intelligence_persistence.sql") expect(text, file).not.toMatch(/outbox_runs|execution_plane/);
       const uses = [...text.matchAll(/^.*\bsystem\.outbox\b.*$/gm)].map((match) => match[0].trim()).filter((line) => !line.startsWith("--"));
       // H6-F2 (0022), like 0019: insert policies and definer INSERTs only (never an UPDATE, a grant or the plane).

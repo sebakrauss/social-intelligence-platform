@@ -31,6 +31,7 @@ import { META_GRAPH_CURSOR_MAX_LENGTH } from "@/integrations/providers/meta/grap
 import { META_PAGE_CURSOR_PREFIX } from "@/integrations/providers/meta/read-port";
 import ts from "typescript";
 import { PLANE_ENVIRONMENT_GUARD, codeOf, codeWithoutPlaneRefusals, findReferences, sourceFiles } from "../support/source-scan";
+import { R4A_MIGRATION, r4aMigrationShapeProblems } from "../support/search-path-migration";
 
 const root = path.resolve(import.meta.dirname, "../..");
 
@@ -710,7 +711,9 @@ describe("Meta pagination cursor envelope (Step 7G-H5.5-P5-C7): the raw Graph cu
     expect(classification).toMatch(/"ingestion\.reconciliation_slice_park_cursor\(\)": \[\],/);
     expect(classification.replace(slices, "").replace('"ingestion.reconciliation_slice_park_cursor()": [],', "")).not.toMatch(/cursor/i);
     const migrations = readdirSync(path.join(root, "db/migrations")).filter((f) => f.endsWith(".sql"));
-    for (const file of migrations.filter((f) => f !== "0018_reconciliation_runtime.sql" && f !== "0023_resumable_signal_progress.sql")) {
+    // Step 7B-14P1 (TA §11 R4a): 0031 names ingestion.reconciliation_slice_park_cursor() only to re-pin its search_path.
+    expect(r4aMigrationShapeProblems()).toEqual([]);
+    for (const file of migrations.filter((f) => f !== "0018_reconciliation_runtime.sql" && f !== "0023_resumable_signal_progress.sql" && f !== R4A_MIGRATION)) {
       expect(readFileSync(path.join(root, "db/migrations", file), "utf8").replace(/--[^\n]*/g, ""), file).not.toMatch(/cursor/i);
     }
     // Step H6-F4b (0023, TL D-F4B-1/2): the parked cursor stays ON its reconciliation slice — part A names only that

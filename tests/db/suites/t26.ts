@@ -6,9 +6,12 @@
  *
  * Runtime traffic uses only the production pool factory and scope helpers, connecting as web_login,
  * worker_login and system_login. The privileged connection is test bootstrap only (seed, oracle, cleanup).
+ * Exception, by design: the R4a probes (30–32, Step 7B-14P1) model a COMPROMISED runtime, so they speak raw SQL as
+ * the runtime login inside one rolled-back transaction; 31 probes the privileged context itself (local cluster only).
  */
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
+import pgClient from "pg";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -22,8 +25,12 @@ import {
   type RuntimeDatabase,
 } from "@/platform/db";
 import { withSystemScope } from "@/platform/db/system-scope";
-import { APPLICATION_SCHEMAS } from "@/db/schema/classification";
+import { tlsFor } from "@/platform/db/pool";
+import { parseDatabaseUrl } from "@/platform/db";
+import { APPLICATION_SCHEMAS, PRIVILEGED_SEARCH_PATH_CONFIG } from "@/db/schema/classification";
+import { probePrivilegedContext, probeRuntimeSession, type ProbeResult } from "../support/name-resolution-probe";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
+import { operatorLogin } from "../support/validation-operator";
 import { cleanupWorld, seedWorld, type World } from "../support/world";
 import { backendPid, count, leftoverContext, scalar, sqlState } from "./helpers";
 
@@ -521,6 +528,99 @@ export function defineT26Suite(getTarget: () => DbTarget): void {
       expect((await sqlState(forged)).code).toBe("42501");
       const row = await privileged.query<{ outcome: string }>("select outcome from audit.audit_events where id = $1", [id]);
       expect(row.rows).toEqual([{ outcome: "succeeded" }]);
+    });
+  });
+
+  // Step 7B-14P1 (TA §11 R4a; 0031). Under `search_path = ''` the session's temporary schema is searched FIRST for
+  // relation and type names; a runtime session could make a privileged function run its own code as app_owner. Each
+  // probe arms a temporary schema inside ONE rolled-back transaction (nothing survives on a pooled backend) and reads
+  // nothing sensitive: it only observes WHERE armed code runs. The same probe finds the class on the pre-0031 schema
+  // (migration-0031-upgrade.test.ts), so a regression here fails CI.
+  describe("T-26 · privileged name resolution (R4a)", () => {
+    // A compromised runtime is the threat: the probe speaks raw SQL as the runtime login (never through the scope helpers).
+    const rawClient = (url: string): pg.Client => {
+      const parsed = parseDatabaseUrl(url, "runtime URL");
+      const client = new pgClient.Client({ host: parsed.host, port: parsed.port, database: parsed.database, user: parsed.user, password: parsed.password,
+        ssl: tlsFor(parsed, target.sslRootCert), application_name: "t26-r4a-probe" });
+      client.on("error", () => undefined);
+      return client;
+    };
+    const probe = async (client: pg.Client, setup: readonly string[]): Promise<ProbeResult> => {
+      await client.connect();
+      try {
+        return await probeRuntimeSession(client, { setup, uuid: world.A1 });
+      } finally {
+        await client.end();
+      }
+    };
+    const claims = (user: string): string =>
+      `select pg_catalog.set_config('request.jwt.claims', '${JSON.stringify({ sub: user, role: "authenticated" })}', true), pg_catalog.set_config('request.jwt.claim.sub', '${user}', true), pg_catalog.set_config('request.jwt.claim.role', 'authenticated', true)`;
+
+    it("30 · a web, worker, system (and, locally, validation operator) session that arms its temporary schema runs NOTHING as app_owner through any function it may execute", async () => {
+      const sessions: [string, () => Promise<ProbeResult>][] = [
+        ["authenticated", () => probe(rawClient(target.runtimeUrls.web), ["set local role authenticated", claims(world.users.a1), `select app.bind_workspace('${world.A1}'::pg_catalog.uuid)`])],
+        ["app_worker", () => probe(rawClient(target.runtimeUrls.worker), ["set local role app_worker", `select app.bind_workspace('${world.A1}'::pg_catalog.uuid)`])],
+        ["app_system", () => probe(rawClient(target.runtimeUrls.system), ["set local role app_system"])],
+      ];
+      if (target.name === "local") {
+        // R8: per-run logins only in the local disposable cluster.
+        const connect = await operatorLogin(privileged, target, "validation_operator_t26_r4a");
+        sessions.push(["app_validation_operator", async () => {
+          const client = await connect();
+          try {
+            return await probeRuntimeSession(client, { setup: ["set local role app_validation_operator"], uuid: world.A1 });
+          } finally {
+            await client.end();
+          }
+        }]);
+      }
+      for (const [role, run] of sessions) {
+        const result = await run();
+        // The fixture is live (the session's OWN unqualified cast resolved the armed domain) and the sweep reached the
+        // functions that role may execute.
+        expect(result.armed, role).toBe(true);
+        expect(result.exercised.length, role).toBeGreaterThan(0);
+        expect(result.escalated, role).toEqual({});
+      }
+    });
+
+    it("31 · in the privileged context itself, EVERY application function — definers, invoker helpers, CHECK predicates and triggers — runs as app_owner without resolving the session's temporary objects", async () => {
+      if (target.name !== "local") {
+        // The probe needs the migration role's own session (SET LOCAL ROLE app_owner): local disposable cluster only.
+        expect(target.name).toBe("managed");
+        return;
+      }
+      const migration = parseDatabaseUrl(target.privilegedUrl, "privileged URL");
+      const client = new pgClient.Client({ host: migration.host, port: migration.port, database: migration.database, user: migration.user, password: migration.password, ssl: false, application_name: "t26-r4a-probe" });
+      client.on("error", () => undefined);
+      await client.connect();
+      try {
+        const result = await probePrivilegedContext(client, { uuid: world.A1 });
+        expect(result.armed).toBe(true);
+        const functions = (await privileged.query<{ n: number; triggers: number }>(
+          `select count(*)::int as n, count(*) filter (where p.prorettype = 'trigger'::regtype)::int as triggers
+             from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspowner = 'app_owner'::regrole`)).rows[0];
+        expect(result.exercised).toHaveLength(functions?.n ?? -1);
+        // Every trigger function was fired at least once on a copy of a table it guards.
+        expect(new Set(result.triggersFired.map((line) => line.split(" on ")[0])).size).toBe(functions?.triggers ?? -1);
+        expect(result.escalated).toEqual({});
+      } finally {
+        await client.end();
+      }
+    });
+
+    it("32 · every application function pins exactly search_path = pg_catalog, pg_temp, and nobody but the owners can create in a schema they search", async () => {
+      const unpinned = await privileged.query<{ signature: string; config: string[] | null }>(
+        `select p.oid::regprocedure::text as signature, p.proconfig::text[] as config
+           from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where (n.nspname = any($1::text[]) or p.proowner = 'app_owner'::regrole) and p.proconfig is distinct from array[$2]::text[]`, [[...APPLICATION_SCHEMAS], PRIVILEGED_SEARCH_PATH_CONFIG]);
+      expect(unpinned.rows).toEqual([]);
+      // pg_catalog is the only schema searched before pg_temp: no runtime role (nor PUBLIC) may create in it.
+      const creators = await privileged.query<{ role: string }>(
+        `select r.rolname::text as role from pg_roles r
+          where r.rolname = any($1::text[]) and has_schema_privilege(r.oid, 'pg_catalog', 'CREATE')`,
+        [["authenticated", "anon", "app_worker", "app_system", "app_validation_operator", "app_owner", ...Object.values(RUNTIME_LOGIN_ROLES)]]);
+      expect(creators.rows).toEqual([]);
     });
   });
 }

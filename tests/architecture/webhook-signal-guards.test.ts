@@ -14,6 +14,7 @@ import type { WebhookEventHint } from "@/integrations/providers/contract";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { RELEASE_PLANES } from "@/tools/trigger/release-pair";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
+import { r4aMigrationShapeProblems } from "../support/search-path-migration";
 
 const META = "integrations/providers/meta/webhooks.ts";
 const CONTRACT = "integrations/providers/contract/webhooks.ts";
@@ -104,9 +105,13 @@ describe("H6-F1 → H6-F3: scope", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
     // H6-F2 added exactly 0022; H6-F3 and H6-F4 none; H6-F4b exactly 0023 (persistence only); H7-A2 0024 (classification);
     // H7-D1c 0025 (intelligence persistence); H7-D1e2b 0026 (provider-call intents); 7B-1 0027 (mutation intents, no webhook object);
-    // 7B-14F1 0028 (validation authorizations, no webhook object); 7B-14I2 0029 (the operator path, no webhook object).
-    expect(migrations.slice(-8)).toEqual(["0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql"]);
+    // 7B-14F1 0028 (validation authorizations, no webhook object); 7B-14I2 0029 (the operator path, no webhook object);
+    // 7B-14I3H 0030 (its hardening, no webhook object); 7B-14P1 0031 (search_path re-pins only, R4a).
+    expect(migrations.slice(-9)).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql", "0030_validation_operator_hardening.sql", "0031_privileged_name_resolution_hardening.sql"]);
     expect(codeOf("db/migrations/0029_validation_operator_path.sql").replace(/--[^\n]*/g, " ")).not.toMatch(/webhook|provider_event/);
+    expect(codeOf("db/migrations/0030_validation_operator_hardening.sql").replace(/--[^\n]*/g, " ")).not.toMatch(/webhook|provider_event/);
+    // Step 7B-14P1 (TA §11 R4a): 0031 names functions of every domain, but only to re-pin their search_path.
+    expect(r4aMigrationShapeProblems()).toEqual([]);
     expect(PRODUCTION_TASKS.tasks.map((t) => t.name).filter((n) => /webhook|provider_event|process_signal|purge/.test(n)).sort()).toEqual(["ingestion.process_signals", "ingestion.purge_provider_events", "ingestion.route_provider_events"]);
     // H6-F4: the tenant consumer of the routed rows.
     expect(PRODUCTION_TASKS.tenant("ingestion.process_signals")?.executionPlane).toBe("main");

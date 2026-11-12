@@ -202,6 +202,8 @@ describe("7B-14G1: the validation authorization is integrated into the ONE reque
       "mutations/persistence/store.ts",
       "mutations/persistence/tables.ts",
       "mutations/persistence/validation-authorizations.ts",
+      // Step 7B-14I3H (H1): the evidence's ONE read for the executor's credential binding (the binding type only).
+      "mutations/persistence/validation-preflights.ts",
       "mutations/ports.ts",
       "mutations/request/index.ts",
       "platform/i18n/catalogs/development-reference.ts",
@@ -254,8 +256,18 @@ describe("7B-14G1: the validation authorization is integrated into the ONE reque
     expect(executor).toMatch(/if \(authorizationId === null && providerAction !== "allowed"\) return block\("PROVIDER_ACTIONS_DISABLED"\);/);
     expect(executor).toMatch(/if \(authorizationId === null\) \{\s*if \(!usable\) return block\("CAPABILITY_UNAVAILABLE"\);/);
     // The verdict and PRE-LIVE-2 come before the EXECUTING settle; the final gate before the ONE provider call.
-    expect(executor.indexOf("validationVerdict(stores.validation")).toBeLessThan(executor.indexOf('await settle(stores, intent, "EXECUTING"'));
-    expect(executor.indexOf("credentialReady(")).toBeLessThan(executor.indexOf('await settle(stores, intent, "EXECUTING"'));
-    expect(executor.indexOf("finalValidationGate(stores, intent")).toBeLessThan(executor.indexOf(".replyPublicly("));
+    // Step 7B-14I3H: every anchor must exist (indexOf -1 would make "before" vacuously true; the last line used to name
+    // a function renamed in 7B-14H1).
+    const at = (needle: string): number => {
+      const index = executor.indexOf(needle);
+      expect(index, needle).toBeGreaterThanOrEqual(0);
+      return index;
+    };
+    expect(at("validationVerdict(stores.validation")).toBeLessThan(at('await settle(stores, intent, "EXECUTING"'));
+    expect(at("credentialReady(")).toBeLessThan(at('await settle(stores, intent, "EXECUTING"'));
+    // H1: the examined-credential binding is decided before the EXECUTING settle too.
+    expect(at("examinedCredentialRefusal({")).toBeLessThan(at('await settle(stores, intent, "EXECUTING"'));
+    expect(at("sendGate(stores, intent, accountPlatform, input.runReference, deps.clock)")).toBeLessThan(at(".replyPublicly("));
+    expect(at("sendGate(stores, intent, accountPlatform, input.runReference, deps.clock, { credentialId: openedId")).toBeLessThan(at(".replyPublicly("));
   });
 });

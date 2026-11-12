@@ -8,7 +8,7 @@
 import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { APPLICATION_SCHEMAS, FUNCTION_EXECUTE, RESTRICTIVE_POLICIES, SCHEMA_USAGE, TABLE_CLASSIFICATION } from "@/db/schema/classification";
+import { APPLICATION_SCHEMAS, CATALOG_FIRST_SEARCH_PATH_FUNCTIONS, FUNCTION_EXECUTE, PRIVILEGED_SEARCH_PATH_CONFIG, RESTRICTIVE_POLICIES, SCHEMA_USAGE, TABLE_CLASSIFICATION } from "@/db/schema/classification";
 import { auditEvents } from "@/modules/audit/persistence";
 import { authorityConflicts, reconciliationRuns, reconciliationSlices, reconciliationWatermarks } from "@/modules/ingestion/persistence";
 import { invitations, organizationMemberships, organizations, workspaceMemberships, workspaces } from "@/modules/tenancy/persistence";
@@ -99,7 +99,7 @@ export function defineIntrospectionSuite(getTarget: () => DbTarget): void {
       }
     });
 
-    it("every function is listed, owned by the owner role, executable only where granted, and definers pin an empty search_path", async () => {
+    it("every function is listed, owned by the owner role, executable only where granted, and definers pin a safe search_path", async () => {
       const rows = await query<{ signature: string; owner: string; definer: boolean; config: string[] | null; grantees: string[] | null; public_default: boolean }>(
         `select replace(p.oid::regprocedure::text, ', ', ',') as signature, pg_get_userbyid(p.proowner)::text as owner, p.prosecdef as definer, p.proconfig::text[] as config,
                 (select array_agg(case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee)::text end)
@@ -111,8 +111,12 @@ export function defineIntrospectionSuite(getTarget: () => DbTarget): void {
         expect(row.owner, row.signature).toBe("app_owner");
         expect(row.public_default, `${row.signature} relies on default EXECUTE for PUBLIC`).toBe(false);
         expect([...(row.grantees ?? [])].sort(), row.signature).toEqual([...(FUNCTION_EXECUTE[row.signature] ?? [])].sort());
-        if (row.definer) expect(row.config ?? [], row.signature).toContain('search_path=""');
+        // TA §11 R4a (Step 7B-14P1, 0031): EVERY application function — definer or invoker — pins exactly pg_catalog
+        // first and pg_temp last, and nothing else. An empty search_path still searches pg_temp first for relation and
+        // type names, so it is refused like any other configuration.
+        expect(row.config, `${row.signature} (definer=${String(row.definer)})`).toEqual([PRIVILEGED_SEARCH_PATH_CONFIG]);
       }
+      for (const signature of CATALOG_FIRST_SEARCH_PATH_FUNCTIONS) expect(rows.map((row) => row.signature), signature).toContain(signature);
     });
 
     it("schemas grant USAGE only to the expected runtime roles and CREATE to nobody", async () => {

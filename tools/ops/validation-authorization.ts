@@ -11,7 +11,10 @@
  *
  * Identity: the database login of DATABASE_VALIDATION_OPERATOR_URL (`.env.local`) — a dedicated
  * validation_operator_<handle> LOGIN, NOINHERIT, member of app_validation_operator only (SET, no ADMIN), never the
- * migration role. Provisioning such a login is a separate, explicitly authorized gate (per operator, long-lived, R8):
+ * migration role. Step 7B-14I3H: the URL must name the pinned project's session pooler or direct host (never a local,
+ * tunnelled or aliased endpoint); TLS is verify-full and re-checked right after connecting; the login must hold no
+ * privilege, ownership, membership or setting beyond its single SET membership and CONNECT (checked here, and again
+ * by the database inside every operator function). Provisioning such a login is a separate, explicitly authorized gate (per operator, long-lived, R8):
  *   create role validation_operator_<handle> login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls password '<SCRAM verifier>';
  *   grant connect on database postgres to validation_operator_<handle>;
  *   grant app_validation_operator to validation_operator_<handle> with inherit false, set true;
@@ -20,7 +23,7 @@
 import { loadTargetEnvironment } from "../db/environment.ts";
 import { describeValidationCommand, parseValidationCommand } from "./validation-authorization-command.ts";
 import { operatorSessionProblems, refusalLine, runValidationCall } from "./validation-authorizations.ts";
-import { checkValidationOperatorTarget, validationOperatorClient } from "../db/validation-operator-target.ts";
+import { checkValidationOperatorTarget, connectedSocket, validationOperatorClient, verifyOperatorEndpoint } from "../db/validation-operator-target.ts";
 
 function fail(message: string): never {
   console.log(`REFUSED: ${message}`);
@@ -43,6 +46,12 @@ const client = made.client;
 
 try {
   await client.connect();
+  // Step 7B-14I3H (H3): the endpoint proved itself (verify-full TLS, the expected host) before any statement is sent.
+  const endpoint = verifyOperatorEndpoint(connectedSocket(client), fence.target);
+  if (endpoint.length > 0) {
+    for (const problem of endpoint) console.log(`  PROBLEM: ${problem}`);
+    fail("the database endpoint could not be positively identified. Nothing was sent.");
+  }
   const problems = await operatorSessionProblems(client);
   if (problems.length > 0) {
     for (const problem of problems) console.log(`  PROBLEM: ${problem}`);

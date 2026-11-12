@@ -15,6 +15,8 @@
  *   - Step 7B-14G1: the validation reads (0028, read-only): the shared ones, plus whether another authorization already
  *     validated the target and whether the credential would be authorized (PRE-LIVE-2) — both read in the admit
  *     transaction before anything is spent. Nothing here writes an authorization.
+ *   - Step 7B-14I3H (H1): the PREFLIGHT evidence linked to the authorization (0030: the worker reads USED evidence of the
+ *     bound workspace), so the executor opens only the credential that PREFLIGHT examined.
  */
 import { createAuditEvent, type AuditLog } from "@/modules/audit";
 import { createPostgresAuditLog } from "@/modules/audit/persistence";
@@ -25,6 +27,7 @@ import type { WorkspaceId } from "@/domain/ids";
 import type { ExecutorStores, IntentOutcomeEvent } from "@/mutations/executor/execute";
 import { anotherValidationConsumedForTarget, createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace, databaseNow, initiatorWorkspaceRole, workspaceModeForExecution } from "@/mutations/persistence";
 import type { ActiveCredentialIdentity, ExecutionGuards, ValidationExecutionReads } from "@/mutations/ports";
+import { readValidationPreflightBinding } from "@/mutations/persistence/validation-preflights";
 import type { DatabaseTransaction } from "@/platform/db";
 import type { TenantJobScope } from "@/platform/jobs";
 import { replyTargets, sharedGuards, validationReads, type AuthorityReads } from "./mutations";
@@ -89,6 +92,11 @@ export function executorStores(scope: Pick<TenantJobScope, "tx">, newId: () => s
     credentialReady: async (workspaceId, connectedAccountId) => (await authorizedCredential(tx, { workspaceId, connectedAccountId })) !== undefined,
     // Step 7B-14H1 (PRE-LIVE-1): identifiers only, for the final gate after the credential was opened.
     activeCredential: (workspaceId, connectedAccountId) => authorizedCredential(tx, { workspaceId, connectedAccountId }),
+    // Step 7B-14I3H (H1): the evidence linked to the authorization, from the BOUND workspace only (0030 worker_read).
+    async examinedCredential(workspaceId, authorizationId) {
+      if (workspaceId !== (await currentWorkspace(tx))) return undefined;
+      return readValidationPreflightBinding(tx, workspaceId, authorizationId);
+    },
   };
   const guards: ExecutionGuards = {
     ...shared,
@@ -112,6 +120,8 @@ export function executorStores(scope: Pick<TenantJobScope, "tx">, newId: () => s
 
 export interface CredentialAuthority {
   readonly workspaceId: WorkspaceId;
+  /** Step 7B-14I3H (H1): the connection whose active credential this is. */
+  readonly connectionId: string;
   readonly credentialId: string;
   readonly envelope: Uint8Array;
   readonly platform: string;
@@ -127,7 +137,7 @@ export interface CredentialAuthority {
 async function authorizedCredential(tx: DatabaseTransaction, input: { readonly workspaceId: string; readonly connectedAccountId: string }): Promise<ActiveCredentialIdentity | undefined> {
   const authority = await credentialAuthority(tx, input);
   if (authority === undefined) return undefined;
-  return { credentialId: authority.credentialId, platform: authority.platform, providerAssetId: authority.providerAssetId };
+  return { credentialId: authority.credentialId, connectionId: authority.connectionId, platform: authority.platform, providerAssetId: authority.providerAssetId };
 }
 
 /**
@@ -145,7 +155,7 @@ export async function credentialAuthority(tx: DatabaseTransaction, input: { read
   if (connection === undefined || connection.status !== "ACTIVE" || connection.activeCredentialId === null) return undefined;
   const credential = await connections.credentials.load(connection.activeCredentialId);
   if (credential === undefined || credential.connectionId !== connection.id) return undefined;
-  return { workspaceId: account.workspaceId, credentialId: connection.activeCredentialId, envelope: credential.envelope, platform: account.platform, providerAssetId: account.providerAssetId };
+  return { workspaceId: account.workspaceId, connectionId: connection.id, credentialId: connection.activeCredentialId, envelope: credential.envelope, platform: account.platform, providerAssetId: account.providerAssetId };
 }
 
 /** Step 7B-14I2 — what the operator reconciliation task may act on: closed facts of ONE intent of the bound workspace. */

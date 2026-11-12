@@ -12,6 +12,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PLATFORM_KEYS } from "@/domain/platforms";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
+import { r4aMigrationShapeProblems } from "../support/search-path-migration";
 
 const RUNTIME = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "jobs", "db", "mutations", "ai"];
 const TOOL = ["tools/db/dev-fixture.ts", "tools/db/dev-fixture-guard.ts", "tests/db/dev-fixtures/classification-acceptance.ts", "tests/db/dev-fixtures/classification-acceptance.operator.ts",
@@ -110,9 +111,11 @@ describe("H7-B1b-0: isolation", () => {
     expect(parsed.interactions.map((interaction) => [...interaction.text.matchAll(/[a-z0-9.-]+\.[a-z]{2,}\/\S*/gi)].map((match) => match[0]))).toEqual([["example.com/h7-b1b"]]);
   });
 
-  it("no migration after 0029 (Step 7B-1: mutation intents; Step 7B-14F1: validation authorizations; Step 7B-14I2: the operator path) and no new platform key", () => {
+  it("no migration after 0031 (Step 7B-1: mutation intents; Step 7B-14F1: validation authorizations; Step 7B-14I2: the operator path; Step 7B-14I3H: its hardening; Step 7B-14P1: search_path re-pins) and no new platform key", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toBe("0029_validation_operator_path.sql");
+    expect(migrations.at(-1)).toBe("0031_privileged_name_resolution_hardening.sql");
+    // Step 7B-14P1 (TA §11 R4a): 0031 names functions of every domain, but only to re-pin their search_path.
+    expect(r4aMigrationShapeProblems()).toEqual([]);
     expect([...PLATFORM_KEYS]).toEqual(["facebook", "instagram", "tiktok"]);
   });
 });

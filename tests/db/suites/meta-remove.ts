@@ -484,14 +484,14 @@ export function defineMetaRemoveSuite(getTarget: () => DbTarget): void {
       expect((await sqlState(withWorkspaceJobScope(worker, t.workspaceId, (tx) => tx.execute(call)))).code).toBe("42501");
     });
 
-    it("catalog: app_owner-owned SECURITY DEFINER, empty search_path, returns void, EXECUTE for authenticated only (no PUBLIC)", async () => {
+    it("catalog: app_owner-owned SECURITY DEFINER, search_path pinned to pg_catalog, pg_temp (R4a, 0031), returns void, EXECUTE for authenticated only (no PUBLIC)", async () => {
       const [row] = await oracle<{ owner: string; definer: boolean; config: string[] | null; returns: string; grantees: string[] | null; public_default: boolean }>(
         `select pg_get_userbyid(p.proowner)::text as owner, p.prosecdef as definer, p.proconfig::text[] as config, p.prorettype::regtype::text as returns,
                 (select array_agg(case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee)::text end order by 1) from aclexplode(p.proacl) a where a.grantee <> p.proowner) as grantees,
                 p.proacl is null as public_default
            from pg_proc p where p.oid = 'connections.invalidate_open_fresh_meta_attempts(timestamptz)'::regprocedure`,
       );
-      expect(row).toEqual({ owner: "app_owner", definer: true, config: ['search_path=""'], returns: "void", grantees: ["authenticated"], public_default: false });
+      expect(row).toEqual({ owner: "app_owner", definer: true, config: ["search_path=pg_catalog, pg_temp"], returns: "void", grantees: ["authenticated"], public_default: false });
       const can = async (role: string) =>
         (await oracle<{ ok: boolean }>("select has_function_privilege($1, 'connections.invalidate_open_fresh_meta_attempts(timestamptz)', 'execute') as ok", [role]))[0]?.ok;
       expect(await can("authenticated")).toBe(true);

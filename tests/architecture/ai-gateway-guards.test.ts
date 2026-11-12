@@ -18,6 +18,7 @@ import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { RELEASE_PLANES } from "@/tools/trigger/release-pair";
 import { UNDERSTANDING_DATA_FIELDS } from "@/modules/classification/application/ai/understanding-task";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
+import { r4aMigrationShapeProblems } from "../support/search-path-migration";
 
 const strip = (code: string): string => code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
 /** eval-corpus.v1 content pin (H7-D0a: the corpus may not change between bake-off runs) — the H7-D0 FINAL corpus, kept. */
@@ -145,9 +146,12 @@ describe("H7-C: nothing is wired to a runtime", () => {
     expect(strip(codeOf("modules/classification/application/understand-deterministic.ts"))).not.toMatch(/understandInteraction|gateway|AI_PENDING|intelligence/i);
   });
 
-  it("no AI migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents); 0027 is Step 7B-1's mutation intents, 0028 Step 7B-14F1's validation authorizations and 0029 Step 7B-14I2's operator path; none names an AI object", () => {
+  it("no AI migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents); 0027 is Step 7B-1's mutation intents, 0028 Step 7B-14F1's validation authorizations and 0029 Step 7B-14I2's operator path and 0030 Step 7B-14I3H's operator hardening (none names an AI object); 0031 Step 7B-14P1's search_path re-pins (R4a) touch no AI object but its functions' path", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toBe("0029_validation_operator_path.sql");
+    expect(migrations.at(-1)).toBe("0031_privileged_name_resolution_hardening.sql");
+    expect(strip(codeOf("db/migrations/0030_validation_operator_hardening.sql"))).not.toMatch(/classification\.|ai_|understand/);
+    // Step 7B-14P1 (TA §11 R4a): 0031 names functions of every domain, but only to re-pin their search_path.
+    expect(r4aMigrationShapeProblems()).toEqual([]);
     expect(strip(codeOf("db/migrations/0029_validation_operator_path.sql"))).not.toMatch(/classification\.|ai_|understand/);
     expect(strip(codeOf("db/migrations/0027_mutation_intents.sql"))).not.toMatch(/classification\.|ai_|understand/);
     expect(strip(codeOf("db/migrations/0028_mutation_validation_authorizations.sql"))).not.toMatch(/classification\.|ai_|understand/);

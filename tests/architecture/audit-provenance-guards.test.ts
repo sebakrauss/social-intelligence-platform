@@ -13,6 +13,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AUDIT_ACTIONS } from "@/modules/audit";
+import { r4aMigrationShapeProblems } from "../support/search-path-migration";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 import {
   COMMAND_BOUND_ELSEWHERE,
@@ -155,9 +156,13 @@ describe("H6-C3d: 0020's scope", () => {
     expect(sql.toLowerCase()).not.toMatch(/\b(insert into|update|delete from|truncate|alter table|create table|drop|audit_events_action_check)\b/);
   });
 
-  it("no later migration changes audit policy or vocabulary — except 0027 (Step 7B-1), which widens the vocabulary and extends append_own by the request's event only, and 0029 (Step 7B-14I2), which widens it by the operator's two events and adds ONE owner insert policy for them; 0028 names no audit object", () => {
+  it("no later migration changes audit policy or vocabulary — except 0027 (Step 7B-1), which widens the vocabulary and extends append_own by the request's event only, and 0029 (Step 7B-14I2), which widens it by the operator's two events and adds ONE owner insert policy for them; 0028 and 0030 name no audit object; 0031 (Step 7B-14P1) only re-pins the audit functions' search_path (R4a)", () => {
     const later = migrationNames().filter((name) => name > M0020);
-    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", M0027, "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql"]);
+    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", M0027, "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql", "0030_validation_operator_hardening.sql", "0031_privileged_name_resolution_hardening.sql"]);
+    // 0030 (Step 7B-14I3H) names no audit object at all (search_path pins, the identity check, one worker read).
+    expect(code("0030_validation_operator_hardening.sql").toLowerCase().replace(/--[^\n]*/g, " ")).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
+    // Step 7B-14P1 (TA §11 R4a): 0031 names functions of every domain, but only to re-pin their search_path.
+    expect(r4aMigrationShapeProblems()).toEqual([]);
     // 0029's audit statements: the two exact widenings, ONE owner insert policy, and the two definers' inserts of the
     // operator's own two actions (inside the function bodies) — no append_own change, no audit grant, no update/delete.
     const m29 = code("0029_validation_operator_path.sql").toLowerCase().replace(/--[^\n]*/g, " ");

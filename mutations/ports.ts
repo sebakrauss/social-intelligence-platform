@@ -8,7 +8,7 @@ import type { ProviderObjectRef } from "@/integrations/providers/contract/identi
 import type { ProviderMutationPort } from "@/integrations/providers/contract/mutation-port";
 import type { MutationAction } from "@/platform/flags";
 import type { CompetingIntent, IntentOutcomeCode, IntentStatus, IntentTransition, MutationIntent } from "./domain/intent";
-import type { ValidationAuthorizationReading } from "./domain/validation-authorization";
+import type { ValidationAuthorizationReading, ValidationPreflightBinding } from "./domain/validation-authorization";
 
 /** The canonical interaction a reply targets, as persistence knows it (never a browser-supplied provider id). */
 export interface ReplyTarget {
@@ -167,11 +167,19 @@ export interface ValidationExecutionReads extends ValidationAuthorityReads {
    * credential was opened. A stored expiry is not consulted (Step 7G-H5.5-P12-C0-R5F).
    */
   activeCredential(workspaceId: string, connectedAccountId: string): Promise<ActiveCredentialIdentity | undefined>;
+  /**
+   * Step 7B-14I3H (H1): the PREFLIGHT evidence the authorization was issued from, as persisted in THIS workspace and
+   * linked to it by the evidence's write-once authorization id (never a payload or browser value); undefined when none,
+   * or not exactly one, is visible. Identifiers, the verdict and the recording instant only.
+   */
+  examinedCredential(workspaceId: string, authorizationId: string): Promise<ValidationPreflightBinding | undefined>;
 }
 
 /** Identifiers of the credential a call is made with (never its envelope or its secret). */
 export interface ActiveCredentialIdentity {
   readonly credentialId: string;
+  /** Step 7B-14I3H (H1): the connection whose active credential it is. */
+  readonly connectionId: string;
   readonly platform: string;
   readonly providerAssetId: string;
 }

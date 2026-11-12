@@ -17,6 +17,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { codeOf, sourceFiles } from "../support/source-scan";
+import { r4aMigrationShapeProblems } from "../support/search-path-migration";
 
 const PRODUCTION = ["app", "ui", "server", "domain", "modules", "platform", "integrations", "jobs", "db", "tools"];
 const SIGNAL_FILES = [
@@ -194,11 +195,14 @@ describe("H6-F4d: confirm marks", () => {
     expect(PRODUCTION_TASKS.tasks.find((task) => task.name === "ingestion.purge_provider_events")?.executionPlane).toBe("main");
   });
 
-  it("no H6 migration after 0023: the later ones are H7's classification (0024), intelligence (0025) and call-intent (0026) persistence and 7B-1's mutation intents (0027), 7B-14F1's validation authorizations (0028) and 7B-14I2's operator path (0029), which name no ingestion object", () => {
+  it("no H6 migration after 0023: the later ones are H7's classification (0024), intelligence (0025) and call-intent (0026) persistence and 7B-1's mutation intents (0027), 7B-14F1's validation authorizations (0028), 7B-14I2's operator path (0029) and 7B-14I3H's hardening (0030), which name no ingestion object, and 7B-14P1's search_path re-pins (0031, R4a)", () => {
     const migrations = readdirSync("db/migrations").filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql"]);
+    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql", "0030_validation_operator_hardening.sql", "0031_privileged_name_resolution_hardening.sql"]);
     expect(readFileSync("db/migrations/0028_mutation_validation_authorizations.sql", "utf8").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|signal_marks|process_signals|system\./);
     expect(readFileSync("db/migrations/0029_validation_operator_path.sql", "utf8").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|signal_marks|process_signals|system\./);
+    expect(readFileSync("db/migrations/0030_validation_operator_hardening.sql", "utf8").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|signal_marks|process_signals|system\./);
+    // Step 7B-14P1 (TA §11 R4a): 0031 names functions of every domain, but only to re-pin their search_path.
+    expect(r4aMigrationShapeProblems()).toEqual([]);
     expect(readFileSync("db/migrations/0026_ai_call_intents.sql", "utf8").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|signal_marks|process_signals|system\./);
     expect(readFileSync("db/migrations/0027_mutation_intents.sql", "utf8").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|signal_marks|process_signals|system\./);
     const later = readFileSync("db/migrations/0024_classification_persistence.sql", "utf8").replace(/--[^\n]*/g, " ");
