@@ -72,6 +72,10 @@ export const AUDIT_ACTIONS = [
   "mutation_intent.blocked",
   "mutation_intent.outcome_unknown",
   "mutation_intent.reconciled",
+  // Step 7B-14I2 (migration 0029): the validation operator's issuance and revocation (written ONLY by the 0029 definers,
+  // actor `system`; no TypeScript producer)
+  "validation_authorization.issued",
+  "validation_authorization.revoked",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -85,6 +89,8 @@ export const AUDIT_TARGET_TYPES = [
   "connected_account",
   "asset_move",
   "mutation_intent",
+  // Step 7B-14I2 (migration 0029)
+  "validation_authorization",
 ] as const;
 export type AuditTargetType = (typeof AUDIT_TARGET_TYPES)[number];
 

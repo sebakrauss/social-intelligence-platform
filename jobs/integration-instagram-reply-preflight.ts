@@ -20,11 +20,14 @@
  *              an observed, top-level, canonical COMMENT of that account in that workspace — anything else is refused
  *              before the credential is opened
  *
- * Writes NOTHING: no intent, reply, outbox, capability profile, catalog, evidence record, audit or provider object; it
- * never reaches the write transport, a mutation port or the executor (tests/architecture + depcruise
- * instagram-reply-preflight-reads-only). A successful read says nothing about the token type a reply POST requires
- * (tokenTypeForReplyPost is always NOT_VERIFIED). Retry: ONE task attempt and ONE KMS attempt; re-running is a new,
- * deliberate operator run.
+ * Writes exactly ONE thing (Step 7B-14I2), in preflight mode only, after the reads: its own evidence row in
+ * mutations.validation_preflights, through the bound worker's 0029 definer — the run id from the run context, the
+ * examined credential's id (re-checked active by the database), closed counts and the database's clock. Nothing else:
+ * no intent, reply, outbox, capability profile, catalog, audit, authorization or provider object; it never reaches the
+ * write transport, a mutation port or the executor (tests/architecture + depcruise instagram-reply-preflight-reads-only).
+ * A successful read says nothing about the token type a reply POST requires (tokenTypeForReplyPost is always
+ * NOT_VERIFIED, and the evidence records it so). Retry: ONE task attempt and ONE KMS attempt; re-running is a new,
+ * deliberate operator run (and a new evidence row).
  */
 import { CredentialUnreadableError, type ConnectedAccount, type Connection, type ProviderCredentialAccess } from "@/modules/connections";
 import { isUuid, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
@@ -35,7 +38,9 @@ import { withWorkspaceJobScope } from "@/platform/db";
 import { NonRetryableJobError, type JobRelease } from "@/platform/jobs";
 import { selectCredentialCrypto } from "@/server/connections/environment";
 import { PROVIDER_MODE_VARIABLES } from "@/server/connections/provider-mode";
-import { instagramReplyPreflightLookup, type InteractionReplyTargetRow } from "@/server/persistence/instagram-reply-preflight";
+import { randomUUID } from "node:crypto";
+import { INSTAGRAM_REPLY_REQUIRED_PERMISSIONS } from "@/integrations/providers/meta/instagram-reply-preflight";
+import { instagramReplyPreflightLookup, recordInstagramReplyPreflightEvidence, type InteractionReplyTargetRow, type ValidationPreflightEvidence } from "@/server/persistence/instagram-reply-preflight";
 import { composeInstagramReplyPreflight } from "./connections";
 import { planeEnvironmentProblems } from "./plane-environment";
 import { workerDatabase } from "./runtime";
@@ -96,7 +101,15 @@ const refuse = (failure: InstagramReplyPreflightFailure): never => {
 export interface InstagramReplyPreflightRun {
   readonly environmentType: string | undefined;
   readonly release: JobRelease;
+  /** Step 7B-14I2: the run's own id (the evidence's run reference). */
+  readonly runId: string;
 }
+
+/** Step 7B-14I2: what became of the run's evidence (preflight mode only). Never a reason to trust a run that wrote none. */
+export type InstagramReplyPreflightEvidenceOutcome =
+  | { readonly kind: "recorded"; readonly preflightId: string; readonly recordedAt: string; readonly passed: boolean }
+  | { readonly kind: "not_recorded" }
+  | { readonly kind: "not_applicable" };
 
 export interface InstagramReplyPreflightInput {
   readonly mode: InstagramReplyPreflightMode;
@@ -130,6 +143,8 @@ export interface InstagramReplyPreflightOutcome {
   /** Observed directly in Meta during this run. */
   readonly observed: InstagramReplyPreflightFacts;
   readonly status: InstagramReplyPreflightFacts["status"];
+  /** Step 7B-14I2: the persisted evidence an operator issuance must rest on (preflight mode only). */
+  readonly evidence: InstagramReplyPreflightEvidenceOutcome;
 }
 
 export interface InstagramReplyPreflightDependencies {
@@ -138,6 +153,35 @@ export interface InstagramReplyPreflightDependencies {
   readonly lookup: (input: InstagramReplyPreflightInput) => Promise<InstagramReplyPreflightLookupResult>;
   /** Builds the credential access and the Meta read-only preflight reader; called only after every guard passed. */
   readonly compose: (environment: Environment) => { readonly access: ProviderCredentialAccess; readonly preflight: InstagramReplyPreflight };
+  /** Step 7B-14I2: records the evidence (one worker transaction bound to the input's workspace); returns the database instant. */
+  readonly record: (workspaceId: WorkspaceId, evidence: ValidationPreflightEvidence) => Promise<Date>;
+}
+
+/**
+ * Step 7B-14I2 — the closed counts a PREFLIGHT run's evidence carries (pure). `passed` is decided by the DATABASE from
+ * these (a generated column); the same rule is mirrored here only to report it: the reader's status VERIFIED, all ten
+ * checks VERIFIED, every required permission granted, the replies listing complete, attributable and showing NO reply
+ * by the managed account, and the sequence not stopped early.
+ */
+export function preflightEvidenceCounts(facts: InstagramReplyPreflightFacts): Omit<ValidationPreflightEvidence, "id" | "connectedAccountId" | "targetInteractionId" | "credentialId" | "runReference"> {
+  const checksVerified = Object.values(facts.checks).filter((check) => check.state === "VERIFIED").length;
+  const permissions = facts.permissions;
+  const requiredPermissionsGranted = permissions !== null && INSTAGRAM_REPLY_REQUIRED_PERMISSIONS.every((permission) => permissions[permission] === "granted");
+  return {
+    status: facts.status,
+    checksVerified,
+    requiredPermissionsGranted,
+    repliesComplete: facts.replies.complete === true,
+    repliesByManagedAccount: facts.replies.byManagedAccount,
+    repliesUnattributed: facts.replies.unattributed,
+    stoppedEarly: facts.stoppedEarly,
+  };
+}
+
+/** The database's `passed` rule (0029), mirrored for the report only. */
+export function preflightEvidencePasses(counts: ReturnType<typeof preflightEvidenceCounts>): boolean {
+  return counts.status === "VERIFIED" && counts.checksVerified === 10 && counts.requiredPermissionsGranted && counts.repliesComplete
+    && counts.repliesByManagedAccount === 0 && counts.repliesUnattributed === 0 && !counts.stoppedEarly;
 }
 
 /**
@@ -194,7 +238,13 @@ export function productionCompose(environment: Environment): { readonly access: 
   return composeInstagramReplyPreflight(environment, INSTAGRAM_REPLY_PREFLIGHT_AWS_ATTEMPTS);
 }
 
-const PRODUCTION: InstagramReplyPreflightDependencies = Object.freeze({ nodeVersion: process.version, lookup: productionLookup, compose: productionCompose });
+/** The production evidence write: ONE worker transaction bound to the input's workspace, through the 0029 definer. */
+export function productionRecord(workspaceId: WorkspaceId, evidence: ValidationPreflightEvidence): Promise<Date> {
+  return withWorkspaceJobScope(workerDatabase(), workspaceId, (tx) => recordInstagramReplyPreflightEvidence(tx, evidence));
+}
+
+const PRODUCTION: InstagramReplyPreflightDependencies = Object.freeze({ nodeVersion: process.version, lookup: productionLookup, compose: productionCompose, record: productionRecord });
+const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 /** The payload must be exactly the acknowledgement, a mode and three UUIDs — nothing else is accepted. */
 export function parseInstagramReplyPreflightInput(payload: unknown): InstagramReplyPreflightInput {
@@ -215,7 +265,7 @@ export function parseInstagramReplyPreflightInput(payload: unknown): InstagramRe
 /** Every precondition, in order, before anything AWS- or provider-capable exists. */
 export function assertInstagramReplyPreflightPreconditions(payload: unknown, run: InstagramReplyPreflightRun, environment: Environment, nodeVersion: string): InstagramReplyPreflightInput {
   const input = parseInstagramReplyPreflightInput(payload);
-  if (run.environmentType !== INSTAGRAM_REPLY_PREFLIGHT_TRIGGER_ENVIRONMENT || run.release.kind !== "pinned") refuse("instagram_reply_preflight_release_refused");
+  if (run.environmentType !== INSTAGRAM_REPLY_PREFLIGHT_TRIGGER_ENVIRONMENT || run.release.kind !== "pinned" || !RUN_ID.test(run.runId)) refuse("instagram_reply_preflight_release_refused");
   if (planeEnvironmentProblems("integration", run.release, environment).length > 0) refuse("instagram_reply_preflight_plane_refused");
   if (environment[PROVIDER_MODE_VARIABLES.tier] !== INSTAGRAM_REPLY_PREFLIGHT_TIER) refuse("instagram_reply_preflight_tier_refused");
   if (!nodeVersion.startsWith("v22.")) refuse("instagram_reply_preflight_runtime_refused");
@@ -228,6 +278,28 @@ export function assertInstagramReplyPreflightPreconditions(payload: unknown, run
   }
   if (!kms) refuse("instagram_reply_preflight_keyring_refused");
   return input;
+}
+
+/**
+ * Step 7B-14I2 — after the reads (the credential is closed again): ONE evidence row, written by the database's definer,
+ * which re-checks that the examined credential is still the account's active one. A refused or failed write is reported
+ * as not_recorded — never retried, never replaced by a value from this process.
+ */
+async function recordEvidence(
+  deps: InstagramReplyPreflightDependencies,
+  input: InstagramReplyPreflightInput,
+  credentialId: string,
+  runId: string,
+  observed: InstagramReplyPreflightFacts,
+): Promise<InstagramReplyPreflightEvidenceOutcome> {
+  const counts = preflightEvidenceCounts(observed);
+  const preflightId = randomUUID();
+  try {
+    const recordedAt = await deps.record(input.workspaceId, { id: preflightId, connectedAccountId: input.connectedAccountId, targetInteractionId: input.targetInteractionId, credentialId, runReference: runId, ...counts });
+    return Object.freeze({ kind: "recorded", preflightId, recordedAt: recordedAt.toISOString(), passed: preflightEvidencePasses(counts) });
+  } catch {
+    return Object.freeze({ kind: "not_recorded" });
+  }
 }
 
 /** A credential-access failure BEFORE the provider call, as one fixed code (never retried here). */
@@ -274,7 +346,8 @@ export async function runInstagramReplyPreflight(
       progress.opened = true;
       return preflight.inspect(credential, target, input.mode);
     });
-    return Object.freeze({ mode: input.mode, platform: "instagram", accountKind: "instagram_professional_account", stored, observed, status: observed.status });
+    const evidence = input.mode === "preflight" ? await recordEvidence(deps, input, found.credentialId, run.runId, observed) : ({ kind: "not_applicable" } as const);
+    return Object.freeze({ mode: input.mode, platform: "instagram", accountKind: "instagram_professional_account", stored, observed, status: observed.status, evidence });
   } catch (error) {
     // The reader returns every provider answer as facts; anything thrown after opening is an internal failure.
     if (progress.opened) return refuse("instagram_reply_preflight_failed");

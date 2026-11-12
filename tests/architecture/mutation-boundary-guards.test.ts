@@ -64,7 +64,12 @@ describe("7B-1: the mutation port has one composition root and one implementatio
       for (const specifier of importsOf(file)) expect(specifier, file).not.toMatch(/^@\/mutations\b/);
     }
     const importers = sourceFiles(PRODUCTION).filter((file) => importsOf(file).some((specifier) => /persistence\/mutation-execution/.test(specifier)));
-    expect(importers).toEqual(["jobs/mutations.ts"]);
+    // Step 7B-14I2: + the operator reconciliation module (it reads the credential authority and the executor's stores to
+    // run the existing reconciler) — and it never reaches a mutation port, the executor composition or a write transport.
+    expect(importers).toEqual(["jobs/integration-mutation-reconcile.ts", "jobs/mutations.ts"]);
+    const reconcile = importsOf("jobs/integration-mutation-reconcile.ts");
+    expect(reconcile.filter((specifier) => /mutation-port|graph-transport|read-port|@\/jobs\/mutations|\.\/mutations|registry/.test(specifier))).toEqual([]);
+    expect(strip(codeOf("jobs/integration-mutation-reconcile.ts"))).not.toMatch(/executeIntent\(|replyPublicly|createMetaMutationPort|composeMutationProviders|createInstagramCommentReply/);
     expect(importsOf("server/persistence/mutations.ts").filter((s) => s.startsWith("@/mutations/"))).toEqual(["@/mutations/persistence", "@/mutations/request"]);
   });
 
@@ -88,8 +93,9 @@ describe("7B-1: the task, its topic and its release", () => {
     expect(PRODUCTION_TASKS.tasks.filter((t) => t.name.startsWith("mutations."))).toHaveLength(1);
     expect(readdirSync(path.join(REPOSITORY_ROOT, "jobs/trigger/integration"))).toContain("mutations.ts");
     expect(codeOf("jobs/trigger/integration/mutations.ts")).toMatch(/defineTenantStepTask\(PRODUCTION_TASKS, "mutations\.execute_intent"/);
-    // 8 since 7B-1 (the executor); 9 since 7B-14C1 (the read-only Instagram reply preflight diagnostic — no mutation task).
-    expect(RELEASE_PLANES.find((plane) => plane.plane === "integration")?.expectedTasks).toBe(9);
+    // 8 since 7B-1 (the executor); 9 since 7B-14C1 (the read-only Instagram reply preflight diagnostic — no mutation task);
+    // 10 since 7B-14I2 (the operator reconciliation task — reads only, never a send, absent from the registry).
+    expect(RELEASE_PLANES.find((plane) => plane.plane === "integration")?.expectedTasks).toBe(10);
     // Members append the topic (the web request); 0021's internal inventory does not name it.
     expect(codeOf("db/migrations/0021_outbox_internal_topics.sql")).not.toMatch(/mutations\.execute_intent/);
   });
@@ -102,12 +108,15 @@ describe("7B-1: the task, its topic and its release", () => {
 });
 
 describe("7B-1: the request command and 0027", () => {
-  it("the command declares reply.public and Standard mode, validates exactly three fields plus one OPTIONAL validated UUID (7B-14G1), appends only the executor dispatch", () => {
+  it("the command declares reply.public and Standard mode, validates exactly three fields plus one OPTIONAL validated UUID (7B-14G1) and one OPTIONAL `true` flag (7B-14I2), appends only the executor dispatch", () => {
     const command = codeOf("server/commands/mutations.ts");
     expect(command).toMatch(/permission: "reply\.public",/);
     expect(command).toMatch(/requiresStandardMode: true,/);
     // Step 7B-14G1: the fourth field is optional and a validated UUID — a reference, never a permission.
-    expect(command).toMatch(/validate: object\(\{ targetInteractionId: uuid, text: text\(\{ min: 1, max: REPLY_TEXT_MAX_CHARS \}\), idempotencyKey: text\(\{ min: 8, max: 128, pattern: IDEMPOTENCY_KEY \}\), validationAuthorizationId: optional\(uuid\) \}\),/);
+    expect(command).toMatch(/validate: object\(\{ targetInteractionId: uuid, text: text\(\{ min: 1, max: REPLY_TEXT_MAX_CHARS \}\), idempotencyKey: text\(\{ min: 8, max: 128, pattern: IDEMPOTENCY_KEY \}\), validationAuthorizationId: optional\(uuid\), validation: optional\(flag\) \}\),/);
+    // Step 7B-14I2: the flag accepts exactly `true` and only asks the request service to resolve on the server.
+    expect(command).toMatch(/const flag = parsed\(\(value\) => \(value === true \? true : undefined\)\);/);
+    expect(command).toMatch(/\.\.\.\(input\.validation === true \? \{ resolveValidationAuthorization: true \} : \{\}\),/);
     expect([...command.matchAll(/outbox\.append\(/g)]).toHaveLength(1);
     expect(command).toMatch(/tx\.outbox\.append\(executeIntentDispatch\(/);
     expect(command).not.toMatch(/tx\.connections|tx\.audit|sql`|replyPublicly|mutation-port/);
@@ -182,6 +191,8 @@ describe("7B-14G1: the validation authorization is integrated into the ONE reque
     const knows = sourceFiles(PRODUCTION).filter((file) => !file.startsWith("db/") && KNOWS.test(strip(codeOf(file))));
     expect(knows).toEqual([
       "domain/i18n/message-keys.ts",
+      // Step 7B-14I2: the closed audit vocabulary names the operator's two 0029 events (no TypeScript producer).
+      "modules/audit/domain/audit-event.ts",
       "modules/capability/application/evaluation.ts",
       "modules/capability/index.ts",
       "mutations/domain/intent.ts",
@@ -198,10 +209,20 @@ describe("7B-14G1: the validation authorization is integrated into the ONE reque
       "server/inbox/inbox.ts",
       "server/persistence/mutation-execution.ts",
       "server/persistence/mutations.ts",
+      // Step 7B-14I2: the Inbox reply model (the initiator's own live authorization, through RLS — its id never leaves
+      // the server) and the operator tool (three fixed definer calls; no table access).
+      "server/queries/inbox.ts",
+      "tools/ops/validation-authorization.ts",
+      "tools/ops/validation-authorizations.ts",
     ]);
-    // The Inbox Server Action still reads exactly its five fields: no browser path names an authorization in this step.
-    expect(strip(codeOf("server/inbox/actions.ts"))).not.toMatch(/validation/i);
+    // Step 7B-14I2: the Inbox Server Action reads ONE more field — a constant mode flag — and never an identifier; the
+    // composer sends that flag only; no browser path names an authorization.
+    const action = strip(codeOf("server/inbox/actions.ts"));
+    expect(action).toMatch(/const validation = field\(form, "validation"\) === "1";/);
+    expect(action).toMatch(/\.\.\.\(validation \? \{ validation: true \} : \{\}\)/);
+    expect(action).not.toMatch(/validationAuthorizationId|authorizationId|field\(form, "validationAuthorization/);
     for (const file of sourceFiles(["app", "ui", "jobs", "integrations", "ai"])) expect(strip(codeOf(file)), file).not.toMatch(KNOWS);
+    expect(strip(codeOf("server/queries/inbox.ts"))).not.toMatch(/validationAuthorizationId|readValidationAuthorization/);
   });
 
   it("nothing outside the migrations can write an authorization: no insert / update / delete / locking read, in any form", () => {

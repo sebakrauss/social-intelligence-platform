@@ -104,13 +104,15 @@ describe("H6-F1 → H6-F3: scope", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
     // H6-F2 added exactly 0022; H6-F3 and H6-F4 none; H6-F4b exactly 0023 (persistence only); H7-A2 0024 (classification);
     // H7-D1c 0025 (intelligence persistence); H7-D1e2b 0026 (provider-call intents); 7B-1 0027 (mutation intents, no webhook object);
-    // 7B-14F1 0028 (validation authorizations, no webhook object).
-    expect(migrations.slice(-7)).toEqual(["0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql"]);
+    // 7B-14F1 0028 (validation authorizations, no webhook object); 7B-14I2 0029 (the operator path, no webhook object).
+    expect(migrations.slice(-8)).toEqual(["0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql"]);
+    expect(codeOf("db/migrations/0029_validation_operator_path.sql").replace(/--[^\n]*/g, " ")).not.toMatch(/webhook|provider_event/);
     expect(PRODUCTION_TASKS.tasks.map((t) => t.name).filter((n) => /webhook|provider_event|process_signal|purge/.test(n)).sort()).toEqual(["ingestion.process_signals", "ingestion.purge_provider_events", "ingestion.route_provider_events"]);
     // H6-F4: the tenant consumer of the routed rows.
     expect(PRODUCTION_TASKS.tenant("ingestion.process_signals")?.executionPlane).toBe("main");
-    // Step 7B-14C1: INTEGRATION 9 (+ the read-only Instagram reply preflight diagnostic).
-    expect(RELEASE_PLANES.map((p) => [p.plane, p.expectedTasks])).toEqual([["integration", 9], ["intelligence", 1], ["main", 11]]);
+    // Step 7B-14C1: INTEGRATION 9 (+ the read-only Instagram reply preflight diagnostic); Step 7B-14I2: 10 (+ the operator
+    // reconciliation task; no webhook or signal task).
+    expect(RELEASE_PLANES.map((p) => [p.plane, p.expectedTasks])).toEqual([["integration", 10], ["intelligence", 1], ["main", 11]]);
     // The verify token: read by the web receiver's config only; refused by both jobs planes.
     expect(sourceFiles(PRODUCTION).filter((file) => /PROVIDER_META_WEBHOOK_VERIFY_TOKEN/.test(codeOf(file))).sort()).toEqual(["jobs/plane-environment.ts", "server/webhooks/meta-config.ts"]);
     // The App Secret still reaches only the web's Meta app configuration; no jobs-plane code names the webhook secret.

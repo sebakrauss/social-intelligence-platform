@@ -102,7 +102,10 @@ describe("foundations are inert", () => {
     expect([...composer.matchAll(/<form/g)]).toHaveLength(1);
     expect(composer).toMatch(/<blockquote className=\{styles\["preview"\]\}>\{text\}<\/blockquote>/);
     expect(composer).toMatch(/<input type="hidden" name="text" value=\{text\} \/>/);
-    expect([...composer.matchAll(/<input type="hidden" name="([^"]+)"/g)].map((m) => m[1])).toEqual(["workspaceId", "conversationId", "targetInteractionId", "idempotencyKey", "text"]);
+    // Step 7B-14I2: + ONE optional mode flag for an operator-authorized validation reply — a constant "1", never an identifier.
+    expect([...composer.matchAll(/<input type="hidden" name="([^"]+)"/g)].map((m) => m[1])).toEqual(["workspaceId", "conversationId", "targetInteractionId", "idempotencyKey", "validation", "text"]);
+    expect(composer).toMatch(/\{fields\.validation === true \? <input type="hidden" name="validation" value="1" \/> : null\}/);
+    expect(composer).not.toMatch(/validationAuthorization|authorizationId/);
   });
 
   it("primitives render native elements and never raw HTML, scripts or inline handlers", () => {

@@ -532,7 +532,8 @@ export function defineConnectionsSuite(getTarget: () => DbTarget): void {
 
     it("no role was created: the application roles are unchanged", async () => {
       const roles = (await privileged.query<{ rolname: string }>("select rolname from pg_roles where rolname like 'app\\_%' order by 1")).rows.map((r) => r.rolname);
-      expect(roles).toEqual(["app_owner", "app_system", "app_worker"]);
+      // Step 7B-14I2 (0029): + the NOLOGIN validation operator role (created once, never dropped — R8).
+      expect(roles).toEqual(["app_owner", "app_system", "app_validation_operator", "app_worker"]);
     });
 
     it("the audit vocabulary constraints are validated and match the application's closed vocabulary exactly", async () => {

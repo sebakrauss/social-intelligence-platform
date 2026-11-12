@@ -211,10 +211,12 @@ describe("H6-C3b: the reconciliation request boundary (0019)", () => {
 });
 
 describe("scope of this gate", () => {
-  it("H6-A1 and H6-C1 added no migration; H6-B adds exactly 0017; 22. H6-C2 adds exactly 0018; H6-C3b exactly 0019; H6-C3d exactly 0020; H6-E none; H6-E1 exactly 0021; H6-F2 0022; H6-F4b 0023; H7-A2 0024; H7-D1c 0025; H7-D1e2b 0026; 7B-1 0027; 7B-14F1 0028 (names no ingestion object)", () => {
+  it("H6-A1 and H6-C1 added no migration; H6-B adds exactly 0017; 22. H6-C2 adds exactly 0018; H6-C3b exactly 0019; H6-C3d exactly 0020; H6-E none; H6-E1 exactly 0021; H6-F2 0022; H6-F4b 0023; H7-A2 0024; H7-D1c 0025; H7-D1e2b 0026; 7B-1 0027; 7B-14F1 0028; 7B-14I2 0029 (neither names an ingestion object)", () => {
     const names = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    expect(names.slice(-13)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql", "0018_reconciliation_runtime.sql", "0019_reconciliation_request.sql", "0020_audit_command_provenance.sql", "0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql"]);
+    expect(names.slice(-14)).toEqual(["0016_capability_replies_not_read.sql", "0017_canonical_source_model.sql", "0018_reconciliation_runtime.sql", "0019_reconciliation_request.sql", "0020_audit_command_provenance.sql", "0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql"]);
     expect(raw("db/migrations/0028_mutation_validation_authorizations.sql").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|reconciliation|signal_marks/);
+    // 0029 names the audit vocabulary (which lists 'connected_account.reconciliation_requested' verbatim) but no ingestion object.
+    expect(raw("db/migrations/0029_validation_operator_path.sql").replace(/--[^\n]*/g, " ")).not.toMatch(/ingestion\.|reconciliation_runs|signal_marks/);
   });
 
   it("21. 0018 is reconciliation persistence only: no provider-event inbox, raw webhook body, subscription or receipt", () => {

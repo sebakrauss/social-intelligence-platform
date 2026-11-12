@@ -446,7 +446,7 @@ module.exports = {
       name: "plane-opener-integration-only",
       severity: "error",
       comment: "Only the integration plane's task directory reaches the CredentialOpener composition (jobs/connections.ts): the main plane — outbox relay and sweepers, the Move saga, the reconciliation planner and consumer (jobs/reconciliation.ts), every shared jobs module — never does. Step H6-C3: jobs/reconciliation-slice.ts is the integration plane's reconciliation slice. Step H6-E: jobs/confirm-interaction.ts is its stored-interaction confirmation. Step 7B-1: jobs/mutations.ts is its Platform Mutation Executor. Step 7B-14C1: jobs/integration-instagram-reply-preflight.ts is its read-only Instagram reply preflight diagnostic.",
-      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|integration-kms-diagnostic\\.ts$|integration-read-content-validation\\.ts$|integration-read-interactions-validation\\.ts$|integration-instagram-reply-preflight\\.ts$|reconciliation-slice\\.ts$|confirm-interaction\\.ts$|mutations\\.ts$|trigger/integration/)" },
+      from: { path: "^jobs/", pathNot: "^jobs/(connections\\.ts$|integration-kms-diagnostic\\.ts$|integration-read-content-validation\\.ts$|integration-read-interactions-validation\\.ts$|integration-instagram-reply-preflight\\.ts$|integration-mutation-reconcile\\.ts$|reconciliation-slice\\.ts$|confirm-interaction\\.ts$|mutations\\.ts$|trigger/integration/)" },
       to: { path: "^jobs/connections\\.ts$" },
     },
     {
@@ -568,6 +568,36 @@ module.exports = {
       comment: "Step 7B-14C1: the Meta read-only preflight reader is composed only by the integration composition (jobs/connections.ts) and typed only by the diagnostic module; the product tasks, MAIN, the web, the executor and the mutation port never reach it.",
       from: { pathNot: "^(jobs/connections\\.ts|jobs/integration-instagram-reply-preflight\\.ts|tests/)" },
       to: { path: "^integrations/providers/meta/instagram-reply-preflight\\.ts$" },
+    },
+    {
+      name: "mutation-reconcile-module-task-only",
+      severity: "error",
+      comment: "Step 7B-14I2: the operator reconciliation module is reached only by its own integration task file (and tests) — never by the product tasks, MAIN, the web or any shared module.",
+      from: { pathNot: "^(jobs/trigger/integration/mutation-reconcile\\.ts|tests/)" },
+      to: { path: "^jobs/integration-mutation-reconcile\\.ts$" },
+    },
+    {
+      name: "mutation-reconcile-task-thin",
+      severity: "error",
+      comment: "Step 7B-14I2: the reconciliation task file depends only on the Trigger.dev SDK, the job release (platform/jobs) and its module.",
+      from: { path: "^jobs/trigger/integration/mutation-reconcile\\.ts$" },
+      to: { path: "^(jobs/(?!integration-mutation-reconcile\\.ts$)|platform/(?!jobs/index\\.ts$)|server/|modules/|integrations/|domain/|db/|app/|ui/)" },
+    },
+    {
+      name: "mutation-reconcile-never-sends",
+      severity: "error",
+      comment: "Step 7B-14I2: the reconciliation module looks, never sends: no mutation port, no write transport, no executor composition (jobs/mutations.ts), no Meta read port, no outbox, no system scope, no registry, AI, UI or db/.",
+      from: { path: "^jobs/integration-mutation-reconcile\\.ts$" },
+      to: {
+        path: "^(integrations/providers/(contract/mutation-port|meta/(mutation-port|graph-transport|read-port|instagram-reply-preflight))\\.ts$|jobs/(mutations|registry|main-runtime)\\.ts$|platform/(outbox|db/(system-scope|outbox-delivery))|ai/|app/|ui/|db/)",
+      },
+    },
+    {
+      name: "meta-instagram-reply-lookup-reconciliation-only",
+      severity: "error",
+      comment: "Step 7B-14I2: the Meta Instagram own-reply lookup is composed only by the integration composition (jobs/connections.ts) and typed only by the reconciliation module; the product tasks, MAIN, the web, the executor and the mutation port never reach it.",
+      from: { pathNot: "^(jobs/connections\\.ts|jobs/integration-mutation-reconcile\\.ts|tests/)" },
+      to: { path: "^integrations/providers/meta/instagram-reply-lookup\\.ts$" },
     },
     {
       name: "plane-task-directories-disjoint",
@@ -712,7 +742,8 @@ module.exports = {
       // composes the PORT (never the transport) in jobs/mutations.ts — see meta-mutation-executor-composition-only.
       // Step 7B-14C1: the Instagram reply preflight reader is the third consumer — of the READ transport only (its type is
       // a Pick of read operations; the AST write-boundary guard keeps the write transport out of it).
-      from: { pathNot: "^(jobs/connections\\.ts|integrations/providers/meta/(read-port|mutation-port|instagram-reply-preflight)\\.ts|tests/)" },
+      // Step 7B-14I2: the Instagram OWN-reply lookup (operator reconciliation) is the fourth — of the READ transport only.
+      from: { pathNot: "^(jobs/connections\\.ts|integrations/providers/meta/(read-port|mutation-port|instagram-reply-preflight|instagram-reply-lookup)\\.ts|tests/)" },
       to: { path: "^integrations/providers/meta/(read-port|graph-transport)\\.ts$" },
     },
     {

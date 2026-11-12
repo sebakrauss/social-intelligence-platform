@@ -61,6 +61,9 @@ export const COMMAND_BOUND_ELSEWHERE = [
   "mutation_intent.blocked",
   "mutation_intent.outcome_unknown",
   "mutation_intent.reconciled",
+  // Step 7B-14I2 (0029): the validation operator's two events — the 0029 definers only (actor `system`).
+  "validation_authorization.issued",
+  "validation_authorization.revoked",
 ] as const;
 
 interface Tenant {

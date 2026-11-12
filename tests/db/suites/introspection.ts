@@ -13,6 +13,7 @@ import { auditEvents } from "@/modules/audit/persistence";
 import { authorityConflicts, reconciliationRuns, reconciliationSlices, reconciliationWatermarks } from "@/modules/ingestion/persistence";
 import { invitations, organizationMemberships, organizations, workspaceMemberships, workspaces } from "@/modules/tenancy/persistence";
 import { validationAuthorizations } from "@/mutations/persistence/validation-authorizations";
+import { validationOperatorEvents, validationPreflights } from "@/mutations/persistence/validation-preflights";
 import { outbox } from "@/platform/db";
 import { privilegedPool, type DbTarget } from "../support/target";
 
@@ -151,7 +152,9 @@ export function defineIntrospectionSuite(getTarget: () => DbTarget): void {
       // Step H6-C2 (0018): the reconciliation runtime tables.
       reconciliationRuns, reconciliationSlices, reconciliationWatermarks, authorityConflicts,
       // Step 7B-14F1 (0028): the one-time validation authorizations.
-      validationAuthorizations];
+      validationAuthorizations,
+      // Step 7B-14I2 (0029): the PREFLIGHT evidence and the operator's append-only log.
+      validationPreflights, validationOperatorEvents];
     for (const table of mapped) {
       const config = getTableConfig(table);
       it(`${config.schema ?? "public"}.${config.name}`, async () => {

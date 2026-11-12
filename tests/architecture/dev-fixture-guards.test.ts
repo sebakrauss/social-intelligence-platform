@@ -110,9 +110,9 @@ describe("H7-B1b-0: isolation", () => {
     expect(parsed.interactions.map((interaction) => [...interaction.text.matchAll(/[a-z0-9.-]+\.[a-z]{2,}\/\S*/gi)].map((match) => match[0]))).toEqual([["example.com/h7-b1b"]]);
   });
 
-  it("no migration after 0028 (Step 7B-1: mutation intents; Step 7B-14F1: validation authorizations) and no new platform key", () => {
+  it("no migration after 0029 (Step 7B-1: mutation intents; Step 7B-14F1: validation authorizations; Step 7B-14I2: the operator path) and no new platform key", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toBe("0028_mutation_validation_authorizations.sql");
+    expect(migrations.at(-1)).toBe("0029_validation_operator_path.sql");
     expect([...PLATFORM_KEYS]).toEqual(["facebook", "instagram", "tiktok"]);
   });
 });

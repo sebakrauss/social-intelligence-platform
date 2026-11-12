@@ -28,7 +28,8 @@ export const TABLE_CLASSES = [
 ] as const;
 export type TableClass = (typeof TABLE_CLASSES)[number];
 
-export type RuntimeGrantee = "authenticated" | "app_worker" | "app_system";
+/** Step 7B-14I2 (0029): app_validation_operator is the operator role (NOLOGIN), reached only by validation operator logins. */
+export type RuntimeGrantee = "authenticated" | "app_worker" | "app_system" | "app_validation_operator";
 
 export interface TableClassification {
   readonly class: TableClass;
@@ -69,7 +70,8 @@ export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number],
   coverage: ["authenticated", "app_worker"],
   ingestion: ["authenticated", "app_worker"],
   classification: ["authenticated", "app_worker"],
-  mutations: ["authenticated", "app_worker"],
+  // Step 7B-14I2 (0029): the operator role holds USAGE only to reach its three definer functions (no table privilege).
+  mutations: ["authenticated", "app_worker", "app_validation_operator"],
 };
 
 export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>> = {
@@ -139,7 +141,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     // owner_move_audit (0010): only connections.record_move_audit (human initiator of a LOCAL move, Move actions).
     // owner_reconciliation_audit (0019): only ingestion.request_reconciliation (its run's initiator, its one action).
     // append_own (narrowed by 0020): only the action pipeline's own actions, bound to the transaction's tenant context.
-    policies: ["append_bound_workspace INSERT app_worker", "append_own INSERT authenticated", "owner_move_audit INSERT app_owner", "owner_reconciliation_audit INSERT app_owner"],
+    // owner_validation_audit (0029): only the validation operator definers, each event alongside its own log row.
+    policies: ["append_bound_workspace INSERT app_worker", "append_own INSERT authenticated", "owner_move_audit INSERT app_owner", "owner_reconciliation_audit INSERT app_owner", "owner_validation_audit INSERT app_owner"],
     privileges: { authenticated: ["INSERT"], app_worker: ["INSERT"] },
   },
   "system.outbox": {
@@ -344,7 +347,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   },
   "interactions.interactions": {
     class: "workspace_tenant",
-    policies: ["member_read SELECT authenticated", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    // owner_validation_read (0029): the validation operator's issuance re-check, bound workspace, operator sessions only.
+    policies: ["member_read SELECT authenticated", "owner_validation_read SELECT app_owner", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
     privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT", "UPDATE(author_id)", "UPDATE(author_role)", "UPDATE(conversation_id)", "UPDATE(current_availability)", "UPDATE(current_removal_basis)", "UPDATE(current_source_text_version_id)", "UPDATE(current_visibility)", "UPDATE(first_observed_at)", "UPDATE(kind)", "UPDATE(latest_observed_at)", "UPDATE(observed)", "UPDATE(parent_interaction_id)", "UPDATE(provider_created_at)", "UPDATE(provider_edited_at)", "UPDATE(state_observed_at)", "UPDATE(text_observed_at)", "UPDATE(updated_at)"] },
   },
   "interactions.source_text_versions": {
@@ -513,7 +517,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   // and its reply text; every later status, history row and confirmation is the bound worker's. Guests read nothing.
   "mutations.mutation_intents": {
     class: "workspace_tenant",
-    policies: ["member_read SELECT authenticated", "member_request INSERT authenticated", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    // owner_validation_read (0029): AUTHORIZED intents of the bound workspace, for the validation operator's status read.
+    policies: ["member_read SELECT authenticated", "member_request INSERT authenticated", "owner_validation_read SELECT app_owner", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
     privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["SELECT", "UPDATE(attempt)", "UPDATE(outcome_code)", "UPDATE(run_reference)", "UPDATE(status)", "UPDATE(updated_at)"] },
   },
   "mutations.mutation_intent_history": {
@@ -523,7 +528,7 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   },
   "mutations.outbound_replies": {
     class: "workspace_tenant",
-    policies: ["member_read SELECT authenticated", "member_request INSERT authenticated", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    policies: ["member_read SELECT authenticated", "member_request INSERT authenticated", "owner_validation_read SELECT app_owner", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
     privileges: { authenticated: ["INSERT", "SELECT"], app_worker: ["SELECT", "UPDATE(confirmed_at)", "UPDATE(provider_reply_id)"] },
   },
   // Step 7B-14F1 (0028): one-time LIVE validation authorizations. Runtimes only READ (the designated initiator their own;
@@ -531,8 +536,22 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
   // tooling issues and revokes. No runtime INSERT, UPDATE or DELETE.
   "mutations.validation_authorizations": {
     class: "workspace_tenant",
-    policies: ["member_read SELECT authenticated", "owner_read SELECT app_owner", "owner_transition UPDATE app_owner", "worker_read SELECT app_worker"],
+    // owner_issue (0029): the validation operator's issuance definer only (bound workspace, operator session).
+    policies: ["member_read SELECT authenticated", "owner_issue INSERT app_owner", "owner_read SELECT app_owner", "owner_transition UPDATE app_owner", "worker_read SELECT app_worker"],
     privileges: { authenticated: ["SELECT"], app_worker: ["SELECT"] },
+  },
+  // Step 7B-14I2 (0029): the PREFLIGHT evidence (written by the bound worker's definer at the end of a completed preflight
+  // run; used once by the operator's issuance definer) and the operator's append-only log. No runtime role holds any
+  // privilege on either: only the owner's definers touch them.
+  "mutations.validation_preflights": {
+    class: "workspace_tenant",
+    policies: ["owner_read SELECT app_owner", "owner_record INSERT app_owner", "owner_use UPDATE app_owner"],
+    privileges: {},
+  },
+  "mutations.validation_operator_events": {
+    class: "append_only_history",
+    policies: ["owner_append INSERT app_owner", "owner_read SELECT app_owner"],
+    privileges: {},
   },
   "t26_fixture.conversations": {
     class: "test_fixture",
@@ -637,4 +656,14 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "mutations.validation_authorization_guard()": [],
   "mutations.bind_validation_authorization()": [],
   "mutations.consume_validation_authorization()": [],
+  // Step 7B-14I2 (0029): the operator's three definers (identity = the session login), the bound worker's evidence
+  // recorder, and four internal functions nobody executes directly (two guards, the identity check, the binding).
+  "mutations.issue_validation_authorization(uuid,uuid,uuid,text,integer,boolean)": ["app_validation_operator"],
+  "mutations.revoke_validation_authorization(uuid,uuid,text)": ["app_validation_operator"],
+  "mutations.validation_authorization_status(uuid,uuid)": ["app_validation_operator"],
+  "mutations.record_validation_preflight(uuid,uuid,uuid,uuid,text,text,integer,boolean,boolean,integer,integer,boolean)": ["app_worker"],
+  "mutations.validation_preflight_guard()": [],
+  "mutations.validation_operator_event_guard()": [],
+  "mutations.validation_operator_login()": [],
+  "mutations.validation_operator_bind(uuid)": [],
 };

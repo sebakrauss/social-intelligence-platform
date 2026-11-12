@@ -47,6 +47,7 @@ import { parseCorrelationId } from "@/domain/correlation";
 import { parseWorkspaceId } from "@/domain/ids";
 import { NonRetryableJobError, type TenantStepJobContext } from "@/platform/jobs";
 import { providerCredential, type ProviderReadPort } from "@/integrations/providers/contract";
+import { createInstagramReplyLookup, type InstagramReplyLookup } from "@/integrations/providers/meta/instagram-reply-lookup";
 import { createInstagramReplyPreflight, type InstagramReplyPreflight } from "@/integrations/providers/meta/instagram-reply-preflight";
 import { createMetaReadPort } from "@/integrations/providers/meta/read-port";
 import { createStagingStubReadPort } from "@/integrations/providers/staging-stub";
@@ -202,6 +203,15 @@ export function composeReadInteractionsValidation(environment: Environment, atte
  */
 export function composeInstagramReplyPreflight(environment: Environment, attempts: AwsSingleAttempt): { readonly access: ProviderCredentialAccess; readonly preflight: InstagramReplyPreflight } {
   return { access: composeReadContentValidation(environment, attempts).access, preflight: createInstagramReplyPreflight() };
+}
+
+/**
+ * Step 7B-14I2 — the operator reconciliation task's composition (jobs/integration-mutation-reconcile.ts): the same read
+ * diagnostics' credential access (this plane's opener and worker identity, ONE KMS attempt) and the Meta read-only
+ * Instagram OWN-reply lookup (Graph GETs only; never the write transport, never a mutation port).
+ */
+export function composeInstagramReplyReconciliation(environment: Environment, attempts: AwsSingleAttempt): { readonly access: ProviderCredentialAccess; readonly lookup: InstagramReplyLookup } {
+  return { access: composeReadContentValidation(environment, attempts).access, lookup: createInstagramReplyLookup() };
 }
 
 /** Discovery dependencies for one run: the composed access/providers and this run's scoped steps. */

@@ -22,6 +22,7 @@ import { REPLY_TEXT_MAX_CHARS, executeIntentDispatch, requestPublicReply, type P
 import type { WorkspaceCommand } from "@/server/pipeline";
 
 const uuid = parsed((value) => (isUuid(value) ? value : undefined));
+const flag = parsed((value) => (value === true ? true : undefined));
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 
 export interface PublicReplyInput {
@@ -30,6 +31,8 @@ export interface PublicReplyInput {
   readonly idempotencyKey: string;
   /** Step 7B-14G1: absent for every ordinary request. */
   readonly validationAuthorizationId?: string | undefined;
+  /** Step 7B-14I2: true → the server resolves the member's ONE live authorization for this exact target (never an id from the browser). */
+  readonly validation?: boolean | undefined;
 }
 
 /** What the caller learns: the closed outcome and the intent to follow (never the outbox row, never provider data). */
@@ -43,7 +46,7 @@ export const requestPublicReplyCommand: WorkspaceCommand<PublicReplyInput, Publi
   name: "mutations.reply_public.request",
   permission: "reply.public",
   requiresStandardMode: true,
-  validate: object({ targetInteractionId: uuid, text: text({ min: 1, max: REPLY_TEXT_MAX_CHARS }), idempotencyKey: text({ min: 8, max: 128, pattern: IDEMPOTENCY_KEY }), validationAuthorizationId: optional(uuid) }),
+  validate: object({ targetInteractionId: uuid, text: text({ min: 1, max: REPLY_TEXT_MAX_CHARS }), idempotencyKey: text({ min: 8, max: 128, pattern: IDEMPOTENCY_KEY }), validationAuthorizationId: optional(uuid), validation: optional(flag) }),
   async execute(context, input, tx, env) {
     const outcome = await requestPublicReply(
       tx.mutations,
@@ -54,6 +57,7 @@ export const requestPublicReplyCommand: WorkspaceCommand<PublicReplyInput, Publi
         text: input.text,
         idempotencyKey: input.idempotencyKey,
         ...(input.validationAuthorizationId === undefined ? {} : { validationAuthorizationId: input.validationAuthorizationId }),
+        ...(input.validation === true ? { resolveValidationAuthorization: true } : {}),
       },
     );
     if (outcome.kind === "created") await tx.outbox.append(executeIntentDispatch({ id: env.newId(), intent: outcome.intent, now: env.now }));

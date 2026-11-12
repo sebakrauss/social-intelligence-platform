@@ -12,6 +12,7 @@ import { providerCredential, type ProviderObjectId } from "@/integrations/provid
 import { META_INSTAGRAM_COMMENT_FIELDS, META_INSTAGRAM_MEDIA_FIELDS, META_INSTAGRAM_REPLY_FIELDS, createMetaGraphTransport, type MetaGraphFetch } from "@/integrations/providers/meta/graph-transport";
 import { createInstagramReplyPreflight } from "@/integrations/providers/meta/instagram-reply-preflight";
 import type { JobRelease } from "@/platform/jobs";
+import type { ValidationPreflightEvidence } from "@/server/persistence/instagram-reply-preflight";
 import {
   INSTAGRAM_REPLY_PREFLIGHT_ACKNOWLEDGEMENT,
   INSTAGRAM_REPLY_PREFLIGHT_AWS_ATTEMPTS,
@@ -19,6 +20,7 @@ import {
   INSTAGRAM_REPLY_PREFLIGHT_TASK_ID,
   InstagramReplyPreflightError,
   classifyPreflightTarget,
+  preflightEvidencePasses,
   runInstagramReplyPreflight,
   type InstagramReplyPreflightDependencies,
   type InstagramReplyPreflightFailure,
@@ -65,7 +67,9 @@ const USER_TOKEN = "synthetic-preflight-user-token-marker";
 const BODY_MARKER = "synthetic-graph-body-marker";
 const KEY_A = "arn:aws:kms:sa-east-1:000000000000:key/00000000-0000-4000-8000-0000000000aa";
 const PINNED: JobRelease = { kind: "pinned", releaseId: "synthetic-release-0000000000000000000000" };
-const RUN = { environmentType: "PRODUCTION", release: PINNED } as const;
+const RUN_ID = "run_synthetic_preflight_0000000001";
+const RUN = { environmentType: "PRODUCTION", release: PINNED, runId: RUN_ID } as const;
+type RunFacts = { environmentType: string | undefined; release: JobRelease; runId: string };
 const PAYLOAD = { acknowledge: INSTAGRAM_REPLY_PREFLIGHT_ACKNOWLEDGEMENT, mode: "preflight", workspace_id: WORKSPACE, connected_account_id: ACCOUNT, target_interaction_id: TARGET_ID };
 const FORBIDDEN_IN_OUTPUT = [IG, MEDIA, COMMENT, COMMENTER, PAGE, MANAGED_HANDLE, COMMENTER_HANDLE, TEXT, USER_TOKEN, BODY_MARKER, WORKSPACE, ACCOUNT, CONNECTION, CREDENTIAL_ID, TARGET_ID, "graph.facebook.com", "access_token", "arn:aws"];
 
@@ -104,8 +108,9 @@ function graphWorld() {
   return { calls, preflight: createInstagramReplyPreflight({ transport: createMetaGraphTransport({ fetch }) }) };
 }
 
-function harness(options: { readonly lookup?: InstagramReplyPreflightLookupResult; readonly failOpen?: Error; readonly lookupThrows?: boolean; readonly deps?: Partial<InstagramReplyPreflightDependencies> } = {}) {
+function harness(options: { readonly lookup?: InstagramReplyPreflightLookupResult; readonly failOpen?: Error; readonly lookupThrows?: boolean; readonly recordFails?: boolean; readonly deps?: Partial<InstagramReplyPreflightDependencies> } = {}) {
   const graph = graphWorld();
+  const records: { readonly workspaceId: string; readonly evidence: ValidationPreflightEvidence }[] = [];
   const openings: string[] = [];
   const lookups: InstagramReplyPreflightInput[] = [];
   const composed: Env[] = [];
@@ -126,9 +131,13 @@ function harness(options: { readonly lookup?: InstagramReplyPreflightLookupResul
       composed.push({ ...environment });
       return { access, preflight: graph.preflight };
     },
+    record: (workspaceId, evidence) => {
+      records.push({ workspaceId, evidence });
+      return options.recordFails === true ? Promise.reject(new Error(BODY_MARKER)) : Promise.resolve(new Date("2026-11-12T15:00:00.000Z"));
+    },
     ...options.deps,
   };
-  return { graph, openings, lookups, composed, run: (payload: unknown = PAYLOAD, env: Env = DEPLOYED, run: { environmentType: string | undefined; release: JobRelease } = RUN) => runInstagramReplyPreflight(payload, run, env, deps) };
+  return { graph, openings, lookups, composed, records, run: (payload: unknown = PAYLOAD, env: Env = DEPLOYED, run: RunFacts = RUN) => runInstagramReplyPreflight(payload, run, env, deps) };
 }
 
 const rendered = (value: unknown): string => [JSON.stringify(value), inspect(value, { depth: 10, showHidden: true }), String(value)].join(" ");
@@ -167,7 +176,7 @@ describe("the diagnostic's identity: a separate operator-only INTEGRATION task",
     await import("@/jobs/trigger/integration/instagram-reply-preflight");
     const definition = sdk.tasks.find((task) => task["id"] === INSTAGRAM_REPLY_PREFLIGHT_TASK_ID);
     const run = definition?.["run"] as (payload: unknown, context: { ctx: unknown }) => Promise<unknown>;
-    const ctx = { environment: { type: "DEVELOPMENT" }, deployment: undefined };
+    const ctx = { environment: { type: "DEVELOPMENT" }, deployment: undefined, run: { id: RUN_ID } };
     await expect(run({ ...PAYLOAD, acknowledge: "nope" }, { ctx })).rejects.toThrow(new sdk.AbortTaskRunError("instagram_reply_preflight_input_refused"));
     await expect(run(PAYLOAD, { ctx })).rejects.toThrow(new sdk.AbortTaskRunError("instagram_reply_preflight_release_refused"));
   });
@@ -199,7 +208,7 @@ describe("the diagnostic's identity: a separate operator-only INTEGRATION task",
 });
 
 describe("P + guards: every refusal happens before any lookup, composition, credential or provider request", () => {
-  type Case = [name: string, failure: InstagramReplyPreflightFailure, change: { payload?: unknown; env?: Env; run?: { environmentType: string | undefined; release: JobRelease }; node?: string }];
+  type Case = [name: string, failure: InstagramReplyPreflightFailure, change: { payload?: unknown; env?: Env; run?: RunFacts; node?: string }];
   const cases: Case[] = [
     ["no payload", "instagram_reply_preflight_input_refused", { payload: null }],
     ["an array", "instagram_reply_preflight_input_refused", { payload: [PAYLOAD] }],
@@ -214,8 +223,11 @@ describe("P + guards: every refusal happens before any lookup, composition, cred
     ["an extra field (a provider comment id)", "instagram_reply_preflight_input_refused", { payload: { ...PAYLOAD, comment_id: COMMENT } }],
     ["an extra field (a token)", "instagram_reply_preflight_input_refused", { payload: { ...PAYLOAD, access_token: USER_TOKEN } }],
     ["an extra field (a message)", "instagram_reply_preflight_input_refused", { payload: { ...PAYLOAD, message: TEXT } }],
-    ["a local development run", "instagram_reply_preflight_release_refused", { run: { environmentType: "DEVELOPMENT", release: { kind: "development" } } }],
-    ["a deployed run without an external id", "instagram_reply_preflight_release_refused", { run: { environmentType: "PRODUCTION", release: { kind: "unidentified" } } }],
+    ["a local development run", "instagram_reply_preflight_release_refused", { run: { environmentType: "DEVELOPMENT", release: { kind: "development" }, runId: RUN_ID } }],
+    ["a deployed run without an external id", "instagram_reply_preflight_release_refused", { run: { environmentType: "PRODUCTION", release: { kind: "unidentified" }, runId: RUN_ID } }],
+    // Step 7B-14I2: the evidence's run reference must be a well-formed run id from the run context.
+    ["a run without a usable run id", "instagram_reply_preflight_release_refused", { run: { environmentType: "PRODUCTION", release: PINNED, runId: "" } }],
+    ["a run id with forbidden characters", "instagram_reply_preflight_release_refused", { run: { environmentType: "PRODUCTION", release: PINNED, runId: "run id/../x" } }],
     ["the main plane's system database credential", "instagram_reply_preflight_plane_refused", { env: { DATABASE_SYSTEM_URL: "postgres://synthetic" } }],
     ["the Meta app secret", "instagram_reply_preflight_plane_refused", { env: { PROVIDER_META_CLIENT_SECRET: "synthetic" } }],
     ["APP_DEPLOYMENT_ENV=production", "instagram_reply_preflight_tier_refused", { env: { APP_DEPLOYMENT_ENV: "production" } }],
@@ -296,7 +308,7 @@ describe("the run: ONE credential opening, the reader's GETs inside it, stored a
     const outcome = await h.run();
     expect(outcome.status).toBe("VERIFIED");
     expect(outcome.mode).toBe("preflight");
-    expect(Object.keys(outcome).sort()).toEqual(["accountKind", "mode", "observed", "platform", "status", "stored"]);
+    expect(Object.keys(outcome).sort()).toEqual(["accountKind", "evidence", "mode", "observed", "platform", "status", "stored"]);
     expect(outcome.stored).toEqual({ kind: "comment", topLevel: true, observed: true, visibility: "visible", removedAtSource: false, ownAuthor: false });
     expect(h.openings).toEqual([CREDENTIAL_ID]);
     expect(h.lookups).toEqual([{ mode: "preflight", workspaceId: WORKSPACE, connectedAccountId: ACCOUNT, targetInteractionId: TARGET_ID }]);
@@ -317,7 +329,45 @@ describe("the run: ONE credential opening, the reader's GETs inside it, stored a
     expect(h.openings).toEqual([CREDENTIAL_ID]);
     // The only dependencies are a read-only lookup, the composition and the reader: nothing here can write.
     expect(outcome.observed.replies).toMatchObject({ listed: 0, complete: true, byManagedAccount: 0 });
+    // Step 7B-14I2: observe never records evidence (only a preflight can back an issuance).
+    expect(outcome.evidence).toEqual({ kind: "not_applicable" });
+    expect(h.records).toEqual([]);
     expectRedacted(outcome);
+  });
+
+  it("7B-14I2: a VERIFIED preflight records exactly ONE evidence row — run id from the run context, the examined credential, closed counts", async () => {
+    const h = harness();
+    const outcome = await h.run();
+    expect(h.records).toHaveLength(1);
+    const [record] = h.records;
+    expect(record?.workspaceId).toBe(WORKSPACE);
+    expect(record?.evidence).toMatchObject({
+      connectedAccountId: ACCOUNT, targetInteractionId: TARGET_ID, credentialId: CREDENTIAL_ID, runReference: RUN_ID,
+      status: "VERIFIED", checksVerified: 10, requiredPermissionsGranted: true, repliesComplete: true,
+      repliesByManagedAccount: 0, repliesUnattributed: 0, stoppedEarly: false,
+    });
+    expect(Object.keys(record?.evidence ?? {}).sort()).toEqual(["checksVerified", "connectedAccountId", "credentialId", "id", "repliesByManagedAccount", "repliesComplete", "repliesUnattributed", "requiredPermissionsGranted", "runReference", "status", "stoppedEarly", "targetInteractionId"]);
+    expect(outcome.evidence).toEqual({ kind: "recorded", preflightId: record?.evidence.id, recordedAt: "2026-11-12T15:00:00.000Z", passed: true });
+    // The payload never chooses the run reference: a payload naming one is refused before anything runs.
+    expect(await refused(harness().run({ ...PAYLOAD, run_reference: "run_forged" }))).toBe("instagram_reply_preflight_input_refused");
+    expectRedacted(outcome);
+  });
+
+  it("7B-14I2: a refused or failed evidence write is reported as not_recorded (never retried, never invented)", async () => {
+    const h = harness({ recordFails: true });
+    const outcome = await h.run();
+    expect(h.records).toHaveLength(1);
+    expect(outcome.evidence).toEqual({ kind: "not_recorded" });
+    expectRedacted(outcome);
+  });
+
+  it("7B-14I2: the passing rule mirrors 0029 — any unverified check, missing permission, existing own reply, unattributed or incomplete listing fails", () => {
+    const base = { status: "VERIFIED", checksVerified: 10, requiredPermissionsGranted: true, repliesComplete: true, repliesByManagedAccount: 0, repliesUnattributed: 0, stoppedEarly: false } as const;
+    expect(preflightEvidencePasses(base)).toBe(true);
+    for (const change of [
+      { status: "NOT_VERIFIED" }, { status: "BLOCKED" }, { checksVerified: 9 }, { requiredPermissionsGranted: false }, { repliesComplete: false },
+      { repliesByManagedAccount: 1 }, { repliesByManagedAccount: null }, { repliesUnattributed: 1 }, { repliesUnattributed: null }, { stoppedEarly: true },
+    ] as const) expect(preflightEvidencePasses({ ...base, ...change }), JSON.stringify(change)).toBe(false);
   });
 
   it.each([

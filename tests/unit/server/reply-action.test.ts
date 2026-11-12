@@ -105,6 +105,22 @@ describe("7B-3: the publish action", () => {
     expect(intent?.targetInteractionId).toBe(TARGET);
   });
 
+  it("7B-14I2: an authorization identifier injected by the browser is ignored; the validation flag only asks the SERVER to resolve one (none here → refused, nothing written)", async () => {
+    const h = await setup();
+    h.as("OWNER");
+    const injected = "c1c2c3c4-5f60-4a7b-8c9d-0e1f2a3b4c5d";
+    // An injected identifier alone: ignored — the ordinary request runs (allowed in this in-memory world).
+    expect((await publishReplyAction({ kind: "idle" }, form({ ...fields(h.workspaceId), validationAuthorizationId: injected }))).kind).toBe("requested");
+    expect([...h.stores.intentRows.values()][0]?.validationAuthorizationId).toBeNull();
+    // The flag (with or without an injected identifier): the server looks for the member's own live authorization —
+    // none is readable here — and refuses with the one closed reason; nothing more is written.
+    for (const extra of [{ validation: "1" }, { validation: "1", validationAuthorizationId: injected }]) {
+      const result = await publishReplyAction({ kind: "idle" }, form({ ...fields(h.workspaceId, { idempotencyKey: `rk-14i2-${String(Object.keys(extra).length)}-form` }), ...extra }));
+      expect(result).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    }
+    expect(h.stores.intentRows.size).toBe(1);
+  });
+
   it("without a session the answer is signed_out and nothing runs", async () => {
     const h = await setup();
     env.auth = undefined;

@@ -9,7 +9,7 @@
  * so the authority of every state change stays with the 0028 triggers, which lock the row themselves (intent first,
  * then the authorization — the order every caller here preserves by locking nothing on this table).
  */
-import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { DatabaseTransaction } from "@/platform/db";
 import {
@@ -123,4 +123,34 @@ export async function anotherValidationConsumedForTarget(tx: DatabaseTransaction
     ))
     .limit(1);
   return rows.length > 0;
+}
+
+/**
+ * Step 7B-14I2 — the LIVE authorizations naming `initiatorUserId` among `targetInteractionIds` of the workspace, as RLS lets
+ * this transaction see them (a member sees ONLY the authorizations naming them, in the bound workspace): unrevoked,
+ * unconsumed, unbound and unexpired by the DATABASE clock. Identifiers and the expiry only; nothing is locked.
+ */
+export async function liveValidationAuthorizationsFor(
+  tx: DatabaseTransaction,
+  workspaceId: string,
+  initiatorUserId: string,
+  targetInteractionIds: readonly string[],
+): Promise<readonly { readonly id: string; readonly targetInteractionId: string; readonly expiresAt: Date }[]> {
+  if (targetInteractionIds.length === 0) return [];
+  const rows = await tx
+    .select({ id: validationAuthorizations.id, targetInteractionId: validationAuthorizations.targetInteractionId, expiresAt: validationAuthorizations.expiresAt })
+    .from(validationAuthorizations)
+    .where(and(
+      eq(validationAuthorizations.workspaceId, workspaceId),
+      eq(validationAuthorizations.initiatorUserId, initiatorUserId),
+      inArray(validationAuthorizations.targetInteractionId, [...targetInteractionIds]),
+      eq(validationAuthorizations.provider, VALIDATION_AUTHORIZATION_OPERATION.provider),
+      eq(validationAuthorizations.platform, VALIDATION_AUTHORIZATION_OPERATION.platform),
+      eq(validationAuthorizations.kind, VALIDATION_AUTHORIZATION_OPERATION.kind),
+      isNull(validationAuthorizations.revokedAt),
+      isNull(validationAuthorizations.consumedAt),
+      isNull(validationAuthorizations.intentId),
+      sql`pg_catalog.clock_timestamp() < ${validationAuthorizations.expiresAt}`,
+    ));
+  return rows;
 }

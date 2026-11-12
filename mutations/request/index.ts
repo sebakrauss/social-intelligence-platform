@@ -47,6 +47,12 @@ export interface PublicReplyRequest {
   readonly idempotencyKey: string;
   /** Step 7B-14G1: an operator-issued one-time validation authorization (validated UUID), or absent for every ordinary request. */
   readonly validationAuthorizationId?: string;
+  /**
+   * Step 7B-14I2: resolve the authorization ON THE SERVER — the ONE live authorization naming this member for exactly
+   * this target, as RLS shows it — instead of trusting any identifier from the caller. Exclusive with
+   * validationAuthorizationId (both → refused). Absent for every ordinary request.
+   */
+  readonly resolveValidationAuthorization?: boolean;
 }
 
 export type PublicReplyRefusal =
@@ -80,12 +86,16 @@ export interface RequestContext {
 const CAPABILITY_OK: ReadonlySet<CapabilityAvailability["state"]> = new Set(["AVAILABLE", "AVAILABLE_WITH_LIMITATION"]);
 
 export async function requestPublicReply(sources: MutationRequestSources, clock: MutationClock, context: RequestContext, request: PublicReplyRequest): Promise<PublicReplyOutcome> {
-  const authorizationId = request.validationAuthorizationId ?? null;
+  const resolve = request.resolveValidationAuthorization === true;
+  if (resolve && request.validationAuthorizationId !== undefined) return { kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" };
+  let authorizationId = request.validationAuthorizationId ?? null;
   const existing = await sources.intents.findByIdempotencyKey(context.workspaceId, request.idempotencyKey);
   if (existing !== undefined) {
     const existingReply = await sources.replies.getByIntent(context.workspaceId, existing.id);
+    // A resolved request's replay names the authorization it bound (no longer live): the same form, the same answer.
+    const sameAuthorization = resolve ? existing.validationAuthorizationId !== null : existing.validationAuthorizationId === authorizationId;
     const samePayload = existing.initiatorUserId === context.userId && existing.targetInteractionId === request.targetInteractionId && existingReply?.text === request.text
-      && existing.validationAuthorizationId === authorizationId;
+      && sameAuthorization;
     return samePayload ? { kind: "existing", intent: existing } : { kind: "refused", reason: "IDEMPOTENCY_KEY_REUSED" };
   }
 
@@ -101,6 +111,14 @@ export async function requestPublicReply(sources: MutationRequestSources, clock:
   if (target.ownAccount) return { kind: "refused", reason: "TARGET_OWN_ACCOUNT" };
   // Step 7B-13C (F1): Instagram top-level comments only, on the persisted target (the UI's rule is never the authority).
   if (!publicReplyDepthAllowed(target)) return { kind: "refused", reason: "TARGET_NOT_REPLYABLE" };
+  if (resolve) {
+    // Step 7B-14I2: exactly ONE live authorization naming this member for exactly this target, read through RLS.
+    const live = sources.validation?.liveForInitiator === undefined ? [] : await sources.validation.liveForInitiator(context.workspaceId, context.userId, [target.interactionId]);
+    const mine = live.filter((authorization) => authorization.targetInteractionId === target.interactionId);
+    const only = mine.length === 1 ? mine[0] : undefined;
+    if (only === undefined) return { kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" };
+    authorizationId = only.id;
+  }
 
   const providerAction = await sources.guards.providerActionAllowed(target.platform, "public_reply");
   // Ordinary request: exactly as before — no grant (or a pause) refuses here.

@@ -169,6 +169,9 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
   /** Step 7B-14C1: the read-only Instagram reply preflight diagnostic opts in the same way, through a delegating composition. */
   const PREFLIGHT_DIAGNOSTIC = "jobs/integration-instagram-reply-preflight.ts";
   const PREFLIGHT_DIAGNOSTIC_TASK = "jobs/trigger/integration/instagram-reply-preflight.ts";
+  /** Step 7B-14I2: the operator reconciliation task opts in the same way (one KMS attempt), through a delegating composition. */
+  const RECONCILE_TASK_MODULE = "jobs/integration-mutation-reconcile.ts";
+  const RECONCILE_TASK = "jobs/trigger/integration/mutation-reconcile.ts";
   const SEAL_COMPOSITION = "server/connections/credential-crypto.ts";
   const runtime = sourceFiles(RUNTIME_ROOTS);
   const users = (pattern: RegExp): string[] => findReferences(runtime, [pattern]).map(([file]) => file).sort();
@@ -188,7 +191,13 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
   it("only the diagnostics opt in; the product compositions (open and seal) never pass the option", () => {
     expect(users(/\bKMS_DIAGNOSTIC_AWS_ATTEMPTS\b/)).toEqual([DIAGNOSTIC]);
     expect(users(/\bREAD_CONTENT_VALIDATION_AWS_ATTEMPTS\b/)).toEqual([READ_DIAGNOSTIC]);
-    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT, READ_DIAGNOSTIC, READ_DIAGNOSTIC_TASK, INTERACTIONS_DIAGNOSTIC, INTERACTIONS_DIAGNOSTIC_TASK, PREFLIGHT_DIAGNOSTIC, PREFLIGHT_DIAGNOSTIC_TASK].sort());
+    expect(users(/\{\s*maxAttempts:\s*1\s*\}/)).toEqual([DIAGNOSTIC, DIAGNOSTIC_TASK, KMS_CLIENT, READ_DIAGNOSTIC, READ_DIAGNOSTIC_TASK, INTERACTIONS_DIAGNOSTIC, INTERACTIONS_DIAGNOSTIC_TASK, PREFLIGHT_DIAGNOSTIC, PREFLIGHT_DIAGNOSTIC_TASK, RECONCILE_TASK_MODULE, RECONCILE_TASK].sort());
+    expect(users(/\bMUTATION_RECONCILE_AWS_ATTEMPTS\b/)).toEqual([RECONCILE_TASK_MODULE]);
+    expect(codeOf(RECONCILE_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/);
+    expect(codeOf(RECONCILE_TASK_MODULE)).toMatch(/export const MUTATION_RECONCILE_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
+    expect(count(RECONCILE_TASK_MODULE, /composeInstagramReplyReconciliation\(environment, MUTATION_RECONCILE_AWS_ATTEMPTS\)/)).toBe(1);
+    expect(users(/\bcomposeInstagramReplyReconciliation\(/)).toEqual([COMPOSITION, RECONCILE_TASK_MODULE].sort());
+    expect(count(COMPOSITION, /return \{ access: composeReadContentValidation\(environment, attempts\)\.access, lookup: createInstagramReplyLookup\(\) \};/)).toBe(1);
     expect(users(/\bINSTAGRAM_REPLY_PREFLIGHT_AWS_ATTEMPTS\b/)).toEqual([PREFLIGHT_DIAGNOSTIC]);
     expect(codeOf(PREFLIGHT_DIAGNOSTIC_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/);
     expect(codeOf(PREFLIGHT_DIAGNOSTIC)).toMatch(/export const INSTAGRAM_REPLY_PREFLIGHT_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
@@ -208,7 +217,7 @@ describe("diagnostic-scoped AWS attempt bound (Step 7E.7-B-R1): explicit argumen
     expect(codeOf(READ_DIAGNOSTIC)).toMatch(/export const READ_CONTENT_VALIDATION_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);
     expect(count(READ_DIAGNOSTIC, /composeReadContentValidation\(environment, READ_CONTENT_VALIDATION_AWS_ATTEMPTS\)/)).toBe(1);
     expect(users(/\bcomposeReadContentValidation\(/)).toEqual([COMPOSITION, READ_DIAGNOSTIC].sort());
-    expect(count(COMPOSITION, /composeReadContentValidation\(/)).toBe(3); // its definition, the two delegations
+    expect(count(COMPOSITION, /composeReadContentValidation\(/)).toBe(4); // its definition, the three delegations (+ 7B-14I2's reconciliation)
     expect(count(COMPOSITION, /composeCredentialOpener\(environment, integrationWorkerAwsCredentials\(environment\), attempts\)/)).toBe(1);
     expect(codeOf(DIAGNOSTIC_TASK)).toMatch(/retry: \{ maxAttempts: 1 \},/); // the Trigger.dev task retry: a separate control
     expect(codeOf(DIAGNOSTIC)).toMatch(/export const KMS_DIAGNOSTIC_AWS_ATTEMPTS = Object\.freeze\(\{ maxAttempts: 1 \} as const\);/);

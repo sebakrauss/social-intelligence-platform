@@ -48,7 +48,7 @@ describe("the closed release table", () => {
     expect(RELEASE_PLANES.map((definition) => [definition.plane, definition.config, definition.expectedTasks])).toEqual([
       // Step H6-C3: + ingestion.reconcile_slice (INTEGRATION); + ingestion.reconcile_account, interactions.observed (MAIN).
       // Step H6-E: + ingestion.confirm_interaction (INTEGRATION).
-      ["integration", "trigger.integration.config.ts", 9],
+      ["integration", "trigger.integration.config.ts", 10],
       // Step H7-D1e: classification.understand_ai, alone.
       ["intelligence", "trigger.intelligence.config.ts", 1],
       ["main", "trigger.config.ts", 11],

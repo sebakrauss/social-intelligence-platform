@@ -452,6 +452,8 @@ describe("vocabulary alignment with migration 0014", () => {
       "connected_account.reconciliation_requested",
       // Step 7B-1 (0027): the Platform Mutation Executor's request and outcomes.
       "mutation_intent.created", "mutation_intent.executing", "mutation_intent.confirmed", "mutation_intent.failed", "mutation_intent.blocked", "mutation_intent.outcome_unknown", "mutation_intent.reconciled",
+      // Step 7B-14I2 (0029): the validation operator's issuance and revocation.
+      "validation_authorization.issued", "validation_authorization.revoked",
     ];
     expect(listed("audit_events_action_check")).toEqual([...AUDIT_ACTIONS].filter((action) => !addedLater.includes(action)).sort());
   });

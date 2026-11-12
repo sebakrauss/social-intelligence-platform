@@ -151,6 +151,7 @@ export const developmentReferenceCatalog: Catalog = {
   "inbox.reply.to": "Replying to {author}",
   "inbox.reply.as": "As your {platform} account, visible to everyone",
   "inbox.reply.instagram_top_level": "On Instagram, replies attach to the top-level comment.",
+  "inbox.reply.validation_notice": "Exceptional validation reply: authorized once, for this comment only, until {time}. Instagram replies are not generally available.",
   "inbox.reply.field_label": "Your reply",
   "inbox.reply.field_help": "Up to {max} characters. It will be published as written.",
   "inbox.reply.remaining": "{count} characters left",

@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { PermissionKey } from "@/domain/access";
 import type { ContentItemRecord } from "@/modules/content";
-import type { OutboundReplyView, ProviderActionDecision, RequestGuards } from "@/mutations/request";
+import type { OutboundReplyView, ProviderActionDecision, RequestGuards, ValidationAuthorityReads } from "@/mutations/request";
 import { effectivePermissions } from "@/platform/permissions";
 import { OUTBOUND_STATE_OF, buildOutbound, buildReplyModel } from "@/server/queries/inbox";
 import { replyEligible } from "@/app/workspaces/[workspaceId]/inbox/views";
@@ -71,6 +71,53 @@ describe("7B-3: the reply model follows the availability precedence", () => {
     }
     expect(new Set(scopes)).toEqual(new Set(["post/paid"]));
     expect(await buildReplyModel({ permissions: permissions("OWNER"), mode: "STANDARD", content, guards: guards({ capability: "AVAILABLE_WITH_LIMITATION" }) })).toMatchObject({ kind: "available", limitation: "limited" });
+  });
+});
+
+describe("7B-14I2: the exceptional validation composer — only where the ordinary chain stops at 'platform unavailable', only for a live authorization naming this member", () => {
+  const TARGET_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const TARGET_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const expiresAt = new Date("2026-11-12T16:00:00.000Z");
+  const reads = (over: { live?: readonly string[]; pending?: boolean; absent?: boolean } = {}): ValidationAuthorityReads & { asked: string[][] } => {
+    const asked: string[][] = [];
+    return {
+      asked,
+      authorization: () => Promise.resolve(undefined),
+      catalogValidationPending: () => Promise.resolve(over.pending ?? true),
+      ...(over.absent === true ? {} : { liveForInitiator: (_w: string, _u: string, targets: readonly string[]) => {
+        asked.push([...targets]);
+        return Promise.resolve((over.live ?? [TARGET_A]).map((targetInteractionId) => ({ id: `auth-${targetInteractionId}`, targetInteractionId, expiresAt })));
+      } }),
+    };
+  };
+  const model = (over: Parameters<typeof guards>[0], validationReads: ValidationAuthorityReads | undefined, role: Parameters<typeof permissions>[0] = "RESPONDER", mode: "STANDARD" | "MONITOR_ONLY" = "STANDARD") =>
+    buildReplyModel({ permissions: permissions(role), mode, content, guards: guards(over), ...(validationReads === undefined ? {} : { validation: { reads: validationReads, workspaceId: "w", userId: "u", targets: [TARGET_A, TARGET_B] } }) });
+
+  it("today's DEV state (no grant, catalog not validated) + a live authorization for one shown comment → validation, for that comment only; never its identifier", async () => {
+    const r = reads();
+    const result = await model({ capability: "UNAVAILABLE", authorization: "not_enabled" }, r);
+    expect(result).toEqual({ kind: "validation", connectedAccountId: ACCOUNT, platform: "instagram", maxChars: 2200, targets: [{ targetInteractionId: TARGET_A, expiresAt }] });
+    expect(JSON.stringify(result)).not.toMatch(/auth-/);
+    expect(r.asked).toEqual([[TARGET_A, TARGET_B]]);
+  });
+
+  it("no live authorization, no validation reads, or the reads lacking the live query → the ordinary answer, unchanged", async () => {
+    const ordinary = { kind: "unavailable", reason: "platform_unavailable", platform: "instagram" };
+    expect(await model({ capability: "UNAVAILABLE", authorization: "not_enabled" }, reads({ live: [] }))).toEqual(ordinary);
+    expect(await model({ capability: "UNAVAILABLE", authorization: "not_enabled" }, undefined)).toEqual(ordinary);
+    expect(await model({ capability: "UNAVAILABLE", authorization: "not_enabled" }, reads({ absent: true }))).toEqual(ordinary);
+  });
+
+  it("never overrides: no permission (hidden), Monitor-only, an inactive account, a pause or the emergency block, an unhealthy connection, or a capability unusable for another reason", async () => {
+    expect(await model({ capability: "UNAVAILABLE", authorization: "not_enabled" }, reads(), "ANALYST_VIEWER")).toEqual({ kind: "hidden" });
+    expect(await model({ capability: "UNAVAILABLE", authorization: "not_enabled" }, reads(), "RESPONDER", "MONITOR_ONLY")).toMatchObject({ reason: "monitor_only" });
+    expect(await model({ account: undefined }, reads())).toMatchObject({ reason: "account_inactive" });
+    expect(await model({ capability: "UNAVAILABLE", authorization: "paused" }, reads())).toMatchObject({ kind: "unavailable" });
+    expect(await model({ authorization: "paused" }, reads())).toMatchObject({ kind: "unavailable", reason: "paused" });
+    expect(await model({ capability: "TEMPORARILY_UNAVAILABLE", authorization: "not_enabled" }, reads())).toMatchObject({ kind: "unavailable", reason: "connection" });
+    expect(await model({ capability: "UNAVAILABLE", authorization: "not_enabled" }, reads({ pending: false }))).toMatchObject({ kind: "unavailable", reason: "platform_unavailable" });
+    // Ordinary availability stays ordinary: an exact grant and a usable capability never become "validation".
+    expect(await model({ authorization: "allowed" }, reads())).toMatchObject({ kind: "available" });
   });
 });
 

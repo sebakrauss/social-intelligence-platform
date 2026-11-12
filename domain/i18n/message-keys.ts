@@ -146,6 +146,7 @@ export const MESSAGE_KEYS = [
   "inbox.reply.to",
   "inbox.reply.as",
   "inbox.reply.instagram_top_level",
+  "inbox.reply.validation_notice",
   "inbox.reply.field_label",
   "inbox.reply.field_help",
   "inbox.reply.remaining",

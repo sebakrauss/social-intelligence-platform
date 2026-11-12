@@ -23,6 +23,7 @@
     "eval:classification": "vitest run --config vitest.eval.config.ts",
     "eval:classification:live": "node tools/eval/classification-live.ts",
     "ops:switch": "node tools/ops/switch.ts",
+    "ops:validation-authorization": "node tools/ops/validation-authorization.ts",
     "secret-scan": "node tools/secret-scan/cli.ts",
     "trigger:release": "node tools/trigger/deploy-release-pair.ts",
     "audit": "npm audit",

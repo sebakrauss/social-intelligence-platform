@@ -24,6 +24,8 @@ export interface ReplyComposerLabels {
   readonly to: string;
   readonly as: string;
   readonly note?: string;
+  /** Step 7B-14I2: present ONLY for an exceptional, operator-authorized validation reply (never general availability). */
+  readonly validationNotice?: string;
   readonly fieldLabel: string;
   readonly fieldHelp: string;
   /** Templates with a literal `{count}` placeholder: only plain strings cross the server → client boundary. */
@@ -45,7 +47,7 @@ export type ReplyOutcomeMessages = Readonly<Record<string, string>>;
 
 export interface ReplyComposerProps {
   readonly action: ReplyAction;
-  readonly fields: { readonly workspaceId: string; readonly conversationId: string; readonly targetInteractionId: string; readonly idempotencyKey: string };
+  readonly fields: { readonly workspaceId: string; readonly conversationId: string; readonly targetInteractionId: string; readonly idempotencyKey: string; readonly validation?: true };
   readonly maxChars: number;
   readonly labels: ReplyComposerLabels;
   /** Outcome copy by closed state (see ReplyOutcomeMessages); the development harness overrides it to say "demo". */
@@ -126,6 +128,11 @@ export function ReplyComposer({ action, fields, maxChars, labels, outcomes, init
         <span className={styles["as"]}>{labels.as}</span>
       </p>
       {labels.note === undefined ? null : <p className={styles["note"]}>{labels.note}</p>}
+      {labels.validationNotice === undefined ? null : (
+        <Notice tone="warning" live="off">
+          {labels.validationNotice}
+        </Notice>
+      )}
 
       {shownStage === "write" ? (
         <div className={styles["stage"]}>
@@ -185,6 +192,7 @@ export function ReplyComposer({ action, fields, maxChars, labels, outcomes, init
           <input type="hidden" name="conversationId" value={fields.conversationId} />
           <input type="hidden" name="targetInteractionId" value={fields.targetInteractionId} />
           <input type="hidden" name="idempotencyKey" value={fields.idempotencyKey} />
+          {fields.validation === true ? <input type="hidden" name="validation" value="1" /> : null}
           <input type="hidden" name="text" value={text} />
           {outcome === undefined ? null : (
             <Notice tone={OUTCOME_TONE[state.kind as Exclude<ReplyActionState["kind"], "idle">]} live="polite">

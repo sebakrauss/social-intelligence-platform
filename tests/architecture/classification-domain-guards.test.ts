@@ -110,9 +110,9 @@ describe("H7-A1: nothing outside the pure scope was introduced", () => {
     expect(names.filter((name) => /anthropic|openai|langchain|@ai-sdk|^ai$|cohere|mistral|gemini|@google\/generative|ollama|huggingface|franc|cld|langdetect/i.test(name)).sort()).toEqual(["@anthropic-ai/sdk", "openai"]);
   });
 
-  it("the only migrations after 0023 are H7-A2's classification persistence (0024), H7-D1c's intelligence persistence (0025), H7-D1e2b's provider-call intents (0026), 7B-1's mutation intents (0027) and 7B-14F1's validation authorizations (0028)", () => {
+  it("the only migrations after 0023 are H7-A2's classification persistence (0024), H7-D1c's intelligence persistence (0025), H7-D1e2b's provider-call intents (0026), 7B-1's mutation intents (0027), 7B-14F1's validation authorizations (0028) and 7B-14I2's operator path (0029)", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql"]);
+    expect(migrations.filter((name) => name > "0023")).toEqual(["0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", "0027_mutation_intents.sql", "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql"]);
   });
 
   it("registers exactly one classification task (H7-D1d, intelligence plane); `ai/` is unchanged and reached only by the INTELLIGENCE composition; the module is used by the two planes' compositions only", () => {

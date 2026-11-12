@@ -804,3 +804,61 @@ describe("7B-14H1: the executor re-checks after the credential is opened and bef
     expect(stores.calls.filter((c) => c.startsWith("validation:"))).toEqual([]);
   });
 });
+
+// ── 7B-14I2 · the request resolves the member's OWN live authorization on the server ─────────────────────────────
+describe("7B-14I2: resolveValidationAuthorization — the server picks exactly ONE live authorization for (member, target)", () => {
+  const context = { organizationId: ORGANIZATION, workspaceId: WORKSPACE, userId: USER, correlationId: CORRELATION };
+  const request = (overrides: Partial<PublicReplyRequest> = {}): PublicReplyRequest => ({ targetInteractionId: TARGET, text: TEXT, idempotencyKey: "form-render-14i2-0001", resolveValidationAuthorization: true, ...overrides });
+  /** igStores plus the initiator's live-authorization read (as RLS would answer it). */
+  const withLive = (live: readonly { readonly id: string; readonly targetInteractionId: string }[] | "absent") => {
+    const h = igStores({ reading: reading() });
+    const asked: { workspaceId: string; userId: string; targets: readonly string[] }[] = [];
+    if (live !== "absent" && h.stores.validation !== undefined) {
+      Object.assign(h.stores.validation, {
+        liveForInitiator: (workspaceId: string, userId: string, targets: readonly string[]) => {
+          asked.push({ workspaceId, userId, targets });
+          return Promise.resolve(live.map((entry) => ({ ...entry, expiresAt: new Date(now.getTime() + 3_600_000) })));
+        },
+      });
+    }
+    return { ...h, asked };
+  };
+
+  it("exactly one live authorization for this member and this target → the intent names it (bound by the database later)", async () => {
+    const { stores, asked } = withLive([{ id: AUTHORIZATION, targetInteractionId: TARGET }]);
+    const outcome = await requestPublicReply(stores, fixedClock(), context, request());
+    expect(outcome).toMatchObject({ kind: "created", intent: { validationAuthorizationId: AUTHORIZATION, initiatorUserId: USER, targetInteractionId: TARGET } });
+    expect(asked).toEqual([{ workspaceId: WORKSPACE, userId: USER, targets: [TARGET] }]);
+  });
+
+  it.each([
+    ["none", []],
+    ["one for another comment", [{ id: AUTHORIZATION, targetInteractionId: OTHER }]],
+    ["two (never guessed)", [{ id: AUTHORIZATION, targetInteractionId: TARGET }, { id: OTHER, targetInteractionId: TARGET }]],
+    ["no live read composed (fail closed)", "absent"],
+  ] as const)("refuses with ONE closed reason when there is %s; nothing is written", async (_name, live) => {
+    const { stores } = withLive(live);
+    expect(await requestPublicReply(stores, fixedClock(), context, request())).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    expect([stores.intentRows.size, stores.replyRows.size, stores.history.length]).toEqual([0, 0, 0]);
+  });
+
+  it("the caller can never add an identifier to a resolved request; without the flag the ordinary path is untouched", async () => {
+    const both = withLive([{ id: AUTHORIZATION, targetInteractionId: TARGET }]);
+    expect(await requestPublicReply(both.stores, fixedClock(), context, request({ validationAuthorizationId: AUTHORIZATION }))).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+    expect(both.asked).toEqual([]);
+    const ordinary = withLive([{ id: AUTHORIZATION, targetInteractionId: TARGET }]);
+    expect(await requestPublicReply(ordinary.stores, fixedClock(), context, request({ resolveValidationAuthorization: false }))).toEqual({ kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" });
+    expect(ordinary.asked).toEqual([]);
+  });
+
+  it("the same form again answers `existing` (the authorization is bound now, no longer live); a pause still vetoes", async () => {
+    const { stores } = withLive([{ id: AUTHORIZATION, targetInteractionId: TARGET }]);
+    const first = await requestPublicReply(stores, fixedClock(), context, request());
+    expect(first.kind).toBe("created");
+    expect(await requestPublicReply(stores, fixedClock(), context, request())).toMatchObject({ kind: "existing" });
+    expect(stores.intentRows.size).toBe(1);
+    const paused = withLive([{ id: AUTHORIZATION, targetInteractionId: TARGET }]);
+    paused.v.providerAction = ["paused"];
+    expect(await requestPublicReply(paused.stores, fixedClock(), context, request({ idempotencyKey: "form-render-14i2-0002" }))).toEqual({ kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" });
+  });
+});

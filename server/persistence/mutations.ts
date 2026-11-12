@@ -21,7 +21,7 @@ import { createPostgresConnectionStore } from "@/modules/connections/persistence
 import { createPostgresContentItemReadStore } from "@/modules/content/persistence";
 import { CAPABILITY_CONTENT_KINDS, CAPABILITY_SOURCES, type CapabilityContentKind, type CapabilitySource } from "@/modules/capability";
 import { loadInteractionReplyTarget, type InteractionReplyTargetRow } from "@/modules/interactions/persistence";
-import { createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace, readValidationAuthorizationForAdmission } from "@/mutations/persistence";
+import { createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace, liveValidationAuthorizationsFor, readValidationAuthorizationForAdmission } from "@/mutations/persistence";
 import type { MutationRequestSources, ReplyTarget, ReplyTargets, RequestGuards, ValidationAuthorityReads } from "@/mutations/request";
 import { readSwitchRows, type DatabaseTransaction } from "@/platform/db";
 import { resolveSwitch } from "@/platform/flags";
@@ -152,6 +152,11 @@ export function validationReads(tx: DatabaseTransaction, reads: AuthorityReads):
         source,
         connection: connection.status,
       });
+    },
+    // Step 7B-14I2: the initiator's own live authorizations (RLS: a member reads only those naming them).
+    async liveForInitiator(workspaceId, initiatorUserId, targetInteractionIds) {
+      if (workspaceId !== (await currentWorkspace(tx))) return [];
+      return liveValidationAuthorizationsFor(tx, workspaceId, initiatorUserId, targetInteractionIds);
     },
   };
 }

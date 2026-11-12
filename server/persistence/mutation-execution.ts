@@ -23,7 +23,7 @@ import type { ConnectionWorkerStore } from "@/modules/connections";
 import { createPostgresConnectionWorkerStore } from "@/modules/connections/persistence";
 import type { WorkspaceId } from "@/domain/ids";
 import type { ExecutorStores, IntentOutcomeEvent } from "@/mutations/executor/execute";
-import { anotherValidationConsumedForTarget, createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace, initiatorWorkspaceRole, workspaceModeForExecution } from "@/mutations/persistence";
+import { anotherValidationConsumedForTarget, createPostgresIntentStore, createPostgresOutboundReplyStore, currentWorkspace, databaseNow, initiatorWorkspaceRole, workspaceModeForExecution } from "@/mutations/persistence";
 import type { ActiveCredentialIdentity, ExecutionGuards, ValidationExecutionReads } from "@/mutations/ports";
 import type { DatabaseTransaction } from "@/platform/db";
 import type { TenantJobScope } from "@/platform/jobs";
@@ -146,4 +146,30 @@ export async function credentialAuthority(tx: DatabaseTransaction, input: { read
   const credential = await connections.credentials.load(connection.activeCredentialId);
   if (credential === undefined || credential.connectionId !== connection.id) return undefined;
   return { workspaceId: account.workspaceId, credentialId: connection.activeCredentialId, envelope: credential.envelope, platform: account.platform, providerAssetId: account.providerAssetId };
+}
+
+/** Step 7B-14I2 — what the operator reconciliation task may act on: closed facts of ONE intent of the bound workspace. */
+export interface ReconciliationCandidate {
+  readonly status: string;
+  /** The intent names a one-time validation authorization (0028). */
+  readonly authorized: boolean;
+  /** Seconds since the intent's last transition, by the DATABASE clock. */
+  readonly ageSeconds: number;
+  readonly provider: string;
+  readonly platform: string;
+}
+
+/**
+ * Step 7B-14I2 — reads (worker scope, RLS: the bound workspace only) the intent the operator names, with its account's
+ * provider and platform. undefined when absent, of another workspace, or its account/connection is unreadable.
+ */
+export async function reconciliationCandidate(tx: DatabaseTransaction, workspaceId: string, intentId: string): Promise<ReconciliationCandidate | undefined> {
+  const intent = await createPostgresIntentStore(tx).get(workspaceId, intentId);
+  if (intent === undefined) return undefined;
+  const connections = connectionsAuthority(tx);
+  const account = await connections.connectedAccounts.get(intent.connectedAccountId);
+  const connection = account === undefined ? undefined : await connections.connections.get(account.connectionId);
+  if (account === undefined || connection === undefined || account.workspaceId !== workspaceId) return undefined;
+  const now = await databaseNow(tx);
+  return { status: intent.status, authorized: intent.validationAuthorizationId !== null, ageSeconds: Math.floor((now.getTime() - intent.updatedAt.getTime()) / 1000), provider: connection.provider, platform: account.platform };
 }

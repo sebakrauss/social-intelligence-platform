@@ -105,7 +105,9 @@ describe("H6-C3d: the members' audit append is the pipeline's, exactly", () => {
 
 describe("H6-C3d: command-bound actions keep their authoritative producers", () => {
   it("reconciliation_requested is written only by the request boundary (0019, replaced same-signature by 0022); no TypeScript emits it", () => {
-    const writers = migrationNames().filter((n) => /insert into audit\.audit_events[\s\S]*?'connected_account\.reconciliation_requested'/.test(code(n)));
+    // Statement-level (Step 7B-14I2): an INSERT statement that itself names the action — a later vocabulary listing elsewhere
+    // in the same file is not a write of it.
+    const writers = migrationNames().filter((n) => code(n).split(";").some((statement) => /insert into audit\.audit_events/.test(statement) && /'connected_account\.reconciliation_requested'/.test(statement)));
     expect(writers).toEqual(["0019_reconciliation_request.sql", "0022_provider_webhook_signals.sql"]);
     // In 0022 that insert lives inside the replaced ingestion.request_reconciliation, and nowhere else.
     const replaced = code("0022_provider_webhook_signals.sql");
@@ -153,9 +155,21 @@ describe("H6-C3d: 0020's scope", () => {
     expect(sql.toLowerCase()).not.toMatch(/\b(insert into|update|delete from|truncate|alter table|create table|drop|audit_events_action_check)\b/);
   });
 
-  it("no later migration changes audit policy or vocabulary — except 0027 (Step 7B-1), which widens the vocabulary and extends append_own by the request's event only; 0028 names no audit object", () => {
+  it("no later migration changes audit policy or vocabulary — except 0027 (Step 7B-1), which widens the vocabulary and extends append_own by the request's event only, and 0029 (Step 7B-14I2), which widens it by the operator's two events and adds ONE owner insert policy for them; 0028 names no audit object", () => {
     const later = migrationNames().filter((name) => name > M0020);
-    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", M0027, "0028_mutation_validation_authorizations.sql"]);
+    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", M0027, "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql"]);
+    // 0029's audit statements: the two exact widenings, ONE owner insert policy, and the two definers' inserts of the
+    // operator's own two actions (inside the function bodies) — no append_own change, no audit grant, no update/delete.
+    const m29 = code("0029_validation_operator_path.sql").toLowerCase().replace(/--[^\n]*/g, " ");
+    const audit29 = m29.split(";").map((s) => s.trim()).filter((s) => /audit\.|audit_events/.test(s));
+    expect(audit29.map((s) => s.split(/\s+/).slice(0, 4).join(" ").replace(/ \(.*$/, ""))).toEqual([
+      "insert into audit.audit_events", "insert into audit.audit_events",
+      "alter table audit.audit_events drop", "alter table audit.audit_events add", "alter table audit.audit_events validate",
+      "alter table audit.audit_events drop", "alter table audit.audit_events add", "alter table audit.audit_events validate",
+      "create policy owner_validation_audit on",
+    ]);
+    for (const insert of audit29.filter((s) => s.startsWith("insert into audit"))) expect(insert).toMatch(/'validation_authorization\.(issued|revoked)', 'system', null/);
+    expect(m29).not.toMatch(/update audit|delete from audit|grant [^;]* on audit|policy append_own|alter policy/);
     expect(code("0028_mutation_validation_authorizations.sql").toLowerCase().replace(/--[^\n]*/g, " ")).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
     // 0027's audit statements are exactly: the two exact widenings (drop / add NOT VALID / validate, lint-verified) and
     // the one ALTER POLICY; no audit row is read or written, no audit grant or other audit policy changes.

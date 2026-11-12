@@ -365,6 +365,9 @@ function Member({ item, platformText, detail, workspaceId, replyAction, outcomes
   // "Written by your account" repeats what the author line already says on the brand's own messages: the fact stays in
   // the data (nothing is removed from the view model) and is simply not drawn twice.
   const facts = item.facts.filter((fact) => !(fact === "author_own_brand" && item.author === "own_account"));
+  // Step 7B-14I2: the exceptional validation composer appears ONLY under the exact comment a live authorization naming this
+  // member covers; it sends no identifier — the server resolves the authorization itself.
+  const validationTarget = detail.reply.kind === "validation" ? detail.reply.targets.find((target) => target.targetInteractionId === item.interactionId) : undefined;
   const composer =
     detail.reply.kind === "available" && replyEligible(item, detail.platform) ? (
       <ReplyComposer
@@ -372,6 +375,14 @@ function Member({ item, platformText, detail, workspaceId, replyAction, outcomes
         fields={{ workspaceId, conversationId: detail.conversationId, targetInteractionId: item.interactionId, idempotencyKey: replyFormKey() }}
         maxChars={detail.reply.maxChars}
         labels={composerLabels(platformText, author, detail.reply.maxChars, detail.platform === "instagram")}
+        outcomes={outcomes}
+      />
+    ) : detail.reply.kind === "validation" && validationTarget !== undefined && replyEligible(item, detail.platform) ? (
+      <ReplyComposer
+        action={replyAction}
+        fields={{ workspaceId, conversationId: detail.conversationId, targetInteractionId: item.interactionId, idempotencyKey: replyFormKey(), validation: true }}
+        maxChars={detail.reply.maxChars}
+        labels={{ ...composerLabels(platformText, author, detail.reply.maxChars, detail.platform === "instagram"), validationNotice: t("inbox.reply.validation_notice", { time: displayTime(validationTarget.expiresAt) }) }}
         outcomes={outcomes}
       />
     ) : undefined;

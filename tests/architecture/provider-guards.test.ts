@@ -247,7 +247,8 @@ describe("Meta authorization adapter (Step 7G-D): offline, authorization only", 
 
   it("the Meta tree is the authorization adapter and its token transport, the read port and its Graph transport, error normalization, the fixed endpoints, the pure webhook boundary (H6-F1) and the Instagram-only mutation port (7B-11)", () => {
     // Step 7B-14C1: + the read-only Instagram reply preflight reader (operator diagnostic; read transport only).
-    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/graph-transport.ts`, `${META}/instagram-reply-preflight.ts`, MUTATION_PORT, `${META}/oauth-transport.ts`, `${META}/read-port.ts`, `${META}/webhooks.ts`]);
+    // Step 7B-14I2: + the read-only Instagram OWN-reply lookup (operator reconciliation; read transport only).
+    expect(files()).toEqual([`${META}/authorization.ts`, `${META}/endpoints.ts`, `${META}/errors.ts`, `${META}/graph-transport.ts`, `${META}/instagram-reply-lookup.ts`, `${META}/instagram-reply-preflight.ts`, MUTATION_PORT, `${META}/oauth-transport.ts`, `${META}/read-port.ts`, `${META}/webhooks.ts`]);
     // The authorization side knows nothing of reads; nothing in the tree refreshes or proves; only the mutation port mutates.
     for (const file of AUTHORIZATION_SIDE) expect(codeOf(file), file).not.toMatch(/discoverAssets|\/me\/accounts|instagram_business_account|ProviderReadPort/);
     for (const file of files()) expect(codeOf(file), file).not.toMatch(/fb_exchange_token|appsecret_proof/);
@@ -549,9 +550,15 @@ describe("Meta read_interactions (Step 7G-H5.5-P12-B1): Facebook comments + repl
     expect(transport()).toMatch(/export const META_INSTAGRAM_COMMENTS_PAGE_LIMIT = 10;/);
     // Replies: the documented write (7B-11) and, since Step 7B-14C1, exactly ONE read of the replies edge — one fixed
     // whitelist, one fixed limit, no cursor parameter — that the READ PORT never calls: only the operator's read-only
-    // Instagram reply preflight reader does (its own guards below).
-    expect(transport().match(/get\(\[[^\]]*"replies"/g)).toEqual(['get([commentId, "replies"']);
-    expect(transport().match(/"replies"/g)).toHaveLength(2);
+    // Instagram reply preflight reader does (its own guards below). Step 7B-14I2: plus exactly ONE reconciliation read of
+    // the same edge — its own fixed whitelist (with the text, compared in memory only), the same fixed limit and a
+    // validated cursor — reached only by the operator's own-reply lookup, never by the read port.
+    expect(transport().match(/get\(\[[^\]]*"replies"/g)).toEqual(['get([commentId, "replies"', 'get([commentId, "replies"']);
+    expect(transport().match(/"replies"/g)).toHaveLength(3);
+    expect(transport()).toMatch(/export const META_INSTAGRAM_RECONCILIATION_REPLY_FIELDS = "id,from,timestamp,parent_id,text";/);
+    expect(transport()).toMatch(/return get\(\[commentId, "replies"\], after === null \? base : \[\.\.\.base, \["after", after\]\], userToken, instagramReconciliationReplyPageOf\);/);
+    expect(readPort()).not.toMatch(/listInstagramCommentRepliesForReconciliation|META_INSTAGRAM_RECONCILIATION/);
+    expect("id,from,timestamp,parent_id,text").not.toMatch(/\{|attachment|like|reaction|replies|permalink|private|message/);
     expect(transport()).toMatch(/get\(\[commentId, "replies"\], \[\["fields", META_INSTAGRAM_REPLY_FIELDS\], \["limit", String\(META_INSTAGRAM_REPLIES_PAGE_LIMIT\)\]\], userToken, instagramReplyListOf\);/);
     expect(transport()).toMatch(/export const META_INSTAGRAM_REPLY_FIELDS = "id,from,timestamp,parent_id";/);
     expect(transport()).toMatch(/listInstagramCommentReplies\(userToken: SecretValue, commentId: ProviderObjectId\): Promise<MetaGraphOutcome<MetaInstagramReplyList>>;/);

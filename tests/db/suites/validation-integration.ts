@@ -45,6 +45,12 @@ import { FakeIdentity, verifiedUser } from "../../support/in-memory";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld } from "../support/world";
 import { quietPendingOutbox } from "./helpers";
+import { providerObjectRef } from "@/integrations/providers/contract";
+import { createInstagramReplyLookup, type InstagramReplyLookupTransport } from "@/integrations/providers/meta/instagram-reply-lookup";
+import { instagramReplyLookupPort } from "@/jobs/integration-mutation-reconcile";
+import { reconcileIntent } from "@/mutations/executor/reconcile";
+import { recordValidationPreflight } from "@/mutations/persistence/validation-preflights";
+import { operatorLogin } from "../support/validation-operator";
 
 const TASK = "mutations.execute_intent";
 const ROLES = ["OWNER", "RESPONDER", "RESPONDER_2", "ANALYST_VIEWER"] as const;
@@ -207,12 +213,17 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
     throw new Error("the authorization never expired");
   };
 
-  const request = async (t: Tenant, user: string, input: { readonly target?: string; readonly authorization?: string; readonly key?: string; readonly text?: string }) => {
+  const request = async (t: Tenant, user: string, input: { readonly target?: string; readonly authorization?: string; readonly key?: string; readonly text?: string; readonly validation?: true }) => {
     const identity = new FakeIdentity(verifiedUser(parseUserId(user) ?? (() => { throw new Error("user"); })()));
     const pipeline = createActionPipeline({ identity, unitOfWork: createPostgresUnitOfWork(web), clock: () => new Date(), newId: randomUUID, logger });
     const result = await pipeline.run(requestPublicReplyCommand, {
       workspaceId: t.workspaceId,
-      input: { targetInteractionId: input.target ?? t.ig.comment, text: input.text ?? TEXT, idempotencyKey: input.key ?? `form-${randomUUID()}`, ...(input.authorization === undefined ? {} : { validationAuthorizationId: input.authorization }) },
+      input: {
+        targetInteractionId: input.target ?? t.ig.comment, text: input.text ?? TEXT, idempotencyKey: input.key ?? `form-${randomUUID()}`,
+        ...(input.authorization === undefined ? {} : { validationAuthorizationId: input.authorization }),
+        // Step 7B-14I2: the Inbox's mode flag — the server resolves the member's own live authorization.
+        ...(input.validation === true ? { validation: true } : {}),
+      },
     });
     await quietPendingOutbox((text, values) => privileged.query(text, values), "topic = $1 and workspace_id = $2", [TASK, t.workspaceId]);
     return result.status === "ok" ? result.value : result;
@@ -838,6 +849,138 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
       }
       expect(x.posts).toHaveLength(1);
       expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING", "CONFIRMED"]);
+    });
+  });
+
+  /**
+   * Step 7B-14I2 — the operator path end to end on the real database: evidence recorded by the bound worker, issuance by a
+   * validation operator login (never declared), the Inbox request resolved ON THE SERVER (no identifier from the caller),
+   * the executor's ONE POST on a fake Meta, and reconciliation through the Instagram own-reply lookup (GETs on a fake
+   * transport). Never a second POST.
+   */
+  describe("7B-14I2 · operator path: evidence → operator issuance → server-resolved request → one POST → reconciliation", () => {
+    const OPERATOR_LOGIN = "validation_operator_integration";
+    const issueAsOperator = async (t: Tenant, initiator = t.users.RESPONDER): Promise<string> => {
+      const credential = (await oracle<{ id: string }>("select active_credential_id as id from connections.connections where id = $1", [t.connection]))[0]?.id ?? "";
+      const preflightId = randomUUID();
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx: DatabaseTransaction) => recordValidationPreflight(tx, {
+        id: preflightId, connectedAccountId: t.ig.account, targetInteractionId: t.ig.comment, credentialId: credential, runReference: `run_7b14i2_${randomUUID().slice(0, 8)}`,
+        status: "VERIFIED", checksVerified: 10, requiredPermissionsGranted: true, repliesComplete: true, repliesByManagedAccount: 0, repliesUnattributed: 0, stoppedEarly: false,
+      }));
+      const client = await (await operatorLogin(privileged, getTarget(), OPERATOR_LOGIN))();
+      try {
+        await client.query("begin transaction isolation level read committed");
+        await client.query("set local role app_validation_operator");
+        const row = (await client.query<{ authorization_id: string }>("select authorization_id from mutations.issue_validation_authorization($1, $2, $3, 'live_validation', 60, true)", [t.workspaceId, preflightId, initiator])).rows[0];
+        await client.query("commit");
+        return row?.authorization_id ?? "";
+      } finally {
+        await client.end();
+      }
+    };
+    const synthetic = (replies: readonly { readonly id: string; readonly fromId: string; readonly fromUsername?: string; readonly text: string; readonly parentId: string }[] | "fail"): InstagramReplyLookupTransport => ({
+      getInstagramAccount: () => Promise.resolve({ kind: "ok", value: { username: "synthetic_managed" } }),
+      listInstagramCommentRepliesForReconciliation: () => Promise.resolve(replies === "fail"
+        ? { kind: "transient", reason: "network" }
+        : { kind: "ok", value: { replies: replies.map((reply) => ({ ...reply, fromUsername: reply.fromUsername ?? null, timestamp: new Date().toISOString() })) as never, after: null } }),
+    });
+    const reconcileWith = (t: Tenant, intentId: string, transport: InstagramReplyLookupTransport) =>
+      reconcileIntent(
+        {
+          inScope: (work) => withWorkspaceJobScope(worker, t.workspaceId, (tx: DatabaseTransaction) => work(executorStores({ tx }, randomUUID))),
+          credentials: { withAccess: (_input, use) => use({ credential: providerCredential("cred-synthetic", "synthetic-user-token"), account: providerObjectRef("instagram", "asset", t.ig.asset) }, { credentialId: "synthetic" }) },
+          lookup: instagramReplyLookupPort(createInstagramReplyLookup({ transport })),
+          clock: { newId: randomUUID, now: () => new Date() },
+        },
+        { workspaceId: t.workspaceId, intentId, runReference: `run_reconcile_${randomUUID().slice(0, 8)}` },
+      );
+
+    it("the request names no identifier: the server binds the member's own live authorization; ONE POST → CONFIRMED; nothing else is admitted", async () => {
+      const t = await tenant();
+      const id = await issueAsOperator(t);
+      const key = `form-${randomUUID()}`;
+      const outcome = await request(t, t.users.RESPONDER, { validation: true, key });
+      expect(outcome).toMatchObject({ kind: "requested" });
+      const intentId = (outcome as { readonly intentId: string }).intentId;
+      expect(await authorizationRow(t, id)).toMatchObject({ intent_id: intentId, bound: true, consumed: false });
+      expect((await intentRow(t, intentId))?.validation_authorization_id).toBe(id);
+      // The same form again: the same answer (idempotent), never a second intent.
+      expect(await request(t, t.users.RESPONDER, { validation: true, key })).toMatchObject({ kind: "existing", intentId });
+      // Bound: a new validation request for the same comment, by the same member, is refused.
+      expect(await request(t, t.users.RESPONDER, { validation: true })).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+      const x = execution();
+      expect(await x.run(t, intentId)).toMatchObject({ kind: "confirmed" });
+      expect(x.posts).toHaveLength(1);
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING", "CONFIRMED"]);
+      expect(await authorizationRow(t, id)).toMatchObject({ consumed: true });
+      // Consumed: nothing can request again on that comment, and a re-run sends nothing.
+      expect(await request(t, t.users.RESPONDER, { validation: true })).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+      expect(await x.run(t, intentId)).toEqual({ kind: "noop", status: "CONFIRMED" });
+      expect(x.posts).toHaveLength(1);
+    });
+
+    it("only the named initiator, only the exact comment; no flag means the ordinary path (still refused); flag + identifier is refused", async () => {
+      const t = await tenant();
+      const id = await issueAsOperator(t);
+      expect(await request(t, t.users.RESPONDER_2, { validation: true })).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+      expect(await request(t, t.users.RESPONDER, { validation: true, target: t.ig.otherComment })).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+      expect(await request(t, t.users.RESPONDER, {})).toEqual({ kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" });
+      expect(await request(t, t.users.RESPONDER, { validation: true, authorization: id })).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+      const other = await tenant();
+      expect(await request(other, other.users.RESPONDER, { validation: true })).toEqual({ kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
+      expect(await authorizationRow(t, id)).toMatchObject({ bound: false });
+      expect(await intentsOf(t)).toBe(0);
+    });
+
+    it("a pause (exact or wildcard) and Monitor-only still win over an operator-issued authorization", async () => {
+      const t = await tenant();
+      const id = await issueAsOperator(t);
+      for (const key of [WILDCARD, INSTAGRAM]) {
+        await withClient((client) => setSwitch(client, key, { enabled: false }, SWITCH_OPERATOR));
+        try {
+          expect(await request(t, t.users.RESPONDER, { validation: true }), key.qualifier).toEqual({ kind: "refused", reason: "PROVIDER_ACTIONS_DISABLED" });
+        } finally {
+          await withClient((client) => clearSwitch(client, key, SWITCH_OPERATOR));
+        }
+      }
+      await privileged.query("update tenancy.workspaces set mode = 'MONITOR_ONLY' where id = $1", [t.workspaceId]);
+      expect(await request(t, t.users.RESPONDER, { validation: true })).toMatchObject({ status: "error" });
+      expect(await authorizationRow(t, id)).toMatchObject({ bound: false });
+      expect(await intentsOf(t)).toBe(0);
+    });
+
+    it("a lost response → OUTCOME_UNKNOWN; reconciliation: an incomplete or ambiguous listing keeps it unknown, ONE unique match confirms, a repeat is a no-op; ONE POST in total", async () => {
+      const t = await tenant();
+      await issueAsOperator(t);
+      const intentId = ((await request(t, t.users.RESPONDER, { validation: true })) as { readonly intentId: string }).intentId;
+      const x = execution("lost");
+      expect(await x.run(t, intentId)).toEqual({ kind: "outcome_unknown", code: "RESPONSE_LOST" });
+      expect(x.posts).toHaveLength(1);
+      const ours = { id: "17990000000000001", fromId: t.ig.asset, text: TEXT, parentId: t.ig.commentProviderId };
+      expect(await reconcileWith(t, intentId, synthetic("fail"))).toEqual({ kind: "still_unknown", reason: "incomplete" });
+      expect(await reconcileWith(t, intentId, synthetic([ours, { ...ours, id: "17990000000000002" }]))).toEqual({ kind: "still_unknown", reason: "ambiguous" });
+      // Our text under another id: unattributable without usernames (ambiguous); provably someone else's → nothing found.
+      expect(await reconcileWith(t, intentId, synthetic([{ ...ours, fromId: "17841400000000999" }]))).toEqual({ kind: "still_unknown", reason: "ambiguous" });
+      expect(await reconcileWith(t, intentId, synthetic([{ ...ours, fromId: "17841400000000999", fromUsername: "someone_else" }]))).toEqual({ kind: "still_unknown", reason: "not_found" });
+      expect((await intentRow(t, intentId))?.status).toBe("OUTCOME_UNKNOWN");
+      expect(await reconcileWith(t, intentId, synthetic([ours]))).toEqual({ kind: "confirmed", providerReplyId: ours.id });
+      expect(await reconcileWith(t, intentId, synthetic([ours]))).toEqual({ kind: "noop", status: "CONFIRMED" });
+      expect(await historyOf(t, intentId)).toEqual(["PENDING", "EXECUTING", "OUTCOME_UNKNOWN", "CONFIRMED"]);
+      expect(await x.run(t, intentId)).toEqual({ kind: "noop", status: "CONFIRMED" });
+      expect(x.posts).toHaveLength(1);
+    });
+
+    it("EXECUTING left by a crashed run: reconciliation records OUTCOME_UNKNOWN (RUN_INTERRUPTED) first and sends nothing; a redelivered run sends nothing", async () => {
+      const t = await tenant();
+      const id = await issueAsOperator(t);
+      const intentId = ((await request(t, t.users.RESPONDER, { validation: true })) as { readonly intentId: string }).intentId;
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx: DatabaseTransaction) => tx.execute(sql`update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_crashed_7b14i2', updated_at = now() where workspace_id = ${t.workspaceId} and id = ${intentId} and status = 'PENDING'`));
+      expect(await authorizationRow(t, id)).toMatchObject({ consumed: true });
+      expect(await reconcileWith(t, intentId, synthetic([]))).toEqual({ kind: "still_unknown", reason: "not_found" });
+      expect(await intentRow(t, intentId)).toMatchObject({ status: "OUTCOME_UNKNOWN", outcome_code: "RUN_INTERRUPTED" });
+      const x = execution();
+      expect(await x.run(t, intentId)).toEqual({ kind: "noop", status: "OUTCOME_UNKNOWN" });
+      expect(x.posts).toEqual([]);
     });
   });
 }

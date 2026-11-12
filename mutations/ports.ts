@@ -136,6 +136,18 @@ export interface ValidationAuthorityReads {
    * row coherent, UNKNOWN_NOT_VALIDATED with exactly CATALOG_NOT_VALIDATED. Anything else (or any doubt) is false.
    */
   catalogValidationPending(connectedAccountId: string, scope: { readonly contentKind: string; readonly reportedSource: string }): Promise<boolean>;
+  /**
+   * Step 7B-14I2: the LIVE authorizations (unbound, unrevoked, unconsumed, unexpired by the database clock) naming THIS
+   * member as initiator for any of these targets, as RLS shows them (a member sees only their own). Absent: none.
+   */
+  liveForInitiator?(workspaceId: string, initiatorUserId: string, targetInteractionIds: readonly string[]): Promise<readonly LiveValidationAuthorization[]>;
+}
+
+/** Step 7B-14I2: a live authorization as its initiator may see it — identifiers and the expiry only. */
+export interface LiveValidationAuthorization {
+  readonly id: string;
+  readonly targetInteractionId: string;
+  readonly expiresAt: Date;
 }
 
 /** The executor's validation reads (bound worker): the request side's, plus two only the worker can answer. */
@@ -201,7 +213,8 @@ export interface CredentialUse {
  *              (it cannot be placed before or after the attempt): no identity can be assigned safely.
  * An unreadable, incomplete or failed listing throws: the caller keeps the outcome unknown.
  */
-export type ReplyLookupResult = { readonly kind: "found"; readonly providerReplyId: string } | { readonly kind: "none" } | { readonly kind: "ambiguous" };
+/** `incomplete` (Step 7B-14I2): the listing could not be read to its end — nothing may be concluded from it. */
+export type ReplyLookupResult = { readonly kind: "found"; readonly providerReplyId: string } | { readonly kind: "none" } | { readonly kind: "ambiguous" } | { readonly kind: "incomplete" };
 
 export interface ReplyLookup {
   findOwnReply(

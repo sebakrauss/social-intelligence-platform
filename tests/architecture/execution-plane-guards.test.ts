@@ -38,8 +38,8 @@ const MAIN_TASKS = ["outbox.relay", "outbox.dispatch_sweep", "outbox.outcome_swe
 const INTEGRATION_TASKS = ["connections.discover_assets", "capability.evaluate_account", "ingestion.reconcile_slice", "ingestion.confirm_interaction",
   // Step 7B-1: the Platform Mutation Executor — the only task that obtains a provider MUTATION port.
   "mutations.execute_intent"];
-/** Step 7E.7-B / 7G-H5.5-P5-B / 7G-H5.5-P12-B2 / 7B-14C1: integration-only, operator-triggered diagnostics — discovered by the integration config, never registered. */
-const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic", "integration.read_content_validation", "integration.read_interactions_validation", "integration.instagram_reply_preflight"];
+/** Step 7E.7-B / 7G-H5.5-P5-B / 7G-H5.5-P12-B2 / 7B-14C1 / 7B-14I2: integration-only, operator-triggered tasks — discovered by the integration config, never registered. */
+const INTEGRATION_DIAGNOSTIC_TASKS = ["integration.kms_worker_auth_diagnostic", "integration.read_content_validation", "integration.read_interactions_validation", "integration.instagram_reply_preflight", "integration.mutation_reconcile"];
 /** Step H7-D1d: the one task that holds the model credential. */
 const INTELLIGENCE_TASKS = ["classification.understand_ai"];
 const PLANE_DIRS = { main: "jobs/trigger/main", integration: "jobs/trigger/integration", intelligence: "jobs/trigger/intelligence" } as const;
@@ -109,8 +109,9 @@ describe("discovery: one config per plane, disjoint task directories", () => {
     const intelligence = discoveredTasks(PLANE_DIRS.intelligence);
     // The release unit expects exactly the discovered counts: INTEGRATION 9, INTELLIGENCE 1, MAIN 11 (H6-C3 adds 1 + 2;
     // H6-E 1 + 0; H6-F3 0 + 2; H6-F4 0 + 1 — ingestion.process_signals; H7-D1e: the intelligence plane, 1; 7B-1: the
-    // executor, 1 + 0; 7B-14C1: the read-only Instagram reply preflight diagnostic, 1 + 0).
-    expect(integration).toHaveLength(9);
+    // executor, 1 + 0; 7B-14C1: the read-only Instagram reply preflight diagnostic, 1 + 0; 7B-14I2: the operator
+    // reconciliation task, 1 + 0 → INTEGRATION 10).
+    expect(integration).toHaveLength(10);
     expect(intelligence).toHaveLength(1);
     expect(main).toHaveLength(11);
     expect(RELEASE_PLANES.map((plane) => [plane.plane, plane.expectedTasks])).toEqual([["integration", integration.length], ["intelligence", intelligence.length], ["main", main.length]]);

@@ -33,11 +33,13 @@ export async function publishReplyAction(_previous: ReplyActionState, form: Form
   const targetInteractionId = field(form, "targetInteractionId");
   const idempotencyKey = field(form, "idempotencyKey");
   const text = field(form, "text");
+  // Step 7B-14I2: a mode, never an identifier — the command resolves the member's own live authorization for this target.
+  const validation = field(form, "validation") === "1";
   if (workspaceId === undefined || !isUuid(conversationId)) return { kind: "blocked", code: "NOT_FOUND" };
   const auth = await requestAuth();
   if (auth === undefined) return { kind: "signed_out" };
   try {
-    const result = await inboxPipeline(auth).run(requestPublicReplyCommand, { workspaceId, input: { targetInteractionId, text, idempotencyKey } });
+    const result = await inboxPipeline(auth).run(requestPublicReplyCommand, { workspaceId, input: { targetInteractionId, text, idempotencyKey, ...(validation ? { validation: true } : {}) } });
     if (result.status === "unauthenticated" || result.status === "verification_required") return { kind: "signed_out" };
     if (result.status === "error") {
       const code = result.error.code;

@@ -27,7 +27,7 @@ export interface ReconcileDependencies {
   readonly clock: MutationClock;
 }
 
-export const STILL_UNKNOWN_REASONS = ["not_found", "ambiguous", "identity_linked_elsewhere", "competing_intents", "unreadable"] as const;
+export const STILL_UNKNOWN_REASONS = ["not_found", "ambiguous", "identity_linked_elsewhere", "competing_intents", "unreadable", "incomplete"] as const;
 export type StillUnknownReason = (typeof STILL_UNKNOWN_REASONS)[number];
 
 export type ReconcileResult =
@@ -66,6 +66,8 @@ export async function reconcileIntent(deps: ReconcileDependencies, input: { read
   }
   if (looked.kind === "none") return { kind: "still_unknown", reason: "not_found" };
   if (looked.kind === "ambiguous") return { kind: "still_unknown", reason: "ambiguous" };
+  // Step 7B-14I2: a listing not read to its end proves nothing either way.
+  if (looked.kind === "incomplete") return { kind: "still_unknown", reason: "incomplete" };
   const { providerReplyId } = looked;
 
   return deps.inScope(async (stores) => {

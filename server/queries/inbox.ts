@@ -33,7 +33,7 @@ import type { ConversationActivityRow, InteractionSummaryRow, TextVersionRow } f
 import type { PersistedSignalRow } from "@/modules/classification";
 import type { PermissionKey } from "@/domain/access";
 import type { WorkspaceMode } from "@/modules/tenancy";
-import { REPLY_TEXT_MAX_CHARS, type OutboundReplyView, type RequestGuards } from "@/mutations/request";
+import { REPLY_TEXT_MAX_CHARS, type OutboundReplyView, type RequestGuards, type ValidationAuthorityReads } from "@/mutations/request";
 import type { InboxAccountRow, Transaction, WorkspaceCommand, WorkspaceContext } from "@/server/pipeline";
 
 export const INBOX_PAGE_SIZE = 25;
@@ -151,7 +151,14 @@ export type ReplyUnavailableReason = "monitor_only" | "account_inactive" | "paus
 export type ReplyModel =
   | { readonly kind: "hidden" }
   | { readonly kind: "unavailable"; readonly reason: ReplyUnavailableReason; readonly platform: PlatformLabel }
-  | { readonly kind: "available"; readonly connectedAccountId: string; readonly platform: PlatformLabel; readonly maxChars: number; readonly limitation: string | null };
+  | { readonly kind: "available"; readonly connectedAccountId: string; readonly platform: PlatformLabel; readonly maxChars: number; readonly limitation: string | null }
+  /**
+   * Step 7B-14I2: an EXCEPTIONAL, operator-authorized validation reply — NOT general availability. Only where the ordinary
+   * chain stops at "platform unavailable" ONLY because no provider-action grant exists and/or the catalog has not
+   * validated reply_public, and only for the targets a LIVE authorization naming THIS member covers (read through RLS).
+   * The authorization's identifier never leaves the server.
+   */
+  | { readonly kind: "validation"; readonly connectedAccountId: string; readonly platform: PlatformLabel; readonly maxChars: number; readonly targets: readonly { readonly targetInteractionId: string; readonly expiresAt: Date }[] };
 
 /** The closed display states of an outbound reply (TA §44.1): never optimistic, never a provider detail. */
 export type OutboundReplyState = "sending" | "sent" | "failed" | "checking" | "blocked";
@@ -387,10 +394,41 @@ export interface ReplyModelInput {
   readonly mode: WorkspaceMode;
   readonly content: ContentItemRecord | undefined;
   readonly guards: RequestGuards;
+  /** Step 7B-14I2: the member and the shown targets, with the validation reads (absent: no exception is ever offered). */
+  readonly validation?: { readonly reads: ValidationAuthorityReads; readonly workspaceId: string; readonly userId: string; readonly targets: readonly string[] };
 }
 
 /** The reply affordance, from the SAME guards the request command re-checks (one resolver chain, IA §18 order). */
 export async function buildReplyModel(input: ReplyModelInput): Promise<ReplyModel> {
+  const ordinary = await ordinaryReplyModel(input);
+  if (ordinary.kind !== "unavailable" || ordinary.reason !== "platform_unavailable" || input.validation === undefined || input.content === undefined) return ordinary;
+  return (await validationReplyModel(input.content, input.guards, input.validation)) ?? ordinary;
+}
+
+/**
+ * Step 7B-14I2 — the exception, re-deciding the request's own bounded rule on the same guards: the account ACTIVE, the
+ * connection ACTIVE, reply_public usable or unusable ONLY because the catalog has not validated it, the provider action
+ * allowed or merely not enabled (a pause or the emergency block never), and a LIVE authorization naming this member for a
+ * shown target. Anything else: undefined (the ordinary answer stands). The request and the executor re-check all of it.
+ */
+async function validationReplyModel(content: ContentItemRecord, guards: RequestGuards, validation: NonNullable<ReplyModelInput["validation"]>): Promise<ReplyModel | undefined> {
+  const reads = validation.reads;
+  if (reads.liveForInitiator === undefined || validation.targets.length === 0) return undefined;
+  const account = await guards.account(content.connectedAccountId);
+  if (account === undefined || account.status !== "ACTIVE" || account.connectionStatus !== "ACTIVE") return undefined;
+  const scope = { contentKind: content.contentKind, reportedSource: content.reportedSource };
+  const capability = await guards.replyCapability(content.connectedAccountId, scope);
+  const usable = capability.state === "AVAILABLE" || capability.state === "AVAILABLE_WITH_LIMITATION";
+  if (!usable && !(capability.state === "UNAVAILABLE" && (await reads.catalogValidationPending(content.connectedAccountId, scope)))) return undefined;
+  const providerAction = await guards.providerActionAllowed(account.platform, "public_reply");
+  if (providerAction !== "allowed" && providerAction !== "not_enabled") return undefined;
+  const live = await reads.liveForInitiator(validation.workspaceId, validation.userId, validation.targets);
+  const targets = live.filter((authorization) => validation.targets.includes(authorization.targetInteractionId)).map((authorization) => ({ targetInteractionId: authorization.targetInteractionId, expiresAt: authorization.expiresAt }));
+  if (targets.length === 0) return undefined;
+  return { kind: "validation", connectedAccountId: content.connectedAccountId, platform: platformLabel(content.platform), maxChars: REPLY_TEXT_MAX_CHARS, targets };
+}
+
+async function ordinaryReplyModel(input: ReplyModelInput): Promise<ReplyModel> {
   if (!input.permissions.has("reply.public")) return { kind: "hidden" };
   const platform = platformLabel(input.content?.platform);
   if (input.mode !== "STANDARD") return { kind: "unavailable", reason: "monitor_only", platform };
@@ -496,7 +534,14 @@ async function readConversation(tx: Transaction, context: WorkspaceContext, conv
   const anchor = thread.find((member) => member.id === conversation.anchorInteractionId) ?? (await tx.inbox.interactions.summaries([conversation.anchorInteractionId]))[0];
   const content = anchor === undefined ? undefined : (await tx.inbox.content.findManyById([anchor.contentItemId]))[0];
   // Step 7B-3: the reply affordance (same guards as the request command) and the outbound replies under these members.
-  const reply = await buildReplyModel({ permissions: context.permissions, mode: context.mode, content, guards: tx.mutations.guards });
+  const validation = tx.mutations.validation;
+  const reply = await buildReplyModel({
+    permissions: context.permissions,
+    mode: context.mode,
+    content,
+    guards: tx.mutations.guards,
+    ...(validation === undefined ? {} : { validation: { reads: validation, workspaceId: context.workspaceId, userId: context.userId, targets: ids } }),
+  });
   const outbound = buildOutbound(await tx.mutations.replies.listForParents(context.workspaceId, ids), shown);
   return buildConversationDetail({ conversation, thread, versions, signals, content, threadLimit: INBOX_THREAD_LIMIT, versionLimit: INBOX_VERSION_LIMIT, reply, outbound });
 }

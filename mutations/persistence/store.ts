@@ -230,3 +230,11 @@ export async function initiatorWorkspaceRole(tx: DatabaseTransaction, userId: st
   const result = await tx.execute<{ role: string | null }>(sql`select mutations.initiator_workspace_role(${userId}::uuid) as role`);
   return result.rows[0]?.role ?? undefined;
 }
+
+/** Step 7B-14I2: the DATABASE clock (the reconciliation task's in-flight bound is measured on it, never the process clock). */
+export async function databaseNow(tx: DatabaseTransaction): Promise<Date> {
+  const result = await tx.execute<{ now: Date | string }>(sql`select pg_catalog.clock_timestamp() as now`);
+  const now = result.rows[0]?.now;
+  if (now === undefined) throw new Error("mutation persistence: no database clock");
+  return now instanceof Date ? now : new Date(now);
+}

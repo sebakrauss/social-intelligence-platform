@@ -26,6 +26,10 @@
  *   getInstagramComment  GET https://graph.facebook.com/v25.0/{ig-comment-id}?fields=META_INSTAGRAM_COMMENT_FIELDS
  *   listInstagramCommentReplies GET https://graph.facebook.com/v25.0/{ig-comment-id}/replies?fields=META_INSTAGRAM_REPLY_FIELDS
  *                            &limit=META_INSTAGRAM_REPLIES_PAGE_LIMIT        (User token; ONE page, no cursor accepted)
+ *   listInstagramCommentRepliesForReconciliation  GET https://graph.facebook.com/v25.0/{ig-comment-id}/replies
+ *                            ?fields=META_INSTAGRAM_RECONCILIATION_REPLY_FIELDS&limit=META_INSTAGRAM_REPLIES_PAGE_LIMIT
+ *                            [&after={cursor}]   (User token; Step 7B-14I2 — reconciliation of OUR reply only; the text
+ *                            is read to be compared in memory with the text we sent, never logged or returned upward)
  *   createInstagramCommentReply POST https://graph.facebook.com/v25.0/{ig-comment-id}/replies  body: message, access_token
  *                            (User token; Step 7B-11 — the ONLY write; one request per call, never retried here)
  *                                                                                                   (User token)
@@ -277,6 +281,20 @@ export interface MetaInstagramReplyList {
   readonly after: MetaGraphCursor | null;
 }
 
+/** Step 7B-14I2: the reconciliation read of `{ig-comment-id}/replies` — the closed fields plus the reply's text. */
+export const META_INSTAGRAM_RECONCILIATION_REPLY_FIELDS = "id,from,timestamp,parent_id,text";
+
+/** One reply as the reconciliation read sees it: `text` is untrusted content, compared in memory only (null: absent). */
+export interface MetaInstagramReconciliationReply extends MetaInstagramReply {
+  readonly text: string | null;
+}
+
+export interface MetaInstagramReconciliationReplyPage {
+  readonly replies: readonly MetaInstagramReconciliationReply[];
+  /** The next page's cursor (validated), or null when Graph reports no next page. */
+  readonly after: MetaGraphCursor | null;
+}
+
 export interface MetaGraphTransport {
   listPages(token: SecretValue, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaPageList>>;
   /** The linked Instagram professional account id, or null when the Page has none. */
@@ -313,6 +331,8 @@ export interface MetaGraphTransport {
    * can never be requested; `after` only tells the caller the listing is incomplete.
    */
   listInstagramCommentReplies(userToken: SecretValue, commentId: ProviderObjectId): Promise<MetaGraphOutcome<MetaInstagramReplyList>>;
+  /** Step 7B-14I2: one page (cursor-continued) of the comment's replies WITH their text, for reconciliation only. */
+  listInstagramCommentRepliesForReconciliation(userToken: SecretValue, commentId: ProviderObjectId, after: MetaGraphCursor | null): Promise<MetaGraphOutcome<MetaInstagramReconciliationReplyPage>>;
 }
 
 /**
@@ -761,6 +781,23 @@ function instagramReplyListOf(body: unknown): MetaInstagramReplyList | undefined
   return after === undefined ? undefined : Object.freeze({ replies: Object.freeze(replies), after });
 }
 
+/** Step 7B-14I2: one reconciliation page — every reply well-formed (text optional) or the whole page is unreadable. */
+function instagramReconciliationReplyPageOf(body: unknown): MetaInstagramReconciliationReplyPage | undefined {
+  const root = record(body);
+  if (root === undefined || !Array.isArray(root["data"])) return undefined;
+  const data = root["data"] as readonly unknown[];
+  if (data.length > META_INSTAGRAM_REPLIES_PAGE_LIMIT) return undefined;
+  const replies: MetaInstagramReconciliationReply[] = [];
+  for (const item of data) {
+    const reply = instagramReplyOf(item);
+    const text = optionalString(record(item)?.["text"]);
+    if (reply === undefined || text === undefined) return undefined;
+    replies.push(Object.freeze({ ...reply, text }));
+  }
+  const after = afterOf(root);
+  return after === undefined ? undefined : Object.freeze({ replies: Object.freeze(replies), after });
+}
+
 /** The one place the transport options become fetch, timeout and body bound — shared by the read and write transports. */
 function transportSettings(options: MetaGraphTransportOptions): { readonly fetchImpl: MetaGraphFetch; readonly timeoutMs: number; readonly maxBytes: number } {
   return {
@@ -859,6 +896,10 @@ export function createMetaGraphTransport(options: MetaGraphTransportOptions = {}
     },
     listInstagramCommentReplies(userToken, commentId) {
       return get([commentId, "replies"], [["fields", META_INSTAGRAM_REPLY_FIELDS], ["limit", String(META_INSTAGRAM_REPLIES_PAGE_LIMIT)]], userToken, instagramReplyListOf);
+    },
+    listInstagramCommentRepliesForReconciliation(userToken, commentId, after) {
+      const base: [string, string][] = [["fields", META_INSTAGRAM_RECONCILIATION_REPLY_FIELDS], ["limit", String(META_INSTAGRAM_REPLIES_PAGE_LIMIT)]];
+      return get([commentId, "replies"], after === null ? base : [...base, ["after", after]], userToken, instagramReconciliationReplyPageOf);
     },
   };
 }

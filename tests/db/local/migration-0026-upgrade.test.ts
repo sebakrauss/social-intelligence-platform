@@ -19,6 +19,8 @@ const M0026 = "0026_ai_call_intents.sql";
 const M0027 = "0027_mutation_intents.sql";
 /** Step 7B-14F1: one-time validation authorizations follow; a pure expansion that names no classification object. */
 const M0028 = "0028_mutation_validation_authorizations.sql";
+/** Step 7B-14I2: the operator path follows, applied by the same runner (expand-only; touches no row of this era). */
+const M0029 = "0029_validation_operator_path.sql";
 const OLD = { organizationId: randomUUID(), workspaceId: randomUUID(), user: randomUUID(), interaction: randomUUID(), version: randomUUID(), deterministic: randomUUID(), intelligence: randomUUID() };
 
 describe("0025 → 0026 upgrade with 0025-era data", () => {
@@ -51,7 +53,7 @@ describe("0025 → 0026 upgrade with 0025-era data", () => {
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied.at(-1)).toBe(THROUGH);
     expect(status.applied).toHaveLength(25);
-    expect(status.pending.map((m) => m.name)).toEqual([M0026, M0027, M0028]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0026, M0027, M0028, M0029]);
   });
 
   it("seeds the 0025-era shapes", async () => {
@@ -95,13 +97,13 @@ describe("0025 → 0026 upgrade with 0025-era data", () => {
     } finally {
       await client.query("rollback");
     }
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0026, M0027, M0028]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0026, M0027, M0028, M0029]);
   });
 
   it("2 · 4. the real runner applies exactly 0026 (then 0027, 0028); every 0025-era row keeps its values; a re-run is a no-op", async () => {
     const before = await snapshot();
-    expect(await applyMigrations(client, readMigrations())).toEqual([M0026, M0027, M0028]);
-    expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(28);
+    expect(await applyMigrations(client, readMigrations())).toEqual([M0026, M0027, M0028, M0029]);
+    expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(29);
     expect(await snapshot()).toEqual(before);
     expect(await rows("select count(*)::int as n from classification.ai_call_intents")).toEqual([{ n: 0 }]);
     expect(await applyMigrations(client, readMigrations())).toEqual([]);
