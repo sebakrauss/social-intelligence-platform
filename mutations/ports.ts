@@ -52,8 +52,22 @@ export interface OutboundReply {
   readonly createdAt: Date;
 }
 
+/**
+ * Step 7B-16B: what an intent insert did. `key_taken` and `target_in_flight` are the two uniqueness rules a concurrent
+ * request can lose (the idempotency key, and migration 0032's one open public reply per target), recognized by their
+ * exact constraint names and rolled back to a savepoint so the surrounding transaction stays usable. Nothing was written
+ * in either case; every other failure is thrown unchanged.
+ */
+export type IntentInsertResult = "inserted" | "key_taken" | "target_in_flight";
+
 export interface IntentStore {
-  insert(intent: MutationIntent): Promise<void>;
+  insert(intent: MutationIntent): Promise<IntentInsertResult>;
+  /**
+   * Step 7B-16B: whether the workspace holds a public-reply intent on this target in a holding status (PENDING, EXECUTING,
+   * OUTCOME_UNKNOWN — any initiator, any key). A plain read: the clean answer for the common case, never the authority
+   * (a concurrent request committing after this read is refused by the database at insert).
+   */
+  holdsOpenReply(workspaceId: string, targetInteractionId: string): Promise<boolean>;
   /** The intent with this idempotency key in the bound workspace, if any (the idempotent answer). */
   findByIdempotencyKey(workspaceId: string, idempotencyKey: string): Promise<MutationIntent | undefined>;
   get(workspaceId: string, intentId: string): Promise<MutationIntent | undefined>;

@@ -556,7 +556,8 @@ export function defineValidationAuthorizationsSuite(getTarget: () => DbTarget): 
       expect((await sqlState(asOperator(OPERATOR, (client) => client.query("delete from mutations.validation_authorizations where workspace_id = $1 and id = $2", [t.workspaceId, id])))).code).toBe("42501");
       // The intent's binding: no runtime grant, and the trigger refuses everyone else.
       const intent = await request(t, t.users.RESPONDER, { authorization: id });
-      const ordinary = await request(t, t.users.RESPONDER);
+      // Step 7B-16B: the ordinary intent names the account's OTHER comment — the authorized intent holds this one (0032).
+      const ordinary = await request(t, t.users.RESPONDER, { target: t.ig.otherComment });
       expect((await sqlState(asWorker(t.workspaceId, (tx) => tx.execute(sql`update mutations.mutation_intents set validation_authorization_id = null where id = ${intent}`)))).code).toBe("42501");
       expect((await sqlState(asUser(t.users.RESPONDER, t.workspaceId, (tx) => tx.execute(sql`update mutations.mutation_intents set validation_authorization_id = ${id} where id = ${ordinary}`)))).code).toBe("42501");
       for (const [target, value] of [[intent, "null"], [ordinary, `'${id}'`]] as const) {
@@ -698,7 +699,8 @@ export function defineValidationAuthorizationsSuite(getTarget: () => DbTarget): 
       const revived = await request(t, t.users.RESPONDER);
       expect(await transition(t, revived, "PENDING", "BLOCKED", sql`, outcome_code = 'CAPABILITY_UNAVAILABLE'`)).toBe(1);
       expect(await transition(t, revived, "BLOCKED", "EXECUTING", sql`, outcome_code = null`)).toBe(1);
-      const unknown = await request(t, t.users.RESPONDER);
+      // Step 7B-16B: `revived` is EXECUTING again and holds the comment (0032), so the next one names the other comment.
+      const unknown = await request(t, t.users.RESPONDER, { target: t.ig.otherComment });
       expect(await transition(t, unknown, "PENDING", "OUTCOME_UNKNOWN", sql`, outcome_code = 'RESPONSE_LOST'`)).toBe(1);
     });
   });

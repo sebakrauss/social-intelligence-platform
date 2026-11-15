@@ -21,6 +21,7 @@
  *                is UNKNOWN_NOT_VALIDATED); never a credential opened, never a request
  */
 import { randomBytes, randomUUID } from "node:crypto";
+import { sql } from "drizzle-orm";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SimulatorWorld, createSimulatorReadPort, parseScenario } from "@/integrations/providers/simulator";
@@ -31,7 +32,7 @@ import { PLATFORM_CATALOG, SIMULATOR_CATALOG, evaluateAndStore, type FactsInput 
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
 import type { DiscoveryProviders, ProviderCredentialAccess } from "@/modules/connections";
 import { parseUserId } from "@/domain/ids";
-import { withUserScope, withWorkspaceJobScope, type RuntimeDatabase } from "@/platform/db";
+import { postgresError, withUserScope, withWorkspaceJobScope, type RuntimeDatabase } from "@/platform/db";
 import { runTenantStepJob } from "@/platform/jobs";
 import { relayPass, sweepRunOutcomes, type DeliveryConfig, type DeliveryDependencies } from "@/platform/outbox/delivery";
 import { createLogger, type Logger } from "@/platform/observability";
@@ -41,6 +42,9 @@ import { requestPublicReplyCommand } from "@/server/commands/mutations";
 import { inboxConversationCommand } from "@/server/queries/inbox";
 import { credentialUse, runExecuteIntent, runReconcileIntent, selectMutationPorts, type MutationComposition } from "@/jobs/mutations";
 import { CredentialUnreadable, executeIntent } from "@/mutations/executor/execute";
+import { createPostgresIntentStore } from "@/mutations/persistence";
+import { requestPublicReply, type PublicReplyOutcome } from "@/mutations/request";
+import { mutationRequestSources } from "@/server/persistence/mutations";
 import { credentialAuthority, executorStores } from "@/server/persistence/mutation-execution";
 import { PRODUCTION_TASKS } from "@/jobs/registry";
 import { FakeJobRuntime, type FakeHandler } from "../../support/fake-job-runtime";
@@ -641,6 +645,11 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       expect(await sqlState(reply(t.comment, b.account))).toMatchObject({ code: "23503", constraint: "outbound_replies_intent_coherent" });
       expect(await sqlState(reply(b.comment, t.account))).toMatchObject({ code: "23503", constraint: "outbound_replies_intent_coherent" });
       await reply(b.comment, b.account);
+      // Step 7B-16B: that coherent PENDING intent (even inserted by the privileged role) holds B's comment (0032)…
+      const held = await request(t, t.users.RESPONDER, { targetInteractionId: b.comment });
+      expect(held.status === "ok" ? held.value : held).toEqual({ kind: "refused", reason: "REPLY_IN_FLIGHT" });
+      // …until it reaches a releasing status (here BLOCKED, as a guard refusal would leave it).
+      await privileged.query("update mutations.mutation_intents set status = 'BLOCKED', attempt = 1, run_reference = 'run_coherence', outcome_code = 'MODE_NOT_STANDARD' where id = $1", [intentId]);
       // Through the real pipeline, B's comment is a valid target and ends up bound to B.
       const created = await request(t, t.users.RESPONDER, { targetInteractionId: b.comment });
       expect(created.status === "ok" ? created.value.kind : created).toBe("requested");
@@ -651,9 +660,13 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
     it("one provider reply identity links to at most one intent per workspace and platform (23505)", async () => {
       const t = await tenant();
       const first = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, idempotencyKey: "key-identity-1" });
+      const firstId = first.status === "ok" && first.value.kind === "requested" ? first.value.intentId : "";
+      // Step 7B-16B: the first reply is CONFIRMED with its identity (releasing the comment, 0032) before the second exists.
+      await privileged.query("update mutations.outbound_replies set provider_reply_id = 'fb_r_same', confirmed_at = now() where intent_id = $1", [firstId]);
+      await privileged.query("update mutations.mutation_intents set status = 'CONFIRMED', attempt = 1, run_reference = 'run_identity' where id = $1", [firstId]);
       const second = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, idempotencyKey: "key-identity-2" });
       const ids = [first, second].map((r) => (r.status === "ok" && r.value.kind === "requested" ? r.value.intentId : ""));
-      await privileged.query("update mutations.outbound_replies set provider_reply_id = 'fb_r_same', confirmed_at = now() where intent_id = $1", [ids[0]]);
+      expect(ids[1]).not.toBe("");
       expect(await sqlState(privileged.query("update mutations.outbound_replies set provider_reply_id = 'fb_r_same', confirmed_at = now() where intent_id = $1", [ids[1]]))).toMatchObject({ code: "23505", constraint: "outbound_replies_provider_identity" });
     });
 
@@ -665,11 +678,14 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       expect(reused.status === "ok" ? reused.value : reused).toEqual({ kind: "refused", reason: "IDEMPOTENCY_KEY_REUSED" });
       const byOther = await request(t, t.users.OWNER, { targetInteractionId: t.comment, idempotencyKey: "key-reuse-0001", text: "first text" });
       expect(byOther.status === "ok" ? byOther.value : byOther).toEqual({ kind: "refused", reason: "IDEMPOTENCY_KEY_REUSED" });
-      const results = await Promise.all([1, 2, 3].map(() => request(t, t.users.RESPONDER, { targetInteractionId: t.comment, idempotencyKey: "key-concurrent-0001", text: "same text" })));
+      // Step 7B-16B: the key-reuse intent above holds t.comment (0032), so the concurrent same-key requests use B's comment.
+      const b = await secondAccount(t);
+      const results = await Promise.all([1, 2, 3].map(() => request(t, t.users.RESPONDER, { targetInteractionId: b.comment, idempotencyKey: "key-concurrent-0001", text: "same text" })));
       const kinds = results.map((r) => (r.status === "ok" ? r.value.kind : r.status === "error" ? r.error.code : r.status)).sort();
-      // One wins; the others see it (existing) or lose the unique race (CONFLICT); never two intents, never two rows.
+      // One wins; the others see it (existing) — since 7B-16B a lost unique race is answered in a savepoint as the
+      // winner's intent instead of an aborted transaction (CONFLICT); never two intents, never two rows.
       expect(kinds.filter((k) => k === "requested")).toHaveLength(1);
-      expect(kinds.every((k) => k === "requested" || k === "existing" || k === "CONFLICT")).toBe(true);
+      expect(kinds.every((k) => k === "requested" || k === "existing")).toBe(true);
       expect((await oracle<{ n: string }>("select count(*)::text as n from mutations.mutation_intents where workspace_id = $1 and idempotency_key = 'key-concurrent-0001'", [t.workspaceId]))[0]?.n).toBe("1");
       expect((await oracle<{ n: string }>("select count(*)::text as n from system.outbox where workspace_id = $1", [t.workspaceId]))[0]?.n).toBe("2");
     });
@@ -681,8 +697,11 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       const asResponder = (text: string) => withUserScope(web, { sub: t.users.RESPONDER, role: "authenticated" }, t.workspaceId, (tx) => tx.execute(text as never));
       const historyRow = (intent: string) => `insert into mutations.mutation_intent_history (id, organization_id, workspace_id, intent_id, from_status, to_status, attempt, actor, outcome_code, run_reference, correlation_id, occurred_at) values ('${randomUUID()}', '${t.organizationId}', '${t.workspaceId}', '${intent}', null, 'PENDING', 0, 'web', null, null, 'corr-7b1-forged-0002', now())`;
       expect((await sqlState(asResponder(historyRow(ownerIntent)))).code).toBe("42501");
-      const mine = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment });
+      // Step 7B-16B: the Owner's intent holds t.comment (0032); the Responder's own intent names B's comment.
+      const b = await secondAccount(t);
+      const mine = await request(t, t.users.RESPONDER, { targetInteractionId: b.comment });
       const mineId = mine.status === "ok" && mine.value.kind === "requested" ? mine.value.intentId : "";
+      expect(mineId).not.toBe("");
       await privileged.query("update mutations.mutation_intents set status = 'BLOCKED', attempt = 1, run_reference = 'run_x', outcome_code = 'MODE_NOT_STANDARD' where id = $1", [mineId]);
       expect((await sqlState(asResponder(historyRow(mineId)))).code).toBe("42501");
       expect((await sqlState(asResponder(`insert into mutations.outbound_replies (id, organization_id, workspace_id, intent_id, parent_interaction_id, connected_account_id, platform, text, created_at) values ('${randomUUID()}', '${t.organizationId}', '${t.workspaceId}', '${ownerIntent}', '${t.comment}', '${t.account}', 'facebook', 'forged', now())`))).code).toBe("42501");
@@ -845,7 +864,7 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
     const reconcile = (h: Harness, intentId: string, runId: string) =>
       runTenantStepJob({ registry: PRODUCTION_TASKS, worker, logger }, TASK, must(h.payloads.at(-1), "payload"), { runId, attempt: 1 }, (context) => runReconcileIntent(context, h.base, { intentId, provider: "simulator" }, { clock: h.clock }));
 
-    it("A unknown without publishing, B published and lost its answer: reconciling A and B — sequentially and concurrently — keeps both OUTCOME_UNKNOWN, links no identity, sends nothing", async () => {
+    it("Step 7B-16B: the A/B setup is now refused at admission — while A is OUTCOME_UNKNOWN, B (another member, another form) is REPLY_IN_FLIGHT and even a privileged second open intent violates 0032; nothing written, nothing sent", async () => {
       const h = harness();
       const t = await tenant();
       const text = `${TEXT} ab ${randomUUID()}`;
@@ -855,29 +874,50 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       await onlyThisWorkspace(t.workspaceId);
       await withWorkspaceJobScope(worker, t.workspaceId, (tx) => tx.execute(`update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_a_crashed' where id = '${aId}'` as never));
       await h.step();
-      expect(h.providerCalls).toEqual([]);
       expect(await intentRow(t.workspaceId, aId)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", outcome_code: "RUN_INTERRUPTED" })]);
-      // B: same account, target and text, another form; it really publishes and loses the answer.
+      // B: same account, target and text, another form and member — refused; the one hazard 7B-5 guarded against can't start.
+      const b = await request(t, t.users.OWNER, { targetInteractionId: t.comment, text, idempotencyKey: `form-b-${randomUUID().slice(0, 8)}` });
+      expect(b.status === "ok" ? b.value : b).toEqual({ kind: "refused", reason: "REPLY_IN_FLIGHT" });
+      await h.step();
+      expect(h.providerCalls).toEqual([]);
+      expect(await sqlState(privileged.query(
+        `insert into mutations.mutation_intents (id, organization_id, workspace_id, kind, request_type, target_interaction_id, connected_account_id, initiator_user_id, idempotency_key, status, attempt, capability_catalog_id, capability_catalog_revision, correlation_id, created_at, updated_at)
+         values ($1, $2, $3, 'reply_public', 'human', $4, $5, $6, 'key-ab-privileged-b', 'PENDING', 0, 'simulator', 2, 'corr-7b16b-ab-0001', now(), now())`,
+        [randomUUID(), t.organizationId, t.workspaceId, t.comment, t.account, t.users.OWNER],
+      ))).toMatchObject({ code: "23505", constraint: "mutation_intents_one_open_reply_per_target" });
+      expect((await oracle<{ n: string }>("select count(*)::text as n from mutations.mutation_intents where workspace_id = $1 and target_interaction_id = $2", [t.workspaceId, t.comment]))[0]?.n).toBe("1");
+      expect((await oracle<{ n: string }>("select count(*)::text as n from mutations.outbound_replies where workspace_id = $1", [t.workspaceId]))[0]?.n).toBe("1");
+    });
+
+    it("the competitor shape that remains possible — B CONFIRMED without a provider identity, then A left unknown — keeps A OUTCOME_UNKNOWN on reconciliation (sequentially and concurrently): no identity linked, nothing sent", async () => {
+      const h = harness();
+      const t = await tenant();
+      const text = `${TEXT} ba ${randomUUID()}`;
+      // B: really publishes and loses its answer; it is then CONFIRMED by a receipt that named no reply (no identity).
       const b = await request(t, t.users.OWNER, { targetInteractionId: t.comment, text, idempotencyKey: `form-b-${randomUUID().slice(0, 8)}` });
       const bId = b.status === "ok" && b.value.kind === "requested" ? b.value.intentId : "";
+      await onlyThisWorkspace(t.workspaceId);
       h.world.injectFaults([{ operation: "replyPublicly", on: 1, fault: { kind: "outcome_unknown" } }]);
       await h.step();
       expect(h.providerCalls).toEqual(["replyPublicly:fb_c_010"]);
       expect(await intentRow(t.workspaceId, bId)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", outcome_code: "RESPONSE_LOST" })]);
+      await privileged.query("update mutations.mutation_intents set status = 'CONFIRMED', outcome_code = null where id = $1", [bId]);
+      // A: same account, target and text, another form (the comment was released by B's CONFIRMED); its run dies after EXECUTING.
+      const a = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text, idempotencyKey: `form-a-${randomUUID().slice(0, 8)}` });
+      const aId = a.status === "ok" && a.value.kind === "requested" ? a.value.intentId : "";
+      expect(aId).not.toBe("");
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx) => tx.execute(`update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_a_crashed' where id = '${aId}'` as never));
+      await h.step();
+      expect(await intentRow(t.workspaceId, aId)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", outcome_code: "RUN_INTERRUPTED" })]);
       expect(h.world.interactions().filter((state) => state.text === text)).toHaveLength(1);
       h.world.advanceClock(60);
-      // Sequential: each sees the other as a plausible producer of the one reply.
+      // The one reply on the platform may be B's: A never claims it — sequentially, then on two worker transactions at once.
       expect(await reconcile(h, aId, "run_rec_a")).toEqual({ kind: "still_unknown", reason: "competing_intents" });
-      expect(await reconcile(h, bId, "run_rec_b")).toEqual({ kind: "still_unknown", reason: "competing_intents" });
-      // Concurrent: the same, on two worker transactions at once.
-      expect(await Promise.all([reconcile(h, aId, "run_rec_a2"), reconcile(h, bId, "run_rec_b2")])).toEqual([{ kind: "still_unknown", reason: "competing_intents" }, { kind: "still_unknown", reason: "competing_intents" }]);
-      for (const id of [aId, bId]) {
-        expect(await intentRow(t.workspaceId, id)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN" })]);
-        expect((await replyRow(t.workspaceId, id))[0]?.provider_reply_id).toBeNull();
-      }
+      expect(await Promise.all([reconcile(h, aId, "run_rec_a2"), reconcile(h, aId, "run_rec_a3")])).toEqual([{ kind: "still_unknown", reason: "competing_intents" }, { kind: "still_unknown", reason: "competing_intents" }]);
+      expect(await intentRow(t.workspaceId, aId)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN" })]);
+      for (const id of [aId, bId]) expect((await replyRow(t.workspaceId, id))[0]?.provider_reply_id).toBeNull();
       expect(h.providerCalls).toHaveLength(1);
-      expect((await oracle<{ n: string }>("select count(*)::text as n from mutations.outbound_replies where workspace_id = $1 and provider_reply_id is not null", [t.workspaceId]))[0]?.n).toBe("0");
-      expect((await oracle<{ n: string }>("select count(*)::text as n from audit.audit_events where target_type = 'mutation_intent' and target_id in ($1, $2) and action in ('mutation_intent.confirmed', 'mutation_intent.reconciled')", [aId, bId]))[0]?.n).toBe("0");
+      expect((await oracle<{ n: string }>("select count(*)::text as n from audit.audit_events where target_type = 'mutation_intent' and target_id = $1 and action in ('mutation_intent.confirmed', 'mutation_intent.reconciled')", [aId]))[0]?.n).toBe("0");
     });
 
     it("an unambiguous reply (no competitor) still confirms through reconciliation; a competitor already holding the identity blocks another claim", async () => {
@@ -1204,6 +1244,323 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       const missing = credentialUse({ inScope: () => Promise.resolve(undefined) as never }, access);
       await expect(missing.withAccess({ workspaceId: randomUUID(), connectedAccountId: randomUUID() }, () => Promise.resolve("sent"))).rejects.toBeInstanceOf(CredentialUnreadable);
       expect(opened).toEqual([]);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("Step 7B-16B: REPLY_IN_FLIGHT on PostgreSQL — one open public reply per target (0032)", () => {
+    const onlyThisWorkspace = (workspaceId: string) => quietPendingOutbox((text, values) => privileged.query(text, values), "topic = $1 and workspace_id <> $2", [TASK, workspaceId]);
+    const INDEX = "mutation_intents_one_open_reply_per_target";
+    /** A second, independent web pool: another server process as far as PostgreSQL can tell. */
+    let otherServer: RuntimeDatabase<"web">;
+    beforeAll(() => {
+      otherServer = runtimeDatabase(getTarget(), "web");
+    });
+    afterAll(async () => {
+      await otherServer.end();
+    });
+    const requestOn = (server: RuntimeDatabase<"web">, t: Tenant, user: string, input: { readonly targetInteractionId: string; readonly idempotencyKey: string; readonly text?: string }) =>
+      createActionPipeline({ identity: new FakeIdentity(verifiedUser(must(parseUserId(user), "user"))), unitOfWork: createPostgresUnitOfWork(server), clock: () => new Date(), newId: randomUUID, logger })
+        .run(requestPublicReplyCommand, { workspaceId: t.workspaceId, input: { targetInteractionId: input.targetInteractionId, text: input.text ?? TEXT, idempotencyKey: input.idempotencyKey } });
+    const outcomeOf = (r: Awaited<ReturnType<typeof requestOn>>) => (r.status === "ok" ? r.value : r.status === "error" ? r.error.code : r.status);
+    const key = (label: string) => `form-16b-${label}-${randomUUID().slice(0, 8)}`;
+    const count = async (query: string, values: readonly unknown[]): Promise<number> => Number((await oracle<{ n: string }>(query, values))[0]?.n ?? "-1");
+    const openOn = (t: Tenant, target: string) => count("select count(*)::text as n from mutations.mutation_intents where workspace_id = $1 and target_interaction_id = $2 and status in ('PENDING', 'EXECUTING', 'OUTCOME_UNKNOWN')", [t.workspaceId, target]);
+    const written = async (t: Tenant) => ({
+      intents: await count("select count(*)::text as n from mutations.mutation_intents where workspace_id = $1", [t.workspaceId]),
+      replies: await count("select count(*)::text as n from mutations.outbound_replies where workspace_id = $1", [t.workspaceId]),
+      history: await count("select count(*)::text as n from mutations.mutation_intent_history where workspace_id = $1", [t.workspaceId]),
+      outbox: await count("select count(*)::text as n from system.outbox where workspace_id = $1 and topic = $2", [t.workspaceId, TASK]),
+      audit: await count("select count(*)::text as n from audit.audit_events where workspace_id = $1 and action = 'mutation_intent.created'", [t.workspaceId]),
+    });
+    /** Waits until some backend waits on another transaction's id: the unique-index wait on an uncommitted insert. */
+    const untilWaiting = async (): Promise<void> => {
+      for (let i = 0; ; i += 1) {
+        const waiting = await oracle<{ n: number }>("select count(*)::int as n from pg_locks where locktype = 'transactionid' and not granted");
+        if ((waiting[0]?.n ?? 0) > 0) return;
+        if (i === 250) throw new Error("the second request never waited on the first");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    };
+    /**
+     * T1: the REAL request service in the member's own user-scope transaction, held open after it wrote the PENDING
+     * intent, its reply and its history row (uncommitted) — then committed or rolled back on demand.
+     */
+    const held = (t: Tenant, user: string, input: { readonly targetInteractionId: string; readonly idempotencyKey: string }) => {
+      let decide: (commit: boolean) => void = () => undefined;
+      const decision = new Promise<boolean>((resolve) => { decide = resolve; });
+      let report: (outcome: PublicReplyOutcome) => void = () => undefined;
+      const outcome = new Promise<PublicReplyOutcome>((resolve) => { report = resolve; });
+      const transaction = withUserScope(web, { sub: user, role: "authenticated" }, t.workspaceId, async (tx) => {
+        report(await requestPublicReply(mutationRequestSources(tx), { now: () => new Date(), newId: randomUUID }, { organizationId: t.organizationId, workspaceId: t.workspaceId, userId: user, correlationId: `corr-16b-${randomUUID().slice(0, 8)}` }, { targetInteractionId: input.targetInteractionId, text: TEXT, idempotencyKey: input.idempotencyKey }));
+        if (!(await decision)) throw new Error("T1 rolled back on purpose");
+      });
+      return {
+        outcome,
+        commit: async () => { decide(true); await transaction; },
+        rollback: async () => { decide(false); await transaction.then(() => { throw new Error("T1 committed"); }, () => undefined); },
+        /** Always ends T1 (a failing test must never leave it open and starve the pools of later tests). */
+        release: async () => { decide(false); await transaction.then(() => undefined, () => undefined); },
+      };
+    };
+
+    it("the index is exactly the reviewed definition: unique, partial, owned by app_owner, commented", async () => {
+      expect(await oracle("select indexdef from pg_indexes where schemaname = 'mutations' and indexname = $1", [INDEX])).toEqual([
+        { indexdef: `CREATE UNIQUE INDEX ${INDEX} ON mutations.mutation_intents USING btree (workspace_id, target_interaction_id) WHERE ((kind = 'reply_public'::text) AND (status = ANY (ARRAY['PENDING'::text, 'EXECUTING'::text, 'OUTCOME_UNKNOWN'::text])))` },
+      ]);
+      expect(await oracle(`select i.indisunique as unique, i.indpred is not null as partial, pg_get_userbyid(c.relowner) as owner, obj_description(c.oid, 'pg_class') is not null as commented
+        from pg_index i join pg_class c on c.oid = i.indexrelid where c.oid = 'mutations.${INDEX}'::regclass`)).toEqual([{ unique: true, partial: true, owner: "app_owner", commented: true }]);
+      // target_interaction_id is NOT NULL (a NULL would never conflict in a unique index).
+      expect(await oracle("select attnotnull as not_null from pg_attribute where attrelid = 'mutations.mutation_intents'::regclass and attname = 'target_interaction_id'")).toEqual([{ not_null: true }]);
+    });
+
+    it("(2, 3) different keys, T1 COMMITS while T2 waits: T2 (another server pool) waits on the index, then REPLY_IN_FLIGHT — one intent, one reply, nothing more", async () => {
+      const t = await tenant();
+      const t1 = held(t, t.users.RESPONDER, { targetInteractionId: t.comment, idempotencyKey: key("t1") });
+      try {
+        expect((await t1.outcome).kind).toBe("created");
+        const t2 = requestOn(otherServer, t, t.users.OWNER, { targetInteractionId: t.comment, idempotencyKey: key("t2") });
+        await untilWaiting();
+        await t1.commit();
+        expect(outcomeOf(await t2)).toEqual({ kind: "refused", reason: "REPLY_IN_FLIGHT" });
+      } finally {
+        await t1.release();
+      }
+      // T1 is the request service only (no command): its outbox row and audit event are the command's, so both are 0 here.
+      expect(await written(t)).toEqual({ intents: 1, replies: 1, history: 1, outbox: 0, audit: 0 });
+      expect(await openOn(t, t.comment)).toBe(1);
+    });
+
+    it("(2, 4) different keys, T1 ROLLS BACK while T2 waits: T2 proceeds and is the one intent (with its reply, history, audit and outbox row)", async () => {
+      const t = await tenant();
+      const t1 = held(t, t.users.RESPONDER, { targetInteractionId: t.comment, idempotencyKey: key("t1") });
+      try {
+        expect((await t1.outcome).kind).toBe("created");
+        const t2 = requestOn(otherServer, t, t.users.OWNER, { targetInteractionId: t.comment, idempotencyKey: key("t2") });
+        await untilWaiting();
+        await t1.rollback();
+        expect(outcomeOf(await t2)).toMatchObject({ kind: "requested" });
+      } finally {
+        await t1.release();
+      }
+      expect(await written(t)).toEqual({ intents: 1, replies: 1, history: 1, outbox: 1, audit: 1 });
+      expect((await oracle<{ initiator_user_id: string }>("select initiator_user_id from mutations.mutation_intents where workspace_id = $1", [t.workspaceId]))[0]?.initiator_user_id).toBe(t.users.OWNER);
+    });
+
+    it("(1) the SAME key and payload: T2 waits, then answers T1's intent (existing) after a commit — or creates it after a rollback", async () => {
+      for (const ending of ["commit", "rollback"] as const) {
+        const t = await tenant();
+        const form = key("same");
+        const t1 = held(t, t.users.RESPONDER, { targetInteractionId: t.comment, idempotencyKey: form });
+        try {
+          expect((await t1.outcome).kind).toBe("created");
+          const t2 = requestOn(otherServer, t, t.users.RESPONDER, { targetInteractionId: t.comment, idempotencyKey: form });
+          await untilWaiting();
+          if (ending === "commit") await t1.commit();
+          else await t1.rollback();
+          expect(outcomeOf(await t2), ending).toMatchObject({ kind: ending === "commit" ? "existing" : "requested" });
+        } finally {
+          await t1.release();
+        }
+        expect(await count("select count(*)::text as n from mutations.mutation_intents where workspace_id = $1 and idempotency_key = $2", [t.workspaceId, form]), ending).toBe(1);
+        expect(await openOn(t, t.comment), ending).toBe(1);
+      }
+    });
+
+    it("(1, 2, 5) six simultaneous requests from two server pools, different keys and members: exactly one admitted, five REPLY_IN_FLIGHT; one of everything written", async () => {
+      const t = await tenant();
+      const results = await Promise.all([web, otherServer, web, otherServer, web, otherServer].map((server, i) =>
+        requestOn(server, t, i % 2 === 0 ? t.users.RESPONDER : t.users.OWNER, { targetInteractionId: t.comment, idempotencyKey: key(`burst${String(i)}`) })));
+      const outcomes = results.map(outcomeOf);
+      expect(outcomes.filter((o) => typeof o === "object" && o.kind === "requested")).toHaveLength(1);
+      expect(outcomes.filter((o) => typeof o === "object" && o.kind === "refused" && o.reason === "REPLY_IN_FLIGHT")).toHaveLength(5);
+      expect(await written(t)).toEqual({ intents: 1, replies: 1, history: 1, outbox: 1, audit: 1 });
+      // The executor can only ever see that one intent: one provider call at most.
+      const h = harness();
+      await onlyThisWorkspace(t.workspaceId);
+      await h.step();
+      expect(h.providerCalls).toEqual(["replyPublicly:fb_c_010"]);
+    });
+
+    it("(6) different targets are independent, simultaneously", async () => {
+      const t = await tenant();
+      const b = await secondAccount(t);
+      const results = await Promise.all([t.comment, b.comment].map((target, i) => requestOn(i === 0 ? web : otherServer, t, t.users.RESPONDER, { targetInteractionId: target, idempotencyKey: key(`target${String(i)}`) })));
+      expect(results.map((r) => (r.status === "ok" ? r.value.kind : r.status))).toEqual(["requested", "requested"]);
+      expect([await openOn(t, t.comment), await openOn(t, b.comment)]).toEqual([1, 1]);
+    });
+
+    it("(7) a Facebook and an Instagram comment with the SAME provider id are two targets: both may hold an open intent", async () => {
+      const t = await tenant();
+      const discovered = randomUUID();
+      await privileged.query(`insert into connections.discovered_assets (id, organization_id, workspace_id, connection_id, platform, provider_asset_id, asset_class, display_name, last_seen_at, created_at, updated_at)
+        values ($1, $2, $3, $4, 'instagram', 'ig_twin_7b16b', 'content_bearing', 'Synthetic IG', now(), now(), now())`, [discovered, t.organizationId, t.workspaceId, t.connection]);
+      const ig = randomUUID();
+      await privileged.query(`insert into connections.connected_accounts (id, organization_id, workspace_id, connection_id, platform, provider_asset_id, asset_class, status, activated_at, created_at, updated_at)
+        select $1, organization_id, workspace_id, connection_id, platform, provider_asset_id, asset_class, 'ACTIVE', now(), now(), now() from connections.discovered_assets where id = $2`, [ig, discovered]);
+      const content = randomUUID();
+      await privileged.query(`insert into content.content_items (id, organization_id, workspace_id, platform, connected_account_id, provider_asset_id, provider_content_id, content_kind, reported_source, source_state, first_observed_at, latest_observed_at, created_at, updated_at)
+        values ($1, $2, $3, 'instagram', $4, 'ig_twin_7b16b', 'ig_post_twin', 'post', 'organic', 'available', now(), now(), now(), now())`, [content, t.organizationId, t.workspaceId, ig]);
+      const twin = randomUUID();
+      await privileged.query(`insert into interactions.interactions (id, organization_id, workspace_id, platform, provider_interaction_id, connected_account_id, provider_asset_id, content_item_id, provider_content_id, observed, created_at, updated_at)
+        values ($1, $2, $3, 'instagram', 'fb_c_010', $4, 'ig_twin_7b16b', $5, 'ig_post_twin', false, now(), now())`, [twin, t.organizationId, t.workspaceId, ig, content]);
+      expect(outcomeOf(await request(t, t.users.RESPONDER, { targetInteractionId: t.comment }))).toMatchObject({ kind: "requested" });
+      await privileged.query(`insert into mutations.mutation_intents (id, organization_id, workspace_id, kind, request_type, target_interaction_id, connected_account_id, initiator_user_id, idempotency_key, status, attempt, capability_catalog_id, capability_catalog_revision, correlation_id, created_at, updated_at)
+        values ($1, $2, $3, 'reply_public', 'human', $4, $5, $6, 'key-16b-ig-twin', 'PENDING', 0, 'platform', 5, 'corr-16b-ig-twin', now(), now())`, [randomUUID(), t.organizationId, t.workspaceId, twin, ig, t.users.OWNER]);
+      expect([await openOn(t, t.comment), await openOn(t, twin)]).toEqual([1, 1]);
+    });
+
+    it("(8, 15) the same target UUID in two workspaces: independent reservations; each member sees only their own; a stranger gets TARGET_NOT_FOUND, never REPLY_IN_FLIGHT", async () => {
+      const t = await tenant();
+      const other = await tenant();
+      // The other workspace holds an interaction with the SAME UUID as t.comment (the key is (workspace, id)).
+      await privileged.query(`insert into interactions.interactions (id, organization_id, workspace_id, platform, provider_interaction_id, connected_account_id, provider_asset_id, content_item_id, provider_content_id, observed, kind, author_id, author_role,
+          current_visibility, current_availability, provider_created_at, state_observed_at, first_observed_at, latest_observed_at, created_at, updated_at)
+        values ($1, $2, $3, 'facebook', 'fb_c_twin_ws', $4, 'fb_page_aurora', $5, 'fb_post_boosted_02', true, 'comment', $6, 'user', 'visible', 'available', now() - interval '1 hour', now(), now(), now(), now(), now())`,
+      [t.comment, other.organizationId, other.workspaceId, other.account, other.content, other.audience]);
+      expect(outcomeOf(await request(t, t.users.RESPONDER, { targetInteractionId: t.comment }))).toMatchObject({ kind: "requested" });
+      expect(outcomeOf(await request(other, other.users.RESPONDER, { targetInteractionId: t.comment }))).toMatchObject({ kind: "requested" });
+      expect([await openOn(t, t.comment), await openOn(other, t.comment)]).toEqual([1, 1]);
+      // RLS: each member's in-flight read (and any read) sees only their own workspace's intent.
+      for (const [tenantOf, member] of [[t, t.users.RESPONDER], [other, other.users.RESPONDER]] as const) {
+        const seen = await withUserScope(web, { sub: member, role: "authenticated" }, tenantOf.workspaceId, async (tx) => ({
+          holds: await createPostgresIntentStore(tx).holdsOpenReply(tenantOf.workspaceId, t.comment),
+          workspaces: (await tx.execute<{ workspace_id: string }>(sql`select distinct workspace_id from mutations.mutation_intents where target_interaction_id = ${t.comment}`)).rows.map((row) => row.workspace_id),
+        }));
+        expect(seen).toEqual({ holds: true, workspaces: [tenantOf.workspaceId] });
+      }
+      // A third workspace without that target: TARGET_NOT_FOUND — the refusal never reveals another workspace's reply.
+      const stranger = await tenant();
+      expect(outcomeOf(await request(stranger, stranger.users.RESPONDER, { targetInteractionId: t.comment }))).toEqual({ kind: "refused", reason: "TARGET_NOT_FOUND" });
+      // A member of another workspace routing into t's workspace is NOT_FOUND before anything runs.
+      expect(outcomeOf(await request(t, other.users.RESPONDER, { targetInteractionId: t.comment }))).toBe("NOT_FOUND");
+    });
+
+    it("(9, 10) a run that dies in EXECUTING keeps the target held, then RUN_INTERRUPTED keeps it held — indefinitely (no expiry), with zero provider calls", async () => {
+      const h = harness();
+      const t = await tenant();
+      const first = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment });
+      const firstId = first.status === "ok" && first.value.kind === "requested" ? first.value.intentId : "";
+      await onlyThisWorkspace(t.workspaceId);
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx) => tx.execute(`update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_16b_crashed' where id = '${firstId}'` as never));
+      expect(outcomeOf(await request(t, t.users.OWNER, { targetInteractionId: t.comment }))).toEqual({ kind: "refused", reason: "REPLY_IN_FLIGHT" });
+      await h.step();
+      expect(await intentRow(t.workspaceId, firstId)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", outcome_code: "RUN_INTERRUPTED" })]);
+      // Make it old: a year later, it still holds the target (an uncertain outcome is never released by time).
+      await privileged.query("update mutations.mutation_intents set created_at = now() - interval '400 days', updated_at = now() - interval '400 days' where id = $1", [firstId]);
+      expect(outcomeOf(await request(t, t.users.OWNER, { targetInteractionId: t.comment }))).toEqual({ kind: "refused", reason: "REPLY_IN_FLIGHT" });
+      expect(h.providerCalls).toEqual([]);
+      expect(await written(t)).toMatchObject({ intents: 1, replies: 1, outbox: 1 });
+    });
+
+    it("(11) CONFIRMED releases the target: the next request is admitted and executes", async () => {
+      const h = harness();
+      const t = await tenant();
+      const first = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: `${TEXT} one ${randomUUID()}` });
+      const firstId = first.status === "ok" && first.value.kind === "requested" ? first.value.intentId : "";
+      await onlyThisWorkspace(t.workspaceId);
+      await h.step();
+      expect(await intentRow(t.workspaceId, firstId)).toEqual([expect.objectContaining({ status: "CONFIRMED" })]);
+      expect(outcomeOf(await request(t, t.users.OWNER, { targetInteractionId: t.comment, text: `${TEXT} two ${randomUUID()}` }))).toMatchObject({ kind: "requested" });
+      await h.step();
+      expect(h.providerCalls).toEqual(["replyPublicly:fb_c_010", "replyPublicly:fb_c_010"]);
+    });
+
+    it("(12) a definite FAILED (provider refusal) and a BLOCKED (grant withdrawn before execution) release the target", async () => {
+      const failing = harness();
+      failing.world.injectFaults([{ operation: "replyPublicly", on: 1, fault: { kind: "target_not_found" } }]);
+      const t = await tenant();
+      const first = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: `${TEXT} failed ${randomUUID()}` });
+      const firstId = first.status === "ok" && first.value.kind === "requested" ? first.value.intentId : "";
+      await onlyThisWorkspace(t.workspaceId);
+      await failing.step();
+      expect(await intentRow(t.workspaceId, firstId)).toEqual([expect.objectContaining({ status: "FAILED", outcome_code: "TARGET_NOT_FOUND" })]);
+      const second = await request(t, t.users.OWNER, { targetInteractionId: t.comment });
+      const secondId = second.status === "ok" && second.value.kind === "requested" ? second.value.intentId : "";
+      expect(secondId).not.toBe("");
+      await withdraw();
+      try {
+        await harness().step();
+      } finally {
+        await authorize(true);
+      }
+      expect(await intentRow(t.workspaceId, secondId)).toEqual([expect.objectContaining({ status: "BLOCKED", outcome_code: "PROVIDER_ACTIONS_DISABLED" })]);
+      expect(outcomeOf(await request(t, t.users.RESPONDER, { targetInteractionId: t.comment }))).toMatchObject({ kind: "requested" });
+    });
+
+    it("(13) reconciliation OUTCOME_UNKNOWN → CONFIRMED releases the target; until then it is held", async () => {
+      const h = harness();
+      const t = await tenant();
+      const first = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: `${TEXT} reconciled ${randomUUID()}` });
+      const firstId = first.status === "ok" && first.value.kind === "requested" ? first.value.intentId : "";
+      await onlyThisWorkspace(t.workspaceId);
+      h.world.injectFaults([{ operation: "replyPublicly", on: 1, fault: { kind: "outcome_unknown" } }]);
+      await h.step();
+      expect(await intentRow(t.workspaceId, firstId)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", outcome_code: "RESPONSE_LOST" })]);
+      expect(outcomeOf(await request(t, t.users.OWNER, { targetInteractionId: t.comment }))).toEqual({ kind: "refused", reason: "REPLY_IN_FLIGHT" });
+      h.world.advanceClock(60);
+      expect((await runTenantStepJob({ registry: PRODUCTION_TASKS, worker, logger }, TASK, must(h.payloads.at(-1), "payload"), { runId: "run_16b_rec", attempt: 1 }, (context) => runReconcileIntent(context, h.base, { intentId: firstId, provider: "simulator" }, { clock: h.clock }))).kind).toBe("confirmed");
+      expect(outcomeOf(await request(t, t.users.OWNER, { targetInteractionId: t.comment }))).toMatchObject({ kind: "requested" });
+      expect(h.providerCalls).toHaveLength(1);
+    });
+
+    it("(14) the index binds every role: a privileged second open intent — or a terminal intent moved back into a holding status — is a unique violation", async () => {
+      const t = await tenant();
+      const first = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment });
+      const firstId = first.status === "ok" && first.value.kind === "requested" ? first.value.intentId : "";
+      const insert = (status: string, attempt: number, run: string | null, outcome: string | null) => privileged.query(
+        `insert into mutations.mutation_intents (id, organization_id, workspace_id, kind, request_type, target_interaction_id, connected_account_id, initiator_user_id, idempotency_key, status, attempt, run_reference, outcome_code, capability_catalog_id, capability_catalog_revision, correlation_id, created_at, updated_at)
+         values ($1, $2, $3, 'reply_public', 'human', $4, $5, $6, $7, $8, $9, $10, $11, 'simulator', 2, 'corr-16b-privileged', now(), now()) returning id`,
+        [randomUUID(), t.organizationId, t.workspaceId, t.comment, t.account, t.users.OWNER, key("privileged"), status, attempt, run, outcome]);
+      for (const [status, attempt, run, outcome] of [["PENDING", 0, null, null], ["EXECUTING", 1, "run_p", null], ["OUTCOME_UNKNOWN", 1, "run_p", "RESPONSE_LOST"]] as const) {
+        expect(await sqlState(insert(status, attempt, run, outcome)), status).toMatchObject({ code: "23505", constraint: INDEX });
+      }
+      // Terminal rows never conflict…
+      const blocked = (await insert("BLOCKED", 1, "run_p", "MODE_NOT_STANDARD")).rows[0] as { id: string };
+      // …but nothing can move one back into a holding status while the target is held (the database admits
+      // BLOCKED → EXECUTING for an ordinary intent; the index still refuses a second open one).
+      expect(await sqlState(privileged.query("update mutations.mutation_intents set status = 'EXECUTING', outcome_code = null where id = $1", [blocked.id]))).toMatchObject({ code: "23505", constraint: INDEX });
+      expect(await openOn(t, t.comment)).toBe(1);
+      expect(await intentRow(t.workspaceId, firstId)).toEqual([expect.objectContaining({ status: "PENDING" })]);
+    });
+
+    it("SAVEPOINT: a lost race rolls back only the insert — the same transaction keeps its role, claims and sealed workspace and goes on to commit other work", async () => {
+      const t = await tenant();
+      const b = await secondAccount(t);
+      expect(outcomeOf(await request(t, t.users.OWNER, { targetInteractionId: t.comment }))).toMatchObject({ kind: "requested" });
+      const clock = { now: () => new Date(), newId: randomUUID };
+      const intentFor = (target: string, account: string, label: string) => ({
+        id: randomUUID(), organizationId: t.organizationId, workspaceId: t.workspaceId, kind: "reply_public" as const, requestType: "human" as const, targetInteractionId: target, connectedAccountId: account,
+        initiatorUserId: t.users.RESPONDER, idempotencyKey: key(label), status: "PENDING" as const, attempt: 0, runReference: null, outcomeCode: null, capabilityCatalogId: "simulator", capabilityCatalogRevision: 2,
+        correlationId: `corr-16b-${label}`, createdAt: clock.now(), updatedAt: clock.now(), validationAuthorizationId: null,
+      });
+      const kept = intentFor(b.comment, b.account, "kept");
+      const result = await withUserScope(web, { sub: t.users.RESPONDER, role: "authenticated" }, t.workspaceId, async (tx) => {
+        const store = createPostgresIntentStore(tx);
+        const lost = await store.insert(intentFor(t.comment, t.account, "lost"));
+        // Without the savepoint the next statement would fail with 25P02 (the transaction is aborted).
+        const context = (await tx.execute<{ role: string; workspace: string; uid: string }>(sql`select current_user as role, app.current_workspace()::text as workspace, auth.uid()::text as uid`)).rows[0];
+        const inserted = await store.insert(kept);
+        return { lost, context, inserted };
+      });
+      expect(result).toEqual({ lost: "target_in_flight", context: { role: "authenticated", workspace: t.workspaceId, uid: t.users.RESPONDER }, inserted: "inserted" });
+      expect(await count("select count(*)::text as n from mutations.mutation_intents where workspace_id = $1 and id = $2", [t.workspaceId, kept.id])).toBe(1);
+      expect(await openOn(t, t.comment)).toBe(1);
+    });
+
+    it("(16) any other unique violation is rethrown, never mapped: a duplicate primary key fails the insert with its own constraint", async () => {
+      const t = await tenant();
+      const b = await secondAccount(t);
+      const first = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment });
+      const firstId = first.status === "ok" && first.value.kind === "requested" ? first.value.intentId : "";
+      const failure = await withUserScope(web, { sub: t.users.RESPONDER, role: "authenticated" }, t.workspaceId, (tx) =>
+        createPostgresIntentStore(tx).insert({
+          id: firstId, organizationId: t.organizationId, workspaceId: t.workspaceId, kind: "reply_public", requestType: "human", targetInteractionId: b.comment, connectedAccountId: b.account,
+          initiatorUserId: t.users.RESPONDER, idempotencyKey: key("pk"), status: "PENDING", attempt: 0, runReference: null, outcomeCode: null, capabilityCatalogId: "simulator", capabilityCatalogRevision: 2,
+          correlationId: "corr-16b-duplicate-pk", createdAt: new Date(), updatedAt: new Date(), validationAuthorizationId: null,
+        })).then(() => undefined, (error: unknown) => error);
+      expect(postgresError(failure)).toEqual({ code: "23505", constraint: "mutation_intents_pkey" });
+      expect(await openOn(t, b.comment)).toBe(0);
     });
   });
 }

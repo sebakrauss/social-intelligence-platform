@@ -4,7 +4,7 @@
  * event. No database, no network; the provider side is the simulator's real mutation port.
  */
 import type { ExecutorStores, IntentOutcomeEvent } from "@/mutations/executor/execute";
-import type { IntentOutcomeCode, IntentStatus, IntentTransition, MutationIntent } from "@/mutations/domain/intent";
+import { holdsReplyTarget, type IntentOutcomeCode, type IntentStatus, type IntentTransition, type MutationIntent } from "@/mutations/domain/intent";
 import type { ExecutionGuards, MutationClock, OutboundReply, ReplyTarget } from "@/mutations/ports";
 
 export const WORKSPACE = "1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d";
@@ -127,11 +127,17 @@ export function memoryStores(state: GuardState = guardState(), targets: readonly
     targetRows,
     calls,
     intents: {
+      // The PostgreSQL store's two recognized uniqueness rules, in the database's order (key first, then 0032's open target).
       insert: (intent) => {
-        if ([...intentRows.values()].some((row) => row.workspaceId === intent.workspaceId && row.idempotencyKey === intent.idempotencyKey)) return Promise.reject(new Error("duplicate idempotency key"));
+        const rows = [...intentRows.values()].filter((row) => row.workspaceId === intent.workspaceId);
+        if (rows.some((row) => row.idempotencyKey === intent.idempotencyKey)) return Promise.resolve("key_taken" as const);
+        // (reply_public is the only MutationKind today, so the index's kind predicate always applies here.)
+        if (holdsReplyTarget(intent.status) && rows.some((row) => row.targetInteractionId === intent.targetInteractionId && holdsReplyTarget(row.status))) return Promise.resolve("target_in_flight" as const);
         intentRows.set(key(intent.workspaceId, intent.id), intent);
-        return Promise.resolve();
+        return Promise.resolve("inserted" as const);
       },
+      holdsOpenReply: (workspaceId, targetInteractionId) =>
+        Promise.resolve([...intentRows.values()].some((row) => row.workspaceId === workspaceId && row.targetInteractionId === targetInteractionId && holdsReplyTarget(row.status))),
       findByIdempotencyKey: (workspaceId, idempotencyKey) => Promise.resolve([...intentRows.values()].find((row) => row.workspaceId === workspaceId && row.idempotencyKey === idempotencyKey)),
       get: (workspaceId, id) => Promise.resolve(intentRows.get(key(workspaceId, id))),
       lock: (workspaceId, id) => {

@@ -73,9 +73,10 @@ describe("H7-B: MAIN only, no new task or topic", () => {
     expect(users(/classification\.understand_ai/).sort()).toEqual(USERS_OF_UNDERSTAND_AI);
   });
 
-  it("no classification migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents); 0027 is Step 7B-1's, 0028 Step 7B-14F1's, 0029 Step 7B-14I2's, 0030 Step 7B-14I3H's; 0031 Step 7B-14P1's only re-pins search_path (R4a)", () => {
+  it("no classification migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents); 0027 is Step 7B-1's, 0028 Step 7B-14F1's, 0029 Step 7B-14I2's, 0030 Step 7B-14I3H's; 0031 Step 7B-14P1's only re-pins search_path (R4a); 0032 Step 7B-16B's index names none", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toBe("0031_privileged_name_resolution_hardening.sql");
+    expect(migrations.at(-1)).toBe("0032_reply_in_flight_admission.sql");
+    expect(codeOf("db/migrations/0032_reply_in_flight_admission.sql").replace(/--[^\n]*/g, " ")).not.toMatch(/classification\./);
     expect(codeOf("db/migrations/0030_validation_operator_hardening.sql").replace(/--[^\n]*/g, " ")).not.toMatch(/classification\./);
     // Step 7B-14P1 (TA §11 R4a): 0031 names functions of every domain, but only to re-pin their search_path.
     expect(r4aMigrationShapeProblems()).toEqual([]);

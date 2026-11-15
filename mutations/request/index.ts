@@ -18,6 +18,13 @@
  * capability state. Any refusal about the authorization itself is ONE closed reason (no oracle). The intent is inserted
  * naming it, and 0028's trigger binds it in the same statement's transaction (a concurrent binding or a revocation that
  * committed first makes the insert fail: nothing is written).
+ *
+ * Step 7B-16B — REPLY_IN_FLIGHT. At most ONE public-reply intent per target may be open (PENDING, EXECUTING,
+ * OUTCOME_UNKNOWN) in a workspace, whatever the key, the member or the path (ordinary or validation). The last check
+ * before the insert refuses a target already held; migration 0032's partial unique index is the authority for two
+ * requests racing past that check (in separate server processes): the loser's insert fails inside a savepoint and is
+ * answered here — its own key's intent if the winner used the same form, REPLY_IN_FLIGHT otherwise. A refusal writes
+ * nothing (no intent, reply, history, audit or outbox row).
  */
 import type { CapabilityAvailability } from "@/modules/capability";
 import { REPLY_TEXT_MAX_CHARS, publicReplyDepthAllowed, type MutationIntent } from "../domain/intent";
@@ -69,7 +76,12 @@ export type PublicReplyRefusal =
   | "PROVIDER_ACTIONS_DISABLED"
   | "IDEMPOTENCY_KEY_REUSED"
   /** Step 7B-14G1: the named validation authorization does not admit this request (one reason for every case). */
-  | "VALIDATION_AUTHORIZATION_UNAVAILABLE";
+  | "VALIDATION_AUTHORIZATION_UNAVAILABLE"
+  /**
+   * Step 7B-16B: another public reply to this target is PENDING, EXECUTING or OUTCOME_UNKNOWN in this workspace (any
+   * member, any key). Nothing was written; a new reply is possible once that one's outcome is known.
+   */
+  | "REPLY_IN_FLIGHT";
 
 export type PublicReplyOutcome =
   | { readonly kind: "created"; readonly intent: MutationIntent; readonly reply: OutboundReply }
@@ -89,15 +101,18 @@ export async function requestPublicReply(sources: MutationRequestSources, clock:
   const resolve = request.resolveValidationAuthorization === true;
   if (resolve && request.validationAuthorizationId !== undefined) return { kind: "refused", reason: "VALIDATION_AUTHORIZATION_UNAVAILABLE" };
   let authorizationId = request.validationAuthorizationId ?? null;
-  const existing = await sources.intents.findByIdempotencyKey(context.workspaceId, request.idempotencyKey);
-  if (existing !== undefined) {
+  const requestedAuthorizationId = authorizationId;
+  // The idempotent answer for a key that already names an intent: the same payload → that intent; anything else → a reuse.
+  const replay = async (existing: MutationIntent): Promise<PublicReplyOutcome> => {
     const existingReply = await sources.replies.getByIntent(context.workspaceId, existing.id);
     // A resolved request's replay names the authorization it bound (no longer live): the same form, the same answer.
-    const sameAuthorization = resolve ? existing.validationAuthorizationId !== null : existing.validationAuthorizationId === authorizationId;
+    const sameAuthorization = resolve ? existing.validationAuthorizationId !== null : existing.validationAuthorizationId === requestedAuthorizationId;
     const samePayload = existing.initiatorUserId === context.userId && existing.targetInteractionId === request.targetInteractionId && existingReply?.text === request.text
       && sameAuthorization;
     return samePayload ? { kind: "existing", intent: existing } : { kind: "refused", reason: "IDEMPOTENCY_KEY_REUSED" };
-  }
+  };
+  const existing = await sources.intents.findByIdempotencyKey(context.workspaceId, request.idempotencyKey);
+  if (existing !== undefined) return replay(existing);
 
   const text = request.text;
   if (text.trim().length === 0) return { kind: "refused", reason: "TEXT_EMPTY" };
@@ -187,7 +202,20 @@ export async function requestPublicReply(sources: MutationRequestSources, clock:
     confirmedAt: null,
     createdAt: now,
   };
-  await sources.intents.insert(intent);
+  // Step 7B-16B — REPLY_IN_FLIGHT, the LAST check (every earlier refusal keeps its order): no second public reply to a
+  // target while another one may still publish. This read is the clean answer; the database's unique index is the
+  // authority for a request that commits between this read and the insert below.
+  if (await sources.intents.holdsOpenReply(context.workspaceId, target.interactionId)) return { kind: "refused", reason: "REPLY_IN_FLIGHT" };
+  const inserted = await sources.intents.insert(intent);
+  if (inserted !== "inserted") {
+    // A concurrent request committed first and nothing of ours was written (the savepoint rolled back). Whichever rule
+    // fired, the key decides first: the same form answers its own intent (or a key reuse) — never a second intent.
+    const winner = await sources.intents.findByIdempotencyKey(context.workspaceId, request.idempotencyKey);
+    if (winner !== undefined) return replay(winner);
+    if (inserted === "target_in_flight") return { kind: "refused", reason: "REPLY_IN_FLIGHT" };
+    // The key is taken but its intent is not visible here: not an answer this request can give — fail loudly.
+    throw new Error("mutation request: idempotency key taken by an intent this transaction cannot read");
+  }
   await sources.replies.insert(reply);
   await sources.intents.appendHistory(context.workspaceId, intent.id, { id: clock.newId(), from: null, to: "PENDING", attempt: 0, actor: "web", code: null, runReference: null, correlationId: context.correlationId, at: now });
   return { kind: "created", intent, reply };

@@ -47,9 +47,12 @@ describe("the command through the pipeline", () => {
   it("OWNER, ADMIN, MANAGER and RESPONDER create an intent; the pipeline audits it as the member and appends the IDs-only outbox row", async () => {
     const h = await setup();
     let n = 0;
+    // Step 7B-16B: one comment per role — a second open public reply to ONE comment is REPLY_IN_FLIGHT (tested below).
+    const roleTargets = { OWNER: TARGET, ADMIN: "4b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c01", MANAGER: "4b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c02", RESPONDER: "4b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c03" } as const;
+    for (const id of Object.values(roleTargets)) h.stores.targetRows.set(id, replyTarget({ interactionId: id, workspaceId: h.workspaceId }));
     for (const role of ["OWNER", "ADMIN", "MANAGER", "RESPONDER"] as const) {
       h.as(role);
-      const result = expectOk(await h.run(input(`${KEY}-${role}`)));
+      const result = expectOk(await h.run({ ...input(`${KEY}-${role}`), targetInteractionId: roleTargets[role] }));
       expect(result.kind).toBe("requested");
       if (result.kind !== "requested") return;
       n += 1;

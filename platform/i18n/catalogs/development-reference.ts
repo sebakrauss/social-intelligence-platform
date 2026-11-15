@@ -188,6 +188,7 @@ export const developmentReferenceCatalog: Catalog = {
   "inbox.reply.refused.provider_actions_disabled": "Public replies on this platform are paused right now.",
   "inbox.reply.refused.idempotency_key_reused": "This form was already used for a different reply. Open Reply again to start over.",
   "inbox.reply.refused.validation_authorization_unavailable": "This validation reply isn't authorized right now.",
+  "inbox.reply.refused.reply_in_flight": "A reply to this comment is on its way or being checked. You can write another once its outcome is known.",
   "inbox.reply.blocked.permission_denied": "Your role can't reply in this workspace.",
   "inbox.reply.blocked.mode_blocked": "This workspace is Monitor-only.",
   "inbox.reply.blocked.not_found": "This conversation isn't available.",

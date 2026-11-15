@@ -111,9 +111,9 @@ describe("H7-B1b-0: isolation", () => {
     expect(parsed.interactions.map((interaction) => [...interaction.text.matchAll(/[a-z0-9.-]+\.[a-z]{2,}\/\S*/gi)].map((match) => match[0]))).toEqual([["example.com/h7-b1b"]]);
   });
 
-  it("no migration after 0031 (Step 7B-1: mutation intents; Step 7B-14F1: validation authorizations; Step 7B-14I2: the operator path; Step 7B-14I3H: its hardening; Step 7B-14P1: search_path re-pins) and no new platform key", () => {
+  it("no migration after 0032 (Step 7B-1: mutation intents; Step 7B-14F1: validation authorizations; Step 7B-14I2: the operator path; Step 7B-14I3H: its hardening; Step 7B-14P1: search_path re-pins; Step 7B-16B: one open reply per target) and no new platform key", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toBe("0031_privileged_name_resolution_hardening.sql");
+    expect(migrations.at(-1)).toBe("0032_reply_in_flight_admission.sql");
     // Step 7B-14P1 (TA §11 R4a): 0031 names functions of every domain, but only to re-pin their search_path.
     expect(r4aMigrationShapeProblems()).toEqual([]);
     expect([...PLATFORM_KEYS]).toEqual(["facebook", "instagram", "tiktok"]);

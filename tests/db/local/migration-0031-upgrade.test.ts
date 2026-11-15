@@ -25,6 +25,8 @@ const THROUGH = "0028_mutation_validation_authorizations.sql";
 const M0029 = "0029_validation_operator_path.sql";
 const M0030 = "0030_validation_operator_hardening.sql";
 const M0031 = "0031_privileged_name_resolution_hardening.sql";
+// Step 7B-16B: 0032 adds an index (a catalog change), so this test applies through 0031 only; 0032 stays pending.
+const M0032 = "0032_reply_in_flight_admission.sql";
 const upTo = (name: string) => readMigrations().filter((migration) => migration.name <= name);
 
 interface Tenant {
@@ -121,7 +123,7 @@ describe("0028 → 0031 upgrade: privileged name resolution (R4a)", () => {
   it("starts at 28 applied migrations with 0029, 0030 and 0031 pending, no operator login, and every pre-0030 function pinned to the empty search_path", async () => {
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied).toHaveLength(28);
-    expect(status.pending.map((m) => m.name)).toEqual([M0029, M0030, M0031]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0029, M0030, M0031, M0032]);
     expect(await operatorHolders()).toEqual([]);
     expect((await configs()).every((row) => JSON.stringify(row.config) === JSON.stringify(['search_path=""']))).toBe(true);
   });
@@ -164,15 +166,15 @@ describe("0028 → 0031 upgrade: privileged name resolution (R4a)", () => {
     expect(await operatorHolders()).toEqual([]);
     expect(await applyMigrations(client, upTo(M0030))).toEqual([M0030]);
     expect(await operatorHolders()).toEqual([]);
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032]);
   });
 
   it("0031 refuses (changing nothing) when an application function carries an unexpected configuration", async () => {
     const before = { configs: await configs(), catalog: await catalog() };
     await client.query("begin; set local role app_owner; alter function app.my_workspace_role(uuid) set work_mem = '64kB'; commit");
-    await expect(applyMigrations(client, readMigrations())).rejects.toThrow(/unexpected configuration \(refusing\): app\.my_workspace_role/);
+    await expect(applyMigrations(client, upTo(M0031))).rejects.toThrow(/unexpected configuration \(refusing\): app\.my_workspace_role/);
     await client.query("begin; set local role app_owner; alter function app.my_workspace_role(uuid) reset work_mem; commit");
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032]);
     expect(await configs()).toEqual(before.configs);
     expect(await catalog()).toEqual(before.catalog);
   });
@@ -180,21 +182,21 @@ describe("0028 → 0031 upgrade: privileged name resolution (R4a)", () => {
   it("0031 refuses (rolling every pin back) when an application function exists that it does not pin", async () => {
     const before = await configs();
     await client.query("begin; set local role app_owner; create function app.r4a_unlisted() returns integer language sql stable security definer set search_path = '' as 'select 1'; commit");
-    await expect(applyMigrations(client, readMigrations())).rejects.toThrow(/left without the safe search_path \(refusing\): app\.r4a_unlisted\(\)/);
+    await expect(applyMigrations(client, upTo(M0031))).rejects.toThrow(/left without the safe search_path \(refusing\): app\.r4a_unlisted\(\)/);
     await client.query("begin; set local role app_owner; drop function app.r4a_unlisted(); commit");
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032]);
     expect(await configs()).toEqual(before);
   });
 
   it("applies exactly 0031: every application function pins pg_catalog, pg_temp; NOTHING else in the catalog moved; a re-run is a no-op", async () => {
     const before = { configs: await configs(), catalog: await catalog() };
     expect(before.configs.filter((row) => JSON.stringify(row.config) === JSON.stringify(['search_path=""']))).toHaveLength(52);
-    expect(await applyMigrations(client, readMigrations())).toEqual([M0031]);
+    expect(await applyMigrations(client, upTo(M0031))).toEqual([M0031]);
     const after = await configs();
     expect(after.map((row) => row.signature)).toEqual(before.configs.map((row) => row.signature));
     expect(after.filter((row) => JSON.stringify(row.config) !== JSON.stringify([PRIVILEGED_SEARCH_PATH_CONFIG]))).toEqual([]);
     expect(await catalog()).toEqual(before.catalog);
-    expect(await applyMigrations(client, readMigrations())).toEqual([]);
+    expect(await applyMigrations(client, upTo(M0031))).toEqual([]);
     expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(31);
     expect(await operatorHolders()).toEqual([]);
   });

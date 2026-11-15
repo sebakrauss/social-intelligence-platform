@@ -138,6 +138,19 @@ export function assertTransition(from: IntentStatus, to: IntentStatus): void {
 }
 
 export const isTerminal = (status: IntentStatus): boolean => TRANSITIONS[status].length === 0;
+
+/**
+ * Step 7B-16B — REPLY_IN_FLIGHT: the statuses in which a public-reply intent HOLDS its target. PENDING may still execute,
+ * EXECUTING may have reached the provider, OUTCOME_UNKNOWN may have published: while any of them exists for a target, no
+ * second public-reply intent for that target is admitted in the workspace, whatever its idempotency key. CONFIRMED,
+ * FAILED and BLOCKED release it (published, definitely not published, never sent). Nothing releases by time.
+ *
+ * The authority is the database: migration 0032's partial unique index `mutation_intents_one_open_reply_per_target`
+ * names exactly these statuses (a unit test pins the two together); the request side's read is only the clean answer.
+ * No transition leads from a releasing status back into this set, so a transition can never collide with the index.
+ */
+export const REPLY_HOLDING_STATUSES = ["PENDING", "EXECUTING", "OUTCOME_UNKNOWN"] as const satisfies readonly IntentStatus[];
+export const holdsReplyTarget = (status: IntentStatus): boolean => (REPLY_HOLDING_STATUSES as readonly IntentStatus[]).includes(status);
 /** Only PENDING executes (TA §26.3: "only PENDING/RETRYABLE executes"; no RETRYABLE exists in 7B-1). */
 export const isExecutable = (status: IntentStatus): boolean => status === "PENDING";
 

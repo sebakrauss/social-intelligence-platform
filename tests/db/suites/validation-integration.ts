@@ -673,7 +673,10 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
       expect(x.posts).toEqual([]);
     });
 
-    it("(21, X2) deterministic: a consumption committed AFTER a second authorization was issued at the expiry boundary → the second intent's EXECUTING is refused by the unique index mid-flight → BLOCKED, never left PENDING, zero POSTs", async () => {
+    it("(21, X2) deterministic: a consumption still in flight while a second authorization was issued at the expiry boundary → Step 7B-16B: the second intent is never admitted (REPLY_IN_FLIGHT, 0032), so it can never race to EXECUTING — nothing bound, zero POSTs", async () => {
+      // Before 0032 the second intent was admitted and its EXECUTING was refused mid-flight by 0028's one-consumed-per-
+      // target index (still pinned by the 7B-14F2 · B suite). With 0032 the first intent HOLDS the comment from PENDING
+      // on, so the same setup now stops one step earlier: at admission, before any binding, credential or execution.
       const t = await tenant();
       const first = await issue(t, { lifetime: "3 seconds" });
       const firstIntent = await requested(t, first);
@@ -687,30 +690,22 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
         consumedInT1();
         await held;
       });
-      await consumedSignal;
-      // The first authorization expires; its consumption is still invisible: the issuance guard admits a second one.
-      await untilExpired(t, first);
-      const second = await issue(t);
-      const secondIntent = await requested(t, second);
-      // The executor on the second intent passes its checks, then waits on the unique index behind T1.
-      const x = execution();
-      const running = x.run(t, secondIntent);
-      // pg_locks is readable by every role (pg_stat_activity hides other roles' sessions): an ungranted transactionid
-      // lock is the unique-index wait on T1's uncommitted consumption.
-      for (let i = 0; ; i += 1) {
-        const waiting = await oracle<{ n: number }>("select count(*)::int as n from pg_locks where locktype = 'transactionid' and not granted");
-        if ((waiting[0]?.n ?? 0) > 0) break;
-        if (i === 200) throw new Error("the second consumption never waited on the first");
-        await sleep(20);
+      try {
+        await consumedSignal;
+        // The first authorization expires; its consumption is still invisible: the issuance guard admits a second one.
+        await untilExpired(t, first);
+        const second = await issue(t);
+        // The second request is refused while the first intent holds the comment (committed PENDING, EXECUTING in flight).
+        expect(await request(t, t.users.RESPONDER, { authorization: second })).toEqual({ kind: "refused", reason: "REPLY_IN_FLIGHT" });
+        expect(await authorizationRow(t, second)).toMatchObject({ intent_id: null, bound: false, consumed: false });
+      } finally {
+        release();
+        await t1;
       }
-      release();
-      await t1;
-      expect(await running).toEqual({ kind: "blocked", code: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
-      expect(await intentRow(t, secondIntent)).toMatchObject({ status: "BLOCKED", outcome_code: "VALIDATION_AUTHORIZATION_UNAVAILABLE" });
-      expect(await authorizationRow(t, second)).toMatchObject({ consumed: false });
+      expect(await oracle("select count(*)::int as n from mutations.mutation_intents where workspace_id = $1 and target_interaction_id = $2", [t.workspaceId, t.ig.comment])).toEqual([{ n: 1 }]);
       expect(await oracle("select count(*)::int as n from mutations.validation_authorizations where workspace_id = $1 and target_interaction_id = $2 and consumed_at is not null", [t.workspaceId, t.ig.comment])).toEqual([{ n: 1 }]);
-      expect([x.posts, x.opened]).toEqual([[], []]);
-      expect(await x.run(t, secondIntent)).toEqual({ kind: "noop", status: "BLOCKED" });
+      // No second intent exists, so no execution of it can ever reach a provider (zero POSTs by construction).
+      expect(await intentRow(t, firstIntent)).toMatchObject({ status: "EXECUTING" });
     });
   });
   // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1184,6 +1179,38 @@ export function defineValidationIntegrationSuite(getTarget: () => DbTarget): voi
       expect(reads).toBeUndefined();
       const webRead = await withUserScope(web, { sub: t.users.OWNER, role: "authenticated" }, t.workspaceId, (tx) => tx.execute(sql`select 1 from mutations.validation_preflights`)).then(() => "ok", (error: unknown) => postgresError(error)?.code);
       expect(webRead).toBe("42501");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("Step 7B-16B · REPLY_IN_FLIGHT across the validation and ordinary paths (one target, one open reply)", () => {
+    const ordinaryOpen = (t: Tenant, target: string) => privileged.query(
+      `insert into mutations.mutation_intents (id, organization_id, workspace_id, kind, request_type, target_interaction_id, connected_account_id, initiator_user_id, idempotency_key, status, attempt, capability_catalog_id, capability_catalog_revision, correlation_id, created_at, updated_at)
+       values ($1, $2, $3, 'reply_public', 'human', $4, $5, $6, $7, 'PENDING', 0, 'platform', 5, 'corr-7b16b-ordinary', now(), now())`,
+      [randomUUID(), t.organizationId, t.workspaceId, target, t.ig.account, t.users.OWNER, `key-7b16b-${randomUUID()}`]);
+
+    it("(17) an ORDINARY open intent on the comment refuses the authorized validation request (REPLY_IN_FLIGHT): the authorization stays unbound and reusable once the comment is released", async () => {
+      const t = await tenant();
+      await ordinaryOpen(t, t.ig.comment);
+      const authorization = await issue(t);
+      expect(await request(t, t.users.RESPONDER, { authorization })).toEqual({ kind: "refused", reason: "REPLY_IN_FLIGHT" });
+      expect(await authorizationRow(t, authorization)).toMatchObject({ intent_id: null, bound: false, consumed: false });
+      expect(await oracle("select count(*)::int as n from mutations.mutation_intents where workspace_id = $1 and validation_authorization_id is not null", [t.workspaceId])).toEqual([{ n: 0 }]);
+      // The ordinary intent is BLOCKED (never sent): the comment is released and the same authorization now binds.
+      await privileged.query("update mutations.mutation_intents set status = 'BLOCKED', attempt = 1, run_reference = 'run_7b16b', outcome_code = 'PROVIDER_ACTIONS_DISABLED' where workspace_id = $1 and validation_authorization_id is null", [t.workspaceId]);
+      const intentId = await requested(t, authorization);
+      expect(await authorizationRow(t, authorization)).toMatchObject({ intent_id: intentId, bound: true, consumed: false });
+    });
+
+    it("(17) an AUTHORIZED open intent on the comment refuses any second open intent — even a privileged ordinary one (23505 on 0032) — and its binding is untouched", async () => {
+      const t = await tenant();
+      const authorization = await issue(t);
+      const intentId = await requested(t, authorization);
+      expect(postgresError(await ordinaryOpen(t, t.ig.comment).then(() => undefined, (error: unknown) => error))).toEqual({ code: "23505", constraint: "mutation_intents_one_open_reply_per_target" });
+      // The account's other comment is a different target: unaffected.
+      await ordinaryOpen(t, t.ig.otherComment);
+      expect(await authorizationRow(t, authorization)).toMatchObject({ intent_id: intentId, bound: true, consumed: false });
+      expect(await oracle("select count(*)::int as n from mutations.mutation_intents where workspace_id = $1 and target_interaction_id = $2", [t.workspaceId, t.ig.comment])).toEqual([{ n: 1 }]);
     });
   });
 }

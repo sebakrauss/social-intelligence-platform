@@ -5,9 +5,9 @@
  * what each role may change (0027). Every write names the workspace explicitly (R5).
  */
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
-import type { DatabaseTransaction } from "@/platform/db";
-import { isIntentOutcomeCode, isIntentStatus, MUTATION_KINDS, MUTATION_REQUEST_TYPES, type MutationIntent } from "../domain/intent";
-import type { IntentStore, OutboundReply, OutboundReplyStore } from "../ports";
+import { postgresError, type DatabaseTransaction } from "@/platform/db";
+import { isIntentOutcomeCode, isIntentStatus, MUTATION_KINDS, MUTATION_REQUEST_TYPES, REPLY_HOLDING_STATUSES, type MutationIntent } from "../domain/intent";
+import type { IntentInsertResult, IntentStore, OutboundReply, OutboundReplyStore } from "../ports";
 import { mutationIntentHistory, mutationIntents, outboundReplies } from "./tables";
 
 const corrupt = (what: string): never => {
@@ -42,6 +42,42 @@ function toIntent(row: typeof mutationIntents.$inferSelect): MutationIntent {
   };
 }
 
+/**
+ * Step 7B-16B: the two uniqueness rules an intent insert may lose to a concurrent request, by EXACT constraint/index
+ * name (0027's idempotency key; 0032's one open public reply per target). Any other 23505 — another index, 0028's one
+ * intent per authorization, a trigger's own 23505 — is not in this map and is rethrown.
+ */
+const INSERT_CONFLICTS: { readonly [constraint: string]: Exclude<IntentInsertResult, "inserted"> | undefined } = {
+  mutation_intents_idempotent: "key_taken",
+  mutation_intents_one_open_reply_per_target: "target_in_flight",
+};
+
+async function insertIntentRow(tx: DatabaseTransaction, intent: MutationIntent): Promise<void> {
+  await tx.insert(mutationIntents).values({
+    id: intent.id,
+    organizationId: intent.organizationId,
+    workspaceId: intent.workspaceId,
+    kind: intent.kind,
+    requestType: intent.requestType,
+    targetInteractionId: intent.targetInteractionId,
+    connectedAccountId: intent.connectedAccountId,
+    initiatorUserId: intent.initiatorUserId,
+    idempotencyKey: intent.idempotencyKey,
+    status: intent.status,
+    attempt: intent.attempt,
+    runReference: intent.runReference,
+    outcomeCode: intent.outcomeCode,
+    capabilityCatalogId: intent.capabilityCatalogId,
+    capabilityCatalogRevision: intent.capabilityCatalogRevision,
+    correlationId: intent.correlationId,
+    createdAt: intent.createdAt,
+    updatedAt: intent.updatedAt,
+    // Step 7B-14G1: an authorized intent is bound by 0028's AFTER INSERT trigger in THIS statement's transaction
+    // (the authorization row locked FOR UPDATE); a refused binding fails the insert and writes nothing.
+    validationAuthorizationId: intent.validationAuthorizationId,
+  });
+}
+
 export function createPostgresIntentStore(tx: DatabaseTransaction): IntentStore {
   const one = async (workspaceId: string, intentId: string, lock: boolean): Promise<MutationIntent | undefined> => {
     const query = tx.select().from(mutationIntents).where(and(eq(mutationIntents.workspaceId, workspaceId), eq(mutationIntents.id, intentId))).limit(1);
@@ -51,29 +87,30 @@ export function createPostgresIntentStore(tx: DatabaseTransaction): IntentStore 
   };
   return {
     async insert(intent) {
-      await tx.insert(mutationIntents).values({
-        id: intent.id,
-        organizationId: intent.organizationId,
-        workspaceId: intent.workspaceId,
-        kind: intent.kind,
-        requestType: intent.requestType,
-        targetInteractionId: intent.targetInteractionId,
-        connectedAccountId: intent.connectedAccountId,
-        initiatorUserId: intent.initiatorUserId,
-        idempotencyKey: intent.idempotencyKey,
-        status: intent.status,
-        attempt: intent.attempt,
-        runReference: intent.runReference,
-        outcomeCode: intent.outcomeCode,
-        capabilityCatalogId: intent.capabilityCatalogId,
-        capabilityCatalogRevision: intent.capabilityCatalogRevision,
-        correlationId: intent.correlationId,
-        createdAt: intent.createdAt,
-        updatedAt: intent.updatedAt,
-        // Step 7B-14G1: an authorized intent is bound by 0028's AFTER INSERT trigger in THIS statement's transaction
-        // (the authorization row locked FOR UPDATE); a refused binding fails the insert and writes nothing.
-        validationAuthorizationId: intent.validationAuthorizationId,
-      });
+      // Step 7B-16B: inside a SAVEPOINT, so a lost uniqueness race rolls back only this statement and the request can
+      // still answer cleanly in the same transaction. Only the two named rules are recognized; everything else —
+      // another constraint, a refused 0028 binding, RLS, a lost connection — is rethrown exactly as before.
+      try {
+        await tx.transaction(async (savepoint) => {
+          await insertIntentRow(savepoint, intent);
+        });
+        return "inserted";
+      } catch (error) {
+        const failure = postgresError(error);
+        if (failure?.code === "23505" && failure.constraint !== undefined) {
+          const result = INSERT_CONFLICTS[failure.constraint];
+          if (result !== undefined) return result;
+        }
+        throw error;
+      }
+    },
+    async holdsOpenReply(workspaceId, targetInteractionId) {
+      const rows = await tx
+        .select({ id: mutationIntents.id })
+        .from(mutationIntents)
+        .where(and(eq(mutationIntents.workspaceId, workspaceId), eq(mutationIntents.targetInteractionId, targetInteractionId), eq(mutationIntents.kind, "reply_public"), inArray(mutationIntents.status, [...REPLY_HOLDING_STATUSES])))
+        .limit(1);
+      return rows.length > 0;
     },
     async findByIdempotencyKey(workspaceId, idempotencyKey) {
       const row = (await tx.select().from(mutationIntents).where(and(eq(mutationIntents.workspaceId, workspaceId), eq(mutationIntents.idempotencyKey, idempotencyKey))).limit(1))[0];
