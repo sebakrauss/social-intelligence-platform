@@ -11,8 +11,13 @@ import { createHarness } from "../../support/harness";
 import { userId } from "../../support/in-memory";
 import { TARGET, guardState, memoryStores, replyTarget } from "../mutations/support";
 
-const env = vi.hoisted((): { pipeline: unknown; auth: unknown; revalidated: string[] } => ({ pipeline: undefined, auth: { id: "set-later" }, revalidated: [] }));
-vi.mock("next/cache", () => ({ revalidatePath: (path: string) => void env.revalidated.push(path) }));
+const env = vi.hoisted((): { pipeline: unknown; auth: unknown; revalidated: string[]; failRevalidation: boolean } => ({ pipeline: undefined, auth: { id: "set-later" }, revalidated: [], failRevalidation: false }));
+vi.mock("next/cache", () => ({
+  revalidatePath: (path: string) => {
+    if (env.failRevalidation) throw new Error("revalidation failed");
+    env.revalidated.push(path);
+  },
+}));
 vi.mock("@/server/auth/request-auth", () => ({ requestAuth: () => Promise.resolve(env.auth) }));
 vi.mock("@/server/inbox/runtime", () => ({ inboxPipeline: () => env.pipeline }));
 
@@ -126,5 +131,86 @@ describe("7B-3: the publish action", () => {
     env.auth = undefined;
     expect(await publishReplyAction({ kind: "idle" }, form(fields(h.workspaceId)))).toEqual({ kind: "signed_out" });
     expect(h.stores.intentRows.size).toBe(0);
+  });
+});
+
+/**
+ * Step 7B-15L (audit 7B-15K K22) — an UNKNOWN outcome keeps the composer's form key. The conversation page issues the
+ * idempotency key; a revalidation re-renders the page and would hand the open composer a NEW key, so a retry of a
+ * request that may already have been accepted would be admitted as a second, independent reply. On `unavailable` —
+ * a pipeline error that is not a known block, or a failure thrown at any point, even after the commit — the action
+ * revalidates nothing, and the same form submitted again is answered from the first intent.
+ */
+describe("7B-15L: an unknown outcome never revalidates the conversation (the form key stays with the submission)", () => {
+  interface Pipeline {
+    run(command: unknown, request: unknown): Promise<unknown>;
+  }
+  const real = (): Pipeline => env.pipeline as Pipeline;
+
+  it.each(["PROVIDER_TRANSIENT", "OUTCOME_UNKNOWN", "CONFLICT", "STALE_STATE"])("a pipeline error that is not a known block (%s) answers `unavailable` and revalidates nothing", async (code) => {
+    const h = await setup();
+    h.as("RESPONDER");
+    env.pipeline = { run: () => Promise.resolve({ status: "error", error: { code } }) };
+    expect(await publishReplyAction({ kind: "idle" }, form(fields(h.workspaceId)))).toEqual({ kind: "unavailable" });
+    expect(env.revalidated).toEqual([]);
+  });
+
+  it("a failure thrown BEFORE anything was written answers `unavailable`, writes nothing and revalidates nothing", async () => {
+    const h = await setup();
+    h.as("RESPONDER");
+    env.pipeline = { run: () => Promise.reject(new Error("connection lost")) };
+    expect(await publishReplyAction({ kind: "idle" }, form(fields(h.workspaceId)))).toEqual({ kind: "unavailable" });
+    expect(env.revalidated).toEqual([]);
+    expect(h.stores.intentRows.size).toBe(0);
+  });
+
+  it("a failure thrown AFTER the intent was committed: `unavailable`, no revalidation — and the SAME form key then finds that one intent (existing), a changed text is refused, never a second intent", async () => {
+    const h = await setup();
+    h.as("RESPONDER");
+    const pipeline = real();
+    // The request commits (the real pipeline ran), then the answer is lost on the way back.
+    env.pipeline = {
+      run: async (command: unknown, request: unknown) => {
+        await pipeline.run(command, request);
+        throw new Error("answer lost after the commit");
+      },
+    };
+    expect(await publishReplyAction({ kind: "idle" }, form(fields(h.workspaceId)))).toEqual({ kind: "unavailable" });
+    expect(h.stores.intentRows.size).toBe(1);
+    const intentId = [...h.stores.intentRows.values()][0]?.id;
+    // Nothing re-rendered the page: the open composer still holds the key it submitted with.
+    expect(env.revalidated).toEqual([]);
+
+    env.pipeline = pipeline;
+    expect(await publishReplyAction({ kind: "unavailable" }, form(fields(h.workspaceId)))).toEqual({ kind: "existing", intentId });
+    expect(await publishReplyAction({ kind: "unavailable" }, form(fields(h.workspaceId, { text: "Texto editado tras el resultado incierto" })))).toEqual({ kind: "refused", reason: "IDEMPOTENCY_KEY_REUSED" });
+    expect(h.stores.intentRows.size).toBe(1);
+    expect(h.unitOfWork.state.outbox.filter((row) => row.topic === "mutations.execute_intent")).toHaveLength(1);
+  });
+
+  it("a failure thrown by the revalidation itself (after the commit) is still `unavailable`, and the same key still answers `existing`", async () => {
+    const h = await setup();
+    h.as("RESPONDER");
+    env.failRevalidation = true;
+    try {
+      expect(await publishReplyAction({ kind: "idle" }, form(fields(h.workspaceId)))).toEqual({ kind: "unavailable" });
+    } finally {
+      env.failRevalidation = false;
+    }
+    expect(h.stores.intentRows.size).toBe(1);
+    expect((await publishReplyAction({ kind: "unavailable" }, form(fields(h.workspaceId)))).kind).toBe("existing");
+    expect(h.stores.intentRows.size).toBe(1);
+  });
+
+  it("the known answers are unchanged: signed_out and blocked revalidate nothing; requested, existing and refused re-render the thread", async () => {
+    const h = await setup();
+    h.as("ANALYST_VIEWER");
+    expect((await publishReplyAction({ kind: "idle" }, form(fields(h.workspaceId)))).kind).toBe("blocked");
+    env.auth = undefined;
+    expect((await publishReplyAction({ kind: "idle" }, form(fields(h.workspaceId)))).kind).toBe("signed_out");
+    expect(env.revalidated).toEqual([]);
+    h.as("RESPONDER");
+    expect((await publishReplyAction({ kind: "idle" }, form(fields(h.workspaceId)))).kind).toBe("requested");
+    expect(env.revalidated).toHaveLength(1);
   });
 });

@@ -1,39 +1,31 @@
 /*
- * Inbox (UI-4; Manual de Marca v1.1 §5 product grid, §7 boxes). Two panes from 1280px: the list (minmax 360–400) and
- * the fluid detail, each scrolling on its own; one screen below that. Rows are separated by 1px dividers, never cards;
+ * Inbox (UI-4; Step 7B-15B; Manual de Marca v1.1 §5 product grid, §7 boxes). One wide list; the selected conversation
+ * expands inside its own row (no permanent second pane); one screen below 768px. Rows are separated by 1px dividers, never cards;
  * the selected row is marked by the hover surface and a 2px bar in the text color — never blue, which stays for a
  * person, links and focus. Depth is a surface step, not a shadow.
  */
 
-/* Panes */
-.panes {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--wk-space-24);
+/* Work surface (Step 7B-15B): one wide column; the selected conversation opens inside its own row. */
+.workspace {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  /* Step 7B-15O: a bounded, centered work surface (the reading column itself is narrower: .detailMain). */
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
 }
 
-.listPane,
-.detailPane {
-  min-width: 0;
+.standalone {
+  margin-bottom: var(--wk-space-24);
+  padding: var(--wk-space-16);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
 }
 
-.detailPane {
-  display: none;
-}
-
-.panes[data-selected="true"] .listPane {
-  display: none;
-}
-
-.panes[data-selected="true"] .detailPane {
-  display: block;
-}
-
-.placeholder {
-  display: none;
-}
-
+/* Step 7B-15S: hidden until focused by CLIPPING it, not by moving it up — moved, it showed over the shell's top bar
+   on tablet layouts (seen at 768–1024px). Focused, it appears in place over the list. */
 .skipToDetail {
   position: absolute;
   left: var(--wk-space-8);
@@ -45,62 +37,48 @@
   color: var(--wk-action-primary-fg);
   font: 500 12px / calc(16 / 12) var(--wk-font-ui);
   text-decoration: none;
-  transform: translateY(-200%);
+  white-space: nowrap;
+  clip-path: inset(50%);
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
 }
 
 .skipToDetail:focus {
-  transform: none;
+  clip-path: none;
+  overflow: visible;
+  width: auto;
+  height: auto;
 }
 
-@media (min-width: 1280px) {
-  .panes {
-    grid-template-columns: minmax(360px, 400px) minmax(0, 1fr);
-    gap: var(--wk-space-32);
-    align-items: start;
-  }
-
-  .listPane,
-  .panes[data-selected="true"] .listPane {
-    display: block;
-    position: sticky;
-    top: var(--wk-space-24);
-    max-height: calc(100dvh - 2 * var(--wk-space-24));
-    overflow-y: auto;
-    padding-right: var(--wk-space-16);
-    border-right: 1px solid var(--wk-border-default);
-  }
-
-  .detailPane {
-    display: block;
-    position: sticky;
-    top: var(--wk-space-24);
-    max-height: calc(100dvh - 2 * var(--wk-space-24));
-    overflow-y: auto;
-  }
-
-  .placeholder {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 240px;
-    color: var(--wk-text-secondary);
-    font: 400 14px / calc(20 / 14) var(--wk-font-ui);
-  }
-
-  .backLink {
-    display: none;
-  }
-}
-
-@media (max-width: 1279px) {
-  .skipToDetail {
+/* One screen (small widths): with a conversation open, only it is on screen; the way back keeps the list position. */
+@media (max-width: 767px) {
+  .workspace[data-selected="true"] .header,
+  .workspace[data-selected="true"] .coverage,
+  .workspace[data-selected="true"] .pagination,
+  .workspace[data-selected="true"] .skipToDetail,
+  .workspace[data-selected="true"] .list > li:not(.expandedItem) {
     display: none;
   }
 
-  .listPane,
-  .detailPane {
-    max-width: 720px;
+  .workspace[data-selected="true"] .list {
+    border-top: 0;
   }
+
+  /* One screen: the open conversation alone, under a bar that stays in reach (previous, next, back to the list). */
+  .workspace[data-selected="true"] .expandedItem {
+    border-bottom: 0;
+    background: transparent;
+  }
+
+  .workspace[data-selected="true"] .expandedItem::before {
+    content: none;
+  }
+
+  .workspace[data-selected="true"] .expanded {
+    padding: 0;
+  }
+
 }
 
 /* List header */
@@ -120,6 +98,13 @@
 .subtitle {
   font: 400 13px / calc(18 / 13) var(--wk-font-ui);
   color: var(--wk-text-secondary);
+}
+
+/* Step 7B-15S: how times read, said once for the list ("Newest activity first · Times in UTC"). */
+.subtitleNote::before {
+  content: "·";
+  content: "·" / "";
+  margin: 0 var(--wk-space-8);
 }
 
 .coverage {
@@ -198,7 +183,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--wk-space-4);
-  padding: var(--wk-space-12) var(--wk-space-12) var(--wk-space-12) var(--wk-space-12);
+  padding: var(--wk-space-16) var(--wk-space-12);
   border-bottom: 1px solid var(--wk-border-default);
   color: var(--wk-text-primary);
   text-decoration: none;
@@ -211,7 +196,7 @@
 }
 
 .row[aria-current="page"] {
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-surface);
 }
 
 .row[aria-current="page"]::before {
@@ -225,6 +210,7 @@
   background: var(--wk-text-primary);
 }
 
+/* Step 7B-15O: who wrote it leads the row (avatar, name, where), the comment reads under it, what is known last. */
 .rowHead {
   display: flex;
   align-items: center;
@@ -232,10 +218,29 @@
   min-width: 0;
 }
 
+.avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-bg-hover);
+  color: var(--wk-text-secondary);
+  font: 500 11px / 1 var(--wk-font-ui);
+}
+
+.avatarOwn {
+  border-color: var(--wk-action-primary-bg);
+  background: var(--wk-action-primary-bg);
+  color: var(--wk-action-primary-fg);
+}
+
 .rowAuthor {
-  flex: 1 1 auto;
   min-width: 0;
-  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  font: 600 14px / calc(20 / 14) var(--wk-font-ui);
   color: var(--wk-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -250,7 +255,12 @@
   white-space: nowrap;
 }
 
+.rowHead > .time {
+  margin-left: auto;
+}
+
 .rowExcerpt {
+  padding-left: calc(28px + var(--wk-space-8));
   font: 400 14px / calc(20 / 14) var(--wk-font-ui);
   color: var(--wk-text-primary);
   overflow-wrap: anywhere;
@@ -270,14 +280,24 @@
   align-items: center;
   gap: var(--wk-space-8);
   margin-top: var(--wk-space-4);
+  padding-left: calc(28px + var(--wk-space-8));
 }
 
 .pagination {
   display: flex;
   justify-content: center;
+  align-items: center;
   padding: var(--wk-space-16) 0;
   font: 400 13px / calc(18 / 13) var(--wk-font-ui);
   color: var(--wk-text-secondary);
+}
+
+/* Manual §11: 32px targets with a mouse (44px on touch, at the end of this file). */
+.pagination a,
+.backLink a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
 }
 
 /* Empty */
@@ -310,7 +330,7 @@
 .detail {
   display: flex;
   flex-direction: column;
-  gap: var(--wk-space-16);
+  gap: var(--wk-space-12);
 }
 
 .backLink {
@@ -323,11 +343,179 @@
   color: var(--wk-text-primary);
 }
 
+/* Step 7B-15O: the thread is the reading column; what is known about the place sits above it, or beside it when wide. */
+.detailGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--wk-space-16);
+}
+
+.detailMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-16);
+  min-width: 0;
+  max-width: 720px;
+}
+
+.contextBox {
+  min-width: 0;
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-canvas);
+}
+
+.contextSummary {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 var(--wk-space-12);
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+  cursor: pointer;
+}
+
+.contextBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: 0 var(--wk-space-12) var(--wk-space-12);
+}
+
 .context {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--wk-space-8);
+}
+
+/* A long data tag ("Mixed: boosted or used in ads, and also organic") wraps inside the narrow column, never past it:
+   the square box grows with its lines (same border, radius and type). */
+.contextFact {
+  display: inline-flex;
+  max-width: 100%;
+}
+
+/* `> span` (class + element) outranks the primitive's own single class, whatever order the two sheets load in. */
+.contextFact > span {
+  min-width: 0;
+  height: auto;
+  min-height: 20px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  line-height: calc(14 / 11.5);
+  white-space: normal;
+}
+
+.contextNote {
+  margin: 0;
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.quietNote {
+  margin: 0;
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+/* Step 7B-15S — wide, in its row: what is known about the place is simply shown beside the thread, under a heading
+   (an <aside>), and the disclosure is not displayed — no summary that looks like a control and toggles nothing. Below
+   1280px, or for a conversation drawn on its own, it is the other way round. Only one is ever displayed. */
+.contextAside {
+  display: none;
+}
+
+.contextHeading {
+  margin: 0;
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--wk-text-secondary);
+}
+
+@media (min-width: 1280px) {
+  .expanded .detailGrid {
+    grid-template-columns: minmax(0, 1fr) 260px;
+    column-gap: var(--wk-space-32);
+    align-items: start;
+  }
+
+  .expanded .detailMain {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .expanded .contextBox {
+    display: none;
+  }
+
+  .expanded .contextAside {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--wk-space-12);
+    padding-left: var(--wk-space-16);
+    border-left: 1px solid var(--wk-border-default);
+  }
+}
+
+/* The open conversation's own navigation: where it is among the rows, the one before, the one after, Close. */
+.conversationNav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4);
+  margin-bottom: var(--wk-space-12);
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.navPosition {
+  margin-right: var(--wk-space-8);
+  font: 500 11px / calc(16 / 11) var(--wk-font-mono);
+  letter-spacing: 0.02em;
+  color: var(--wk-text-tertiary);
+}
+
+.navLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border-radius: var(--wk-radius-sm);
+  color: var(--wk-text-primary);
+  text-decoration: none;
+  transition: background-color var(--wk-duration-fast) var(--wk-ease-standard);
+}
+
+a.navLink:hover {
+  background: var(--wk-bg-hover);
+}
+
+a.navLink:active {
+  background: var(--wk-bg-raised);
+}
+
+/* An end of the list: the word keeps its place (the bar does not jump) in the disabled text color; not a control. */
+.navEnd {
+  color: var(--wk-text-disabled);
+}
+
+.navArrow {
+  font: 400 16px / 1 var(--wk-font-ui);
+}
+
+/* The composer's small buttons, inside the thread, keep the 32px desktop target (Manual §11; 44px on touch below). */
+.thread button {
+  min-height: 32px;
+}
+
+.navClose {
+  margin-left: auto;
+  padding: 0 var(--wk-space-12) 0 var(--wk-space-8);
+  border: 1px solid var(--wk-border-default);
 }
 
 .sectionLabel {
@@ -337,59 +525,132 @@
   color: var(--wk-text-tertiary);
 }
 
+/* Step 7B-15S: the thread's label and, at the end of the same line, how its times read. */
+.threadHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--wk-space-4) var(--wk-space-16);
+}
+
+.threadHeadingNote {
+  margin: 0;
+  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.01em;
+  color: var(--wk-text-tertiary);
+}
+
+/* Step 7B-15O: the thread has no boxes — a comment, the replies under it on one indent rule, the account's own
+   replies marked by their avatar. Space separates the top-level comments; a divider only between them. */
 .thread {
   list-style: none;
   margin: 0;
   padding: 0;
-  border-top: 1px solid var(--wk-border-default);
 }
 
 .member {
   display: flex;
   flex-direction: column;
-  gap: var(--wk-space-8);
-  padding: var(--wk-space-16) 0;
-  border-bottom: 1px solid var(--wk-border-default);
+  gap: var(--wk-space-4);
+  padding: var(--wk-space-12) 0;
+  scroll-margin-top: var(--wk-space-16);
+}
+
+.member:not(.nested):not(:first-child) {
+  margin-top: var(--wk-space-8);
+  padding-top: var(--wk-space-16);
+  border-top: 1px solid var(--wk-border-default);
 }
 
 .nested {
-  margin-left: var(--wk-space-24);
+  margin-left: 13px;
   padding-left: var(--wk-space-16);
   border-left: 1px solid var(--wk-border-strong);
 }
 
-.own {
-  background: var(--wk-bg-surface);
-  padding-right: var(--wk-space-12);
+.member > :not(.memberHead) {
+  margin-left: calc(28px + var(--wk-space-8));
 }
 
-.own.nested {
-  padding-left: var(--wk-space-16);
-}
-
+/* Step 7B-15S: the avatar in its own column, who-and-when beside it — a wrapped line stays aligned with the text. */
 .memberHead {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  column-gap: var(--wk-space-8);
+}
+
+.memberMeta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--wk-space-8);
+  gap: var(--wk-space-2) var(--wk-space-8);
+  min-width: 0;
+  min-height: 28px;
+}
+
+/* Replies sit one step quieter than the comment they answer: a smaller avatar on the same rail. */
+.nested .memberHead,
+.outbound .memberHead {
+  grid-template-columns: 24px minmax(0, 1fr);
+}
+
+.nested .avatar,
+.outbound .avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 10px;
+}
+
+.nested .memberMeta,
+.outbound .memberMeta {
+  min-height: 24px;
+}
+
+.nested > :not(.memberHead) {
+  margin-left: calc(24px + var(--wk-space-8));
 }
 
 .memberAuthor {
-  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  font: 600 14px / calc(20 / 14) var(--wk-font-ui);
   color: var(--wk-text-primary);
   overflow-wrap: anywhere;
 }
 
 .memberKind {
-  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
   color: var(--wk-text-secondary);
 }
 
 .memberText {
-  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+  max-width: 68ch;
+  font: 400 14px / calc(22 / 14) var(--wk-font-ui);
   color: var(--wk-text-primary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Step 7B-15Q: whom a reply answers, in words, when the list's one indent cannot say it (a reply to a reply). */
+.replyingTo {
+  margin: 0;
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.replyingTo::before {
+  content: "↳";
+  content: "↳" / "";
+  margin-right: var(--wk-space-4);
+  color: var(--wk-text-tertiary);
+}
+
+/* A reply whose parent was not read belongs to no block shown: a divider sets it apart from the one above. */
+.detached {
+  margin-top: var(--wk-space-8);
+  padding-top: var(--wk-space-16);
+  border-top: 1px solid var(--wk-border-default);
 }
 
 .memberTextMuted {
@@ -400,9 +661,82 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--wk-space-8);
+  margin: 0;
   font: 400 11px / calc(16 / 11) var(--wk-font-ui);
   letter-spacing: 0.01em;
   color: var(--wk-text-secondary);
+}
+
+/* Step 7B-15S — the record (exact times, earlier versions): small disclosures on one line under the text. The one
+   that opens takes the whole line, so what it shows reads under its own name. */
+.memberRecord {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: var(--wk-space-16);
+}
+
+.memberRecord > details[open] {
+  flex-basis: 100%;
+}
+
+.memberDetails {
+  min-width: 0;
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.memberDetailsSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  border-radius: var(--wk-radius-xs);
+  list-style: none;
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+  cursor: pointer;
+  transition: color var(--wk-duration-fast) var(--wk-ease-standard);
+}
+
+.memberDetailsSummary::-webkit-details-marker {
+  display: none;
+}
+
+.memberDetailsSummary::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  transition: transform var(--wk-duration-fast) var(--wk-ease-standard);
+}
+
+.memberDetails[open] > .memberDetailsSummary::before {
+  transform: rotate(90deg);
+}
+
+.memberDetailsSummary:hover,
+.memberDetails[open] > .memberDetailsSummary {
+  color: var(--wk-text-primary);
+}
+
+.memberDetailsBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-4) 0 var(--wk-space-8) var(--wk-space-12);
+  border-left: 1px solid var(--wk-border-default);
+  margin-left: 2px;
+}
+
+.memberDetailsBody .memberTimes {
+  flex-direction: column;
+  gap: var(--wk-space-2);
+  font: 500 11px / calc(16 / 11) var(--wk-font-mono);
+  letter-spacing: 0.02em;
 }
 
 .versions {
@@ -428,8 +762,15 @@
 
 .facts {
   display: flex;
-  flex-direction: column;
-  gap: var(--wk-space-4);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4) var(--wk-space-8);
+}
+
+.factsLabel {
+  margin: 0;
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-tertiary);
 }
 
 .factList {
@@ -438,21 +779,48 @@
   gap: var(--wk-space-8);
 }
 
-/* Step 7B-3: an outbound reply under the comment it answers (same voice as the brand's own messages). */
+/* An outbound reply (Step 7B-3; 7B-15O: its own entry of the thread, in time order): the account's voice, its real
+   state as a pill, one line of status. No box. */
+/* Step 7B-15S: Wrenkind's own record — what was asked of the platform and what is known of it — is a quiet framed
+   entry, so it never reads as something observed on the platform. Its state closes its head line. */
+.outboundItem > .outbound {
+  margin-left: 0;
+  max-width: 640px;
+  padding: var(--wk-space-12);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-canvas);
+}
+
 .outbound {
   display: flex;
   flex-direction: column;
-  gap: var(--wk-space-8);
-  margin-top: var(--wk-space-12);
-  margin-left: var(--wk-space-24);
-  padding: var(--wk-space-12) var(--wk-space-12) var(--wk-space-12) var(--wk-space-16);
-  border-left: 1px solid var(--wk-border-strong);
-  background: var(--wk-bg-surface);
+  gap: var(--wk-space-4);
 }
 
+.outbound .memberHead {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+}
+
+.outboundState {
+  display: inline-flex;
+  align-self: center;
+  justify-self: end;
+}
+
+.outbound > :not(.memberHead) {
+  margin-left: calc(24px + var(--wk-space-8));
+}
+
+.outbound .memberTimes {
+  column-gap: var(--wk-space-12);
+  color: var(--wk-text-tertiary);
+}
+
+/* Manual §11: what a person must read to act is 13px or more. */
 .outboundNote {
-  margin: 0;
-  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  margin: var(--wk-space-4) 0 0;
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
   color: var(--wk-text-secondary);
 }
 
@@ -469,4 +837,233 @@
 .replyUnavailableLabel {
   font-weight: 500;
   color: var(--wk-text-primary);
+}
+
+/* The selected conversation, in place: a surface step and the 2px bar of the selected row carried down its side. */
+.expandedItem {
+  position: relative;
+  border-bottom: 1px solid var(--wk-border-default);
+  scroll-margin-top: var(--wk-space-16);
+}
+
+.expandedItem::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--wk-text-primary);
+}
+
+.expandedItem {
+  background: var(--wk-bg-surface);
+}
+
+.expandedItem > .row {
+  border-bottom: 0;
+  padding-bottom: var(--wk-space-4);
+}
+
+
+
+.expandedItem > .row[aria-current="page"]::before {
+  content: none;
+}
+
+.expanded {
+  padding: 0 var(--wk-space-12) var(--wk-space-24) var(--wk-space-12);
+}
+
+@media (min-width: 900px) {
+  .expanded {
+    padding: 0 var(--wk-space-16) var(--wk-space-24) calc(var(--wk-space-12) + 28px + var(--wk-space-8));
+  }
+}
+
+/* In its row, the list already says where the person is: the row is the header, the nav is the way out. The page's
+   h1 stays for assistive technology; the plain back link is the way out of a conversation shown on its own. */
+.expanded .detailTitle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.expanded .backLink {
+  display: none;
+}
+
+/* "Reply to this comment": navigation that moves the one composer, drawn as the quiet button it behaves like. */
+.replySlot {
+  display: flex;
+}
+
+.replySlot {
+  margin-top: var(--wk-space-4);
+}
+
+.replySlot a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: 0 var(--wk-space-12) 0 var(--wk-space-8);
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-canvas);
+  color: var(--wk-text-primary);
+  font: 500 13px / 1 var(--wk-font-ui);
+  text-decoration: none;
+  transition: background-color var(--wk-duration-fast) var(--wk-ease-standard);
+}
+
+.replySlot a:hover {
+  background: var(--wk-bg-hover);
+}
+
+.replySlot a:active {
+  background: var(--wk-bg-raised);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding-top: var(--wk-space-12);
+  border-top: 1px solid var(--wk-border-default);
+}
+
+/* Step 7B-15S: "More actions" is a quiet line under the thread, not a full-width box competing with it. */
+.actions > details {
+  border: 0;
+  background: transparent;
+}
+
+.actions > details > summary,
+.actions > details[open] > summary {
+  align-self: flex-start;
+  width: fit-content;
+  padding: 0 var(--wk-space-8) 0 0;
+  border-bottom: 0;
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.actions > details > summary:hover {
+  background: transparent;
+  color: var(--wk-text-primary);
+}
+
+.actions > details > div {
+  padding: var(--wk-space-4) 0 0 var(--wk-space-16);
+}
+
+.unavailableActions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+}
+
+.unavailableAction {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--wk-space-4) var(--wk-space-8);
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.unavailableActionName {
+  font-weight: 500;
+  color: var(--wk-text-primary);
+}
+
+/*
+ * One screen (phones) — Step 7B-15Q. These rules sit at the END of the file on purpose: they adjust rules declared
+ * above with the same specificity, and in CSS the later declaration wins. (Declared inside the first small-screen block
+ * near the top, they were silently overridden by the base rules that follow it.)
+ */
+@media (max-width: 767px) {
+  .conversationNav {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: var(--wk-space-4) 0;
+    border-bottom: 1px solid var(--wk-border-default);
+    background: var(--wk-bg-canvas);
+  }
+
+  .nested {
+    margin-left: var(--wk-space-8);
+    padding-left: var(--wk-space-12);
+  }
+
+  .outboundItem > .outbound {
+    padding: var(--wk-space-12) var(--wk-space-12) var(--wk-space-12) var(--wk-space-8);
+  }
+}
+
+/* Phones: the bar is one line — position, ‹ and › (their words read, not shown), Close. */
+@media (max-width: 479px) {
+  .navWord {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .navArrow {
+    font-size: 20px;
+  }
+
+  .conversationNav {
+    flex-wrap: nowrap;
+  }
+
+  .navPosition {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .navClose {
+    padding: 0;
+  }
+}
+
+.navLink svg {
+  flex: none;
+}
+
+/*
+ * Touch (Step 7B-15Q; 7B-15S): every control a finger uses in the Inbox is at least 44px tall — and 44px wide where its
+ * label is shorter — on a phone-sized screen AND wherever the primary pointer is coarse (tablets, at any width). A mouse
+ * keeps the 32px desktop targets (Manual §11). Last in the file, for the same reason as above.
+ */
+@media (max-width: 767px), (pointer: coarse) {
+  .navLink,
+  .replySlot a,
+  .contextSummary,
+  .memberDetailsSummary,
+  .expanded summary,
+  .standalone summary,
+  .coverage summary,
+  .thread button,
+  .pagination a,
+  .backLink a {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .navLink {
+    justify-content: center;
+  }
 }

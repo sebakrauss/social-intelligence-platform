@@ -79,13 +79,16 @@ describe("foundations are inert", () => {
     for (const file of css) expect(textOf(file), file).not.toMatch(/@import|url\(|expression\(|https?:|javascript:/);
   });
 
-  /** Step 7B-3: the ONE client component in ui/ — the contextual reply composer — pinned below with its own rule. */
-  const CLIENT_COMPONENTS = ["ui/inbox/reply-composer.tsx"];
+  /**
+   * Step 7B-3: the contextual reply composer — pinned below with its own rule. Step 7B-15H: + the signed-out boundary that
+   * clears the composer's in-memory drafts (one effect; pinned in tests/architecture/inbox-composer-guards.test.ts).
+   */
+  const CLIENT_COMPONENTS = ["ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx"];
 
   it("the foundation, brand, icon and primitive components are server components", () => {
     for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell", "ui/inbox"]).filter((file) => !CLIENT_COMPONENTS.includes(file))) {
       // No client directive, hook or BOUND handler (a primitive may forward an optional `onClick` prop for client components).
-      expect(codeOf(file), file).not.toMatch(/"use client"|from "react-dom"|useState|useEffect|onClick=\{|onChange=\{/);
+      expect(codeOf(file), file).not.toMatch(/["']use client["']|from "react-dom"|useState|useEffect|onClick=\{|onChange=\{/);
     }
     expect(codeOf("ui/primitives/button.tsx")).not.toMatch(/onClick=\{|useState|"use client"/);
   });
@@ -97,6 +100,9 @@ describe("foundations are inert", () => {
     expect(imports.filter(([, from]) => from.startsWith("@/server/"))).toEqual([["type", "@/server/inbox/reply-state"]]);
     expect(imports.filter(([, from]) => /^@\/(tools|platform|modules|db|integrations|ai|mutations|jobs)\//.test(from))).toEqual([]);
     expect(composer).not.toMatch(/dangerouslySetInnerHTML|<script|javascript:|fetch\(|\bt\(|@\/server\/i18n|process\.env/);
+    // No persistence (Step 7B-15H made this title true): no web storage, cookie or URL write; the full syntax-tree rule for
+    // every client module is in tests/architecture/inbox-composer-guards.test.ts.
+    expect(composer).not.toMatch(/localStorage|sessionStorage|indexedDB|cookie|history\.|location\.|globalThis/);
     // Only the review stage posts; the hidden field is the same state string the review shows.
     expect(composer).toMatch(/<form action=\{formAction\}/);
     expect([...composer.matchAll(/<form/g)]).toHaveLength(1);
@@ -197,6 +203,33 @@ describe("UI reference pages (development only)", () => {
     expect(action).toMatch(/if \(!IS_DEVELOPMENT\) return \{ kind: "unavailable" \};/);
     expect([...action.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])).toEqual(["@/server/inbox/reply-state"]);
     expect(action).not.toMatch(/pipeline|requestPublicReplyCommand|mutations\/|platform\/db|fetch\(|requestAuth/);
+  });
+});
+
+describe("Inbox › Comments prototype (Step 7B-15N, development only)", () => {
+  const DIR = "app/dev/ui-reference/comments";
+
+  it("is a 404 outside next dev, indexes nothing, and its only action is the reply harness's development-only simulation", () => {
+    const page = codeOf(`${DIR}/page.tsx`);
+    expect(page).toMatch(/const IS_DEVELOPMENT = process\.env\.NODE_ENV === "development";/);
+    expect(page).toMatch(/if \(!IS_DEVELOPMENT\) notFound\(\);/);
+    expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+    expect((page.match(/process\.env/g) ?? []).length).toBe(1);
+    expect(page).toMatch(/^import \{ simulateReplyAction \} from "\.\.\/reply\/actions";$/m);
+    expect(page).toMatch(/action: simulateReplyAction/);
+    // The simulation never claims a delivery: its request outcomes read "demo".
+    expect(page).toMatch(/const DEMO_OUTCOME = "Demo only — no reply was sent\.";/);
+    expect(page).toMatch(/requested: DEMO_OUTCOME, existing: DEMO_OUTCOME/);
+    expect(page).not.toMatch(/publishReplyAction|@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|@\/mutations\/|fetch\(|runtime|"use (client|server)"/);
+  });
+
+  it("the prototype's components and fixtures read nothing, send nothing and add no client code", () => {
+    for (const file of [`${DIR}/prototype.tsx`, `${DIR}/fixtures.ts`]) {
+      const code = codeOf(file);
+      expect(code.replace(/^import type \{ ReplyAction \} from "@\/server\/inbox\/reply-state";$/m, ""), file).not.toMatch(/@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|@\/mutations\/|@\/integrations\/|publishReplyAction|fetch\(|process\.env|["']use (client|server)["']|localStorage|sessionStorage|cookie|dangerouslySetInnerHTML/);
+    }
+    // The one composer is the real, unchanged component; the prototype never gives it a start stage or a text.
+    expect(codeOf(`${DIR}/prototype.tsx`)).not.toMatch(/initialStage|initialText/);
   });
 });
 

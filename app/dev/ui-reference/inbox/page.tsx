@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { ConversationDetail, InboxPage } from "@/server/inbox/inbox";
-import { InboxPanes } from "@/ui/inbox/inbox";
-import { ClosedState, ConversationView, DetailEmpty, InboxListView } from "@/app/workspaces/[workspaceId]/inbox/views";
+import { InboxWorkspace, StandaloneConversation } from "@/ui/inbox/inbox";
+import { ClosedState, ConversationView, InboxListView } from "@/app/workspaces/[workspaceId]/inbox/views";
 
 /**
  * Inbox reference (UI-4) — DEVELOPMENT ONLY, synthetic data. Draws the Inbox views with hand-written view models so
@@ -82,7 +82,10 @@ const DETAIL_REPLY: ConversationDetail = {
 };
 const DETAIL_REPLY_UNAVAILABLE: ConversationDetail = { ...DETAIL, reply: { kind: "unavailable", reason: "platform_unavailable", platform: "instagram" } };
 
-const VIEWS = ["list", "selected", "detail", "empty", "none", "partial", "unavailable", "not_allowed", "not_found", "reply", "reply_unavailable"] as const;
+/** Step 7B-15B: an exceptional validation reply — the composer only under the comment the live authorization covers. */
+const DETAIL_VALIDATION: ConversationDetail = { ...DETAIL, reply: { kind: "validation", connectedAccountId: ACCOUNT_IG, platform: "instagram", maxChars: 2200, targets: [{ targetInteractionId: "a1111111-1111-4111-8111-111111111111", expiresAt: at("2026-11-09T00:20:00Z") }] } };
+
+const VIEWS = ["list", "selected", "detail", "empty", "none", "partial", "unavailable", "not_allowed", "not_found", "reply", "reply_open", "validation", "reply_unavailable", "standalone"] as const;
 type View = (typeof VIEWS)[number];
 const isView = (value: unknown): value is View => typeof value === "string" && (VIEWS as readonly string[]).includes(value);
 
@@ -91,19 +94,34 @@ export default async function InboxReferencePage({ searchParams }: { readonly se
   const raw = (await searchParams)["view"];
   const view: View = isView(raw) ? raw : "list";
   const cursor = "2026-11-08T23:14:00.000Z~11111111-1111-4111-8111-111111111111";
-  const list = (page: InboxPage, selectedId?: string) => <InboxListView workspaceId={WS} page={page} cursor={cursor} {...(selectedId === undefined ? {} : { selectedId })} />;
+  const list = (page: InboxPage, selectedId?: string, expanded?: React.ReactNode) => <InboxListView workspaceId={WS} page={page} cursor={cursor} {...(selectedId === undefined ? {} : { selectedId })} {...(expanded === undefined ? {} : { expanded })} />;
+  const open = (detail: ConversationDetail, replyTo?: string) => <ConversationView workspaceId={WS} detail={detail} cursor={cursor} {...(replyTo === undefined ? {} : { replyTo })} />;
+  const skip = { href: "#conversation", label: "Skip to conversation" };
   return (
     <main>
-      {view === "list" ? <InboxPanes selected={false} list={list(PAGE)} detail={<DetailEmpty />} /> : null}
-      {view === "selected" || view === "detail" ? <InboxPanes selected={view === "detail"} skipToDetail={{ href: "#conversation", label: "Skip to conversation" }} list={list(PAGE, IDS[0])} detail={<ConversationView workspaceId={WS} detail={DETAIL} cursor={cursor} />} /> : null}
-      {view === "empty" ? <InboxPanes selected={false} list={list(EMPTY)} detail={null} /> : null}
-      {view === "none" ? <InboxPanes selected={false} list={list(NONE)} detail={null} /> : null}
-      {view === "partial" ? <InboxPanes selected={false} list={list(PARTIAL)} detail={<DetailEmpty />} /> : null}
-      {view === "unavailable" ? <InboxPanes selected={false} list={<ClosedState kind="unavailable" />} detail={null} /> : null}
-      {view === "not_allowed" ? <InboxPanes selected={false} list={<ClosedState kind="not_allowed" />} detail={null} /> : null}
-      {view === "not_found" ? <InboxPanes selected list={list(PAGE)} detail={<ClosedState kind="conversation_not_found" />} /> : null}
-      {view === "reply" ? <InboxPanes selected skipToDetail={{ href: "#conversation", label: "Skip to conversation" }} list={list(PAGE, IDS[0])} detail={<ConversationView workspaceId={WS} detail={DETAIL_REPLY} cursor={cursor} />} /> : null}
-      {view === "reply_unavailable" ? <InboxPanes selected skipToDetail={{ href: "#conversation", label: "Skip to conversation" }} list={list(PAGE, IDS[0])} detail={<ConversationView workspaceId={WS} detail={DETAIL_REPLY_UNAVAILABLE} cursor={cursor} />} /> : null}
+      {view === "list" ? <InboxWorkspace selected={false}>{list(PAGE)}</InboxWorkspace> : null}
+      {view === "selected" || view === "detail" ? <InboxWorkspace selected skipToConversation={skip}>{list(PAGE, IDS[0], open(DETAIL))}</InboxWorkspace> : null}
+      {view === "empty" ? <InboxWorkspace selected={false}>{list(EMPTY)}</InboxWorkspace> : null}
+      {view === "none" ? <InboxWorkspace selected={false}>{list(NONE)}</InboxWorkspace> : null}
+      {view === "partial" ? <InboxWorkspace selected={false}>{list(PARTIAL)}</InboxWorkspace> : null}
+      {view === "unavailable" ? <InboxWorkspace selected={false}><ClosedState kind="unavailable" /></InboxWorkspace> : null}
+      {view === "not_allowed" ? <InboxWorkspace selected={false}><ClosedState kind="not_allowed" /></InboxWorkspace> : null}
+      {view === "not_found" ? (
+        <InboxWorkspace selected>
+          <StandaloneConversation><ClosedState kind="conversation_not_found" /></StandaloneConversation>
+          {list(PAGE)}
+        </InboxWorkspace>
+      ) : null}
+      {view === "reply" ? <InboxWorkspace selected skipToConversation={skip}>{list(PAGE, IDS[0], open(DETAIL_REPLY))}</InboxWorkspace> : null}
+      {view === "reply_open" ? <InboxWorkspace selected skipToConversation={skip}>{list(PAGE, IDS[0], open(DETAIL_REPLY, "a1111111-1111-4111-8111-111111111111"))}</InboxWorkspace> : null}
+      {view === "validation" ? <InboxWorkspace selected skipToConversation={skip}>{list(PAGE, IDS[0], open(DETAIL_VALIDATION, "a1111111-1111-4111-8111-111111111111"))}</InboxWorkspace> : null}
+      {view === "reply_unavailable" ? <InboxWorkspace selected skipToConversation={skip}>{list(PAGE, IDS[0], open(DETAIL_REPLY_UNAVAILABLE))}</InboxWorkspace> : null}
+      {view === "standalone" ? (
+        <InboxWorkspace selected skipToConversation={skip}>
+          <StandaloneConversation>{open(DETAIL_REPLY_UNAVAILABLE)}</StandaloneConversation>
+          {list({ ...PAGE, items: PAGE.items.slice(1) }, IDS[0])}
+        </InboxWorkspace>
+      ) : null}
     </main>
   );
 }

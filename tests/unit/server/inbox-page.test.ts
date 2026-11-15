@@ -27,6 +27,8 @@ vi.mock("next/navigation", () => ({ redirect: () => undefined }));
 vi.mock("@/server/inbox/runtime", () => ({
   currentInboxPage: () => Promise.resolve(env.list),
   currentConversation: () => Promise.resolve(env.detail),
+  // Step 7B-15F: no verified person here, so no reply-draft scope (the composer keeps no draft).
+  currentReplyDraftScope: () => Promise.resolve(undefined),
   inboxPipeline: () => undefined,
 }));
 

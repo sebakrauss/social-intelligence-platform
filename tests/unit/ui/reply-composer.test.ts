@@ -123,13 +123,16 @@ describe("7B-3: the conversation view", () => {
     expect(view(detail({ kind: "unavailable", reason: "monitor_only", platform: "instagram" }))).toContain(t("inbox.reply.reason.monitor_only"));
   });
 
-  it("available: exactly one Reply affordance per eligible member — the top-level audience comment, never the brand's own reply, the Instagram reply-to-reply or the hidden comment", () => {
+  it("available: ONE composer per render (Step 7B-15B) — under the first eligible comment; every other eligible comment offers a link that moves it, never a second composer; own, hidden and the Instagram reply-to-reply offer nothing", () => {
     const html = view(detail({ kind: "available", connectedAccountId: "acc", platform: "instagram", maxChars: 2200, limitation: null }));
     expect([...html.matchAll(/>Reply<\/button>/g)]).toHaveLength(1);
     expect(html).not.toMatch(/<form/);
     const facebook = view({ ...detail({ kind: "available", connectedAccountId: "acc", platform: "facebook", maxChars: 2200, limitation: null }), platform: "facebook" });
-    // Facebook: the audience reply-to-reply is eligible too (2 affordances); own and hidden still are not.
-    expect([...facebook.matchAll(/>Reply<\/button>/g)]).toHaveLength(2);
+    // Facebook: the audience reply-to-reply is eligible too — still ONE composer, plus one link that moves it there; own and hidden offer nothing.
+    expect([...facebook.matchAll(/>Reply<\/button>/g)]).toHaveLength(1);
+    expect([...facebook.matchAll(new RegExp(`>${t("inbox.reply.here")}</a>`, "g"))]).toHaveLength(1);
+    expect(facebook).toContain(`href="/workspaces/${WS}/inbox/${CONVERSATION}?reply=a3333333-3333-4333-8333-333333333333#member-a3333333-3333-4333-8333-333333333333"`);
+    expect(html).not.toContain(t("inbox.reply.here"));
   });
 
   it("outbound replies appear under their comment with their REAL state, text as text, and never as a canonical member", () => {
@@ -150,7 +153,11 @@ describe("7B-3: the conversation view", () => {
     expect(html).toContain(escape(t("inbox.outbound.blocked_note")));
     // Sent only where the platform confirmed; the sending row carries no "Published" time.
     expect([...html.matchAll(new RegExp(t("inbox.outbound.state.sent"), "g"))]).toHaveLength(1);
-    expect([...html.matchAll(/Published /g)]).toHaveLength(1);
+    // Step 7B-15S: the published time is written twice in the ONE sent entry (short for the eye, exact for assistive
+    // technology); no other entry carries it.
+    const entries = html.split(/<li class="[^"]*outboundItem/).slice(1).map((entry) => entry.slice(0, entry.indexOf("</li>")));
+    expect(entries.filter((entry) => entry.includes("Published "))).toHaveLength(1);
+    expect(entries.find((entry) => entry.includes("Published "))).toContain("Confirmada");
     expect(html).not.toContain("RESPONSE_LOST");
   });
 });

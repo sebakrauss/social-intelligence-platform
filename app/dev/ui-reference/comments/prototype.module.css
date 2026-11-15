@@ -1,0 +1,1059 @@
+/*
+ * Comments prototype (Step 7B-15N) — DEVELOPMENT ONLY. Brand tokens only (Manual de Marca v1.1): greys, the three
+ * functional states, square data boxes and round state pills; no new color, no shadow in dark, the blue left to links
+ * and focus (through the base styles). Two directions share one DOM: [data-direction="focus"] (A) and
+ * [data-direction="triage"] (B) only rearrange it.
+ */
+
+.page ol,
+.page ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.page p,
+.page h1,
+.page h2,
+.page h3 {
+  margin: 0;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-16);
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+  min-width: 0;
+}
+
+.skip {
+  position: absolute;
+  left: var(--wk-space-8);
+  top: var(--wk-space-8);
+  z-index: 5;
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-action-primary-bg);
+  color: var(--wk-action-primary-fg);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  transform: translateY(-300%);
+}
+
+.skip:focus {
+  transform: none;
+}
+
+/* ── Prototype control strip (never product UI) ─────────────────────────────── */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wk-space-8) var(--wk-space-16);
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-md);
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.barTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.barBadge {
+  padding: 0 var(--wk-space-8);
+  border-radius: var(--wk-radius-xs);
+  background: var(--wk-warning-bg);
+  color: var(--wk-warning-fg);
+  font: 500 11px / 20px var(--wk-font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.barGroups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-8) var(--wk-space-16);
+}
+
+.barGroup {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4);
+}
+
+.barLabel {
+  margin-right: var(--wk-space-4);
+  font: 500 11px / 16px var(--wk-font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--wk-text-tertiary);
+}
+
+.barOption {
+  padding: var(--wk-space-2) var(--wk-space-8);
+  border-radius: var(--wk-radius-full);
+  color: var(--wk-text-secondary);
+  text-decoration: none;
+}
+
+.barOption:hover {
+  background: var(--wk-bg-hover);
+}
+
+.barOption[aria-current] {
+  background: var(--wk-action-primary-bg);
+  color: var(--wk-action-primary-fg);
+}
+
+/* ── Header and scope ───────────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--wk-space-4) var(--wk-space-16);
+}
+
+.title {
+  font: 600 28px / calc(34 / 28) var(--wk-font-brand);
+  letter-spacing: -0.02em;
+  color: var(--wk-text-primary);
+}
+
+.subtitle {
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8) var(--wk-space-12);
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+}
+
+.scopeLabel {
+  font: 500 12px / 16px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.scopeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-8);
+}
+
+.scopeItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-2) var(--wk-space-12) var(--wk-space-2) var(--wk-space-4);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-full);
+}
+
+.scopeRead {
+  margin-left: auto;
+  font: 400 12px / 16px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.mono {
+  font: 500 11px / 16px var(--wk-font-mono);
+  letter-spacing: 0.02em;
+  color: inherit;
+}
+
+.quietLine {
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.demoBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.demoMark {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 18px;
+  padding: 0 var(--wk-space-4);
+  border: 1px dashed var(--wk-warning-fg);
+  border-radius: var(--wk-radius-xs);
+  color: var(--wk-warning-fg);
+  font: 500 10px / 1 var(--wk-font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ── Toolbar: views (round = state that changes), platform chips, order ─────── */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-12) var(--wk-space-16);
+  padding-bottom: var(--wk-space-12);
+  border-bottom: 1px solid var(--wk-border-default);
+}
+
+.tabs,
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-4);
+}
+
+.tab,
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: 0 var(--wk-space-12);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-full);
+  color: var(--wk-text-primary);
+  font: 500 13px / 1 var(--wk-font-ui);
+  text-decoration: none;
+}
+
+.chip {
+  min-height: 28px;
+  font-size: 12px;
+  color: var(--wk-text-secondary);
+}
+
+.tab:hover,
+.chip:hover {
+  background: var(--wk-bg-hover);
+}
+
+.tab[aria-current],
+.chip[aria-current] {
+  border-color: var(--wk-action-primary-bg);
+  background: var(--wk-action-primary-bg);
+  color: var(--wk-action-primary-fg);
+}
+
+.tabCount {
+  font: 500 11px / 1 var(--wk-font-mono);
+  opacity: 0.8;
+}
+
+.order {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  margin-left: auto;
+  font: 400 12px / 16px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+/* ── The list ───────────────────────────────────────────────────────────────── */
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.item {
+  border-bottom: 1px solid var(--wk-border-default);
+  scroll-margin-top: var(--wk-space-16);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, auto) minmax(0, 1fr) auto;
+  grid-template-areas:
+    "avatar who post time"
+    "avatar excerpt excerpt excerpt"
+    "avatar meta meta meta";
+  column-gap: var(--wk-space-12);
+  row-gap: var(--wk-space-4);
+  padding: var(--wk-space-16) var(--wk-space-12);
+  color: var(--wk-text-primary);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+}
+
+.row:hover {
+  background: var(--wk-bg-hover);
+}
+
+.item[data-open="true"] {
+  background: var(--wk-bg-surface);
+}
+
+.item[data-open="true"] > .row {
+  border-left-color: var(--wk-text-primary);
+  padding-bottom: var(--wk-space-8);
+}
+
+/* An open conversation shows its text once — in the thread — so the row becomes its compact header. */
+.item[data-open="true"] .excerpt,
+.item[data-open="true"] .meta {
+  display: none;
+}
+
+.avatar {
+  grid-area: avatar;
+}
+
+.avatar,
+.msgAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-bg-hover);
+  border: 1px solid var(--wk-border-default);
+  color: var(--wk-text-secondary);
+  font: 500 12px / 1 var(--wk-font-ui);
+}
+
+.who {
+  grid-area: who;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
+}
+
+.author {
+  overflow: hidden;
+  font: 600 14px / calc(20 / 14) var(--wk-font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.post {
+  grid-area: post;
+  align-self: center;
+  overflow: hidden;
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time {
+  grid-area: time;
+  align-self: center;
+  font: 500 11px / 16px var(--wk-font-mono);
+  letter-spacing: 0.02em;
+  color: var(--wk-text-tertiary);
+  white-space: nowrap;
+}
+
+.excerpt {
+  grid-area: excerpt;
+  display: -webkit-box;
+  overflow: hidden;
+  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.muted {
+  color: var(--wk-text-secondary);
+}
+
+.meta {
+  grid-area: meta;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 0;
+}
+
+.meta:empty {
+  display: none;
+}
+
+.why {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
+}
+
+.whyText {
+  font: 400 12px / 16px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.empty {
+  padding: var(--wk-space-48) var(--wk-space-16);
+  text-align: center;
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.emptyTitle {
+  margin-bottom: var(--wk-space-4);
+  font: 600 20px / calc(26 / 20) var(--wk-font-brand);
+  color: var(--wk-text-primary);
+}
+
+/* ── The open conversation (in place, inside its row) ───────────────────────── */
+.open {
+  padding: 0 var(--wk-space-12) var(--wk-space-24) calc(var(--wk-space-12) + 2px + 36px + var(--wk-space-12));
+  border-left: 2px solid var(--wk-text-primary);
+  outline: none;
+}
+
+.openBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8) var(--wk-space-12);
+  padding: var(--wk-space-4) 0 var(--wk-space-12);
+  font: 400 12px / 16px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.position {
+  font: 500 11px / 16px var(--wk-font-mono);
+  letter-spacing: 0.02em;
+  color: var(--wk-text-tertiary);
+}
+
+.moves {
+  display: inline-flex;
+  gap: var(--wk-space-4);
+}
+
+.move,
+.moveDisabled,
+.close,
+.contextButton,
+.backToList {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border-radius: var(--wk-radius-sm);
+  color: var(--wk-text-primary);
+  font: 500 12px / 16px var(--wk-font-ui);
+  text-decoration: none;
+}
+
+.move:hover,
+.close:hover,
+.contextButton:hover,
+.backToList:hover {
+  background: var(--wk-bg-hover);
+}
+
+.moveDisabled {
+  color: var(--wk-text-disabled);
+}
+
+/* "← Comments" is the way back on one-screen layouts only; wider screens close in place. */
+.backToList {
+  display: none;
+}
+
+.close {
+  margin-left: auto;
+}
+
+.contextButton {
+  border: 1px solid var(--wk-border-default);
+}
+
+.openGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--wk-space-24);
+}
+
+.threadColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-16);
+  min-width: 0;
+  max-width: 720px;
+}
+
+.side {
+  display: none;
+}
+
+/* A (focus) on wide screens: the post sits beside the thread, only while a conversation is open. */
+@media (min-width: 1280px) {
+  [data-direction="focus"] .openGrid {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: var(--wk-space-32);
+  }
+
+  [data-direction="focus"] .side {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wk-space-16);
+    padding-left: var(--wk-space-24);
+    border-left: 1px solid var(--wk-border-default);
+  }
+
+  [data-direction="focus"] .contextStrip {
+    display: none;
+  }
+}
+
+.contextStrip {
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-canvas);
+}
+
+.contextStripSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 40px;
+  padding: 0 var(--wk-space-12);
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  cursor: pointer;
+}
+
+.contextStrip[open] > .postCard {
+  padding: 0 var(--wk-space-12) var(--wk-space-12);
+}
+
+.contextStrip[open] .sideHeading {
+  display: none;
+}
+
+.contextLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.subtle {
+  font: 400 12px / 16px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.whyCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-12);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-md);
+}
+
+.whyHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.whyTitle {
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.factors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  padding-left: var(--wk-space-16) !important;
+  list-style: disc !important;
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+/* Thread: no boxes — avatars, one indent rule for replies, own replies marked by their avatar and author line. */
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-24);
+}
+
+.topLevel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-12);
+  scroll-margin-top: var(--wk-space-16);
+}
+
+.replies {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-12);
+  margin-left: 15px;
+  padding-left: calc(var(--wk-space-24) - 1px);
+  border-left: 1px solid var(--wk-border-strong);
+}
+
+.message {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: var(--wk-space-12);
+}
+
+.message[data-nested="true"] {
+  grid-template-columns: 28px minmax(0, 1fr);
+}
+
+.message[data-nested="true"] .msgAvatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+.msgAvatarOwn {
+  border-color: var(--wk-action-primary-bg);
+  background: var(--wk-action-primary-bg);
+  color: var(--wk-action-primary-fg);
+}
+
+.msgBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  min-width: 0;
+}
+
+.msgHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4) var(--wk-space-8);
+}
+
+.msgAuthor {
+  font: 600 14px / calc(20 / 14) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.msgText {
+  max-width: 68ch;
+  font: 400 14px / calc(22 / 14) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msgStatus {
+  font: 400 12px / 16px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.msgStatus[data-state="checking"],
+.msgStatus[data-state="blocked"] {
+  color: var(--wk-warning-fg);
+}
+
+.msgStatus[data-state="failed"] {
+  color: var(--wk-danger-fg);
+}
+
+/* The one reply affordance: aligned with the replies, a quiet button (never an underlined link). */
+.affordance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-12);
+  margin-left: 44px;
+}
+
+.replyButton {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: 0 var(--wk-space-12);
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-canvas);
+  color: var(--wk-text-primary);
+  font: 500 13px / 1 var(--wk-font-ui);
+  text-decoration: none;
+}
+
+.replyButton:hover {
+  background: var(--wk-bg-hover);
+}
+
+.quietNote {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  margin-left: 44px;
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+/* The real composer, presented as the next reply in the thread (outside styling only; its component is untouched). */
+.composerSlot {
+  max-width: 640px;
+}
+
+.composerSlot section {
+  margin-top: 0;
+  padding: var(--wk-space-12) var(--wk-space-16) var(--wk-space-16);
+  border-color: var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-canvas);
+}
+
+.composerSlot h3 {
+  font-size: 13px;
+}
+
+.composerSlot textarea {
+  min-height: 88px;
+  border-radius: var(--wk-radius-sm);
+}
+
+.suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  max-width: 640px;
+  padding: var(--wk-space-12);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-md);
+}
+
+.suggestionHead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  font: 500 12px / 16px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.suggestionText {
+  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+}
+
+.suggestionMeta {
+  font: 400 12px / 16px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.suggestionMissing {
+  color: var(--wk-warning-fg);
+}
+
+/* Context card and secondary actions */
+.postCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  min-width: 0;
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.sideHeading {
+  font: 500 12px / 16px var(--wk-font-ui);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--wk-text-secondary);
+}
+
+.postMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.postAccount {
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.postCaption {
+  padding-left: var(--wk-space-12);
+  border-left: 2px solid var(--wk-border-strong);
+  color: var(--wk-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.postLink {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4);
+  color: var(--wk-text-secondary);
+}
+
+.more {
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.moreSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border-radius: var(--wk-radius-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.moreSummary:hover {
+  background: var(--wk-bg-hover);
+}
+
+.moreList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-8);
+}
+
+.moreItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-2);
+  color: var(--wk-text-disabled);
+}
+
+.moreItem > span:first-child {
+  color: var(--wk-text-secondary);
+}
+
+[data-direction="triage"] .open > .more {
+  margin-top: var(--wk-space-16);
+}
+
+/* ── Direction B (triage): one line per conversation from 1024px ────────────── */
+@media (min-width: 1024px) {
+  [data-direction="triage"] .row {
+    grid-template-columns: 28px minmax(120px, 170px) minmax(0, 1fr) minmax(0, 170px) minmax(0, 220px) 52px;
+    grid-template-areas: "avatar who excerpt post meta time";
+    align-items: center;
+    padding: var(--wk-space-8) var(--wk-space-12);
+  }
+
+  [data-direction="triage"] .avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+
+  [data-direction="triage"] .excerpt {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 13px;
+  }
+
+  [data-direction="triage"] .meta {
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+
+  [data-direction="triage"] .meta > :not(:first-child) {
+    display: none;
+  }
+
+  [data-direction="triage"] .whyText,
+  [data-direction="triage"] .why > :last-child {
+    display: none;
+  }
+
+  [data-direction="triage"] .time {
+    justify-self: end;
+  }
+
+  [data-direction="triage"] .item[data-open="true"] .excerpt,
+  [data-direction="triage"] .item[data-open="true"] .meta {
+    display: block;
+    visibility: hidden;
+  }
+
+  [data-direction="triage"] .open {
+    padding-left: calc(var(--wk-space-12) + 28px + var(--wk-space-12));
+  }
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: var(--wk-text-primary);
+  opacity: 0.24;
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-16);
+  width: min(400px, 100vw);
+  padding: var(--wk-space-16) var(--wk-space-24);
+  overflow-y: auto;
+  border-left: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-raised);
+  outline: none;
+}
+
+.drawerHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drawerTitle {
+  font: 600 20px / calc(26 / 20) var(--wk-font-brand);
+}
+
+.closeText {
+  display: inline;
+}
+
+/* ── One screen at a time (phones) ──────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .page {
+    gap: var(--wk-space-12);
+  }
+
+  .bar {
+    padding: var(--wk-space-8);
+  }
+
+  .scopeRead,
+  .order {
+    margin-left: 0;
+  }
+
+  .row {
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "avatar who time"
+      "avatar post post"
+      "avatar excerpt excerpt"
+      "avatar meta meta";
+    padding: var(--wk-space-12) var(--wk-space-4);
+    min-height: 44px;
+  }
+
+  .tab,
+  .chip,
+  .replyButton,
+  .move,
+  .moveDisabled,
+  .close,
+  .contextButton,
+  .backToList,
+  .moreSummary,
+  .contextStripSummary {
+    min-height: 44px;
+  }
+
+  .page[data-selected="true"] > .scope,
+  .page[data-selected="true"] > .quietLine,
+  .page[data-selected="true"] > .demoBanner,
+  .page[data-selected="true"] > .toolbar,
+  .page[data-selected="true"] .item[data-open="false"],
+  .page[data-selected="true"] .item[data-open="true"] > .row {
+    display: none;
+  }
+
+  /* The page title stays for assistive technology; only its visual is folded away. */
+  .page[data-selected="true"] > .header {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .page[data-selected="true"] .item[data-open="true"] {
+    border-bottom: 0;
+    background: transparent;
+  }
+
+  .open {
+    padding: 0;
+    border-left: 0;
+  }
+
+  .openBar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    margin-bottom: var(--wk-space-8);
+    padding: var(--wk-space-4) 0;
+    border-bottom: 1px solid var(--wk-border-default);
+    background: var(--wk-bg-canvas);
+  }
+
+  .backToList {
+    display: inline-flex;
+    padding-left: 0;
+    font-size: 14px;
+  }
+
+  .position {
+    display: none;
+  }
+
+  .closeText {
+    display: none;
+  }
+
+  .affordance,
+  .quietNote {
+    margin-left: 0;
+  }
+
+  .replies {
+    margin-left: 11px;
+    padding-left: var(--wk-space-12);
+  }
+
+  .composerSlot section {
+    padding: var(--wk-space-12);
+  }
+
+  .drawer {
+    width: 100vw;
+    padding: var(--wk-space-16);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .row,
+  .tab,
+  .chip,
+  .replyButton {
+    transition: background-color var(--wk-duration-fast) var(--wk-ease-standard);
+  }
+}

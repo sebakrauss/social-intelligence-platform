@@ -2,6 +2,7 @@ import Link from "next/link";
 import { signUpWithPasswordAction } from "@/server/auth/actions";
 import { AUTH_STATUS_MESSAGES, parseAuthStatus } from "@/server/auth/forms";
 import { t } from "@/server/i18n";
+import { ReplyDraftsSignedOut } from "@/ui/inbox/reply-drafts-boundary";
 
 /** Minimal account registration (Step 1). Onboarding (create organization) is a later step. */
 export default async function SignUpPage({
@@ -13,6 +14,8 @@ export default async function SignUpPage({
 
   return (
     <main>
+      {/* Step 7B-15H: a signed-out surface forgets every unsent reply draft kept in this tab. */}
+      <ReplyDraftsSignedOut />
       <h1>{t("auth.sign_up.heading")}</h1>
       {status === undefined ? null : <p role="status">{t(AUTH_STATUS_MESSAGES[status])}</p>}
 

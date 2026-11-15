@@ -51,6 +51,11 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/api/webhooks/meta/route.ts",
       "app/auth/callback/route.ts",
       // UI-2: the component reference sheet; a 404 in every build that is not `next dev` (brand-guards proves it).
+      // Step 7B-15N: the Inbox › Comments product prototype (synthetic fixtures; its only action is the reply harness's
+      // development-only simulation), also a 404 outside `next dev` (brand-guards proves it).
+      "app/dev/ui-reference/comments/fixtures.ts",
+      "app/dev/ui-reference/comments/page.tsx",
+      "app/dev/ui-reference/comments/prototype.tsx",
       // UI-4: the Inbox reference (synthetic view models), also development-only.
       "app/dev/ui-reference/inbox/page.tsx",
       "app/dev/ui-reference/page.tsx",

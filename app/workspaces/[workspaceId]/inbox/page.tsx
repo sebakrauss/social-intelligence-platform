@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import { currentInboxPage } from "@/server/inbox/runtime";
 import { t } from "@/server/i18n";
-import { InboxPanes } from "@/ui/inbox/inbox";
-import { ClosedState, DetailEmpty, InboxListView } from "./views";
+import { InboxWorkspace } from "@/ui/inbox/inbox";
+import { ClosedState, InboxListView } from "./views";
 
 /** Inbox content is per request and per member: never prerender it. */
 export const dynamic = "force-dynamic";
@@ -13,8 +13,8 @@ export const dynamic = "force-dynamic";
  * client guest sees the access message only). The list unit is the conversation (IA-01). Each row is one link showing
  * where it comes from, who wrote the first comment, an excerpt of it AS TEXT (links inert), when it last moved and what
  * is known about what was read. No action exists on this page: no reply, hide, delete, block, assignment, resolution
- * or "Needs review" (steps 7B and 8). Priority and labels are not available yet, which the page says. From 1280px the
- * list sits beside an empty detail pane; older pages follow a server-issued position only.
+ * or "Needs review" (steps 7B and 8). Priority and labels are not available yet, which the page says. The list is one wide
+ * column (Step 7B-15B): a conversation opens in place, inside its row; older pages follow a server-issued position only.
  *
  * "What has been read" is the most recent coverage record per managed account and kind, with its as-of time (TA
  * §17.4, S11): an empty list says whether nothing was read or nothing was found.
@@ -34,11 +34,7 @@ export default async function WorkspaceInboxPage({
 
   return (
     <main>
-      <InboxPanes
-        selected={false}
-        list={state.kind === "ready" ? <InboxListView workspaceId={state.workspaceId} page={state.page} cursor={cursor} /> : <ClosedState kind={state.kind} />}
-        detail={state.kind === "ready" && state.page.items.length > 0 ? <DetailEmpty /> : null}
-      />
+      <InboxWorkspace selected={false}>{state.kind === "ready" ? <InboxListView workspaceId={state.workspaceId} page={state.page} cursor={cursor} /> : <ClosedState kind={state.kind} />}</InboxWorkspace>
       <span className="wk-sr-only">{t("inbox.heading")}</span>
     </main>
   );

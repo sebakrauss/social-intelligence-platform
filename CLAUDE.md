@@ -33,7 +33,7 @@ Non-negotiable product stances (PD §1, §7):
 |---|---|---|
 | `docs/product-definition-v1.md` (PD) | 1.3, approved | Product intent and confirmed product behavior (decisions D-01…D-52) |
 | `docs/information-architecture-v1.md` (IA) | 1.1, approved | Where concepts live; navigation; role visibility (IA §18) |
-| `docs/core-ux-flows-v1.md` (UX) | 1.1, approved | User journeys, interaction behavior, unavailable states |
+| `docs/core-ux-flows-v1.md` (UX) | 1.1, approved. v1.2 (Phase 1 Comments Inbox amendment UX-19 Focus / UX-20 in-memory drafts, Step 7B-15V) is **pending formal product-owner approval** of its wording | User journeys, interaction behavior, unavailable states |
 | `docs/intelligence-data-model-v1.md` (Model) | 1.1, approved | Conceptual meaning, provenance, relationships, invariants S1–S21 (Model §50) |
 | `docs/technical-architecture-v1.md` (TA) | 1.2, approved. v1.3 (security amendment R4a, Step 7B-14P1) is technically validated and **pending formal product-owner approval** | Implementation boundaries, stack, runtime patterns, security, operations |
 | `docs/pre-implementation-validation-v1.md` | 1.0, accepted (0E.3) | Evidence for validated technical patterns (TA-Q-29, TA-Q-04, R1–R8). Evidence, not a decision document |

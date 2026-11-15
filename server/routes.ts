@@ -42,3 +42,20 @@ export function workspaceInboxPagePath(workspaceId: unknown, cursor: string): st
   const base = workspaceInboxPath(workspaceId);
   return base === undefined ? undefined : `${base}?cursor=${encodeURIComponent(cursor)}`;
 }
+
+/** The DOM id of one comment or reply in the open conversation (Step 7B-15B): the fragment target of "reply here". */
+export function threadMemberId(memberId: string): string {
+  return `member-${memberId}`;
+}
+
+/**
+ * The open conversation with the ONE reply composer under a chosen comment (Step 7B-15B). Navigation only: it selects
+ * where the composer is drawn, never what may be replied to — the page re-checks eligibility and the server re-checks
+ * everything at request time. All three ids must be canonical UUIDs or there is no path.
+ */
+export function workspaceConversationReplyPath(workspaceId: unknown, conversationId: unknown, memberId: unknown, cursor?: string): string | undefined {
+  const id = parseWorkspaceId(workspaceId);
+  if (id === undefined || !isUuid(conversationId) || !isUuid(memberId)) return undefined;
+  const position = cursor === undefined || cursor === "" ? "" : `cursor=${encodeURIComponent(cursor)}&`;
+  return `/workspaces/${id}/inbox/${conversationId}?${position}reply=${memberId}#${threadMemberId(memberId)}`;
+}

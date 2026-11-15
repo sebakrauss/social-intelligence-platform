@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { ConversationDetail } from "@/server/inbox/inbox";
-import { InboxPanes } from "@/ui/inbox/inbox";
+import { InboxWorkspace, StandaloneConversation } from "@/ui/inbox/inbox";
 import { ConversationView, replyOutcomeMessages } from "@/app/workspaces/[workspaceId]/inbox/views";
 import { simulateReplyAction } from "./actions";
 
@@ -45,11 +45,28 @@ const DETAIL: ConversationDetail = {
 
 export default async function ReplyReferencePage({ searchParams }: { readonly searchParams: Promise<Readonly<Record<string, string | string[] | undefined>>> }) {
   if (!IS_DEVELOPMENT) notFound();
-  const platform = (await searchParams)["platform"] === "facebook" ? "facebook" : "instagram";
+  const query = await searchParams;
+  const platform = query["platform"] === "facebook" ? "facebook" : "instagram";
+  const reply = query["reply"];
+  const replyTo = typeof reply === "string" && reply !== "" ? reply : undefined;
   const detail: ConversationDetail = platform === "facebook" ? { ...DETAIL, platform, source: "organic", reply: { ...DETAIL.reply, platform } as ConversationDetail["reply"] } : DETAIL;
   return (
     <main>
-      <InboxPanes selected skipToDetail={{ href: "#conversation", label: "Skip to conversation" }} list={<div />} detail={<ConversationView workspaceId={WS} detail={detail} cursor={undefined} replyAction={simulateReplyAction} replyOutcomes={{ ...replyOutcomeMessages(), requested: DEMO_OUTCOME, existing: DEMO_OUTCOME }} />} />
+      <InboxWorkspace selected skipToConversation={{ href: "#conversation", label: "Skip to conversation" }}>
+        <StandaloneConversation>
+          <ConversationView
+            workspaceId={WS}
+            detail={detail}
+            cursor={undefined}
+            {...(replyTo === undefined ? {} : { replyTo })}
+            // Step 7B-15F: a synthetic draft scope, and "reply to this comment" stays inside this harness (in-page).
+            draftScope="dev-reference"
+            replyPath={(memberId) => `/dev/ui-reference/reply?platform=${platform}&reply=${memberId}#member-${memberId}`}
+            replyAction={simulateReplyAction}
+            replyOutcomes={{ ...replyOutcomeMessages(), requested: DEMO_OUTCOME, existing: DEMO_OUTCOME }}
+          />
+        </StandaloneConversation>
+      </InboxWorkspace>
     </main>
   );
 }

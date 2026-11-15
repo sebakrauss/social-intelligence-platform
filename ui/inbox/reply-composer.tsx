@@ -14,6 +14,7 @@ import { useFormStatus } from "react-dom";
 import type { ReplyAction, ReplyActionState } from "@/server/inbox/reply-state";
 import { Button } from "@/ui/primitives/button";
 import { Notice, type NoticeTone } from "@/ui/primitives/notice";
+import { forgetReplyDraft, keepReplyDraft, replyDraftKey, restoreReplyDraft, settleReplyDraft } from "./reply-drafts";
 import styles from "./reply-composer.module.css";
 
 export type ComposerStage = "closed" | "write" | "review" | "done";
@@ -40,6 +41,8 @@ export interface ReplyComposerLabels {
   readonly reviewNote: string;
   readonly publish: string;
   readonly publishing: string;
+  /** Step 7B-15F: shown in the write stage while the text is a draft kept from earlier in this tab. */
+  readonly restored?: string;
 }
 
 /** Outcome copy by closed state, resolved on the server: `requested`, `existing`, `unavailable`, `signed_out`, `refused.<reason>`, `blocked.<code>`. */
@@ -52,9 +55,23 @@ export interface ReplyComposerProps {
   readonly labels: ReplyComposerLabels;
   /** Outcome copy by closed state (see ReplyOutcomeMessages); the development harness overrides it to say "demo". */
   readonly outcomes: ReplyOutcomeMessages;
-  /** Development reference only: start at a later stage with a text, to draw it without interaction. */
+  /**
+   * The stage the composer starts at (default "closed": behind its Reply button).
+   *
+   * Production callers may pass ONLY "write" (Step 7B-15B: the Inbox opens the ONE composer under the comment the
+   * address names, `?reply=`, ready to type). That skips nothing: the write stage has no form — only the review stage
+   * posts, after the person pressed Review and then the explicit Publish confirmation — so navigation alone can never
+   * publish or bypass the review. "review", "done" and `initialText` are for tests and the development reference only
+   * (to draw a stage without interaction); no production caller is authorized to pass them
+   * (tests/architecture/inbox-composer-guards.test.ts).
+   */
   readonly initialStage?: ComposerStage;
   readonly initialText?: string;
+  /**
+   * Step 7B-15F: the opaque per-person scope of this tab's in-memory drafts (reply-drafts.ts), from the server's
+   * verified identity. Without it, no draft is kept or restored.
+   */
+  readonly draftScope?: string;
 }
 
 const IDLE: ReplyActionState = { kind: "idle" };
@@ -79,6 +96,19 @@ function outcomeKey(state: ReplyActionState): string | undefined {
 /** A request is not a delivery: neutral until the thread shows the platform's confirmation (green is for Sent only). */
 const OUTCOME_TONE: { readonly [K in Exclude<ReplyActionState["kind"], "idle">]: NoticeTone } = { requested: "info", existing: "info", refused: "warning", blocked: "warning", unavailable: "danger", signed_out: "warning" };
 
+/**
+ * Step 7B-15H: Edit is unavailable while the publication is in flight — the reviewed text cannot be reopened (and then
+ * kept as a draft) while the request that carries it may still be accepted.
+ */
+function EditButton({ label, onEdit }: { readonly label: string; readonly onEdit: () => void }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button variant="ghost" size="sm" disabled={pending} onClick={onEdit}>
+      {label}
+    </Button>
+  );
+}
+
 function PublishButton({ label, pendingLabel }: { readonly label: string; readonly pendingLabel: string }) {
   const { pending } = useFormStatus();
   return (
@@ -88,10 +118,14 @@ function PublishButton({ label, pendingLabel }: { readonly label: string; readon
   );
 }
 
-export function ReplyComposer({ action, fields, maxChars, labels, outcomes, initialStage = "closed", initialText = "" }: ReplyComposerProps) {
-  const [stage, setStage] = useState<ComposerStage>(initialStage);
-  const [text, setText] = useState(initialText);
-  const [state, formAction] = useActionState<ReplyActionState, FormData>(action, IDLE);
+export function ReplyComposer({ action, fields, maxChars, labels, outcomes, initialStage = "closed", initialText = "", draftScope }: ReplyComposerProps) {
+  // Step 7B-15F: this composer's unsent text kept in this tab's memory, if any. It seeds the WRITE stage only (whatever
+  // the start stage); never the review stage, a mode or a target — those are the server's render.
+  const draftKey = draftScope === undefined ? undefined : replyDraftKey(draftScope, fields);
+  const [restored] = useState(() => restoreReplyDraft(draftKey));
+  const [stage, setStage] = useState<ComposerStage>(restored !== undefined ? "write" : initialStage);
+  const [text, setText] = useState(restored ?? initialText);
+  const [state, formAction] = useActionState<ReplyActionState, FormData>(settleReplyDraft(action, draftKey), IDLE);
   const id = useId();
   const length = text.length;
   const remaining = maxChars - length;
@@ -145,6 +179,7 @@ export function ReplyComposer({ action, fields, maxChars, labels, outcomes, init
             value={text}
             onChange={(event) => {
               setText(event.target.value);
+              keepReplyDraft(draftKey, event.target.value);
             }}
             rows={4}
             maxLength={maxChars * 2}
@@ -155,6 +190,7 @@ export function ReplyComposer({ action, fields, maxChars, labels, outcomes, init
           <p id={`${id}-help`} className={styles["help"]}>
             {labels.fieldHelp}
           </p>
+          {restored !== undefined && text === restored && labels.restored !== undefined ? <p className={styles["help"]}>{labels.restored}</p> : null}
           <p id={`${id}-count`} className={remaining < 0 ? styles["countOver"] : styles["count"]} aria-live="polite">
             {remaining < 0 ? counted(labels.overLimit, -remaining) : counted(labels.remaining, remaining)}
           </p>
@@ -164,6 +200,7 @@ export function ReplyComposer({ action, fields, maxChars, labels, outcomes, init
               size="sm"
               onClick={() => {
                 setStage("closed");
+                forgetReplyDraft(draftKey);
               }}
             >
               {labels.cancel}
@@ -200,15 +237,12 @@ export function ReplyComposer({ action, fields, maxChars, labels, outcomes, init
             </Notice>
           )}
           <div className={styles["actions"]}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
+            <EditButton
+              label={labels.edit}
+              onEdit={() => {
                 setStage("write");
               }}
-            >
-              {labels.edit}
-            </Button>
+            />
             <PublishButton label={labels.publish} pendingLabel={labels.publishing} />
           </div>
         </form>

@@ -78,3 +78,14 @@ export function codeWithoutPlaneRefusals(relative: string): string {
   if (stripped === code) throw new Error(`${relative}: the plane refusal declarations were not found`);
   return stripped;
 }
+
+/**
+ * Step 7B-15J (audit 7B-15I Z08): whether a source file is a React client module — its directive prologue contains
+ * "use client" in EITHER quote style (a single-quoted directive is just as real). Read from the text's leading
+ * statements (comments and whitespace allowed before them), never from an exact spelling at byte 0.
+ */
+export function isClientModule(relative: string): boolean {
+  const text = readFileSync(path.join(REPOSITORY_ROOT, relative), "utf8");
+  const prologue = /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*((?:(["'])use [a-z ]+\2;?\s*)+)/.exec(text)?.[1] ?? "";
+  return /(["'])use client\1/.test(prologue);
+}

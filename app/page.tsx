@@ -2,6 +2,7 @@ import Link from "next/link";
 import { signOutAction } from "@/server/auth/actions";
 import { currentSessionState } from "@/server/auth/request-auth";
 import { t } from "@/server/i18n";
+import { ReplyDraftsSignedOut } from "@/ui/inbox/reply-drafts-boundary";
 
 /** Session state is per request: never prerender it. */
 export const dynamic = "force-dynamic";
@@ -16,6 +17,8 @@ export default async function SessionPage() {
   return (
     <main>
       {state === "unavailable" ? <p role="status">{t("auth.status.unavailable")}</p> : null}
+      {/* Step 7B-15J: "/" is a signed-out surface too — it forgets every unsent reply draft kept in this tab. */}
+      {state === "signed_out" ? <ReplyDraftsSignedOut /> : null}
       {state === "signed_out" ? <Link href="/sign-in">{t("auth.sign_in.link")}</Link> : null}
       {state === "verification_required" ? <p role="status">{t("auth.status.verification_required")}</p> : null}
       {state === "signed_in" ? <p role="status">{t("auth.status.signed_in")}</p> : null}

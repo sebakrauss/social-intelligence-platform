@@ -8,6 +8,7 @@ import { createLogger, stdoutSink } from "@/platform/observability";
 import { requestAuth } from "@/server/auth/request-auth";
 import { webUnitOfWork } from "@/server/persistence/runtime";
 import { createActionPipeline, type ActionPipeline } from "@/server/pipeline";
+import { replyDraftScope } from "./draft-scope";
 import { resolveConversation, resolveInboxPage, type ConversationViewState, type InboxListState } from "./inbox";
 
 const logger = createLogger({ sink: stdoutSink, base: { module: "server.inbox" } });
@@ -37,5 +38,19 @@ export async function currentConversation(workspaceId: unknown, conversationId: 
   } catch {
     logger.warn("inbox.conversation.unavailable", { outcome: "error" });
     return { kind: "unavailable" };
+  }
+}
+
+/**
+ * Step 7B-15F: the reply-draft scope of the request's verified person (draft-scope.ts), or undefined — then the
+ * composer keeps no draft. Presentation only: it authorizes nothing, and every read and command re-checks the session.
+ */
+export async function currentReplyDraftScope(): Promise<string | undefined> {
+  try {
+    const auth = await requestAuth();
+    const user = auth === undefined ? undefined : await auth.getVerifiedUser();
+    return user === undefined ? undefined : replyDraftScope(user.id);
+  } catch {
+    return undefined;
   }
 }

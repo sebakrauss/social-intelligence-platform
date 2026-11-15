@@ -4,9 +4,9 @@
 |---|---|
 | Document | Core UX Flows v1 |
 | Phase | 0C — Core UX Flows |
-| Version | 1.1 (Phase 0E.1 alignment) |
-| Date | 2026-10-03 |
-| Status | **Approved** by the product owner on 2026-10-03 (Phase 0C.1); v1.1 aligned in Phase 0E.1 |
+| Version | 1.2 (Phase 1 Comments Inbox amendment, Step 7B-15V — **pending formal product-owner approval of the amended text**; the latest formally approved version is **1.1**) |
+| Date | 2026-10-03 (v1.0, v1.1) · 2026-11-15 (v1.2, pending formal approval) |
+| Status | **Approved** by the product owner on 2026-10-03 (Phase 0C.1); v1.1 aligned in Phase 0E.1. v1.2 records the product owner's Phase 1 direction for the Comments Inbox (UX-19, UX-20; §8.10); its wording is **pending formal approval** |
 | Sources of truth | `docs/product-definition-v1.md` v1.3 (approved) · `docs/information-architecture-v1.md` v1.1 (approved) |
 | Scope | How users move through the product: intent, decision points, system responses, branches, unavailable states and successful outcomes. **Not** visual design, wireframes, components, data schema, technical architecture or implementation. |
 
@@ -17,6 +17,7 @@
 | 2026-10-03 | 0C | Core UX Flows v1.0 drafted. |
 | 2026-10-03 | 0C.1 | Product owner approved Core UX Flows v1.0 and locked IA-01, IA-02, IA-03, IA-04, IA-09, IA-10, IA-13, IA-15, IA-16 and UX-01, UX-02, UX-04, UX-05, UX-06, UX-10, UX-12, UX-15. UX-14 is not adopted. UX-03, UX-07, UX-08, UX-09, UX-13 and UX-16 are deferred, and UX-11 is out of the MVP (§28). The capability-availability rules were aligned with the IA: platform limits are visible but unavailable, never hidden (§25). The IA moved to v1.1 in the same phase. The Product Definition is unchanged. Version 1.0 kept. |
 | 2026-10-03 | 0E.1 | Product owner confirmed two flow behaviors during the Technical Architecture decision lock, recorded as **UX-17** (auto-hide activation is forward-only; PD D-51) and **UX-18** (uncertain interactions are excluded from human bulk Hide; PD D-52). Reflected in §6.1, §8.6, §14, §15.4, §28, §29 and Appendix B. Individual human moderation is unchanged. Version bumped to **1.1**. No other flow changed. |
+| 2026-11-15 | Step 7B-15V | Version **1.2** (**pending formal product-owner approval of this text**): Phase 1 amendment for the Comments Inbox, recorded as **UX-19** (Focus: the selected conversation opens inline) and **UX-20** (Phase 1 reply drafts kept in memory only — a temporary exception), plus a reaffirmation of future scope (§8.10). Three separate statuses: (1) *product direction* — the product owner delegated the Inbox 2.0 product direction and, through the Step 7B-15V mandate relayed by the technical lead, approved Focus (Direction A) as the default Comments Inbox presentation and the Phase 1 draft contract as a temporary exception; (2) *implementation evidence* — built and independently reviewed in Steps 7B-15B to 7B-15U, not yet committed or deployed; (3) *formal approval of the amended wording* — **pending**. Changed: §2 (note on P3), §3.1 (note on drafts), §8.4 step 3, new §8.10, §28.2 (UX-19, UX-20), §29 (item 21). The v1.1 wording of §8.4 step 3 is kept, struck through, for traceability. No PD, IA, Model or TA decision changes; PD C-03/D-36 (no DM inbox) and every safety invariant hold. |
 
 ---
 
@@ -132,7 +133,7 @@ Three commitments shape every flow:
 |---|---|---|
 | P1 | **Answer first, controls second** | Every surface opens with a plain-language statement. Filters and options appear after the answer. |
 | P2 | **Explain why** | Priority, labels, insights, recommendations, automatic hides and unavailable actions all carry a one-line reason, with detail on demand. |
-| P3 | **Preserve user context** | Drilling down never loses the origin. Context arrives as visible, removable filters with a path back. Drafts survive navigation and errors. |
+| P3 | **Preserve user context** | Drilling down never loses the origin. Context arrives as visible, removable filters with a path back. Drafts survive navigation and errors. *(Phase 1: unsent reply drafts follow the temporary in-memory exception UX-20, §8.10.B — they do not survive a reload, leaving the conversation or signing out.)* |
 | P4 | **One primary action at a time** | Each step offers one recommended action. Secondary actions are present but quieter. Destructive actions are separated. |
 | P5 | **Reversible where possible** | Hide, assignment, status, labels and automatic hides can be undone. Irreversible actions (delete, and block where the platform makes it irreversible) need an explicit confirmation that states the consequence. |
 | P6 | **Safe defaults** | Automation is off by default. Protected categories can never be auto-hidden (PD D-35). Monitor-only disables every platform mutation (PD D-49). Suggestions are never sent automatically (PD D-45). |
@@ -153,7 +154,7 @@ Three commitments shape every flow:
 | Scope | Persists across | Local to | Behavior when changed |
 |---|---|---|---|
 | **Organization** | Everything | — | Rarely changes. Only users in more than one organization see an organization choice (an edge case). |
-| **Workspace** | All five destinations and Settings › Workspace | — | Switching workspaces keeps the source scope and analysis period, and resets local filters, open items and drafts. Unsent drafts trigger a "Discard draft?" prompt. |
+| **Workspace** | All five destinations and Settings › Workspace | — | Switching workspaces keeps the source scope and analysis period, and resets local filters, open items and drafts. Unsent drafts trigger a "Discard draft?" prompt. *(Phase 1: approximated by the browser's generic leave confirmation; UX-20, §8.10.B.)* |
 | **Brand / Market** | — | All workspaces (grouping and filter); inside a multi-brand workspace, a local filter on Inbox, Content & Ads and Insights (IA-07) | Not a global scope. Brand and Market are labels (PD C-11). |
 | **Source scope** (All · Organic · Paid) | Home, Inbox, Content & Ads, Insights, within a session and across workspace switches | Not applied to Reports (§3.2) | Changing it updates the current destination immediately. Mixed and Unknown are under All and available as filters (IA §4.1). |
 | **Analysis period** (default: last 30 days) | Content & Ads and Insights | Home uses "now vs baseline". Inbox uses waiting time and an optional date filter. Reports use their own report period. | Persists between Content & Ads and Insights. |
@@ -427,7 +428,7 @@ Behaviors:
 
 1. **Open Inbox.** The view header answers first: counts by urgency for the current scope.
 2. **Scan.** Each list item shows platform, Organic/Paid/Mixed, author, excerpt, one primary label, "Why it's here", content reference, waiting time and assignee (IA §7.5-A).
-3. **Select a conversation.** The detail opens beside the list, so list position is kept (§9).
+3. **Select a conversation.** ~~The detail opens beside the list, so list position is kept (§9).~~ *(v1.1 wording, superseded by UX-19 — §8.10.A.)* The conversation opens **in place, inside its own row of the list** (Focus), so list position is kept (§9). No permanent detail pane sits beside the list.
 4. **Understand why.** The full "Why it's here" factors are visible: what, where, how long, uncertainty, protection notices (IA §7.6).
 5. **Decide:**
    - **Act:** reply (F-07), moderate a harmful comment (F-10), or mark done with a resolution.
@@ -467,6 +468,39 @@ The chosen view is clear, or everything left in it is deliberately assigned or e
 ### 8.9 Monitor-only behavior
 
 The same views, ordering and reasons. The persistent Inbox notice explains the mode. Primary actions become **Assign · Escalate · Add note · Mark done (Reviewed)**. Platform actions are visible but unavailable. Hidden automatically shows history only (IA §7.8).
+
+### 8.10 Phase 1 amendment — Comments Inbox presentation and reply drafts (Step 7B-15V)
+
+**Status:** product-owner direction (Step 7B-15V); the wording is **pending formal approval** (approval record). This section narrows how the flows above are **presented** and how unsent reply drafts are **retained** in Phase 1. It does not change what the Inbox is for, its views, its workflow model, any safety rule or any PD, IA, Model or TA decision.
+
+#### A. UX-19 — Focus: the selected conversation opens inline
+
+| | |
+|---|---|
+| **Previous requirement (v1.1)** | §8.4 step 3: "The detail opens beside the list, so list position is kept (§9)" — a list-and-detail, side-by-side presentation. |
+| **New Phase 1 requirement** | One conceptual Inbox; **Comments** is its current view of work. The default presentation is **Direction A · Focus**: **one** selected conversation is expanded **inline, inside its own row**, and the rest of the list stays where it was. There is **no permanent third column or detail pane**. What is known about where the conversation happens (platform, content kind, Organic / Paid / Mixed / Unknown, status) is shown **inside the expanded conversation** when relevant — beside the thread on wide screens, a disclosure above it otherwise — and says plainly what is not available. On small screens the Inbox is **one screen at a time**: with a conversation open, only it is on screen, with previous / next / close that return to the same list position. The existing authorization, availability and publication contracts are unchanged. |
+| **Reason** | It keeps the intent of step 3 (list position is never lost) while keeping one wide reading column and a scannable list at every width, with no permanently empty pane. IA §8 orders the detail by importance, "not layout", so the IA is unchanged. |
+| **Scope limits** | Presentation only. The detail's information order (IA §8; §9.1) and every branch of §8 and §9 stay as written. Auto-advance (§8.4 step 6), views, filters, labels, "Why it's here", assignment and escalation remain the target behavior; Phase 1 shows only what the product actually has (C below). |
+| **Deferred** | **Direction B · Triage** — one-line, compact rows with the context in a drawer — is kept as a future, optional **density mode**. It is not implemented. |
+| **Boundaries** | No new action, permission or data. Unavailable actions stay visible with their one reason (§25); role limits hide (IA §18). |
+
+#### B. UX-20 — Phase 1 reply drafts: kept in memory only (temporary exception)
+
+| | |
+|---|---|
+| **Previous requirement (v1.1)** | P3 "Drafts survive navigation and errors" (§2) and every "the draft is kept" statement that depends on it: §3.1 ("Discard draft?" when switching workspaces), §9.5, §9.6, §10.4, §10.5, §12.4, §15.3, §25.1, §25.3, §26 (and IA §18 rule 4). |
+| **New Phase 1 requirement** | An unsent public-reply draft is kept **only in the browser tab's memory**: never on the server, never in browser storage, never in the address, logs or analytics. It is scoped to the **signed-in person, the workspace, the conversation and the comment**; without a verified person no draft is kept. It **survives** moving the one composer to another comment of the same conversation, the browser's Back and Forward between those comments, and an answer in which nothing was created (refused, blocked, signed out) — the text comes back at the write stage. It **does not survive** a full reload, closing the tab, leaving the conversation (another conversation, the list, another workspace) or signing out; Publish, Cancel or emptying the text also discards it. While a draft is kept, the browser's own generic "leave this page?" confirmation guards full navigations, **only where the browser offers it**; it cannot name the draft and is not the §3.1 "Discard draft?" prompt. When a reply may already have been accepted (its outcome is unknown), no draft is kept for that comment, so it can never come back as a new publishable reply; and while a reply is still on its way or being checked, that comment offers no way to write another one. A restored draft is never an authorization: Review and Publish stay explicit human steps. |
+| **Reason** | Keeping drafts across those boundaries would mean storing audience-related text in the browser or on the server — a separate security and product decision. |
+| **Scope limits** | Phase 1 only. This behavior is **neither persistent nor durable**. It is a temporary exception to P3 and §3.1 that must be resolved before commercial readiness. |
+| **Deferred** | **Durable draft persistence** — it needs its own security design (where it is stored, protection, retention, per-person scoping, sign-out and shared-device behavior) and product-owner approval **before commercial readiness**. |
+| **Boundaries** | No new storage of any kind; publication, its safeguards and every Monitor-only rule are unchanged. |
+
+#### C. Future scope (reaffirmed — nothing here is implemented)
+
+- **Private Messages**, if ever offered, is a **separate experience** from Comments. Today no DM surface exists anywhere: PD C-03 and D-36, PD §10 and Model S9 are unchanged. Any DM functionality first requires a **formal PD scope amendment** and **independent validation of the platform capability**.
+- **Replying privately** (F-09, one-shot) is a contract distinct from public comment replies. In Phase 1 it is listed as unavailable, with its reason.
+- **Classification, prioritization, "Why it's here", suggested replies and recommended actions** remain the target behavior of §8–§10, but the product does not produce them yet. The Phase 1 Inbox says so ("No automated review has run…"), shows no label, priority, sentiment or risk, and orders conversations by newest activity.
+- **Ordinary public replies stay unavailable** until the server itself refuses a second public reply to a comment while an earlier one is still on its way or being checked (a separate backend gate). A presentation change never makes publication available.
 
 ---
 
@@ -1496,6 +1530,8 @@ Status key: **CONFIRMED** (locked by the product owner) · **OPEN** (IA decision
 | **UX-16** | Delivering escalations to non-members | **DEFERRED** | With PD OQ-17. "Copy escalation summary" is a temporary UX fallback, not a committed integration. |
 | **UX-17** | Auto-hide activation is forward-only: rules apply to comments arriving after activation (or resumption). Previews may use history, but activation never hides historical comments. Historical cleanup is a human bulk Hide. Reprocessing, model upgrades and corrections never trigger automatic hides. | **CONFIRMED** (0E.1) | PD D-51; §6.1, §14.2, §14.5, §14.7, §15.4 |
 | **UX-18** | Uncertain comments are excluded from human bulk Hide (counted, flagged for individual review), in addition to protected categories (UX-06). Individual human moderation stays available. | **CONFIRMED** (0E.1) | PD D-52; §8.6, §14.7 |
+| **UX-19** | Focus: one selected conversation expands inline inside its row; no permanent detail pane; context shown inside the expanded conversation; one screen at a time on small screens. Triage kept as a future optional density mode. | **PO direction (7B-15V); wording pending formal approval** | §8.4 step 3, §8.10.A. Supersedes the v1.1 "beside the list" wording. |
+| **UX-20** | Phase 1 reply drafts are kept in the tab's memory only (person · workspace · conversation · comment); not kept across reload, leaving the conversation or sign-out. Durable persistence needs its own security design and approval before commercial readiness. | **TEMPORARY EXCEPTION (Phase 1)** — PO direction (7B-15V); wording pending formal approval | §2 P3, §3.1, §8.10.B |
 
 ### 28.3 Product questions referenced (unchanged, still open in the PD)
 
@@ -1527,6 +1563,7 @@ Before moving to wireframes and visual design, all of the following must be true
 18. **Entry and workflow locks hold:** multi-workspace users enter through All workspaces; there is no personal start-page preference, no Waiting/Snooze, and no responder recommendation workflow.
 19. **Availability rules consistent with the IA:** role limits hide; Monitor-only and platform limits are visible but unavailable with an explanation; connection problems offer recovery (§25).
 20. **Phase 0E.1 behaviors hold (v1.1):** auto-hide activation is forward-only and previews never imply retrospective hiding (UX-17); uncertain comments are excluded from human bulk Hide while individual moderation remains available (UX-18).
+21. **Phase 1 amendment holds (v1.2, pending formal approval):** the selected conversation opens inline and list position is kept (UX-19); unsent reply drafts are never stored outside the tab's memory, are never described as persistent, and never return as a new publishable reply after an unknown outcome (UX-20); no DM surface, AI output or private reply is presented as available (§8.10.C).
 
 ---
 
