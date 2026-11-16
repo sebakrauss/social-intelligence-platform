@@ -2,10 +2,12 @@
  * Inbox structure (UI-4; Step 7B-15B): the presentational pieces the Inbox pages compose — the wide work surface, a
  * conversation row (expanded in place when selected), a thread member, a coverage account block, the empty state. Structure and CSS only: every text arrives translated,
  * every value already shaped by the Step 7A view models, and nothing here decides, reads or acts. Native elements:
- * a row is one <a>, a time is <time>, lists are lists. Server components.
+ * a row is one <a>, a time is <time>, lists are lists. Server components. Step 7B-17K: the row and the open
+ * conversation's previous / next / close are in-app links (ui/navigation/app-link.tsx) — still one <a href> each.
  */
 import type { ReactNode } from "react";
 import { Icon } from "@/ui/icons/icon";
+import { AppLink } from "@/ui/navigation/app-link";
 import styles from "./inbox.module.css";
 
 /**
@@ -122,7 +124,7 @@ export function ConversationRow({ id, href, current, origin, author, named = tru
   const open = expanded !== undefined && expanded !== null;
   return (
     <li id={id} className={open ? styles["expandedItem"] : undefined}>
-      <a href={href} className={styles["row"]} {...(current ? { "aria-current": "page" } : {})}>
+      <AppLink href={href} className={styles["row"]} pendingClassName={styles["rowPending"]} current={current} focusKey={id}>
         <div className={styles["rowHead"]}>
           <span className={styles["avatar"]} aria-hidden="true">
             {named ? initialsOf(author) : ""}
@@ -134,7 +136,7 @@ export function ConversationRow({ id, href, current, origin, author, named = tru
         {/* Step 7B-15O: an open conversation shows its text once — in the thread — so its row is only the compact header. */}
         {open ? null : <p className={join(styles["rowExcerpt"], excerptMuted ? styles["rowMuted"] : undefined)}>{excerpt}</p>}
         {open || meta === undefined || meta === null ? null : <div className={styles["rowMeta"]}>{meta}</div>}
-      </a>
+      </AppLink>
       {open ? (
         <div className={styles["expanded"]}>
           {nav}
@@ -166,7 +168,7 @@ export function ConversationNav({ label, position, previous, next, close }: {
         {direction === "next" ? <span className={styles["navArrow"]}>›</span> : null}
       </span>
     ) : (
-      <a href={target.href} className={styles["navLink"]}>
+      <AppLink href={target.href} className={styles["navLink"]} pendingClassName={styles["navPending"]}>
         {direction === "previous" ? (
           <span className={styles["navArrow"]} aria-hidden="true">
             ‹
@@ -179,7 +181,7 @@ export function ConversationNav({ label, position, previous, next, close }: {
             ›
           </span>
         ) : null}
-      </a>
+      </AppLink>
     );
   return (
     <nav className={styles["conversationNav"]} aria-label={label}>
@@ -187,10 +189,10 @@ export function ConversationNav({ label, position, previous, next, close }: {
       {move(previous, "previous")}
       {move(next, "next")}
       {close === undefined ? null : (
-        <a href={close.href} className={join(styles["navLink"], styles["navClose"])}>
+        <AppLink href={close.href} className={join(styles["navLink"], styles["navClose"])} pendingClassName={styles["navPending"]}>
           <Icon name="util-close" size={16} />
           <span className={styles["navWord"]}>{close.label}</span>
-        </a>
+        </AppLink>
       )}
     </nav>
   );

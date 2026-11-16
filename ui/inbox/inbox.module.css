@@ -479,6 +479,7 @@
 }
 
 .navLink {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--wk-space-4);
@@ -1065,5 +1066,46 @@ a.navLink:active {
 
   .navLink {
     justify-content: center;
+  }
+}
+
+/*
+ * Step 7B-17K — an in-app move started from this link is under way (ui/navigation/app-link.tsx sets data-pending on the
+ * signal inside it): the link takes the hover tone at once and a thin line grows along its foot until the next page is
+ * on screen. The page itself stays in place meanwhile. With reduced motion the line is simply shown (motion.css).
+ */
+.rowPending,
+.navPending {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-text-primary);
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.rowPending,
+.navPending[data-pending="true"] {
+  opacity: 1;
+  animation: linkPending var(--wk-duration-reveal) var(--wk-ease-enter) forwards;
+}
+
+.row:has(> .rowPending[data-pending="true"]),
+.navLink:has(> .navPending[data-pending="true"]) {
+  background: var(--wk-bg-hover);
+  cursor: progress;
+}
+
+@keyframes linkPending {
+  from {
+    transform: scaleX(0.08);
+  }
+  to {
+    transform: scaleX(0.9);
   }
 }

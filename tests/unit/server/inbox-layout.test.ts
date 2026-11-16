@@ -141,7 +141,8 @@ describe("a selected conversation", () => {
     expect(count(html, /aria-current="page"/g)).toBe(1);
     expect(count(html, /id="conversation"/g)).toBe(1);
     // The conversation lives inside the selected row's <li>, under the row's own link — not in a pane beside the list.
-    expect(html).toMatch(new RegExp(`<li id="row-${CONVERSATION}" class="[^"]*expandedItem[^"]*"><a href="/workspaces/${WS}/inbox/${CONVERSATION}#row-${CONVERSATION}"[^>]*aria-current="page"`));
+    // Step 7B-17K: the row is an in-app link (ui/navigation/app-link.tsx) — still the row's one <a href>.
+    expect(html).toMatch(new RegExp(`<li id="row-${CONVERSATION}" class="[^"]*expandedItem[^"]*"><a class="[^"]*" aria-current="page" href="/workspaces/${WS}/inbox/${CONVERSATION}#row-${CONVERSATION}">`));
     const before = html.indexOf(`id="row-${OTHER}"`);
     const open = html.indexOf('id="conversation"');
     const after = html.indexOf('id="row-33333333-3333-4333-8333-333333333333"');
@@ -577,7 +578,7 @@ describe("Focus presentation (Step 7B-15O)", () => {
       const html = await renderConversation(detail(AVAILABLE), paged);
       const nav = html.slice(html.indexOf(`aria-label="${t("inbox.nav.label")}"`), html.indexOf("</nav>", html.indexOf(`aria-label="${t("inbox.nav.label")}"`)));
       expect(nav).toContain(t("inbox.nav.position_page", { index: "2", count: "2" }));
-      expect(nav).toMatch(new RegExp(`<a href="/workspaces/${WS}/inbox\\?cursor=${encodeURIComponent(older).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"[^>]*><span class="[^"]*navWord[^"]*">${escape(t("inbox.pagination.older"))}</span>`));
+      expect(nav).toMatch(new RegExp(`<a class="[^"]*" href="/workspaces/${WS}/inbox\\?cursor=${encodeURIComponent(older).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"><span class="[^"]*" data-pending="false" aria-hidden="true"></span><span class="[^"]*navWord[^"]*">${escape(t("inbox.pagination.older"))}</span>`));
       expect(nav).not.toContain(`>${t("inbox.nav.next")}`);
       // A page reached through a cursor has newer pages before it: its first row is not "1 of everything" either.
       const second = await renderConversation(detail(AVAILABLE), list([CONVERSATION, OTHER]), { cursor: CURSOR });

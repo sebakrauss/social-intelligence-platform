@@ -4,7 +4,8 @@
  * nothing: every destination it shows was already authorized upstream, every text arrives translated, the account
  * menu's content (the sign-out form) is passed in. Native elements only — links, lists, <details> for the two menus —
  * so the shell works without JavaScript and announces itself: a skip link, named navigation landmarks, aria-current
- * on the active destination.
+ * on the active destination. Step 7B-17K: the destinations are in-app links (ui/navigation/app-link.tsx) — still one
+ * <a href> each — so moving between sections and workspaces does not reload the whole document.
  *
  * What is deliberately absent: a logo in the rail (the manual keeps the Loop for favicon, app and avatar; the product
  * sidebar carries the wordmark), decorative items, and any destination that does not exist yet. The account menu uses
@@ -15,6 +16,7 @@
 import type { ReactNode } from "react";
 import { Logo } from "@/ui/brand/logo";
 import { Icon, type IconName } from "@/ui/icons/icon";
+import { AppLink } from "@/ui/navigation/app-link";
 import { StatePill } from "@/ui/primitives/state-pill";
 import styles from "./app-shell.module.css";
 
@@ -86,10 +88,10 @@ export function AppShell({ texts, workspace, switcher, nav, sidebar, account, pa
             <ul className={styles["railList"]}>
               {nav.map((item) => (
                 <li key={item.key}>
-                  <a href={item.href} className={styles["railItem"]} {...(item.current ? { "aria-current": "page" } : {})}>
+                  <AppLink href={item.href} className={styles["railItem"]} pendingClassName={styles["linkPending"]} current={item.current}>
                     <Icon name={item.icon} size={20} />
                     <span>{item.label}</span>
-                  </a>
+                  </AppLink>
                 </li>
               ))}
             </ul>
@@ -144,10 +146,10 @@ export function AppShell({ texts, workspace, switcher, nav, sidebar, account, pa
                         <span className={styles["switcherItemOrganization"]}>{item.organizationName}</span>
                       </span>
                     ) : (
-                      <a href={item.href} className={styles["switcherItem"]}>
+                      <AppLink href={item.href} className={styles["switcherItem"]} pendingClassName={styles["linkPending"]}>
                         {item.name}
                         <span className={styles["switcherItemOrganization"]}>{item.organizationName}</span>
-                      </a>
+                      </AppLink>
                     )}
                   </li>
                 ))}
@@ -165,9 +167,9 @@ export function AppShell({ texts, workspace, switcher, nav, sidebar, account, pa
             <ul className={styles["sideList"]}>
               {sidebar.items.map((item) => (
                 <li key={item.href}>
-                  <a href={item.href} className={styles["sideItem"]} {...(item.current ? { "aria-current": "page" } : {})}>
+                  <AppLink href={item.href} className={styles["sideItem"]} pendingClassName={styles["linkPending"]} current={item.current}>
                     {item.label}
-                  </a>
+                  </AppLink>
                 </li>
               ))}
             </ul>

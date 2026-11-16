@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import type { IdentityPort } from "@/platform/auth/port";
 import { createLogger, stdoutSink } from "@/platform/observability";
-import { requestAuth } from "@/server/auth/request-auth";
+import { requestIdentity } from "@/server/auth/request-auth";
 import { webUnitOfWork } from "@/server/persistence/runtime";
 import { createActionPipeline, type ActionPipeline } from "@/server/pipeline";
 import { resolveConnectionSettings, type ConnectionSettingsState } from "./settings";
@@ -19,10 +19,10 @@ export function connectionSettingsPipeline(identity: IdentityPort): ActionPipeli
 
 /** The current request's view of one workspace's connections; any composition or database failure is `unavailable`. */
 export async function currentConnectionSettings(workspaceId: unknown): Promise<ConnectionSettingsState> {
-  const auth = await requestAuth();
-  if (auth === undefined) return { kind: "unavailable" };
+  const identity = await requestIdentity();
+  if (identity === undefined) return { kind: "unavailable" };
   try {
-    return await resolveConnectionSettings(connectionSettingsPipeline(auth), workspaceId);
+    return await resolveConnectionSettings(connectionSettingsPipeline(identity), workspaceId);
   } catch {
     logger.warn("connections.settings.unavailable", { outcome: "error" });
     return { kind: "unavailable" };

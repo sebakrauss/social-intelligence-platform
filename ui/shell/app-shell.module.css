@@ -254,6 +254,7 @@
 }
 
 .switcherItem {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 44px;
@@ -299,6 +300,7 @@ a.switcherItem:hover {
 }
 
 .sideItem {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--wk-space-8);
@@ -576,5 +578,45 @@ a.switcherItem:hover {
 
   .main {
     padding: var(--wk-space-16) var(--wk-space-16) var(--wk-space-32);
+  }
+}
+
+/*
+ * Step 7B-17K — an in-app move started from this link is under way (ui/navigation/app-link.tsx sets data-pending on the
+ * signal inside it): the link takes the hover tone at once and a thin line grows along its foot until the next page is
+ * on screen. The page itself stays in place meanwhile. With reduced motion the line is simply shown (motion.css).
+ */
+.linkPending {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-text-primary);
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.linkPending[data-pending="true"] {
+  opacity: 1;
+  animation: linkPending var(--wk-duration-reveal) var(--wk-ease-enter) forwards;
+}
+
+.railItem:has(> .linkPending[data-pending="true"]),
+.switcherItem:has(> .linkPending[data-pending="true"]),
+.sideItem:has(> .linkPending[data-pending="true"]) {
+  background: var(--wk-bg-hover);
+  cursor: progress;
+}
+
+@keyframes linkPending {
+  from {
+    transform: scaleX(0.08);
+  }
+  to {
+    transform: scaleX(0.9);
   }
 }

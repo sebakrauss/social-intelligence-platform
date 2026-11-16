@@ -7,7 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { replyDraftScope } from "@/server/inbox/draft-scope";
 
 const env = vi.hoisted((): { auth: unknown } => ({ auth: undefined }));
-vi.mock("@/server/auth/request-auth", () => ({ requestAuth: () => (env.auth instanceof Error ? Promise.reject(env.auth) : Promise.resolve(env.auth)) }));
+// Step 7B-17K: the Inbox reads take the rendering request's identity (requestIdentity) — the same port shape.
+vi.mock("@/server/auth/request-auth", () => ({ requestIdentity: () => (env.auth instanceof Error ? Promise.reject(env.auth) : Promise.resolve(env.auth)) }));
 
 const { currentReplyDraftScope } = await import("@/server/inbox/runtime");
 

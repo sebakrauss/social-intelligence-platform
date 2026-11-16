@@ -3,7 +3,8 @@
  * the request's cookies. Pages, actions and routes use this module; none of them touch the SDK.
  */
 import { cookies } from "next/headers";
-import { createSupabaseAuth, readSupabaseAuthConfig, type AuthPort, type CookieJar } from "@/platform/auth";
+import { cache } from "react";
+import { createSupabaseAuth, readSupabaseAuthConfig, type AuthPort, type AuthUser, type CookieJar, type IdentityPort } from "@/platform/auth";
 import { serviceIdentityCoherent } from "@/server/http/service-identity";
 
 async function requestCookieJar(): Promise<CookieJar> {
@@ -31,6 +32,39 @@ export async function requestAuth(): Promise<AuthPort | undefined> {
   // Fail closed: an auth project that does not match the database project is "unavailable", never used.
   const config = serviceIdentityCoherent(process.env) ? readSupabaseAuthConfig(process.env) : undefined;
   return config === undefined ? undefined : createSupabaseAuth(config, jar);
+}
+
+/**
+ * Step 7B-17K — an identity port that asks the Auth server at most ONCE: the first `getVerifiedUser()` sends the
+ * server-side validation (getUser, TA §10.2) and every later call on THIS port receives the same answer (or the same
+ * failure). Nothing is decoded locally and nothing outlives the port.
+ */
+export function verifyOnce(auth: Pick<AuthPort, "getVerifiedUser">): IdentityPort {
+  let verified: Promise<AuthUser | undefined> | undefined;
+  return {
+    getVerifiedUser: () => {
+      verified ??= auth.getVerifiedUser();
+      return verified;
+    },
+  };
+}
+
+/**
+ * Step 7B-17K — the identity of the request being RENDERED (server components: a page, its layouts and what they read),
+ * verified with the Auth server once per render instead of once per read. React's `cache` scopes the port to a single
+ * server request — never shared across requests, people or sessions; outside a server-component render (actions,
+ * route handlers) it memoizes nothing, so each call there builds and verifies afresh. The proxy's own session refresh
+ * (proxy.ts) is a separate execution and still runs on every request. Authorization is unchanged: every read still
+ * resolves the workspace and the membership live inside its own transaction (server/pipeline).
+ */
+const renderIdentity = cache(async (): Promise<IdentityPort | undefined> => {
+  const auth = await requestAuth();
+  return auth === undefined ? undefined : verifyOnce(auth);
+});
+
+/** The rendering request's verified identity (see renderIdentity), or undefined when auth configuration is absent. */
+export function requestIdentity(): Promise<IdentityPort | undefined> {
+  return renderIdentity();
 }
 
 export type SessionState = "signed_out" | "verification_required" | "signed_in" | "unavailable";

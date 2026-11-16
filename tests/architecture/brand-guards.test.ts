@@ -82,8 +82,10 @@ describe("foundations are inert", () => {
   /**
    * Step 7B-3: the contextual reply composer — pinned below with its own rule. Step 7B-15H: + the signed-out boundary that
    * clears the composer's in-memory drafts (one effect; pinned in tests/architecture/inbox-composer-guards.test.ts).
+   * Step 7B-17K: + the drafts' conversation boundary (one effect; pinned there too). The in-app link lives outside these
+   * folders (ui/navigation/app-link.tsx) and is pinned there as well.
    */
-  const CLIENT_COMPONENTS = ["ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx"];
+  const CLIENT_COMPONENTS = ["ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx"];
 
   it("the foundation, brand, icon and primitive components are server components", () => {
     for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell", "ui/inbox"]).filter((file) => !CLIENT_COMPONENTS.includes(file))) {

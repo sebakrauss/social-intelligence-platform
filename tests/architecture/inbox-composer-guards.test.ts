@@ -127,6 +127,9 @@ describe("reply composer start stage: production callers", () => {
  */
 const DRAFTS = "ui/inbox/reply-drafts.ts";
 const BOUNDARY = "ui/inbox/reply-drafts-boundary.tsx";
+/** Step 7B-17K: the drafts' conversation boundary and the in-app link (the two other client modules near the drafts). */
+const SCOPE = "ui/inbox/reply-drafts-scope.tsx";
+const APP_LINK = "ui/navigation/app-link.tsx";
 
 const sourceOf = (file: string): ts.SourceFile => ts.createSourceFile(file, readFileSync(path.join(REPOSITORY_ROOT, file), "utf8"), ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
 const nodesOf = (root: ts.Node): ts.Node[] => {
@@ -356,11 +359,17 @@ describe("reply drafts: memory only, never publishing (syntax tree)", () => {
     expect(importsOfFile(DRAFTS)).toEqual(["type @/server/inbox/reply-state"]);
     expect(importsOfFile(BOUNDARY)).toEqual(["react", "./reply-drafts"]);
     expect(importsOfFile(COMPOSER)).toEqual(["react", "react-dom", "type @/server/inbox/reply-state", "@/ui/primitives/button", "@/ui/primitives/notice", "./reply-drafts", "./reply-composer.module.css"]);
+    // Step 7B-17K: the boundary reads the address's two route segments; the link is the framework's <Link>.
+    expect(importsOfFile(SCOPE)).toEqual(["next/navigation", "react", "./reply-drafts"]);
+    expect(importsOfFile(APP_LINK)).toEqual(["next/link", "react", "@/ui/inbox/reply-drafts"]);
   });
 
-  it("only the composer and the signed-out boundary reach the drafts module — by any import, static or dynamic, anywhere in production code", () => {
-    const reachers = sourceFiles([...PRODUCTION_ROOTS]).filter((file) => file !== DRAFTS && /reply-drafts(?!-boundary)/.test(codeOf(file)));
-    expect(reachers.sort()).toEqual([BOUNDARY, COMPOSER].sort());
+  it("only the composer, the signed-out boundary, the conversation boundary and the in-app link reach the drafts module — by any import, static or dynamic, anywhere in production code", () => {
+    const reachers = sourceFiles([...PRODUCTION_ROOTS]).filter((file) => file !== DRAFTS && /reply-drafts(?!-(boundary|scope))/.test(codeOf(file)));
+    expect(reachers.sort()).toEqual([APP_LINK, BOUNDARY, COMPOSER, SCOPE].sort());
+    // Step 7B-17K: each of the two new readers takes exactly what it needs — the link only reads, the boundary only reports.
+    expect(codeOf(APP_LINK)).toMatch(/^import \{ hasReplyDrafts, subscribeReplyDrafts \} from "@\/ui\/inbox\/reply-drafts";$/m);
+    expect(codeOf(SCOPE)).toMatch(/^import \{ showReplyDraftsConversation \} from "\.\/reply-drafts";$/m);
   });
 
   it("the composer: the publish action has ONE way in — the argument of settleReplyDraft, itself the argument of useActionState — and the form posts through formAction only", () => {
@@ -532,12 +541,72 @@ describe("reply drafts: memory only, never publishing (syntax tree)", () => {
     expect(actions).toMatch(/export async function signOutAction\(\): Promise<void> \{\s*const auth = await requestAuth\(\);\s*await auth\?\.signOut\(\);\s*toSignIn\("signed_out"\);\s*\}/);
   });
 
-  it("moving the composer is an in-app navigation (so the tab's memory survives), never prefetched; every other Inbox link is unchanged", () => {
+  it("moving the composer is an in-app navigation (so the tab's memory survives), never prefetched", () => {
     const views = codeOf("app/workspaces/[workspaceId]/inbox/views.tsx");
     expect([...views.matchAll(/<TextLink [^>]*\binPage\b[^>]*>/g)].map((m) => m[0])).toEqual(["<TextLink href={replyHere} inPage>"]);
     const link = codeOf("ui/primitives/text-link.tsx");
     expect(link).toMatch(/^import Link from "next\/link";$/m);
     expect(link).toMatch(/if \(inPage && !external\) \{\s*return \(\s*<Link href=\{href\} prefetch=\{false\}/);
     expect([...link.matchAll(/<Link\b/g)]).toHaveLength(1);
+  });
+
+  it("Step 7B-17K: the Inbox rows, previous / next / close and the shell's destinations are in-app links; the only other links are the skip links", () => {
+    const inbox = codeOf("ui/inbox/inbox.tsx");
+    expect([...inbox.matchAll(/<AppLink href=\{[^}]+\}[^>]*>/g)].map((m) => m[0])).toEqual([
+      '<AppLink href={href} className={styles["row"]} pendingClassName={styles["rowPending"]} current={current} focusKey={id}>',
+      '<AppLink href={target.href} className={styles["navLink"]} pendingClassName={styles["navPending"]}>',
+      '<AppLink href={close.href} className={join(styles["navLink"], styles["navClose"])} pendingClassName={styles["navPending"]}>',
+    ]);
+    expect([...inbox.matchAll(/<a\b[^>]*>/g)].map((m) => m[0])).toEqual(['<a href={skipToConversation.href} className={styles["skipToDetail"]}>']);
+    const shell = codeOf("ui/shell/app-shell.tsx");
+    expect([...shell.matchAll(/<AppLink\b[^>]*>/g)]).toHaveLength(3);
+    expect([...shell.matchAll(/<a\b[^>]*>/g)].map((m) => m[0])).toEqual(['<a href={`#${CONTENT_ID}`} className={styles["skip"]}>']);
+    // Nothing else composes the in-app link (a new caller is a reviewed change, not an accident).
+    expect(sourceFiles([...PRODUCTION_ROOTS]).filter((file) => file !== APP_LINK && /@\/ui\/navigation\/app-link/.test(codeOf(file))).sort()).toEqual(["ui/inbox/inbox.tsx", "ui/shell/app-shell.tsx"]);
+  });
+
+  it("Step 7B-17K: the in-app link is never prefetched, never navigates by script, and is a plain link while a draft is kept", () => {
+    const link = codeOf(APP_LINK);
+    expect(link).toMatch(/^"use client";/);
+    // One framework link, never prefetched; no router, no programmatic navigation, no reload.
+    expect([...link.matchAll(/<Link\b/g)]).toHaveLength(1);
+    expect(link).toMatch(/<Link\s+ref=\{ref\}\s+href=\{href\}\s+prefetch=\{false\}/);
+    expect(link).not.toMatch(/useRouter|\brouter\b|\.push\(|\.replace\(|\.refresh\(|\.prefetch\(|\breload\b/);
+    // While any draft is kept (read through the drafts module; never on the server), the link is a native <a>: leaving is
+    // a full navigation and the browser's own leave confirmation still guards it (UX-20).
+    expect(link).toMatch(/const draftsKept = useSyncExternalStore\(subscribeReplyDrafts, hasReplyDrafts, noDrafts\);/);
+    expect(link).toMatch(/const noDrafts = \(\): boolean => false;/);
+    expect(link).toMatch(/if \(draftsKept\) \{\s*return \(\s*<a ref=\{ref\} href=\{href\} className=\{className\} \{\.\.\.ariaCurrent\}>\s*\{children\}\s*<\/a>\s*\);\s*\}/);
+    // The move's only side effect here is which link takes the focus afterwards.
+    const source = sourceOf(APP_LINK);
+    const navigate = nodesOf(source).find((node): node is ts.JsxAttribute => ts.isJsxAttribute(node) && ts.isIdentifier(node.name) && node.name.text === "onNavigate");
+    expect(navigate?.initializer?.getText(source).replace(/\s+/g, " ")).toBe("{() => { focusAfterMove = anchorOf(href); }}");
+  });
+
+  it("Step 7B-17K: the conversation boundary reports the address's workspace and conversation in one effect, and the Inbox layout draws it", () => {
+    const source = sourceOf(SCOPE);
+    const calls = nodesOf(source).filter(ts.isCallExpression).map((call) => call.getText(source).replace(/\s+/g, " "));
+    expect(calls).toEqual([
+      "useParams()",
+      'segment(params === null ? undefined : params["workspaceId"])',
+      'segment(params === null ? undefined : params["conversationId"])',
+      "useEffect(() => showReplyDraftsConversation(workspaceId, conversationId), [workspaceId, conversationId])",
+      "showReplyDraftsConversation(workspaceId, conversationId)",
+    ]);
+    const layout = codeOf("app/workspaces/[workspaceId]/inbox/layout.tsx");
+    expect(layout).toMatch(/^import \{ ReplyDraftsConversationScope \} from "@\/ui\/inbox\/reply-drafts-scope";$/m);
+    expect(layout).toMatch(/<WorkspaceShell workspaceId=\{workspaceId\} section="inbox">\s*<ReplyDraftsConversationScope \/>\s*\{children\}\s*<\/WorkspaceShell>/);
+  });
+
+  it("Step 7B-17K: leaving a conversation forgets every draft, only the conversation on screen keeps one, and no navigation forgets an uncertain outcome", () => {
+    const source = sourceOf(DRAFTS);
+    const show = functionNamed(source, "showReplyDraftsConversation");
+    const body = show.body?.getText(source).replace(/\s+/g, " ") ?? "";
+    expect(body).toContain("for (const key of [...drafts.keys()]) if (shown === undefined || conversationOf(key) !== shown) drafts.delete(key);");
+    expect(body).toMatch(/return \(\) => \{ if \(shownConversation === shown\) shownConversation = undefined; drafts\.clear\(\); syncLeaveGuard\(\); \};/);
+    expect(valueReferences(source, show, "uncertain")).toEqual([]);
+    expect(valueReferences(source, show, "pending")).toEqual([]);
+    const keep = functionNamed(source, "keepReplyDraft").body?.getText(source).replace(/\s+/g, " ") ?? "";
+    expect(keep).toContain("if (scoped && conversationOf(key) !== shownConversation) return;");
   });
 });

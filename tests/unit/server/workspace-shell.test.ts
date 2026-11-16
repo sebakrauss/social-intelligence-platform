@@ -33,8 +33,9 @@ describe("WorkspaceShell", () => {
 
   it("an Owner sees Inbox and Settings, the active section, the workspace and the sign-out form", async () => {
     const html = await render({ kind: "ready", current: workspace(), workspaces: [workspace()] });
-    expect(html).toMatch(new RegExp(`<a href="/workspaces/${WS}/inbox" class="[^"]*" aria-current="page"><svg`));
-    expect(html).toMatch(new RegExp(`<a href="/workspaces/${WS}/settings/connections" class="[^"]*"><svg`));
+    // Step 7B-17K: in-app links — still one <a href> each, with the pending signal first.
+    expect(html).toMatch(new RegExp(`<a class="[^"]*" aria-current="page" href="/workspaces/${WS}/inbox"><span class="[^"]*" data-pending="false" aria-hidden="true"></span><svg`));
+    expect(html).toMatch(new RegExp(`<a class="[^"]*" href="/workspaces/${WS}/settings/connections"><span class="[^"]*" data-pending="false" aria-hidden="true"></span><svg`));
     expect(html).toContain(">Lumen Coffee</p>");
     expect(html).toContain(">Conversations</a>");
     expect((html.match(/<form\b/g) ?? []).length).toBe(1);
@@ -43,7 +44,7 @@ describe("WorkspaceShell", () => {
     expect(html).not.toContain("Monitor-only");
     expect(html).toContain("<main><h1>Page</h1></main>");
     const settings = await render({ kind: "ready", current: workspace(), workspaces: [workspace()] }, "settings");
-    expect(settings).toMatch(new RegExp(`<a href="/workspaces/${WS}/settings/connections" class="[^"]*" aria-current="page"><svg`));
+    expect(settings).toMatch(new RegExp(`<a class="[^"]*" aria-current="page" href="/workspaces/${WS}/settings/connections"><span class="[^"]*" data-pending="false" aria-hidden="true"></span><svg`));
     expect(settings).toContain(">Connections</a>");
   });
 
@@ -63,7 +64,7 @@ describe("WorkspaceShell", () => {
     const html = await render({ kind: "ready", current: undefined, workspaces: [other] });
     expect(html).toContain("This workspace isn&#x27;t available to you.");
     expect(html).not.toContain("<nav");
-    expect(html).toContain(`<a href="/workspaces/${OTHER}/inbox" class="`);
+    expect(html).toMatch(new RegExp(`<a class="[^"]*" href="/workspaces/${OTHER}/inbox"><span class="[^"]*" data-pending="false" aria-hidden="true"></span>`));
     expect(html).toContain(">Mine<span");
   });
 
@@ -74,7 +75,7 @@ describe("WorkspaceShell", () => {
     const html = await render({ kind: "ready", current, workspaces: [current, linked, guestOnly] });
     expect(html).toContain("Monitor-only");
     expect(html).toContain("Switch workspace");
-    expect(html).toContain(`<a href="/workspaces/${OTHER}/inbox" class="`);
+    expect(html).toMatch(new RegExp(`<a class="[^"]*" href="/workspaces/${OTHER}/inbox"><span class="[^"]*" data-pending="false" aria-hidden="true"></span>`));
     expect(html).toMatch(/<span class="[^"]*">Client view<span/);
     expect(html).not.toContain("22222222-2222-4222-8222-222222222222/inbox");
   });

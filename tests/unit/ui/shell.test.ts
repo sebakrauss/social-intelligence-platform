@@ -43,8 +43,9 @@ describe("<AppShell>", () => {
 
   it("draws exactly the given destinations, marks the active one, and nothing more", () => {
     const html = render();
-    expect(html).toMatch(new RegExp(`<a href="${INBOX}" class="[^"]*" aria-current="page"><svg`));
-    expect(html).toMatch(new RegExp(`<a href="${CONNECTIONS}" class="[^"]*"><svg`));
+    // Step 7B-17K: in-app links (ui/navigation/app-link.tsx) — still one <a href> each, carrying the pending signal first.
+    expect(html).toMatch(new RegExp(`<a class="[^"]*" aria-current="page" href="${INBOX}"><span class="[^"]*" data-pending="false" aria-hidden="true"></span><svg`));
+    expect(html).toMatch(new RegExp(`<a class="[^"]*" href="${CONNECTIONS}"><span class="[^"]*" data-pending="false" aria-hidden="true"></span><svg`));
     expect((html.match(/aria-current="page"/g) ?? []).length).toBe(2); // rail Inbox + sidebar Conversations
     expect(html).not.toMatch(/Home|Insights|Reports|TikTok/);
     const none = render({ nav: [], sidebar: undefined });
@@ -77,7 +78,7 @@ describe("<AppShell>", () => {
       ],
     });
     expect(html).toMatch(/<details class="[^"]*"><summary class="[^"]*"><svg[\s\S]*<\/svg><span class="[^"]*">Switch workspace<\/span><\/summary>/);
-    expect(html).toMatch(/<a href="\/workspaces\/22222222-2222-4222-8222-222222222222\/inbox" class="[^"]*">Other One<span class="[^"]*">Org A<\/span><\/a>/);
+    expect(html).toMatch(/<a class="[^"]*" href="\/workspaces\/22222222-2222-4222-8222-222222222222\/inbox"><span class="[^"]*" data-pending="false" aria-hidden="true"><\/span>Other One<span class="[^"]*">Org A<\/span><\/a>/);
     expect(html).toMatch(/<span class="[^"]*">Guest Only<span class="[^"]*">Org B<\/span><\/span>/);
   });
 

@@ -25,6 +25,15 @@
  *   key, so the server answers `existing` (or refuses a changed text) instead of creating a second reply.
  * - LEAVING: while any draft is kept, the browser's native "leave this page?" confirmation guards full navigations
  *   (reload, closing the tab, another conversation). It carries no content.
+ * - IN-APP NAVIGATION (Step 7B-17K): the Inbox and the shell move between conversations and sections without reloading
+ *   the page, so this tab's memory now outlives a change of conversation unless something forgets it. Two rules keep
+ *   the Phase 1 contract (UX-20) exactly as it was:
+ *   1. While any draft is kept, the app's links are plain links again (ui/navigation/app-link.tsx subscribes to
+ *      `hasReplyDrafts`): leaving is a full navigation, guarded by the native confirmation above, as before.
+ *   2. The conversation on screen is reported by ui/inbox/reply-drafts-scope.tsx. Whenever it changes, or the Inbox is
+ *      left (the list, another section, another workspace, Back / Forward), EVERY draft is forgotten; afterwards only
+ *      the conversation on screen may keep one, so a late answer for a conversation that was left never refills the
+ *      store. The keys that may hold an accepted reply (`uncertain`) are never forgotten by a navigation.
  *
  * Draft text is the person's own words, never an authorization: restoring it seeds at most the write stage. Whether a
  * composer exists, its mode (ordinary or validation), its target and its form key always come from the server's render.
@@ -40,9 +49,20 @@ const pending = new Map<string, number>();
 const uncertain = new Set<string>();
 /** Step 7B-15H: bumped by clearReplyDrafts (sign-out): an answer that arrives later never refills the store. */
 let generation = 0;
+/**
+ * Step 7B-17K: the conversation on screen (workspace + conversation), once ui/inbox/reply-drafts-scope.tsx has reported
+ * one; `scoped` stays false until then (no report: the earlier rules alone apply).
+ */
+let shownConversation: string | undefined;
+let scoped = false;
+/** Step 7B-17K: told whenever "a draft is kept" turns true or false (the in-app links read it). */
+const subscribers = new Set<() => void>();
+let kept = false;
 
 const inBrowser = (): boolean => typeof window !== "undefined";
 const scopeOf = (key: string): string => key.slice(0, key.indexOf(SEPARATOR));
+/** Step 7B-17K: the workspace + conversation part of a draft key (its second and third fields). */
+const conversationOf = (key: string): string => key.split(SEPARATOR).slice(1, 3).join(SEPARATOR);
 
 let guarding = false;
 function warnBeforeLeaving(event: BeforeUnloadEvent): void {
@@ -52,6 +72,10 @@ function warnBeforeLeaving(event: BeforeUnloadEvent): void {
 /** The native leave confirmation follows the store: on while any draft is kept, off when none is. Fails safe (no guard). */
 function syncLeaveGuard(): void {
   const wanted = drafts.size > 0;
+  if (wanted !== kept) {
+    kept = wanted;
+    for (const subscriber of [...subscribers]) subscriber();
+  }
   if (wanted === guarding) return;
   try {
     if (wanted) window.addEventListener("beforeunload", warnBeforeLeaving);
@@ -60,6 +84,37 @@ function syncLeaveGuard(): void {
   } catch {
     // No leave guard available: the draft is still kept in memory for in-page navigation.
   }
+}
+
+/** Step 7B-17K: whether this tab keeps any draft now (always false outside a browser). Reads only. */
+export function hasReplyDrafts(): boolean {
+  return inBrowser() && drafts.size > 0;
+}
+
+/** Step 7B-17K: be told when `hasReplyDrafts` may have changed; returns the way to stop. */
+export function subscribeReplyDrafts(subscriber: () => void): () => void {
+  subscribers.add(subscriber);
+  return () => {
+    subscribers.delete(subscriber);
+  };
+}
+
+/**
+ * Step 7B-17K: the conversation now on screen (undefined: none — the list). Forgets every draft of any other
+ * conversation, and returns what to do when it is no longer on screen: forget every draft. Nothing outside a browser.
+ */
+export function showReplyDraftsConversation(workspaceId: string, conversationId: string | undefined): () => void {
+  if (!inBrowser()) return () => undefined;
+  const shown = conversationId === undefined || workspaceId === "" || conversationId === "" ? undefined : [workspaceId, conversationId].join(SEPARATOR);
+  scoped = true;
+  shownConversation = shown;
+  for (const key of [...drafts.keys()]) if (shown === undefined || conversationOf(key) !== shown) drafts.delete(key);
+  syncLeaveGuard();
+  return () => {
+    if (shownConversation === shown) shownConversation = undefined;
+    drafts.clear();
+    syncLeaveGuard();
+  };
 }
 
 /** The draft key of one composer, or undefined (drafts off) without a scope. */
@@ -77,6 +132,8 @@ export function restoreReplyDraft(key: string | undefined): string | undefined {
 /** Keep the current text as this key's draft (an empty or blank text forgets it). Called from the person's typing only. */
 export function keepReplyDraft(key: string | undefined, text: string): void {
   if (key === undefined || !inBrowser() || pending.has(key) || uncertain.has(key)) return;
+  // Step 7B-17K: only the conversation on screen keeps a draft (a late answer for one that was left never refills).
+  if (scoped && conversationOf(key) !== shownConversation) return;
   const scope = scopeOf(key);
   for (const other of [...drafts.keys()]) if (scopeOf(other) !== scope) drafts.delete(other);
   drafts.delete(key);
