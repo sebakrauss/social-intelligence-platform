@@ -34,10 +34,10 @@ export default function ShellReferencePage() {
         { id: "b", name: "Northwind Outdoor Supply Company", organizationName: "Northwind Agency", href: WS },
       ]}
       nav={[
-        { key: "inbox", label: "Inbox", href: WS, icon: "nav-inbox", current: true },
+        { key: "inbox", label: "Comments", href: WS, icon: "nav-inbox", current: true },
         { key: "settings", label: "Settings", href: WS, icon: "nav-settings", current: false },
       ]}
-      sidebar={{ heading: "Inbox", items: [{ label: "Conversations", href: WS, current: true }] }}
+      sidebar={{ heading: "Comments", items: [{ label: "All comments", href: WS, current: true }] }}
       account={
         <Button type="button" variant="secondary" size="sm">
           Sign out

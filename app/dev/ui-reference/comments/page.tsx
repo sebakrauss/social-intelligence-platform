@@ -38,10 +38,10 @@ export default async function CommentsPrototypePage({ searchParams }: { readonly
       workspace={{ name: WORKSPACE.name, organizationName: WORKSPACE.organization, monitorOnly: query.monitor }}
       switcher={[{ id: "other", name: "Lumen Coffee · Brasil", organizationName: WORKSPACE.organization, href: home }]}
       nav={[
-        { key: "inbox", label: "Inbox", href: home, icon: "nav-inbox", current: true },
+        { key: "inbox", label: "Comments", href: home, icon: "nav-inbox", current: true },
         { key: "settings", label: "Settings", href: home, icon: "nav-settings", current: false },
       ]}
-      sidebar={{ heading: "Inbox", items: [{ label: "Comments", href: home, current: true }] }}
+      sidebar={{ heading: "Comments", items: [{ label: "All comments", href: home, current: true }] }}
       account={
         <Button type="button" variant="secondary" size="sm">
           Sign out

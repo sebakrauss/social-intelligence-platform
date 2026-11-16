@@ -74,6 +74,7 @@ import { Notice } from "@/ui/primitives/notice";
 import { OriginMark } from "@/ui/primitives/origin-mark";
 import { StatePill, type StateTone } from "@/ui/primitives/state-pill";
 import { TextLink } from "@/ui/primitives/text-link";
+import { LocalTime, type LocalTimeForm } from "@/ui/time/local-time";
 import type { MessageKey } from "@/domain/i18n/message-keys";
 
 /**
@@ -109,7 +110,27 @@ export function shortTime(date: Date, now: Date, previous?: Date): string {
   return `${day} ${month} ${year} ${clock}`;
 }
 
-const shown = (date: Date, now: Date, previous?: Date): ShownTime => ({ iso: when(date), label: shortTime(date, now, previous), full: displayTime(date) });
+const shown = (date: Date, now: Date, previous?: Date): ShownTime => ({ iso: when(date), label: shortTime(date, now, previous), full: displayTime(date), ...(previous === undefined ? {} : { previous: when(previous) }) });
+
+/** Where a catalog sentence carries its time ("Published {time}"): split around it, so the time can be drawn on its own. */
+const TIME_SLOT = "\u0000time\u0000";
+
+/**
+ * Comments 2.1 (Step 7B-17R) — a catalog sentence whose `{time}` is read in the reader's own time zone in the browser
+ * (ui/time/local-time.tsx); the server's UTC reading is what the page says without JavaScript. `short` follows the
+ * thread's short form (with `previous`: the time shown just above); `full` is the exact reading with its zone.
+ */
+function timed(key: MessageKey, date: Date, form: LocalTimeForm, timing?: { readonly now: Date; readonly previous?: Date | undefined }): React.ReactNode {
+  const [before = "", after = ""] = t(key, { time: TIME_SLOT }).split(TIME_SLOT);
+  const fallback = form === "full" ? displayTime(date) : shortTime(date, timing?.now ?? renderNow(), timing?.previous);
+  return (
+    <>
+      {before}
+      <LocalTime iso={when(date)} form={form} fallback={fallback} previous={timing?.previous === undefined ? undefined : when(timing.previous)} />
+      {after}
+    </>
+  );
+}
 
 const kindOf = (contentKind: string | null): string => t(contentKind === null ? CONTENT_KIND_FALLBACK : (CONTENT_KIND_MESSAGES[contentKind] ?? CONTENT_KIND_FALLBACK));
 
@@ -162,7 +183,7 @@ export function InboxListView({ workspaceId, page, cursor, selectedId, expanded 
   const now = renderNow();
   return (
     <>
-      <InboxHeader level={selectedId === undefined ? 1 : 2} title={t("inbox.heading")} subtitle={t("inbox.ordering")} {...(selectedId === undefined ? { note: t("inbox.times.utc") } : {})} />
+      <InboxHeader level={selectedId === undefined ? 1 : 2} title={t("inbox.heading")} subtitle={t("inbox.ordering")} noScriptNote={t("inbox.times.utc")} />
       <CoverageSummary page={page} open={empty && page.coverage.length > 0} />
       {empty ? (
         <InboxEmpty title={t("inbox.list.heading")}>{page.emptyReason === "nothing_read_yet" ? t("inbox.empty.nothing_read") : t("inbox.empty.no_conversations")}</InboxEmpty>
@@ -237,7 +258,8 @@ function Row({ workspaceId, item, cursor, now, current, expanded, nav }: { reado
   const meta: React.ReactNode[] = [];
   if (item.contentKind !== null) meta.push(<DataTag key="kind">{kindOf(item.contentKind)}</DataTag>);
   if (item.source === "mixed") meta.push(<DataTag key="source">{t("inbox.source.mixed_short")}</DataTag>);
-  if (item.source === "unknown") meta.push(<DataTag key="source">{t("inbox.source.unknown_short")}</DataTag>);
+  // Comments 2.1 (Step 7B-17R): an unknown source is not a chip on every row — it stays stated in the conversation's
+  // details ("Organic or paid: not known"); nothing is ever inferred to be organic or paid.
   if (item.workflowState !== "open") meta.push(<StatePill key="state">{t(CONVERSATION_STATE_MESSAGES[item.workflowState])}</StatePill>);
   if (item.observedCount > 1) meta.push(<DataTag key="read" icon="conv-thread" mono srLabel={t("inbox.item.read_count", { count: String(item.observedCount) })}>{t("inbox.item.read_count_short", { count: String(item.observedCount) })}</DataTag>);
   if (item.notYetReadCount > 0) meta.push(<DataTag key="unread" mono>{t("inbox.item.not_yet_read_count", { count: String(item.notYetReadCount) })}</DataTag>);
@@ -270,7 +292,7 @@ export function CoverageSummary({ page, open }: { readonly page: InboxPage; read
     <CoverageBlock>
       <Disclosure
         open={open}
-        summary={<CoverageSummaryLabel title={t("inbox.coverage.heading")} meta={page.asOf === null ? t("inbox.coverage.never") : t("inbox.coverage.as_of", { time: displayTime(page.asOf) })} {...(incomplete ? { incomplete: t("inbox.coverage.incomplete") } : {})} />}
+        summary={<CoverageSummaryLabel title={t("inbox.coverage.heading")} meta={page.asOf === null ? t("inbox.coverage.never") : timed("inbox.coverage.as_of", page.asOf, "full")} {...(incomplete ? { incomplete: t("inbox.coverage.incomplete") } : {})} />}
       >
         {page.coverageOmitted ? (
           <NoticeSlot>
@@ -292,7 +314,7 @@ function Account({ account }: { readonly account: AccountCoverageView }) {
         <>
           <OriginMark platform={account.platform} name={name} showName />
           {account.active ? null : <DataTag>{t("inbox.coverage.inactive")}</DataTag>}
-          {account.asOf === null ? null : <span className="wk-sr-only">{t("inbox.coverage.as_of", { time: displayTime(account.asOf) })}</span>}
+          {account.asOf === null ? null : <span className="wk-sr-only">{timed("inbox.coverage.as_of", account.asOf, "full")}</span>}
         </>
       }
       kinds={[kindView("comments", "inbox.coverage.comments", account.comments), kindView("replies", "inbox.coverage.replies", account.replies)]}
@@ -313,7 +335,7 @@ function kindView(key: string, messageKey: "inbox.coverage.comments" | "inbox.co
       </StatePill>
     ),
     captions,
-    ...(view.coveredUntil === null ? {} : { until: t("inbox.coverage.until", { time: displayTime(view.coveredUntil) }) }),
+    ...(view.coveredUntil === null ? {} : { until: timed("inbox.coverage.until", view.coveredUntil, "full") }),
   };
 }
 
@@ -400,8 +422,16 @@ export function ConversationView({ workspaceId, detail, cursor, replyTo, draftSc
       contextNote={t("inbox.context.post_unavailable")}
     >
       <QuietNote>{t("inbox.understanding_pending")}</QuietNote>
-      <ThreadHeading id="thread" label={t("inbox.thread.heading")} note={t("inbox.times.utc")} />
-      {detail.reply.kind === "unavailable" ? <ReplyUnavailable label={t("inbox.reply.unavailable_label")} reason={t(REPLY_REASON_MESSAGES[detail.reply.reason])} /> : null}
+      <ThreadHeading id="thread" label={t("inbox.thread.heading")} />
+      {/* Comments 2.1 (Step 7B-17R): once per conversation. "Not available yet" in Wrenkind is one sentence; a reason of
+          this workspace, account, connection or platform keeps its label and its own words. */}
+      {detail.reply.kind === "unavailable" ? (
+        detail.reply.reason === "platform_unavailable" ? (
+          <ReplyUnavailable reason={t(REPLY_REASON_MESSAGES[detail.reply.reason])} />
+        ) : (
+          <ReplyUnavailable label={t("inbox.reply.unavailable_label")} reason={t(REPLY_REASON_MESSAGES[detail.reply.reason])} />
+        )
+      ) : null}
       <Thread labelledBy="thread">
         {entries.map((entry) =>
           entry.kind === "member" ? (
@@ -605,8 +635,8 @@ interface Timing {
 }
 
 function OutboundRow({ item, replyingTo, timing }: { readonly item: OutboundReplyItem; readonly replyingTo?: string; readonly timing: Timing }) {
-  const times = [<TimedText key="requested" short={t("inbox.outbound.requested_at", { time: shortTime(item.createdAt, timing.now, timing.previous) })} full={t("inbox.outbound.requested_at", { time: displayTime(item.createdAt) })} />];
-  if (item.confirmedAt !== null) times.push(<TimedText key="confirmed" short={t("inbox.outbound.confirmed_at", { time: shortTime(item.confirmedAt, timing.now, item.createdAt) })} full={t("inbox.outbound.confirmed_at", { time: displayTime(item.confirmedAt) })} />);
+  const times = [<TimedText key="requested" short={timed("inbox.outbound.requested_at", item.createdAt, "short", timing)} full={timed("inbox.outbound.requested_at", item.createdAt, "full")} />];
+  if (item.confirmedAt !== null) times.push(<TimedText key="confirmed" short={timed("inbox.outbound.confirmed_at", item.confirmedAt, "short", { now: timing.now, previous: item.createdAt })} full={timed("inbox.outbound.confirmed_at", item.confirmedAt, "full")} />);
   const icon = OUTBOUND_ICONS[item.state];
   const note = item.state === "checking" ? t("inbox.outbound.checking_note") : item.state === "failed" ? t("inbox.outbound.failed_note") : item.state === "blocked" ? t("inbox.outbound.blocked_note") : undefined;
   return (
@@ -646,11 +676,12 @@ function Member({ item, platformText, detail, workspaceId, cursor, replyTarget, 
 }) {
   const author = authorOf(item);
   const kind = t(item.kind === "reply" ? "inbox.thread.reply" : "inbox.thread.comment");
-  // Step 7B-15S: the record — every exact time, in UTC, one small disclosure away (when it was written, edited, read).
-  const times: string[] = [];
-  if (item.providerCreatedAt !== null) times.push(t("inbox.thread.posted", { time: displayTime(item.providerCreatedAt) }));
-  if (item.providerEditedAt !== null) times.push(t("inbox.thread.edited", { time: displayTime(item.providerEditedAt) }));
-  if (item.textObservedAt !== null) times.push(t("inbox.thread.text_read", { time: displayTime(item.textObservedAt) }));
+  // Step 7B-15S: the record — every exact time, one small disclosure away (when it was written, edited, read).
+  // Comments 2.1 (Step 7B-17R): in the reader's own zone, with the zone named; UTC without JavaScript.
+  const times: React.ReactNode[] = [];
+  if (item.providerCreatedAt !== null) times.push(timed("inbox.thread.posted", item.providerCreatedAt, "full"));
+  if (item.providerEditedAt !== null) times.push(timed("inbox.thread.edited", item.providerEditedAt, "full"));
+  if (item.textObservedAt !== null) times.push(timed("inbox.thread.text_read", item.textObservedAt, "full"));
   const entryLabel = item.providerCreatedAt === null ? t("inbox.thread.entry_label_undated", { kind, author }) : t("inbox.thread.entry_label", { kind, author, time: displayTime(item.providerCreatedAt) });
   const removed = item.observed && item.presence === "removed_at_source";
   // "Written by your account" repeats what the author line already says on the brand's own messages: the fact stays in
@@ -740,7 +771,7 @@ function Member({ item, platformText, detail, workspaceId, cursor, replyTarget, 
                     : {})}
                 >
                   {item.earlierVersions.map((version, index) => (
-                    <Version key={`${version.observedAt.toISOString()}-${String(index)}`} time={{ iso: when(version.observedAt), label: t("inbox.thread.version_read", { time: displayTime(version.observedAt) }) }} text={version.text} />
+                    <Version key={`${version.observedAt.toISOString()}-${String(index)}`} time={{ iso: when(version.observedAt), label: timed("inbox.thread.version_read", version.observedAt, "full") }} text={version.text} />
                   ))}
                 </VersionList>
               </MemberDisclosure>

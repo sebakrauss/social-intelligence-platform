@@ -257,7 +257,8 @@ describe("Conversation page", () => {
     // The brand's reply carries the fact in the data but the author line already says "Your account": not drawn twice.
     expect(html).not.toContain(text(t("inbox.facts.author_own_brand")));
     expect(html).toContain(text(t("inbox.understanding_pending")));
-    expect(t("inbox.understanding_pending")).toMatch(/not been assessed for safety or priority/);
+    // Comments 2.1 (Step 7B-17R): shorter, once per conversation — and still says what has NOT happened.
+    expect(t("inbox.understanding_pending")).toBe("Not automatically reviewed yet: safety and priority haven't been assessed.");
     expect(html).toContain(text(t("inbox.thread.not_read")));
     expect(html).toContain(text(t("inbox.understanding_pending")));
     expect(html).not.toContain(text(t("inbox.thread.truncated", { count: "3" })));

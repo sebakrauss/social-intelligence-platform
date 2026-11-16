@@ -66,7 +66,8 @@ describe("the surface requests; it never decides", () => {
     const clients = sourceFiles(PRODUCTION_ROOTS).filter(isClientModule);
     // Step 7B-15H: + the reply-drafts signed-out boundary (clears in-memory drafts; its rule is in inbox-composer-guards).
     // Step 7B-17K: + the in-app link and the drafts' conversation boundary (their rules are in inbox-composer-guards).
-    expect(clients).toEqual(["ui/connections/pending-submit-button.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/navigation/app-link.tsx"]);
+    // Step 7B-17R: + the local-time reading (Comments 2.1; its rule is in inbox-composer-guards).
+    expect(clients).toEqual(["ui/connections/pending-submit-button.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/navigation/app-link.tsx", "ui/time/local-time.tsx"]);
   });
 
   it("the read-model offer reuses the recovery core's functions and restates none of its rules; it locks and writes nothing", () => {

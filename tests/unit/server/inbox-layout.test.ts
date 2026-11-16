@@ -253,8 +253,9 @@ describe("the exceptional validation reply", () => {
 
   it("expired (the server answers the ordinary model again): the unavailable line with its reason, no composer, no validation notice", async () => {
     const html = await renderConversation(detail({ kind: "unavailable", reason: "platform_unavailable", platform: "facebook" }), list(), { reply: SECOND });
-    expect(html).toContain(escape(t("inbox.reply.unavailable_label")));
-    expect(html).toContain(escape(t("inbox.reply.reason.platform_unavailable")));
+    // Comments 2.1 (Step 7B-17R): "not available yet" in Wrenkind is one sentence, without the "Reply not available" label.
+    expect(html).not.toContain(escape(t("inbox.reply.unavailable_label")));
+    expect(count(html, new RegExp(escape(t("inbox.reply.reason.platform_unavailable")), "g"))).toBe(1);
     expect(composers(html)).toBe(0);
     expect(html).not.toMatch(/validation|<form\b|<button\b|<textarea\b/i);
   });
@@ -264,8 +265,11 @@ describe("what is not available says why", () => {
   it("a capability that is not validated / not enabled, paused, the connection or Monitor-only: ONE reason next to the thread, in outcome language", async () => {
     for (const reason of ["platform_unavailable", "paused", "connection", "account_inactive", "monitor_only"] as const) {
       const html = await renderConversation(detail({ kind: "unavailable", reason, platform: "facebook" }), list());
-      expect(count(html, new RegExp(escape(t("inbox.reply.unavailable_label")), "g"))).toBe(1);
-      expect(html).toContain(escape(t(`inbox.reply.reason.${reason}`)));
+      // Comments 2.1 (Step 7B-17R): a limitation of this workspace, account, connection or platform keeps its label and
+      // its own words; Wrenkind's own "not available yet" is one sentence. Either way: once per conversation.
+      expect(count(html, new RegExp(escape(t("inbox.reply.unavailable_label")), "g"))).toBe(reason === "platform_unavailable" ? 0 : 1);
+      // (Monitor-only is also the reason each secondary action gives, so its words appear there too.)
+      expect(count(html, new RegExp(escape(t(`inbox.reply.reason.${reason}`)), "g"))).toBe(reason === "monitor_only" ? 3 : 1);
     }
   });
 
@@ -629,15 +633,22 @@ describe("Focus presentation (Step 7B-15O)", () => {
       expect(names.every((name) => name?.includes("wk-sr-only") === true)).toBe(true);
     });
 
-    it("Step 7B-15S: a time reads short (\"13 NOV 12:37\", then only \"12:37\" on the same day), the exact UTC form stays for assistive technology and on hover, and 'Times in UTC' is said once", async () => {
+    it("Step 7B-15S / 7B-17R: a time reads short (\"13 NOV 12:37\", then only \"12:37\" on the same day), the exact form stays for assistive technology and on hover; the server's HTML is UTC, and 'Times in UTC' is said once, only for a page without JavaScript", async () => {
       const html = await renderConversation(detail(AVAILABLE), list());
       const thread = html.slice(html.indexOf('id="thread"'));
       // The first time in the thread carries the date; the ones after it on the same day only the clock.
       expect(thread).toContain(`<time class="${/class="([^"]*time[^"]*)" dateTime/.exec(thread)?.[1] ?? ""}" dateTime="2026-11-13T12:37:00Z" title="${escape(displayTime(T))}"><span aria-hidden="true">13 NOV 12:37</span><span class="wk-sr-only">${escape(displayTime(T))}</span></time>`);
       expect(count(thread, /<span aria-hidden="true">12:37<\/span>/g)).toBe(4);
       // No visible full timestamp in the thread's head lines: every displayTime() there is screen-reader or record text.
-      expect(count(html, new RegExp(`>${escape(t("inbox.times.utc"))}<`, "g"))).toBe(1); // Step 7B-15U: once per view — the thread heading; the list header says it only when no conversation is open
-      expect(count(await renderList(list()), new RegExp(`>${escape(t("inbox.times.utc"))}<`, "g"))).toBe(1);
+      // Step 7B-17R: once per view, in the list header, inside <noscript> — with JavaScript every time is read in the
+      // reader's own zone (ui/time/local-time.tsx), so the note would be wrong there.
+      for (const page of [html, await renderList(list())]) {
+        expect(count(page, new RegExp(`>${escape(t("inbox.times.utc"))}<`, "g"))).toBe(1);
+        expect(page).toMatch(new RegExp(`<noscript><span class="[^"]*subtitleNote[^"]*">${escape(t("inbox.times.utc"))}</span></noscript>`));
+      }
+      // The thread's name is for assistive technology only; the thread is still labelled by it.
+      expect(html).toMatch(new RegExp(`<h2 id="thread" class="wk-sr-only">${escape(t("inbox.thread.heading"))}</h2>`));
+      expect(html).toMatch(/<ol class="[^"]*" aria-labelledby="thread">/);
     });
 
     it("the automated-review status is one quiet line, not a boxed notice", async () => {
@@ -692,5 +703,53 @@ describe("Focus presentation (Step 7B-15O)", () => {
       expect(html).toMatch(new RegExp(`<a [^>]*href="[^"]*reply=${SECOND}[^"]*#member-${SECOND}"[^>]*>(?:<svg [^>]*aria-hidden="true"[^>]*>[\\s\\S]*?</svg>)?${escape(t("inbox.reply.here"))}</a>`));
       expect(composers(html)).toBe(1);
     });
+  });
+});
+
+describe("Comments 2.1 (Step 7B-17R): naming and a quieter Focus — nothing hidden that matters", () => {
+  it("the module reads 'Comments' (heading, way back) and there is no Messages destination or DM wording", async () => {
+    const html = await renderList(list());
+    expect(html).toMatch(new RegExp(`<h1 class="[^"]*">${escape(t("inbox.heading"))}</h1>`));
+    expect(t("inbox.heading")).toBe("Comments");
+    expect(t("inbox.back")).toBe("All comments");
+    expect(html).not.toMatch(/Messages|Direct message|>Inbox</i);
+  });
+
+  it("an unknown organic/paid source is no chip on the row, but stays stated in the conversation's details — never inferred", async () => {
+    const unknownRow: Ready = { ...list(), page: { ...list().page, items: list().page.items.map((item) => ({ ...item, source: "unknown" as const })) } };
+    const rows = await renderList(unknownRow);
+    expect(rows).not.toContain(escape(t("inbox.source.unknown_short")));
+    expect(rows).not.toContain(escape(t("inbox.source.organic")));
+    expect(rows).not.toContain(escape(t("inbox.source.paid")));
+    const open = await renderConversation(detail(AVAILABLE, { source: "unknown" }), unknownRow);
+    const details = open.slice(open.indexOf('id="conversation"'));
+    expect(details).toContain(escape(t("inbox.source.unknown")));
+    expect(details).not.toMatch(new RegExp(`>${escape(t("inbox.source.organic"))}<|>${escape(t("inbox.source.paid"))}<`));
+  });
+
+  it("the automated-review line is said once per open conversation, still saying safety and priority were not assessed; never on the list alone", async () => {
+    const open = await renderConversation(detail(AVAILABLE), list());
+    expect(count(open, new RegExp(escape(t("inbox.understanding_pending")), "g"))).toBe(1);
+    expect(t("inbox.understanding_pending")).toMatch(/^Not automatically reviewed yet: safety and priority haven't been assessed\.$/);
+    expect(await renderList(list())).not.toContain(escape(t("inbox.understanding_pending")));
+  });
+
+  it("an earlier published reply stays 'Sent' with its publication time beside 'not generally available yet' — no contradiction, nothing offered", async () => {
+    const sent: ConversationDetail["outbound"][number] = { intentId: "b-sent", parentInteractionId: ANCHOR, text: "earlier reply", state: "sent", outcomeCode: null, createdAt: T, confirmedAt: new Date("2026-11-13T12:39:00.000Z") };
+    const html = await renderConversation(detail({ kind: "unavailable", reason: "platform_unavailable", platform: "instagram" }, { outbound: [sent] }), list());
+    expect(html).toContain(escape(t("inbox.outbound.state.sent")));
+    expect(html).toContain("earlier reply");
+    expect(html).toContain(escape(t("inbox.outbound.confirmed_at", { time: "" })));
+    expect(t("inbox.reply.reason.platform_unavailable")).toMatch(/generally/);
+    expect(composers(html)).toBe(0);
+    expect(html).not.toMatch(/<form\b|<textarea\b/);
+  });
+
+  it("times: every <time> keeps its ISO instant; the HTML the server sends reads in UTC (what a page without JavaScript shows), the record names UTC", async () => {
+    const html = await renderConversation(detail(AVAILABLE, { thread: [member(ANCHOR, { providerEditedAt: new Date("2026-11-13T12:40:00.000Z") })] }), list());
+    expect(html).toContain('dateTime="2026-11-13T12:37:00Z"');
+    expect(html).toContain(escape(t("inbox.thread.posted", { time: displayTime(T) })));
+    expect(html).toContain(escape(t("inbox.thread.edited", { time: displayTime(new Date("2026-11-13T12:40:00.000Z")) })));
+    expect(html).toContain(escape(t("inbox.coverage.as_of", { time: displayTime(T) })));
   });
 });

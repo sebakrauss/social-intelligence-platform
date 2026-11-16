@@ -100,7 +100,7 @@
   color: var(--wk-text-secondary);
 }
 
-/* Step 7B-15S: how times read, said once for the list ("Newest activity first · Times in UTC"). */
+/* Step 7B-15S / Comments 2.1: how times read, said once for the list — only without JavaScript (UTC). */
 .subtitleNote::before {
   content: "·";
   content: "·" / "";
@@ -519,28 +519,6 @@ a.navLink:active {
   border: 1px solid var(--wk-border-default);
 }
 
-.sectionLabel {
-  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
-  letter-spacing: 0.01em;
-  text-transform: uppercase;
-  color: var(--wk-text-tertiary);
-}
-
-/* Step 7B-15S: the thread's label and, at the end of the same line, how its times read. */
-.threadHeading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--wk-space-4) var(--wk-space-16);
-}
-
-.threadHeadingNote {
-  margin: 0;
-  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
-  letter-spacing: 0.01em;
-  color: var(--wk-text-tertiary);
-}
 
 /* Step 7B-15O: the thread has no boxes — a comment, the replies under it on one indent rule, the account's own
    replies marked by their avatar. Space separates the top-level comments; a divider only between them. */

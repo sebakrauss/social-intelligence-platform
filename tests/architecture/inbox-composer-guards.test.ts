@@ -130,6 +130,9 @@ const BOUNDARY = "ui/inbox/reply-drafts-boundary.tsx";
 /** Step 7B-17K: the drafts' conversation boundary and the in-app link (the two other client modules near the drafts). */
 const SCOPE = "ui/inbox/reply-drafts-scope.tsx";
 const APP_LINK = "ui/navigation/app-link.tsx";
+/** Step 7B-17R (Comments 2.1): the one other client module on the Comments surface — a time read in the browser's zone. */
+const LOCAL_TIME = "ui/time/local-time.tsx";
+const LOCAL_TIME_FORMAT = "ui/time/local-time-format.ts";
 
 const sourceOf = (file: string): ts.SourceFile => ts.createSourceFile(file, readFileSync(path.join(REPOSITORY_ROOT, file), "utf8"), ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
 const nodesOf = (root: ts.Node): ts.Node[] => {
@@ -362,6 +365,16 @@ describe("reply drafts: memory only, never publishing (syntax tree)", () => {
     // Step 7B-17K: the boundary reads the address's two route segments; the link is the framework's <Link>.
     expect(importsOfFile(SCOPE)).toEqual(["next/navigation", "react", "./reply-drafts"]);
     expect(importsOfFile(APP_LINK)).toEqual(["next/link", "react", "@/ui/inbox/reply-drafts"]);
+  });
+
+  it("Step 7B-17R: the local-time reading only reads an instant it is given — no request, storage, timer, page or drafts access", () => {
+    expect(importsOfFile(LOCAL_TIME)).toEqual(["react", "./local-time-format"]);
+    expect(importsOfFile(LOCAL_TIME_FORMAT)).toEqual([]);
+    for (const file of [LOCAL_TIME, LOCAL_TIME_FORMAT]) {
+      expect(codeOf(file), file).not.toMatch(/\bfetch\b|Storage|indexedDB|cookie|document\.|navigator|location|history|setTimeout|setInterval|XMLHttpRequest|WebSocket|reply-drafts|dangerouslySetInnerHTML/);
+    }
+    // It subscribes to nothing: the reading is computed from the instant, the clock and the zone at render.
+    expect(codeOf(LOCAL_TIME)).toMatch(/const noSubscription = \(\): \(\(\) => void\) => \(\) => undefined;/);
   });
 
   it("only the composer, the signed-out boundary, the conversation boundary and the in-app link reach the drafts module — by any import, static or dynamic, anywhere in production code", () => {

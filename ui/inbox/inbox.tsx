@@ -8,6 +8,7 @@
 import type { ReactNode } from "react";
 import { Icon } from "@/ui/icons/icon";
 import { AppLink } from "@/ui/navigation/app-link";
+import { LocalTime, LocalTimeStamp } from "@/ui/time/local-time";
 import styles from "./inbox.module.css";
 
 /**
@@ -19,28 +20,28 @@ export interface ShownTime {
   readonly iso: string;
   readonly label: string;
   readonly full?: string;
+  /**
+   * Comments 2.1 (Step 7B-17R): the instant shown just above, in reading order, so the short reading can leave out a
+   * date the reader has just seen. `label` and `full` are the server's UTC readings — what the page says without
+   * JavaScript; in the browser both are read in the browser's own time zone (ui/time/local-time.tsx).
+   */
+  readonly previous?: string;
 }
 
 /** A <time> with its short label for the eye and its exact form for assistive technology (never two readings). */
 export function TimeStamp({ time, className }: { readonly time: ShownTime; readonly className?: string | undefined }) {
-  if (time.full === undefined || time.full === time.label) {
+  if (time.full === undefined) {
     return (
       <time className={className} dateTime={time.iso}>
-        {time.label}
+        <LocalTime iso={time.iso} form="short" fallback={time.label} previous={time.previous} />
       </time>
     );
   }
-  return (
-    <time className={className} dateTime={time.iso} title={time.full}>
-      <span aria-hidden="true">{time.label}</span>
-      <span className="wk-sr-only">{time.full}</span>
-    </time>
-  );
+  return <LocalTimeStamp className={className} iso={time.iso} label={time.label} full={time.full} previous={time.previous} />;
 }
 
 /** Step 7B-15S — a sentence that carries a time ("Requested 23:20"): short for the eye, exact for assistive technology. */
-export function TimedText({ short, full }: { readonly short: string; readonly full: string }) {
-  if (short === full) return <span>{full}</span>;
+export function TimedText({ short, full }: { readonly short: ReactNode; readonly full: ReactNode }) {
   return (
     <span>
       <span aria-hidden="true">{short}</span>
@@ -84,14 +85,22 @@ export function StandaloneConversation({ children }: { readonly children: ReactN
   return <div className={styles["standalone"]}>{children}</div>;
 }
 
-/** The list header; `level` 2 when the page's h1 is the conversation beside it. `note` (Step 7B-15S): how times read. */
-export function InboxHeader({ title, subtitle, note, level = 1 }: { readonly title: string; readonly subtitle: string; readonly note?: string; readonly level?: 1 | 2 }) {
+/**
+ * The list header; `level` 2 when the page's h1 is the conversation beside it. `noScriptNote` (Comments 2.1, Step
+ * 7B-17R): how times read when the page runs without JavaScript (UTC); with JavaScript every time is in the reader's own
+ * zone and no note is needed.
+ */
+export function InboxHeader({ title, subtitle, noScriptNote, level = 1 }: { readonly title: string; readonly subtitle: string; readonly noScriptNote?: string; readonly level?: 1 | 2 }) {
   return (
     <header className={styles["header"]}>
       {level === 1 ? <h1 className={styles["title"]}>{title}</h1> : <h2 className={styles["title"]}>{title}</h2>}
       <p className={styles["subtitle"]}>
         {subtitle}
-        {note === undefined ? null : <span className={styles["subtitleNote"]}>{note}</span>}
+        {noScriptNote === undefined ? null : (
+          <noscript>
+            <span className={styles["subtitleNote"]}>{noScriptNote}</span>
+          </noscript>
+        )}
       </p>
     </header>
   );
@@ -224,7 +233,7 @@ export function CoverageBlock({ children }: { readonly children: ReactNode }) {
   return <div className={styles["coverage"]}>{children}</div>;
 }
 
-export function CoverageSummaryLabel({ title, meta, incomplete }: { readonly title: string; readonly meta?: string; readonly incomplete?: string }) {
+export function CoverageSummaryLabel({ title, meta, incomplete }: { readonly title: string; readonly meta?: ReactNode; readonly incomplete?: string }) {
   return (
     <span className={styles["coverageSummary"]}>
       <span>{title}</span>
@@ -238,7 +247,7 @@ export function CoverageAccounts({ children }: { readonly children: ReactNode })
   return <div className={styles["coverageAccounts"]}>{children}</div>;
 }
 
-export function CoverageAccount({ head, kinds }: { readonly head: ReactNode; readonly kinds: readonly { readonly key: string; readonly pill: ReactNode; readonly captions: readonly string[]; readonly until?: string }[] }) {
+export function CoverageAccount({ head, kinds }: { readonly head: ReactNode; readonly kinds: readonly { readonly key: string; readonly pill: ReactNode; readonly captions: readonly string[]; readonly until?: ReactNode }[] }) {
   return (
     <div className={styles["coverageAccount"]}>
       <div className={styles["coverageAccountHead"]}>{head}</div>
@@ -324,21 +333,15 @@ export function QuietNote({ children }: { readonly children: string }) {
   return <p className={styles["quietNote"]}>{children}</p>;
 }
 
-export function SectionLabel({ children, id }: { readonly children: string; readonly id?: string }) {
+/**
+ * The thread's name. Comments 2.1 (Step 7B-17R): the comments under the post already read as a thread, so the name is
+ * for assistive technology only (it still labels the list); times read in the reader's own zone, so no note either.
+ */
+export function ThreadHeading({ id, label }: { readonly id: string; readonly label: string }) {
   return (
-    <h2 className={styles["sectionLabel"]} {...(id === undefined ? {} : { id })}>
-      {children}
+    <h2 id={id} className="wk-sr-only">
+      {label}
     </h2>
-  );
-}
-
-/** Step 7B-15S: the thread's heading with, on the same line, how its times read ("Times in UTC") — said once, not per comment. */
-export function ThreadHeading({ id, label, note }: { readonly id: string; readonly label: string; readonly note: string }) {
-  return (
-    <div className={styles["threadHeading"]}>
-      <SectionLabel id={id}>{label}</SectionLabel>
-      <p className={styles["threadHeadingNote"]}>{note}</p>
-    </div>
   );
 }
 
@@ -391,7 +394,7 @@ export function ThreadMember({ id, nested, own, author, named = true, replyingTo
   readonly presence?: ReactNode;
   readonly text: string;
   readonly textMuted?: boolean;
-  readonly times: readonly string[];
+  readonly times: readonly ReactNode[];
   /** Step 7B-15O: with a label, the exact times sit behind a small disclosure (kept, not in the way). */
   readonly timesLabel?: string;
   /** Step 7B-15S: whose times these are, for screen readers ("Comment by caro.m, …"). */
@@ -403,15 +406,15 @@ export function ThreadMember({ id, nested, own, author, named = true, replyingTo
   const record =
     times.length === 0 ? null : timesLabel === undefined ? (
       <p className={styles["memberTimes"]}>
-        {times.map((entry) => (
-          <span key={entry}>{entry}</span>
+        {times.map((entry, index) => (
+          <span key={index}>{entry}</span>
         ))}
       </p>
     ) : (
       <MemberDisclosure summary={timesLabel} {...(timesContext === undefined ? {} : { context: timesContext })}>
         <p className={styles["memberTimes"]}>
-          {times.map((entry) => (
-            <span key={entry}>{entry}</span>
+          {times.map((entry, index) => (
+            <span key={index}>{entry}</span>
           ))}
         </p>
       </MemberDisclosure>
@@ -494,7 +497,7 @@ export function VersionList({ children, notice }: { readonly children: ReactNode
   );
 }
 
-export function Version({ time, text }: { readonly time: { readonly iso: string; readonly label: string }; readonly text: string }) {
+export function Version({ time, text }: { readonly time: { readonly iso: string; readonly label: ReactNode }; readonly text: string }) {
   return (
     <li className={styles["version"]}>
       <time className={styles["time"]} dateTime={time.iso}>
@@ -515,11 +518,14 @@ export function Facts({ label, children }: { readonly label: string; readonly ch
   );
 }
 
-/** Step 7B-3: replies are not available in this conversation — the one reason, in outcome language, never a dead control. */
-export function ReplyUnavailable({ label, reason }: { readonly label: string; readonly reason: string }) {
+/**
+ * Step 7B-3: replies are not available in this conversation — the one reason, in outcome language, never a dead control.
+ * Comments 2.1 (Step 7B-17R): without `label`, the reason is the whole sentence (the product-wide "not available yet").
+ */
+export function ReplyUnavailable({ label, reason }: { readonly label?: string; readonly reason: string }) {
   return (
     <p className={styles["replyUnavailable"]}>
-      <span className={styles["replyUnavailableLabel"]}>{label}</span>
+      {label === undefined ? null : <span className={styles["replyUnavailableLabel"]}>{label}</span>}
       <span>{reason}</span>
     </p>
   );

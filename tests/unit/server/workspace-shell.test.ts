@@ -31,13 +31,16 @@ describe("WorkspaceShell", () => {
     }
   });
 
-  it("an Owner sees Inbox and Settings, the active section, the workspace and the sign-out form", async () => {
+  it("an Owner sees Comments and Settings, the active section, the workspace and the sign-out form", async () => {
     const html = await render({ kind: "ready", current: workspace(), workspaces: [workspace()] });
     // Step 7B-17K: in-app links — still one <a href> each, with the pending signal first.
     expect(html).toMatch(new RegExp(`<a class="[^"]*" aria-current="page" href="/workspaces/${WS}/inbox"><span class="[^"]*" data-pending="false" aria-hidden="true"></span><svg`));
     expect(html).toMatch(new RegExp(`<a class="[^"]*" href="/workspaces/${WS}/settings/connections"><span class="[^"]*" data-pending="false" aria-hidden="true"></span><svg`));
     expect(html).toContain(">Lumen Coffee</p>");
-    expect(html).toContain(">Conversations</a>");
+    // Comments 2.1 (Step 7B-17R): the module is "Comments", its default section "All comments"; no Messages destination.
+    expect(html).toMatch(/<span>Comments<\/span><\/a>/);
+    expect(html).toContain(">All comments</a>");
+    expect(html).not.toMatch(/Inbox<|Conversations<|Messages/);
     expect((html.match(/<form\b/g) ?? []).length).toBe(1);
     expect(html).toMatch(/<form[^>]*><button type="submit"[^>]*>Sign out<\/button><\/form>/);
     expect(html).not.toContain("Switch workspace");
