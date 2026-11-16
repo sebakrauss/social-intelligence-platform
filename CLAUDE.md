@@ -33,9 +33,9 @@ Non-negotiable product stances (PD §1, §7):
 |---|---|---|
 | `docs/product-definition-v1.md` (PD) | 1.3, approved | Product intent and confirmed product behavior (decisions D-01…D-52) |
 | `docs/information-architecture-v1.md` (IA) | 1.1, approved | Where concepts live; navigation; role visibility (IA §18) |
-| `docs/core-ux-flows-v1.md` (UX) | 1.1, approved. v1.2 (Phase 1 Comments Inbox amendment UX-19 Focus / UX-20 in-memory drafts, Step 7B-15V) is **pending formal product-owner approval** of its wording | User journeys, interaction behavior, unavailable states |
+| `docs/core-ux-flows-v1.md` (UX) | 1.2, approved (2026-11-16, Step 7B-17F): Phase 1 Comments Inbox amendment — UX-19 Focus, UX-20 in-memory reply drafts (a temporary exception to resolve before commercial readiness); ordinary public replies stay default-deny (§8.10.C) | User journeys, interaction behavior, unavailable states |
 | `docs/intelligence-data-model-v1.md` (Model) | 1.1, approved | Conceptual meaning, provenance, relationships, invariants S1–S21 (Model §50) |
-| `docs/technical-architecture-v1.md` (TA) | 1.2, approved. v1.3 (security amendment R4a, Step 7B-14P1) is technically validated and **pending formal product-owner approval** | Implementation boundaries, stack, runtime patterns, security, operations |
+| `docs/technical-architecture-v1.md` (TA) | 1.3, approved (2026-11-16, Step 7B-17F): security amendment R4a | Implementation boundaries, stack, runtime patterns, security, operations |
 | `docs/pre-implementation-validation-v1.md` | 1.0, accepted (0E.3) | Evidence for validated technical patterns (TA-Q-29, TA-Q-04, R1–R8). Evidence, not a decision document |
 
 Rules:
@@ -140,7 +140,7 @@ Spike names such as `bind_context` are illustrative. Production names are decide
 - RLS **enabled and forced** on every tenant table; deny by default.
 - `SECURITY DEFINER` helpers read forced-RLS tables only through explicit owner/definer policies.
 
-**R4a: privileged name resolution (TA §11.6, v1.3 — binding operational security rule; formal approval of TA v1.3 is pending)**
+**R4a: privileged name resolution (TA §11.6, v1.3 — approved; binding security rule)**
 
 - `SECURITY DEFINER` functions, and any function that runs under a privileged identity (helpers they call, triggers fired and `CHECK` predicates evaluated by their writes), pin `SET search_path = pg_catalog, pg_temp`: trusted schemas only, `pg_catalog` before `pg_temp`, `pg_temp` **last**.
 - Every reference to an object outside `pg_catalog` is schema-qualified.
