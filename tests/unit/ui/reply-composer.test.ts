@@ -115,11 +115,12 @@ describe("7B-3: the conversation view", () => {
 
   it("unavailable: the one reason in outcome language, and still no control", () => {
     const html = view(detail({ kind: "unavailable", reason: "platform_unavailable", platform: "instagram" }));
-    // Comments 2.1 (Step 7B-17R): Wrenkind's own "not available yet" is one sentence (no separate label); it says
-    // "generally" because an exceptional validation reply may already have been published (and is still shown as Sent).
+    // Comments 2.1 (Step 7B-17R/17T): Wrenkind's own "not available yet" is one sentence (no separate label), in the PO's
+    // words. It speaks of now: a reply published earlier during validation keeps its Sent record (inbox-layout test).
     expect(html).not.toContain(t("inbox.reply.unavailable_label"));
     expect(html).toContain(escape(t("inbox.reply.reason.platform_unavailable")));
-    expect(t("inbox.reply.reason.platform_unavailable")).toBe("Replying from Wrenkind isn't generally available yet.");
+    expect(t("inbox.reply.reason.platform_unavailable")).toBe("Replying from Wrenkind isn't available yet.");
+    expect(html).not.toMatch(/generally/);
     expect(html).not.toMatch(/not available for this platform|not available on Instagram/);
     expect(html).not.toMatch(/<form|<button|<textarea/);
     expect(view(detail({ kind: "unavailable", reason: "monitor_only", platform: "instagram" }))).toContain(t("inbox.reply.reason.monitor_only"));

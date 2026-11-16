@@ -39,7 +39,7 @@ export default function UiReferencePage() {
         <div className={styles["stack"]}>
           <p className={textStyle("display-l")}>Every conversation counts.</p>
           <p className={textStyle("heading-1")}>The human side of intelligence.</p>
-          <p className={textStyle("heading-2")}>Inbox · Lumen Coffee</p>
+          <p className={textStyle("heading-2")}>Comments · Lumen Coffee</p>
           <p className={textStyle("heading-3")}>Drivers of negative feedback</p>
           <p className={textStyle("body-l")}>One place to manage, understand and learn from conversations. Tu equipo decide. Seu time decide.</p>
           <p className={textStyle("ui-body")}>Pedí el 2 de octubre y todavía no llega. ¿Alguien me puede responder?</p>

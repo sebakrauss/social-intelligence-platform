@@ -119,9 +119,10 @@ const TIME_SLOT = "\u0000time\u0000";
  * Comments 2.1 (Step 7B-17R) — a catalog sentence whose `{time}` is read in the reader's own time zone in the browser
  * (ui/time/local-time.tsx); the server's UTC reading is what the page says without JavaScript. `short` follows the
  * thread's short form (with `previous`: the time shown just above); `full` is the exact reading with its zone.
+ * `values` fills the sentence's other slots ("{kind} by {author}, {time}").
  */
-function timed(key: MessageKey, date: Date, form: LocalTimeForm, timing?: { readonly now: Date; readonly previous?: Date | undefined }): React.ReactNode {
-  const [before = "", after = ""] = t(key, { time: TIME_SLOT }).split(TIME_SLOT);
+function timed(key: MessageKey, date: Date, form: LocalTimeForm, timing?: { readonly now: Date; readonly previous?: Date | undefined }, values: Readonly<Record<string, string>> = {}): React.ReactNode {
+  const [before = "", after = ""] = t(key, { ...values, time: TIME_SLOT }).split(TIME_SLOT);
   const fallback = form === "full" ? displayTime(date) : shortTime(date, timing?.now ?? renderNow(), timing?.previous);
   return (
     <>
@@ -682,7 +683,9 @@ function Member({ item, platformText, detail, workspaceId, cursor, replyTarget, 
   if (item.providerCreatedAt !== null) times.push(timed("inbox.thread.posted", item.providerCreatedAt, "full"));
   if (item.providerEditedAt !== null) times.push(timed("inbox.thread.edited", item.providerEditedAt, "full"));
   if (item.textObservedAt !== null) times.push(timed("inbox.thread.text_read", item.textObservedAt, "full"));
-  const entryLabel = item.providerCreatedAt === null ? t("inbox.thread.entry_label_undated", { kind, author }) : t("inbox.thread.entry_label", { kind, author, time: displayTime(item.providerCreatedAt) });
+  // Comments 2.1 (Step 7B-17T): the screen-reader name of this entry's disclosures reads its time in the same zone as
+  // every other time on the page (UTC without JavaScript).
+  const entryLabel = item.providerCreatedAt === null ? t("inbox.thread.entry_label_undated", { kind, author }) : timed("inbox.thread.entry_label", item.providerCreatedAt, "full", undefined, { kind, author });
   const removed = item.observed && item.presence === "removed_at_source";
   // "Written by your account" repeats what the author line already says on the brand's own messages: the fact stays in
   // the data (nothing is removed from the view model) and is simply not drawn twice.
@@ -728,7 +731,7 @@ function Member({ item, platformText, detail, workspaceId, cursor, replyTarget, 
         action={replyAction}
         fields={{ workspaceId, conversationId: detail.conversationId, targetInteractionId: item.interactionId, idempotencyKey: replyFormKey(), validation: true }}
         maxChars={detail.reply.maxChars}
-        labels={{ ...composerLabels(platformText, author, detail.reply.maxChars, detail.platform === "instagram"), validationNotice: t("inbox.reply.validation_notice", { time: displayTime(validationTarget.expiresAt) }) }}
+        labels={{ ...composerLabels(platformText, author, detail.reply.maxChars, detail.platform === "instagram"), validationNotice: timed("inbox.reply.validation_notice", validationTarget.expiresAt, "full") }}
         outcomes={outcomes}
         {...stage}
         {...drafts}

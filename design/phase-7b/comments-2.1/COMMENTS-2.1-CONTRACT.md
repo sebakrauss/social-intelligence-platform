@@ -1,12 +1,12 @@
-# Comments 2.1 — Product contract, proposed amendments and implementation contract (Step 7B-17R)
+# Comments 2.1 — Product contract, proposed amendments and implementation contract (Steps 7B-17R, 7B-17T)
 
 | Field | Value |
 |---|---|
 | Date | 2026-11-16 |
-| Step | 7B-17R — Comments 2.1: product contract and first (visual) implementation slice |
-| Code baseline | `main` = `origin/main` = `6ae42213890c0b792703a1093ddb6ea65a1573cd` (CI run 43934459243, success); DEV web `dpl_FrdFaGAeQWnN4zTJ8RteGsZSKG88`; DEV database 33 migrations (latest 0033) |
+| Step | 7B-17R — Comments 2.1: product contract and first (visual) implementation slice · 7B-17T — final local alignment (reply copy, local times everywhere) and governance review pack (§F) |
+| Code baseline | 17R: `main` = `origin/main` = `6ae42213890c0b792703a1093ddb6ea65a1573cd` (CI run 43934459243, success); DEV web `dpl_FrdFaGAeQWnN4zTJ8RteGsZSKG88`; DEV database 33 migrations (latest 0033). 17T: local `main` = `94fb502` (17R `46d6df2` + Next.js 16.4.5 security patch), `origin/main` and DEV unchanged |
 | Starting point | The Step 7B-17Q proposal (Inbox 2.1), superseded where the product owner decided otherwise — above all the name: the module is **Comments**, not "Inbox" |
-| Status | Three separate statuses, never conflated: **A** product direction — APPROVED by the product owner (2026-11-16); **B** amended wording of the governing documents — PROPOSED, pending formal approval; **C** implementation evidence — the visual slice, built locally in this step |
+| Status | Four separate statuses, never conflated: **A** product direction — APPROVED by the product owner (2026-11-16); **B** amended wording of the governing documents — PROPOSED, pending formal approval; **C** implementation evidence — the visual slice, built locally (17R, 17T); **D** manual labels — contract only, NOT implemented |
 
 This file is not a source of truth. The governing documents are the ones under `docs/` and they are **unchanged** by
 this step: their approved versions (PD 1.3, IA 1.1, UX 1.2, Model 1.1, TA 1.3) and `CLAUDE.md` §2 still hold. If this
@@ -51,6 +51,19 @@ The English names are in the development reference catalog (`platform/i18n/catal
 Spanish names are recorded here for the Spanish catalog; that catalog does not exist yet, and shipping it is the
 open interface-language decision **PD OQ-20** (§E).
 
+### A.2 Product-owner clarifications (Step 7B-17T, 2026-11-16) — status: APPROVED
+
+Source: the product owner's preferences communicated through the technical lead in the Step 7B-17T mandate.
+
+| # | Clarification |
+|---|---|
+| 12 | Wrenkind's own reply-availability sentence is **"Replying from Wrenkind isn't available yet."** — Spanish **"Responder desde Wrenkind aún no está disponible."** (no "generally"). |
+| 13 | A reply published earlier during validation stays a valid **Sent** record with its publication time: present availability never changes historical publication status. |
+| 14 | Spanish copy (Comentarios, Todos los comentarios, Etiquetas, Administrar etiquetas, the sentence in 12) is an **approved naming requirement** for when a Spanish locale exists; it is not implemented today (§E). |
+
+Unchanged by 12–13: specific account restrictions, Monitor-only, connection problems and platform pauses keep their own
+label and words; ordinary public replies stay default-deny (UX §8.10.C); no capability or permission changes.
+
 ---
 
 ## B. Proposed amendments to the governing documents — status: PROPOSED (pending formal approval)
@@ -71,9 +84,22 @@ New decision row after D-52:
 > duplicate or delete a comment; deleting a label removes its assignments only. No labels are preloaded. Automatic
 > labelling is a separate future capability that needs its own product decision. | 7B-17R | §13, §14 |
 
-Note under §16 (languages): *"The module that holds the public comments is named **Comments** (Spanish:
-**Comentarios**). 'Messages' is reserved for a possible future private-messaging module, which is not part of the
-product (C-03, D-36)."*
+New decision rows after D-53 (17T: the 17R draft put the naming in a §16 note and left the time-zone decision to UX
+only; both are product decisions, so they become decision rows):
+
+> | D-54 | **The public-comments module is named Comments (Comments 2.1).** User-facing name **Comments** (Spanish:
+> **Comentarios**); its default section **All comments** (Todos los comentarios). Technical names (routes, keys,
+> modules, data) are unchanged. "Messages" is reserved for a possible future private-messaging module, which is not
+> part of the product (C-03, D-36); no navigation item, placeholder or DM surface exists. | 7B-17R | §16 |
+> | D-55 | **Individual times are shown in the reader's time zone (Comments 2.1).** Dates and times of individual
+> items on operational surfaces are shown in the time zone of the person's browser, with the zone named wherever the
+> exact time is shown; stored instants stay absolute (UTC). Without the browser's zone (no JavaScript) the product
+> shows UTC and says so. Workspace time zones keep governing reporting, day boundaries in aggregates and
+> response-time measurement (§16 principle 5). | 7B-17R | §16 |
+
+§16 principle 5, amended: *"**Locale-aware formatting.** Dates, times, numbers and currencies follow the user's locale.
+Individual dates and times are shown in the person's own (browser) time zone (D-55). Time zones are set per workspace
+for reporting and response-time measurement."*
 
 ### B.2 Information Architecture (proposed v1.2)
 
@@ -88,32 +114,54 @@ product (C-03, D-36)."*
 **All comments**. No 'Messages' destination exists."*
 
 §18 (role visibility), new row: *"View manual labels and filter by them: every role that reads the operational surface.
-Assign or remove: roles with `workflow.internal`. Create, rename, delete: Owner, Admin, Manager (`labels.manage`).
-Client guest: none."*
+Assign or remove: roles with `workflow.internal` (Owner, Admin, Manager, Responder/Agent). Create, rename, delete:
+Owner, Admin, Manager (`labels.manage`). Analyst/Viewer: view and filter only. Client guest: none. Monitor-only: label
+operations stay available (internal workflow, no platform effect — S7 is about platform mutations)."* (The
+Monitor-only sentence is derived, not explicitly decided: §E.4.)
 
-Glossary note: *"**Manual label** — organizational metadata a person puts on a comment (Comments 2.1). Not a
-classification label (§7.5), not a topic, not a Brand/Market label."*
+§21.1 canonical vocabulary (IA has no separate glossary; 17T moves the 17R "glossary note" here):
+
+> | Inbox (destination) | **Comments**; default section **All comments** | Spanish: Comentarios · Todos los comentarios. Technical names unchanged. Never "Messages" (reserved, not in the product). |
+> | Manual label (Comments 2.1) | **Labels** (one: **label**); management: **Manage labels** | Spanish: Etiquetas · Administrar etiquetas. Organizational metadata a person puts on a comment. Not a classification result, not a topic, not a Brand/Market label. |
+
+§21.1 row **Classification**, amended (17T — required by decision 9; see §E.3): the user-facing umbrella word
+"Labels" moves to manual labels; classification is shown by its dimension names:
+
+> | Classification | **Type**, **Topic**, **Risk**, **Reply needed** (by name; no umbrella word) | Avoid "classification", "intent", "category" in default UI. Never called "labels": that word is reserved for manual labels (Comments 2.1). |
 
 ### B.3 Core UX Flows (proposed v1.3)
 
 New §8.11 and two rows in §28.2:
 
-> | **UX-21** | **Manual labels (Comments 2.1).** Labels are created per workspace and assigned to individual comments
-> from Focus; a comment may carry several. A label in the Comments sidebar filters the list to the conversations
+> | **UX-21** | **Manual labels (Comments 2.1).** Labels are created per workspace by people who manage labels (none are
+> preloaded) and assigned to individual comments from Focus; a comment may carry several. They are not AI
+> classification and are never presented as an assessment. People who handle conversations (`workflow.internal`) assign
+> and remove them; an Analyst sees them and filters by them only. A label in the Comments sidebar filters the list to the conversations
 > that contain at least one comment with it — one label at a time; the filter is visible, survives pagination and
 > Previous / Next / Close, and is cleared by switching workspaces. A deleted or inaccessible label falls back to all
 > comments without revealing whether it ever existed. Labels never act: no hide, delete, priority change, publication
 > or AI action follows from a label. | **APPROVED direction (7B-17R); wording PROPOSED** | §8.11 |
-> | **UX-22** | **Quieter Focus (Comments 2.1).** Times read in the browser's local time zone (UTC when the page runs
-> without JavaScript, said once); the automated-review status is one line per open conversation ("Not automatically
+> | **UX-22** | **Quieter Focus (Comments 2.1).** Every time reads in the browser's local time zone — visible times,
+> exact times, the names assistive technology reads and notices that carry a time (UTC when the page runs without
+> JavaScript, said once; D-55); the automated-review status is one line per open conversation ("Not automatically
 > reviewed yet: safety and priority haven't been assessed."); Wrenkind's own "not available yet" for replying is one
-> sentence per conversation, while a limitation of the workspace (Monitor-only), account, connection or platform keeps
-> its label and its own words; an unknown organic/paid source is stated in the conversation's details, not as a chip on
-> every row; the thread's heading is for assistive technology only. UX-19 and UX-20 are unchanged. | **APPROVED
-> direction (7B-17R); wording PROPOSED** | §8.10, §8.11 |
+> sentence per conversation ("Replying from Wrenkind isn't available yet."), while a limitation of the workspace
+> (Monitor-only), account, connection or platform keeps its label and its own words; a reply published earlier stays
+> **Sent** with its time — present availability never rewrites a historical record; an unknown organic/paid source is
+> stated in the conversation's details, not as a chip on every row; the thread's heading is for assistive technology
+> only. UX-19 and UX-20 are unchanged. | **APPROVED direction (7B-17R, 7B-17T); wording PROPOSED** | §8.10, §8.11 |
 
 §8.10.A note: *"The quoted Phase 1 sentence 'No automated review has run…' is presented, from Comments 2.1, as the
 shorter UX-22 line; its meaning is unchanged."*
+
+Consequential edits for decision 9 (17T; the same open choice as IA §21.1, §E.3) — classification loses the umbrella
+word "Labels", without inventing a new one:
+
+- §9.1 layout, item 4: "Labels: type · topic · risk · reply needed" → *"4. Type · topic · risk · reply needed (more on demand)"*.
+- §16 (F-13): goal "fix a wrong label" → *"fix a wrong classification"*; entry point "conversation → Labels → Not
+  right?" → *"conversation → a classification dimension → Not right?"*.
+- §25.3 (Analyst opens a conversation): "Labels are visible" → *"Classification and manual labels are visible; manual
+  labels cannot be assigned."*
 
 ### B.4 Intelligence Data Model (proposed v1.2)
 
@@ -135,20 +183,27 @@ priority, protection or automation decision reads it. Assignments and definition
 - §38.11 data classes: `workflow.manual_labels` (configuration, class H: name and color are customer text — never
   logged) and `workflow.manual_label_assignments` (workflow; identifiers only).
 - §26 / Appendix A: manual labels are outside every mutation, automation and AI path (guard-enforced, §D.8).
+- §11 / §13 / §41 (17T: tenancy and audit made explicit): both tables are tenant tables — `workspace_id`, forced RLS
+  deny-by-default, explicit grants (web runtime only), composite workspace foreign keys (R5), R4a for any privileged
+  function; every definition change and every assignment writes its audit event in the same transaction
+  (identifiers only).
+- §10.3 matrix row text stays technical: `workspace.read_operational` "(Home, Inbox, Content & Ads)" keeps the word
+  Inbox as the technical surface name (D-54).
 
 ---
 
 ## C. Implementation evidence — the visual slice (this step, local)
 
-Built and tested locally in Step 7B-17R; reviewed by no one yet; not pushed, not deployed.
+Built and tested locally in Steps 7B-17R and 7B-17T; reviewed by no one yet; not pushed, not deployed.
 
 | Area | Change |
 |---|---|
 | Naming | Navigation rail "Comments"; sidebar "Comments" › "All comments"; page heading "Comments"; way back "All comments"; access and unavailable messages say "Comments". No Messages item. Routes and keys unchanged. |
 | Automated-review line | One line per open conversation: "Not automatically reviewed yet: safety and priority haven't been assessed." |
 | Thread heading | "Comments and replies" is screen-reader-only (still labels the thread). |
-| Times | Every time is read in the browser's zone (`ui/time/local-time.tsx`): short "13 NOV 22:30", exact "13 NOV 2026 · 22:30 GMT-3". The server HTML keeps the UTC reading (no-JavaScript fallback, hydration-safe); `<time dateTime>` keeps the ISO instant; "Times in UTC" is said once, inside `<noscript>`. Screen-reader-only disclosure names that embed a time (`inbox.thread.entry_label`) and the validation-reply notice keep the explicit UTC reading. |
-| Reply availability | Wrenkind's own "not available yet": one sentence, "Replying from Wrenkind isn't generally available yet." ("generally": an exceptional validation reply may already be shown as Sent). Monitor-only, paused, connection and inactive-account reasons keep the "Reply not available" label and their words. |
+| Times | Every time is read in the browser's zone (`ui/time/local-time.tsx`): short "13 NOV 22:30", exact "13 NOV 2026 · 22:30 GMT-3". The server HTML keeps the UTC reading (no-JavaScript fallback, hydration-safe); `<time dateTime>` keeps the ISO instant; "Times in UTC" is said once, inside `<noscript>`. 17T: the two surfaces 17R left in UTC now read locally too — the screen-reader name of an entry's disclosures (`inbox.thread.entry_label`) and the exceptional validation-reply notice (`inbox.reply.validation_notice`). Pinned by `tests/unit/server/inbox-local-time-surfaces.test.ts` (no fixed UTC reading left with JavaScript). |
+| Reply availability | Wrenkind's own "not available yet": one sentence, "Replying from Wrenkind isn't available yet." (17T, the PO's wording). A reply published earlier stays Sent with its time beside it. Monitor-only, paused, connection and inactive-account reasons keep the "Reply not available" label and their words. The exceptional validation notice keeps its own sentence ("Instagram replies are not generally available."): it is shown only while an operator authorization is live, where "generally" is exact. |
+| Development references | `/dev/ui-reference` (synthetic, development only): the shell and type-scale samples say "Comments" (17T). The Step 7B-15N prototype keeps its own fixed UTC demo times. |
 | Unknown source | No "Organic or paid: not known" chip on list rows; still stated in the conversation's details. |
 | Context note | "Post details aren't available yet." |
 
@@ -267,8 +322,38 @@ actions return closed states; nothing optimistic.
 1. **Spanish interface (PD OQ-20).** The Spanish names are recorded (§A.1), but the product has one development
    reference catalog (English) and no locale selection. Shipping "Comentarios" needs the interface-language decision
    and a complete Spanish catalog.
+   The approved Spanish copy (§A.2) is recorded for that catalog; nothing renders in Spanish today.
 2. **Formal approval of the amended wording** in §B (PD 1.4, IA 1.2, UX 1.3, Model 1.2, TA 1.4), before or together
    with the manual-label gate.
-3. **"generally" in the reply line.** Implemented as "Replying from Wrenkind isn't generally available yet." (instead of
-   the suggested "isn't available yet") so it does not contradict an exceptional validation reply already shown as
-   Sent. Confirm or replace.
+3. **"Labels" is already the user-facing word for AI classification** (IA §21.1 "Classification → Labels: Type,
+   Topic, Risk, Reply needed"; UX §9.1 layout item 4; UX §16/F-13 entry "conversation → Labels → Not right?"; UX §25.3).
+   Decision 9 (labels separate from AI) and the approved name "Labels / Etiquetas" for manual labels require that word
+   to move. §B.2/§B.3 propose the smallest change — classification shown by its dimension names, no umbrella word.
+   Alternative: keep "Labels" for classification and give manual labels another name. Needs an explicit choice; no
+   classification UI exists yet, so nothing shipped changes.
+4. **Derived rules not explicitly decided** (proposed in §B/§D, need confirmation): label operations stay available
+   in Monitor-only; the initial limits of §D.3 (1–40 characters, 50 per workspace, token colors, flat, no bulk);
+   whether the one label filter combines with other list filters once they exist (IA §7.3) — proposed: yes.
+5. ~~"generally" in the reply line~~ — **resolved in 7B-17T**: "Replying from Wrenkind isn't available yet." (§A.2).
+
+---
+
+## F. Product-owner governance review pack (Step 7B-17T)
+
+Everything in this section summarizes §B; the exact proposed wording is §B. Nothing here is approved wording, and no
+file under `docs/` is changed. Statuses: **A** approved direction (§A, §A.2) · **B** proposed wording (§B) ·
+**C** implemented (§C, local only) · **D** not implemented (§D).
+
+| Document (proposed version) | Sections amended | New normative content | Differences from approved direction | Open |
+|---|---|---|---|---|
+| PD 1.3 → **1.4** | §13–§14 decision log (D-53, D-54, D-55); §16 principle 5 | D-53 manual labels = human organizational metadata, never AI input or action, none preloaded (B·D). D-54 name Comments/Comentarios, Messages reserved (B·C). D-55 times in the browser's zone, UTC without JavaScript; workspace zone keeps reporting (B·C). | None. 17T makes D-54/D-55 decision rows (17R had a §16 note and a UX-only rule). | Spanish runtime: OQ-20 (§E.1) |
+| IA 1.1 → **1.2** | §4; §7.3 (Labels group); §18 (row); §21.1 (Comments, Labels, Classification rows) | Comments › All comments · Labels; one label filter; role visibility: Owner/Admin/Manager manage, Agent assigns, Analyst reads, Guest none (B·D). | §21.1 Classification row loses the word "Labels" (§E.3) — a consequence of decisions 9 and A.1, not stated by the PO. Monitor-only availability of labels is derived (§E.4). | §E.3, §E.4 |
+| UX 1.2 → **1.3** | §8.10.A note; new §8.11; §28.2 rows UX-21, UX-22; §9.1 item 4, §16 (F-13), §25.3 wording | UX-21 manual labels (assign per comment, filter per conversation, one at a time, never act) (B·D). UX-22 quieter Focus: local times everywhere, one review line, reply sentence, Sent history kept (B·C). UX-19 and UX-20 unchanged. | The F-13/§9.1/§25.3 rewording follows §E.3. | §E.3, §E.4 (filter combination) |
+| Model 1.1 → **1.2** | §31 objects; object index; §40 audit | Manual Label, Manual Label Assignment: human workflow metadata outside M-05; no interpretation, priority, protection or automation reads it; audited (B·D). | None. | — |
+| TA 1.3 → **1.4** | §7.1; §10.3 (`labels.manage`); §38.11; §26 / Appendix A; §11/§13/§41 | Owner `workflow` (L3); `labels.manage` for Owner/Admin/Manager; assignment under `workflow.internal`; tenant tables with forced RLS, R5, R4a; audit in the same transaction; outside every mutation/automation/AI path (B·D). | None. | — |
+
+Consistency checks (17T), all holding in §B as now worded: Comments (user-facing) vs Inbox (technical) · Messages
+out of scope · manual labels vs AI classification (except §E.3, which is the open naming collision) · assignment per
+comment, filter per conversation · one label filter in v1 · no preloaded taxonomy · Owner/Admin/Manager manage ·
+Agent assigns · Analyst read-only · Client guest denied · `workflow` ownership and pipeline authorization · tenant
+isolation and audit · UX-19/UX-20 unchanged · no authority over moderation or provider actions.

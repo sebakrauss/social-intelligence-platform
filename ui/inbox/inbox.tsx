@@ -357,7 +357,7 @@ export function Thread({ children, labelledBy }: { readonly children: ReactNode;
  * Step 7B-15S — a small native disclosure under a comment (its exact times, its earlier versions): the summary names
  * what is inside; `context` (screen readers only) says whose it is, so a list of several is never a row of identical names.
  */
-export function MemberDisclosure({ summary, context, children }: { readonly summary: string; readonly context?: string; readonly children: ReactNode }) {
+export function MemberDisclosure({ summary, context, children }: { readonly summary: string; readonly context?: ReactNode; readonly children: ReactNode }) {
   return (
     <details className={styles["memberDetails"]}>
       <summary className={styles["memberDetailsSummary"]}>
@@ -398,7 +398,7 @@ export function ThreadMember({ id, nested, own, author, named = true, replyingTo
   /** Step 7B-15O: with a label, the exact times sit behind a small disclosure (kept, not in the way). */
   readonly timesLabel?: string;
   /** Step 7B-15S: whose times these are, for screen readers ("Comment by caro.m, …"). */
-  readonly timesContext?: string;
+  readonly timesContext?: ReactNode;
   readonly versions?: ReactNode;
   readonly facts?: ReactNode;
   readonly actions?: ReactNode;

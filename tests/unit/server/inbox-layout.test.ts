@@ -734,13 +734,17 @@ describe("Comments 2.1 (Step 7B-17R): naming and a quieter Focus — nothing hid
     expect(await renderList(list())).not.toContain(escape(t("inbox.understanding_pending")));
   });
 
-  it("an earlier published reply stays 'Sent' with its publication time beside 'not generally available yet' — no contradiction, nothing offered", async () => {
-    const sent: ConversationDetail["outbound"][number] = { intentId: "b-sent", parentInteractionId: ANCHOR, text: "earlier reply", state: "sent", outcomeCode: null, createdAt: T, confirmedAt: new Date("2026-11-13T12:39:00.000Z") };
+  it("an earlier published reply stays 'Sent' with its publication time beside 'isn't available yet' — present availability never rewrites the record, nothing offered", async () => {
+    const confirmedAt = new Date("2026-11-13T12:39:00.000Z");
+    const sent: ConversationDetail["outbound"][number] = { intentId: "b-sent", parentInteractionId: ANCHOR, text: "earlier reply", state: "sent", outcomeCode: null, createdAt: T, confirmedAt };
     const html = await renderConversation(detail({ kind: "unavailable", reason: "platform_unavailable", platform: "instagram" }, { outbound: [sent] }), list());
     expect(html).toContain(escape(t("inbox.outbound.state.sent")));
     expect(html).toContain("earlier reply");
-    expect(html).toContain(escape(t("inbox.outbound.confirmed_at", { time: "" })));
-    expect(t("inbox.reply.reason.platform_unavailable")).toMatch(/generally/);
+    expect(html).toContain(escape(t("inbox.outbound.confirmed_at", { time: displayTime(confirmedAt) })));
+    // Comments 2.1 (Step 7B-17T): the PO's sentence, about now — beside the historical Sent record, unchanged.
+    expect(t("inbox.reply.reason.platform_unavailable")).toBe("Replying from Wrenkind isn't available yet.");
+    expect(html).toContain(escape(t("inbox.reply.reason.platform_unavailable")));
+    expect(html).not.toContain(escape(t("inbox.outbound.state.failed")));
     expect(composers(html)).toBe(0);
     expect(html).not.toMatch(/<form\b|<textarea\b/);
   });

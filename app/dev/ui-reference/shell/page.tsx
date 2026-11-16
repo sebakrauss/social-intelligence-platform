@@ -46,7 +46,7 @@ export default function ShellReferencePage() {
     >
       <main className={styles["screen"]}>
         <header className={styles["screenHeader"]}>
-          <h1 className={textStyle("heading-2")}>Inbox</h1>
+          <h1 className={textStyle("heading-2")}>Comments</h1>
           <p className={`${textStyle("ui-body-s")} ${styles["muted"] ?? ""}`}>Newest activity first · synthetic data for the shell reference</p>
         </header>
 

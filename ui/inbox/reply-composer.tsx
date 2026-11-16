@@ -9,7 +9,7 @@
  *
  * Every label arrives translated from the server page (client components hold no catalog).
  */
-import { useActionState, useId, useState } from "react";
+import { useActionState, useId, useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 import type { ReplyAction, ReplyActionState } from "@/server/inbox/reply-state";
 import { Button } from "@/ui/primitives/button";
@@ -25,8 +25,12 @@ export interface ReplyComposerLabels {
   readonly to: string;
   readonly as: string;
   readonly note?: string;
-  /** Step 7B-14I2: present ONLY for an exceptional, operator-authorized validation reply (never general availability). */
-  readonly validationNotice?: string;
+  /**
+   * Step 7B-14I2: present ONLY for an exceptional, operator-authorized validation reply (never general availability).
+   * Comments 2.1 (Step 7B-17T): drawn by the server with its expiry as a local-time element (ui/time/local-time.tsx), so
+   * it reads in the browser's zone like every other time; UTC without JavaScript.
+   */
+  readonly validationNotice?: ReactNode;
   readonly fieldLabel: string;
   readonly fieldHelp: string;
   /** Templates with a literal `{count}` placeholder: only plain strings cross the server → client boundary. */

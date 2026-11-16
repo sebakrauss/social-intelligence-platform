@@ -152,7 +152,7 @@ export const developmentReferenceCatalog: Catalog = {
   "inbox.reply.reason.account_inactive": "The account this conversation belongs to is no longer active here.",
   "inbox.reply.reason.paused": "Public replies on this platform are paused right now.",
   "inbox.reply.reason.connection": "The connection needs attention before replies can be sent.",
-  "inbox.reply.reason.platform_unavailable": "Replying from Wrenkind isn't generally available yet.",
+  "inbox.reply.reason.platform_unavailable": "Replying from Wrenkind isn't available yet.",
   "inbox.reply.heading": "Reply publicly",
   "inbox.reply.to": "Replying to {author}",
   "inbox.reply.as": "As your {platform} account, visible to everyone",
