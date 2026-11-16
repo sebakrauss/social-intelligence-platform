@@ -1089,7 +1089,7 @@ a.navLink:active {
   pointer-events: none;
 }
 
-.rowPending,
+.rowPending[data-pending="true"],
 .navPending[data-pending="true"] {
   opacity: 1;
   animation: linkPending var(--wk-duration-reveal) var(--wk-ease-enter) forwards;
