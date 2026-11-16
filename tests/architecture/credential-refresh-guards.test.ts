@@ -41,7 +41,8 @@ describe("the continuation is created only by a successful re-authorization", ()
     const migrations = readdirSync(path.join(root, "db/migrations")).filter((f) => f.endsWith(".sql"));
     for (const file of migrations) expect(readFileSync(path.join(root, "db/migrations", file), "utf8"), file).not.toMatch(/connections\.discover_assets|capability_refresh_credential_id/);
     // Step 7B-16B: 0032 (one-open-reply index) is scanned by the loop above like every migration.
-    expect(migrations.sort().at(-1)).toBe("0032_reply_in_flight_admission.sql");
+    // Step 7B-16E: 0033 (intent transition guard) is scanned by the loop above like every migration.
+    expect(migrations.sort().at(-1)).toBe("0033_mutation_intent_state_transition_guard.sql");
     // Step 7B-14P1 (TA §11 R4a): 0031 names functions of every domain, but only to re-pin their search_path.
     expect(r4aMigrationShapeProblems()).toEqual([]);
   });

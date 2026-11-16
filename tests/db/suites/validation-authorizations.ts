@@ -192,6 +192,22 @@ export function defineValidationAuthorizationsSuite(getTarget: () => DbTarget): 
     asWorker(t.workspaceId, async (tx) => (await tx.execute(sql`update mutations.mutation_intents set status = ${to}, attempt = 1, run_reference = 'run_7b14f1', updated_at = now() ${extra}
       where workspace_id = ${t.workspaceId} and id = ${intentId} and status = ${from}`)).rowCount ?? 0);
   const toExecuting = (t: Tenant, intentId: string) => transition(t, intentId, "PENDING", "EXECUTING");
+  /** A typed asymmetric matcher for a refusal message (which guard refused). */
+  const matching = (pattern: RegExp): string => expect.stringMatching(pattern) as string;
+  /** Step 7B-16E: the PostgreSQL code and message behind a refused statement (the message tells WHICH guard refused). */
+  const refusedWith = async (promise: Promise<unknown>): Promise<{ code: string; message: string }> => {
+    try {
+      await promise;
+    } catch (error) {
+      for (let current: unknown = error, depth = 0; depth < 5 && typeof current === "object" && current !== null; depth += 1) {
+        const shape = current as { code?: unknown; message?: unknown; cause?: unknown };
+        if (typeof shape.code === "string" && /^[0-9A-Z]{5}$/.test(shape.code)) return { code: shape.code, message: String(shape.message) };
+        current = shape.cause;
+      }
+      throw error;
+    }
+    return expect.unreachable("expected the statement to be refused");
+  };
 
   const authorizationRow = async (t: Tenant, id: string) =>
     (await oracle<{ intent_id: string | null; bound: boolean; consumed: boolean; revoked: boolean; issued_by: string; issue_reason: string; revoked_by: string | null; revocation_reason: string | null }>(
@@ -692,16 +708,43 @@ export function defineValidationAuthorizationsSuite(getTarget: () => DbTarget): 
       expect(await authorizationRow(t, id)).toMatchObject({ consumed: true });
     });
 
-    it("an ordinary intent (no authorization) keeps every transition the database admitted before 0028", async () => {
+    it("an ordinary intent (no authorization) is untouched by 0028's checks — and, since Step 7B-16E, bound by 0033 to the same intent-model transitions", async () => {
+      // Before 0033 this test recorded that the database admitted PENDING → CONFIRMED, BLOCKED → EXECUTING and
+      // PENDING → OUTCOME_UNKNOWN for an ordinary intent (0028 checks authorized intents only). 0033 now refuses them
+      // with ITS message (not 0028's: an ordinary intent never reaches 0028's checks), and the legal path is unchanged.
       const t = await tenant();
+      const notATransition = /not a transition of the mutation intent model/;
       const skip = await request(t, t.users.RESPONDER);
-      expect(await transition(t, skip, "PENDING", "CONFIRMED")).toBe(1);
-      const revived = await request(t, t.users.RESPONDER);
-      expect(await transition(t, revived, "PENDING", "BLOCKED", sql`, outcome_code = 'CAPABILITY_UNAVAILABLE'`)).toBe(1);
-      expect(await transition(t, revived, "BLOCKED", "EXECUTING", sql`, outcome_code = null`)).toBe(1);
-      // Step 7B-16B: `revived` is EXECUTING again and holds the comment (0032), so the next one names the other comment.
-      const unknown = await request(t, t.users.RESPONDER, { target: t.ig.otherComment });
-      expect(await transition(t, unknown, "PENDING", "OUTCOME_UNKNOWN", sql`, outcome_code = 'RESPONSE_LOST'`)).toBe(1);
+      expect(await refusedWith(transition(t, skip, "PENDING", "CONFIRMED"))).toMatchObject({ code: "42501", message: matching(notATransition) });
+      expect(await refusedWith(transition(t, skip, "PENDING", "OUTCOME_UNKNOWN", sql`, outcome_code = 'RESPONSE_LOST'`))).toMatchObject({ code: "42501", message: matching(notATransition) });
+      expect(await transition(t, skip, "PENDING", "BLOCKED", sql`, outcome_code = 'CAPABILITY_UNAVAILABLE'`)).toBe(1);
+      expect(await refusedWith(transition(t, skip, "BLOCKED", "EXECUTING", sql`, outcome_code = null`))).toMatchObject({ code: "42501", message: matching(notATransition) });
+      // The legal ordinary lifecycle, on the other comment: PENDING → EXECUTING → OUTCOME_UNKNOWN → CONFIRMED.
+      const lived = await request(t, t.users.RESPONDER, { target: t.ig.otherComment });
+      expect(await transition(t, lived, "PENDING", "EXECUTING")).toBe(1);
+      expect(await transition(t, lived, "EXECUTING", "OUTCOME_UNKNOWN", sql`, outcome_code = 'RESPONSE_LOST'`)).toBe(1);
+      expect(await transition(t, lived, "OUTCOME_UNKNOWN", "CONFIRMED", sql`, outcome_code = null`)).toBe(1);
+      expect(await oracle("select status from mutations.mutation_intents where workspace_id = $1 and id in ($2, $3) order by status", [t.workspaceId, skip, lived])).toEqual([{ status: "BLOCKED" }, { status: "CONFIRMED" }]);
+    });
+
+    it("Step 7B-16E: two independent layers for an AUTHORIZED intent — 0028 refuses first (its message, nothing consumed); with 0028's trigger removed (rolled back), 0033 still refuses the same resurrection", async () => {
+      const t = await tenant();
+      const id = await issue(t);
+      const intent = await request(t, t.users.RESPONDER, { authorization: id });
+      expect(await transition(t, intent, "PENDING", "BLOCKED", sql`, outcome_code = 'PROVIDER_ACTIONS_DISABLED'`)).toBe(1);
+      expect(await refusedWith(transition(t, intent, "BLOCKED", "EXECUTING", sql`, outcome_code = null`))).toMatchObject({ code: "42501", message: matching(/only from PENDING/) });
+      const client = await privileged.connect();
+      try {
+        await client.query("begin");
+        await client.query("drop trigger consume_validation_authorization on mutations.mutation_intents");
+        expect(await refusedWith(client.query("update mutations.mutation_intents set status = 'EXECUTING', outcome_code = null where workspace_id = $1 and id = $2", [t.workspaceId, intent])))
+          .toMatchObject({ code: "42501", message: matching(/not a transition of the mutation intent model: BLOCKED → EXECUTING/) });
+        await client.query("rollback");
+      } finally {
+        client.release();
+      }
+      expect(await oracle("select count(*)::int as n from pg_trigger where tgrelid = 'mutations.mutation_intents'::regclass and tgname in ('consume_validation_authorization', 'intent_transition_guard')")).toEqual([{ n: 2 }]);
+      expect(await authorizationRow(t, id)).toMatchObject({ intent_id: intent, consumed: false });
     });
   });
 

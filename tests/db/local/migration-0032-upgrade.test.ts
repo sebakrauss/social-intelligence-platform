@@ -22,6 +22,9 @@ import { spawnLocalCluster, type SpawnedCluster } from "../support/spawn-cluster
 
 const THROUGH = "0031_privileged_name_resolution_hardening.sql";
 const M0032 = "0032_reply_in_flight_admission.sql";
+// Step 7B-16E: 0033 follows; this test applies through 0032 only (tests/db/local/migration-0033-upgrade.test.ts covers 0033).
+const M0033 = "0033_mutation_intent_state_transition_guard.sql";
+const upTo = (name: string) => readMigrations().filter((migration) => migration.name <= name);
 const INDEX = "mutation_intents_one_open_reply_per_target";
 /** The read-only preflight recorded in the migration's header, verbatim in substance. */
 const PREFLIGHT = `select workspace_id, target_interaction_id, count(*)::int as open_intents
@@ -101,7 +104,7 @@ describe("0031 → 0032 upgrade: one open public reply per target", () => {
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied.at(-1)).toBe(THROUGH);
     expect(status.applied).toHaveLength(31);
-    expect(status.pending.map((m) => m.name)).toEqual([M0032]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0032, M0033]);
     expect(await indexRow()).toEqual([]);
   });
 
@@ -119,11 +122,11 @@ describe("0031 → 0032 upgrade: one open public reply per target", () => {
 
   it("refuses: the index cannot be created over the duplicate; the runner rolls 0032 back and NOTHING changes", async () => {
     const before = await snapshot();
-    const failure = await applyMigrations(client, readMigrations()).then(() => undefined, (error: unknown) => error);
+    const failure = await applyMigrations(client, upTo(M0032)).then(() => undefined, (error: unknown) => error);
     expect(postgresError(failure)).toEqual({ code: "23505", constraint: INDEX });
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied).toHaveLength(31);
-    expect(status.pending.map((m) => m.name)).toEqual([M0032]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0032, M0033]);
     expect(await indexRow()).toEqual([]);
     expect(await snapshot()).toEqual(before);
   });
@@ -133,11 +136,11 @@ describe("0031 → 0032 upgrade: one open public reply per target", () => {
     await client.query("update mutations.mutation_intents set status = 'BLOCKED', attempt = 1, run_reference = 'run_reviewed', outcome_code = 'PROVIDER_ACTIONS_DISABLED' where id = $1 and status = 'PENDING'", [ids.pending]);
     expect(await rows(PREFLIGHT)).toEqual([]);
     const before = await snapshot();
-    expect(await applyMigrations(client, readMigrations())).toEqual([M0032]);
+    expect(await applyMigrations(client, upTo(M0032))).toEqual([M0032]);
     expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(32);
     expect(await snapshot()).toEqual(before);
     expect(await indexRow()).toEqual([{ indexdef: `CREATE UNIQUE INDEX ${INDEX} ON mutations.mutation_intents USING btree (workspace_id, target_interaction_id) WHERE ((kind = 'reply_public'::text) AND (status = ANY (ARRAY['PENDING'::text, 'EXECUTING'::text, 'OUTCOME_UNKNOWN'::text])))` }]);
-    expect(await applyMigrations(client, readMigrations())).toEqual([]);
+    expect(await applyMigrations(client, upTo(M0032))).toEqual([]);
   });
 
   it("after: the OUTCOME_UNKNOWN intent holds its target; other targets, workspaces and terminal intents are unaffected; CONFIRMED releases it", async () => {

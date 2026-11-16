@@ -700,4 +700,6 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "mutations.validation_operator_event_guard()": [],
   "mutations.validation_operator_login()": [],
   "mutations.validation_operator_bind(uuid)": [],
+  // Step 7B-16E (0033): the intent model's status transitions for every intent (trigger only; invoker, OLD/NEW only).
+  "mutations.intent_transition_guard()": [],
 };

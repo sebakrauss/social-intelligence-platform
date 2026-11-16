@@ -43,6 +43,7 @@ import { inboxConversationCommand } from "@/server/queries/inbox";
 import { credentialUse, runExecuteIntent, runReconcileIntent, selectMutationPorts, type MutationComposition } from "@/jobs/mutations";
 import { CredentialUnreadable, executeIntent } from "@/mutations/executor/execute";
 import { createPostgresIntentStore } from "@/mutations/persistence";
+import { INTENT_STATUSES, OUTCOME_STATUS, assertTransition, type IntentOutcomeCode, type IntentStatus } from "@/mutations/domain/intent";
 import { requestPublicReply, type PublicReplyOutcome } from "@/mutations/request";
 import { mutationRequestSources } from "@/server/persistence/mutations";
 import { credentialAuthority, executorStores } from "@/server/persistence/mutation-execution";
@@ -439,9 +440,10 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
          values ($1, $2, $3, 'reply_public', 'human', $4, $5, $6, 'key-unique-0001', 'PENDING', 0, 'simulator', 2, 'corr-7b1-privileged-0002', now(), now())`,
         [randomUUID(), other.organizationId, other.workspaceId, other.comment, other.account, other.users.OWNER],
       );
-      // The CHECKs refuse an incoherent shape (PENDING with a run; a FAILED without a code).
+      // The CHECKs refuse an incoherent shape (PENDING with a run; an outcome status without a code). Step 7B-16E: the
+      // second probe uses a LEGAL transition (PENDING → BLOCKED), so the refusal is the CHECK's, not 0033's.
       expect((await sqlState(privileged.query(`update mutations.mutation_intents set run_reference = 'run_x' where workspace_id = $1`, [t.workspaceId]))).code).toBe("23514");
-      expect((await sqlState(privileged.query(`update mutations.mutation_intents set status = 'FAILED', attempt = 1, run_reference = 'run_x' where workspace_id = $1`, [t.workspaceId]))).code).toBe("23514");
+      expect((await sqlState(privileged.query(`update mutations.mutation_intents set status = 'BLOCKED', attempt = 1, run_reference = 'run_x' where workspace_id = $1`, [t.workspaceId]))).code).toBe("23514");
     });
 
     it("the initiator-role definer answers for the BOUND workspace only; the worker reads only its bound workspace", async () => {
@@ -663,7 +665,9 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       const firstId = first.status === "ok" && first.value.kind === "requested" ? first.value.intentId : "";
       // Step 7B-16B: the first reply is CONFIRMED with its identity (releasing the comment, 0032) before the second exists.
       await privileged.query("update mutations.outbound_replies set provider_reply_id = 'fb_r_same', confirmed_at = now() where intent_id = $1", [firstId]);
-      await privileged.query("update mutations.mutation_intents set status = 'CONFIRMED', attempt = 1, run_reference = 'run_identity' where id = $1", [firstId]);
+      // Step 7B-16E (0033): through EXECUTING, as the executor records it (PENDING → CONFIRMED is not a transition).
+      await privileged.query("update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_identity' where id = $1", [firstId]);
+      await privileged.query("update mutations.mutation_intents set status = 'CONFIRMED' where id = $1", [firstId]);
       const second = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, idempotencyKey: "key-identity-2" });
       const ids = [first, second].map((r) => (r.status === "ok" && r.value.kind === "requested" ? r.value.intentId : ""));
       expect(ids[1]).not.toBe("");
@@ -1517,9 +1521,9 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
       }
       // Terminal rows never conflict…
       const blocked = (await insert("BLOCKED", 1, "run_p", "MODE_NOT_STANDARD")).rows[0] as { id: string };
-      // …but nothing can move one back into a holding status while the target is held (the database admits
-      // BLOCKED → EXECUTING for an ordinary intent; the index still refuses a second open one).
-      expect(await sqlState(privileged.query("update mutations.mutation_intents set status = 'EXECUTING', outcome_code = null where id = $1", [blocked.id]))).toMatchObject({ code: "23505", constraint: INDEX });
+      // …and nothing can move one back into a holding status: since Step 7B-16E 0033 refuses BLOCKED → EXECUTING for
+      // every intent and role (42501, before the index is reached); before 0033 only this index refused it here.
+      expect(await sqlState(privileged.query("update mutations.mutation_intents set status = 'EXECUTING', outcome_code = null where id = $1", [blocked.id]))).toMatchObject({ code: "42501" });
       expect(await openOn(t, t.comment)).toBe(1);
       expect(await intentRow(t.workspaceId, firstId)).toEqual([expect.objectContaining({ status: "PENDING" })]);
     });
@@ -1561,6 +1565,217 @@ export function defineMutationsSuite(getTarget: () => DbTarget): void {
         })).then(() => undefined, (error: unknown) => error);
       expect(postgresError(failure)).toEqual({ code: "23505", constraint: "mutation_intents_pkey" });
       expect(await openOn(t, b.comment)).toBe(0);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  describe("Step 7B-16E: the database enforces the intent model's status transitions for EVERY intent (0033)", () => {
+    const GUARD = "mutations.intent_transition_guard";
+    /** A typed asymmetric matcher for a refusal message (which guard refused). */
+    const matching = (pattern: RegExp): string => expect.stringMatching(pattern) as string;
+    /** The domain's own answer (mutations/domain/intent.ts assertTransition): the ONLY oracle of the parity tests. */
+    const domainAllows = (from: IntentStatus, to: IntentStatus): boolean => {
+      try {
+        assertTransition(from, to);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    /** The row shape each status requires by 0027's CHECKs, so a refusal can only come from the transition rule. */
+    const codeFor = (status: IntentStatus): IntentOutcomeCode | null =>
+      status === "FAILED" || status === "BLOCKED" || status === "OUTCOME_UNKNOWN" ? must((Object.keys(OUTCOME_STATUS) as IntentOutcomeCode[]).find((code) => OUTCOME_STATUS[code] === status), status) : null;
+    const shapeOf = (status: IntentStatus) => (status === "PENDING" ? { attempt: 0, run: null, code: null } : { attempt: 1, run: "run_16e", code: codeFor(status) });
+    /** The PostgreSQL error (code + message) behind a rejected promise, or undefined when it succeeded. */
+    const refusal = async (promise: Promise<unknown>): Promise<{ code: string; message: string } | undefined> => {
+      try {
+        await promise;
+        return undefined;
+      } catch (error) {
+        for (let current: unknown = error, depth = 0; depth < 5 && typeof current === "object" && current !== null; depth += 1) {
+          const shape = current as { code?: unknown; message?: unknown; cause?: unknown };
+          if (typeof shape.code === "string" && /^[0-9A-Z]{5}$/.test(shape.code)) return { code: shape.code, message: String(shape.message) };
+          current = shape.cause;
+        }
+        throw error;
+      }
+    };
+    /** An ordinary intent inserted directly in `status` (privileged seed: INSERT is not a transition). */
+    const seed = async (t: Tenant, status: IntentStatus, target = t.comment): Promise<string> => {
+      const id = randomUUID();
+      const shape = shapeOf(status);
+      await privileged.query(
+        `insert into mutations.mutation_intents (id, organization_id, workspace_id, kind, request_type, target_interaction_id, connected_account_id, initiator_user_id, idempotency_key, status, attempt, run_reference, outcome_code, capability_catalog_id, capability_catalog_revision, correlation_id, created_at, updated_at)
+         values ($1, $2, $3, 'reply_public', 'human', $4, $5, $6, $7, $8, $9, $10, $11, 'simulator', 2, 'corr-16e-seed', now() - interval '1 hour', now() - interval '1 hour')`,
+        [id, t.organizationId, t.workspaceId, target, t.account, t.users.RESPONDER, `key-16e-${randomUUID()}`, status, shape.attempt, shape.run, shape.code]);
+      return id;
+    };
+    /** The bound worker's status write (its column grants only), shaped for the target status. Resolves to the rows moved. */
+    const workerMove = (t: Tenant, id: string, to: IntentStatus, workspaceId = t.workspaceId) => {
+      const shape = shapeOf(to);
+      return withWorkspaceJobScope(worker, workspaceId, async (tx) => (await tx.execute(sql`update mutations.mutation_intents
+        set status = ${to}, attempt = ${shape.attempt}, run_reference = ${shape.run}, outcome_code = ${shape.code}, updated_at = now()
+        where workspace_id = ${t.workspaceId} and id = ${id}`)).rowCount ?? 0);
+    };
+    const rowOf = async (t: Tenant, id: string) => (await oracle<{ status: string; attempt: number; run_reference: string | null; outcome_code: string | null; updated_at: Date }>(
+      "select status, attempt, run_reference, outcome_code, updated_at from mutations.mutation_intents where workspace_id = $1 and id = $2", [t.workspaceId, id]))[0];
+    const drop = (id: string) => privileged.query("delete from mutations.mutation_intents where id = $1", [id]);
+    /** What the database does with every status CHANGE of an ordinary intent, as the bound worker: allowed or refused (by 0033). */
+    const observeMatrix = async (t: Tenant): Promise<Map<string, boolean>> => {
+      const observed = new Map<string, boolean>();
+      for (const from of INTENT_STATUSES) {
+        for (const to of INTENT_STATUSES) {
+          if (from === to) continue;
+          const id = await seed(t, from);
+          const refused = await refusal(workerMove(t, id, to));
+          if (refused !== undefined && !(refused.code === "42501" && /not a transition of the mutation intent model/.test(refused.message))) throw new Error(`${from} → ${to}: unexpected refusal ${refused.code} ${refused.message}`);
+          observed.set(`${from}→${to}`, refused === undefined);
+          if (refused !== undefined) expect((await rowOf(t, id))?.status, `${from} → ${to} left the row unchanged`).toBe(from);
+          await drop(id);
+        }
+      }
+      return observed;
+    };
+    /** Every pair on which the database and an oracle disagree (empty = parity). */
+    const mismatches = (observed: ReadonlyMap<string, boolean>, oracleAllows: (from: IntentStatus, to: IntentStatus) => boolean): string[] =>
+      [...observed].filter(([pair, allowed]) => {
+        const [from, to] = pair.split("→") as [IntentStatus, IntentStatus];
+        return oracleAllows(from, to) !== allowed;
+      }).map(([pair, allowed]) => `${pair}: database ${allowed ? "allows" : "refuses"}`);
+
+    it("(1, 2, 13) PARITY: for all 30 status changes the bound worker attempts, the database allows exactly the domain's transitions and refuses every other (42501, row unchanged); the comparison itself detects a deliberate mismatch", async () => {
+      const t = await tenant();
+      const observed = await observeMatrix(t);
+      expect(observed.size).toBe(INTENT_STATUSES.length * (INTENT_STATUSES.length - 1));
+      expect(mismatches(observed, domainAllows)).toEqual([]);
+      expect([...observed].filter(([, allowed]) => allowed).map(([pair]) => pair).sort()).toEqual([
+        "EXECUTING→BLOCKED", "EXECUTING→CONFIRMED", "EXECUTING→FAILED", "EXECUTING→OUTCOME_UNKNOWN", "OUTCOME_UNKNOWN→CONFIRMED", "OUTCOME_UNKNOWN→FAILED", "PENDING→BLOCKED", "PENDING→EXECUTING",
+      ]);
+      // Negative control on the ORACLE side: a domain that also allowed BLOCKED → PENDING is reported as a mismatch.
+      expect(mismatches(observed, (from, to) => domainAllows(from, to) || (from === "BLOCKED" && to === "PENDING"))).toEqual(["BLOCKED→PENDING: database refuses"]);
+    });
+
+    it("negative control on the DATABASE side: with 0033's trigger dropped (inside a rolled-back transaction) the forbidden resurrections succeed again — the guard is what refuses them", async () => {
+      const t = await tenant();
+      const blocked = await seed(t, "BLOCKED");
+      const client = await privileged.connect();
+      try {
+        await client.query("begin");
+        await client.query("drop trigger intent_transition_guard on mutations.mutation_intents");
+        const moved = await client.query("update mutations.mutation_intents set status = 'PENDING', attempt = 0, run_reference = null, outcome_code = null where id = $1", [blocked]);
+        expect(moved.rowCount).toBe(1);
+        await client.query("rollback");
+      } finally {
+        client.release();
+      }
+      expect((await rowOf(t, blocked))?.status).toBe("BLOCKED");
+      expect(await oracle("select count(*)::int as n from pg_trigger where tgrelid = 'mutations.mutation_intents'::regclass and tgname = 'intent_transition_guard'")).toEqual([{ n: 1 }]);
+      expect(await refusal(workerMove(t, blocked, "PENDING"))).toMatchObject({ code: "42501" });
+    });
+
+    it("(3–6) the named resurrections are refused for the worker AND the privileged owner: BLOCKED → PENDING, BLOCKED → EXECUTING, FAILED → PENDING, CONFIRMED → EXECUTING", async () => {
+      const t = await tenant();
+      for (const [from, to] of [["BLOCKED", "PENDING"], ["BLOCKED", "EXECUTING"], ["FAILED", "PENDING"], ["CONFIRMED", "EXECUTING"]] as const) {
+        const id = await seed(t, from);
+        expect(await refusal(workerMove(t, id, to)), `worker ${from} → ${to}`).toMatchObject({ code: "42501", message: matching(/not a transition of the mutation intent model/) });
+        const shape = shapeOf(to);
+        expect(await refusal(privileged.query("update mutations.mutation_intents set status = $2, attempt = $3, run_reference = $4, outcome_code = $5 where id = $1", [id, to, shape.attempt, shape.run, shape.code])), `owner ${from} → ${to}`)
+          .toMatchObject({ code: "42501", message: matching(/not a transition of the mutation intent model/) });
+        expect((await rowOf(t, id))?.status).toBe(from);
+        await drop(id);
+      }
+    });
+
+    it("(7) an update that does not change the status is untouched by 0033 (as before: same-status metadata writes stay the store's X1 compare-and-set concern)", async () => {
+      const t = await tenant();
+      const id = await seed(t, "EXECUTING");
+      const moved = await withWorkspaceJobScope(worker, t.workspaceId, async (tx) => (await tx.execute(sql`update mutations.mutation_intents set status = 'EXECUTING', run_reference = 'run_16e_same', updated_at = now() where workspace_id = ${t.workspaceId} and id = ${id}`)).rowCount);
+      expect(moved).toBe(1);
+      expect(await rowOf(t, id)).toMatchObject({ status: "EXECUTING", run_reference: "run_16e_same" });
+      // The PostgreSQL store still refuses a same-status transition outright (application-side X1, unchanged).
+      await expect(withWorkspaceJobScope(worker, t.workspaceId, (tx) => createPostgresIntentStore(tx).transition(t.workspaceId, id, { from: "EXECUTING", status: "EXECUTING", attempt: 2, runReference: "run_x", outcomeCode: null, at: new Date() }))).rejects.toThrow(/incoherent transition/);
+    });
+
+    it("(14, 15) an authenticated member has no UPDATE at all (privilege refusal, before any trigger); a worker bound to another workspace moves nothing and learns nothing", async () => {
+      const t = await tenant();
+      const other = await tenant();
+      const id = await seed(t, "PENDING");
+      expect(await refusal(withUserScope(web, { sub: t.users.OWNER, role: "authenticated" }, t.workspaceId, (tx) => tx.execute(sql`update mutations.mutation_intents set status = 'BLOCKED' where id = ${id}`)))).toMatchObject({ code: "42501", message: matching(/permission denied/) });
+      // Another workspace's bound worker: RLS hides the row — 0 rows, no error, no oracle (legal or illegal target status alike).
+      expect(await workerMove(t, id, "EXECUTING", other.workspaceId)).toBe(0);
+      expect(await workerMove(t, id, "CONFIRMED", other.workspaceId)).toBe(0);
+      expect((await rowOf(t, id))?.status).toBe("PENDING");
+    });
+
+    it("(16) a refused transition rolls back its whole transaction: no status, metadata or history row survives", async () => {
+      const t = await tenant();
+      const id = await seed(t, "BLOCKED");
+      const before = await rowOf(t, id);
+      const historyBefore = await oracle<{ n: number }>("select count(*)::int as n from mutations.mutation_intent_history where intent_id = $1", [id]);
+      expect(await refusal(withWorkspaceJobScope(worker, t.workspaceId, async (tx) => {
+        await tx.execute(sql`insert into mutations.mutation_intent_history (id, organization_id, workspace_id, intent_id, from_status, to_status, attempt, actor, outcome_code, run_reference, correlation_id, occurred_at)
+          values (${randomUUID()}, ${t.organizationId}, ${t.workspaceId}, ${id}, 'BLOCKED', 'EXECUTING', 2, 'executor', null, 'run_16e_partial', 'corr-16e-partial-0001', now())`);
+        await tx.execute(sql`update mutations.mutation_intents set status = 'EXECUTING', attempt = 2, run_reference = 'run_16e_partial', outcome_code = null, updated_at = now() where workspace_id = ${t.workspaceId} and id = ${id}`);
+      }))).toMatchObject({ code: "42501" });
+      expect(await rowOf(t, id)).toEqual(before);
+      expect(await oracle<{ n: number }>("select count(*)::int as n from mutations.mutation_intent_history where intent_id = $1", [id])).toEqual(historyBefore);
+    });
+
+    it("(20) an allowed transition carries its metadata unchanged (PENDING → EXECUTING with attempt, run reference and time)", async () => {
+      const t = await tenant();
+      const id = await seed(t, "PENDING");
+      const at = new Date(Date.now() - 5_000);
+      expect(await withWorkspaceJobScope(worker, t.workspaceId, async (tx) => (await tx.execute(sql`update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_16e_meta', updated_at = ${at} where workspace_id = ${t.workspaceId} and id = ${id}`)).rowCount)).toBe(1);
+      expect(await rowOf(t, id)).toMatchObject({ status: "EXECUTING", attempt: 1, run_reference: "run_16e_meta", outcome_code: null, updated_at: at });
+    });
+
+    it("(12) 0032: no transition can bring a released intent back into a holding status, so the open-reply index is never reached that way; the holding intent's own legal moves are unaffected", async () => {
+      const t = await tenant();
+      const open = await seed(t, "PENDING");
+      const blocked = await seed(t, "BLOCKED");
+      // Before 0033 this was refused only by 0032's index (23505); the transition guard now refuses it first, for any target.
+      expect(await refusal(workerMove(t, blocked, "EXECUTING"))).toMatchObject({ code: "42501", message: matching(/not a transition/) });
+      expect(await workerMove(t, open, "EXECUTING")).toBe(1);
+      expect(await workerMove(t, open, "OUTCOME_UNKNOWN")).toBe(1);
+      expect(await workerMove(t, open, "CONFIRMED")).toBe(1);
+      const next = await request(t, t.users.OWNER, { targetInteractionId: t.comment });
+      expect(next.status === "ok" ? next.value : next).toMatchObject({ kind: "requested" });
+    });
+
+    it("(8, 9) the real executor and reconciliation lifecycles run unchanged under 0033 (lost response → OUTCOME_UNKNOWN → reconciled CONFIRMED; redelivery → RUN_INTERRUPTED)", async () => {
+      const h = harness();
+      const t = await tenant();
+      const created = await request(t, t.users.RESPONDER, { targetInteractionId: t.comment, text: `${TEXT} 16e ${randomUUID()}` });
+      const id = created.status === "ok" && created.value.kind === "requested" ? created.value.intentId : "";
+      await quietPendingOutbox((text, values) => privileged.query(text, values), "topic = $1 and workspace_id <> $2", [TASK, t.workspaceId]);
+      h.world.injectFaults([{ operation: "replyPublicly", on: 1, fault: { kind: "outcome_unknown" } }]);
+      await h.step();
+      h.world.advanceClock(60);
+      expect((await runTenantStepJob({ registry: PRODUCTION_TASKS, worker, logger }, TASK, must(h.payloads.at(-1), "payload"), { runId: "run_16e_rec", attempt: 1 }, (context) => runReconcileIntent(context, h.base, { intentId: id, provider: "simulator" }, { clock: h.clock }))).kind).toBe("confirmed");
+      expect((await historyRows(t.workspaceId, id)).map((row) => `${row.from_status ?? "∅"}→${row.to_status}`)).toEqual(["∅→PENDING", "PENDING→EXECUTING", "EXECUTING→OUTCOME_UNKNOWN", "OUTCOME_UNKNOWN→CONFIRMED"]);
+      // A second intent whose run dies in EXECUTING: the redelivery records RUN_INTERRUPTED (EXECUTING → OUTCOME_UNKNOWN).
+      const second = await request(t, t.users.OWNER, { targetInteractionId: t.comment, text: `${TEXT} 16e-b ${randomUUID()}` });
+      const secondId = second.status === "ok" && second.value.kind === "requested" ? second.value.intentId : "";
+      await withWorkspaceJobScope(worker, t.workspaceId, (tx) => tx.execute(sql`update mutations.mutation_intents set status = 'EXECUTING', attempt = 1, run_reference = 'run_16e_crashed' where id = ${secondId}`));
+      await h.step();
+      expect(await intentRow(t.workspaceId, secondId)).toEqual([expect.objectContaining({ status: "OUTCOME_UNKNOWN", outcome_code: "RUN_INTERRUPTED" })]);
+      expect(h.providerCalls).toHaveLength(1);
+    });
+
+    it("RESIDUAL (documented, not closed by 0033): a legal status change by the bound worker is not tied to a history row — history completeness remains the executor's discipline", async () => {
+      const t = await tenant();
+      const id = await seed(t, "PENDING");
+      expect(await workerMove(t, id, "BLOCKED")).toBe(1);
+      expect(await oracle("select count(*)::int as n from mutations.mutation_intent_history where intent_id = $1", [id])).toEqual([{ n: 0 }]);
+    });
+
+    it("the guard is a SECURITY INVOKER trigger function pinned to pg_catalog, pg_temp, executable by no runtime role, fired BEFORE UPDATE OF status only when the status changes", async () => {
+      expect(await oracle(`select p.prosecdef as definer, p.proconfig::text[] as config, pg_get_userbyid(p.proowner) as owner,
+          has_function_privilege('authenticated', p.oid, 'execute') as web, has_function_privilege('app_worker', p.oid, 'execute') as worker
+        from pg_proc p where p.oid = '${GUARD}()'::regprocedure`)).toEqual([{ definer: false, config: ["search_path=pg_catalog, pg_temp"], owner: "app_owner", web: false, worker: false }]);
+      expect(await oracle("select pg_get_triggerdef(oid) as def from pg_trigger where tgrelid = 'mutations.mutation_intents'::regclass and tgname = 'intent_transition_guard'")).toEqual([
+        { def: "CREATE TRIGGER intent_transition_guard BEFORE UPDATE OF status ON mutations.mutation_intents FOR EACH ROW WHEN ((old.status IS DISTINCT FROM new.status)) EXECUTE FUNCTION mutations.intent_transition_guard()" },
+      ]);
     });
   });
 }
