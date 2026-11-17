@@ -51,6 +51,12 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/api/webhooks/meta/route.ts",
       "app/auth/callback/route.ts",
       // UI-2: the component reference sheet; a 404 in every build that is not `next dev` (brand-guards proves it).
+      // Step 7B-17V: the Comments experience redesign prototype (synthetic fixtures, local React state only; no action,
+      // no read, no storage), also a 404 outside `next dev` (brand-guards proves it).
+      "app/dev/ui-reference/comments-redesign/fixtures.ts",
+      "app/dev/ui-reference/comments-redesign/model.ts",
+      "app/dev/ui-reference/comments-redesign/page.tsx",
+      "app/dev/ui-reference/comments-redesign/prototype.tsx",
       // Step 7B-15N: the Inbox › Comments product prototype (synthetic fixtures; its only action is the reply harness's
       // development-only simulation), also a 404 outside `next dev` (brand-guards proves it).
       "app/dev/ui-reference/comments/fixtures.ts",

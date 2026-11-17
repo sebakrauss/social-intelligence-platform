@@ -235,6 +235,41 @@ describe("Inbox › Comments prototype (Step 7B-15N, development only)", () => {
   });
 });
 
+describe("Comments experience redesign prototype (Step 7B-17V, development only)", () => {
+  const DIR = "app/dev/ui-reference/comments-redesign";
+
+  it("is a 404 outside next dev, indexes nothing, and loads the client prototype only on the development path", () => {
+    const page = codeOf(`${DIR}/page.tsx`);
+    expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+    expect((page.match(/process\.env/g) ?? []).length).toBe(1);
+    // Written inline so the build folds it: outside `next dev` the dynamic import is dead code (not bundled) and the
+    // page ends in notFound().
+    expect(page).toMatch(/if \(process\.env\.NODE_ENV === "development"\) \{\n\s+const \{ CommentsRedesign \} = await import\("\.\/prototype"\);\n\s+return <CommentsRedesign \/>;\n\s+\}\n\s+notFound\(\);\n\}/);
+    expect([...page.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])).toEqual(["next/navigation", "next"]);
+    expect((page.match(/import\(/g) ?? []).length).toBe(1);
+  });
+
+  it("reads nothing, sends nothing, stores nothing: local React state over synthetic fixtures only", () => {
+    for (const file of [`${DIR}/page.tsx`, `${DIR}/prototype.tsx`, `${DIR}/model.ts`, `${DIR}/fixtures.ts`]) {
+      const code = codeOf(file);
+      expect(code, file).not.toMatch(/@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|@\/mutations\/|@\/integrations\/|@\/ai\/|@\/jobs\/|"use server"|<form[^>]*action=|formAction|fetch\(|XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|indexedDB|cookie|dangerouslySetInnerHTML|history\.|location\./);
+    }
+    // Only the prototype is a client module; the rules and the data are plain modules.
+    expect(codeOf(`${DIR}/prototype.tsx`)).toMatch(/^"use client";/);
+    for (const file of [`${DIR}/page.tsx`, `${DIR}/model.ts`, `${DIR}/fixtures.ts`]) expect(codeOf(file), file).not.toMatch(/["']use client["']/);
+    // Its imports are the brand UI (logo, icons, primitives, the local-time element) and its own files.
+    const imports = [...codeOf(`${DIR}/prototype.tsx`).matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
+    for (const specifier of imports) expect(specifier).toMatch(/^(react|@\/ui\/(brand\/logo|icons\/icon|primitives|time\/local-time|time\/local-time-format)|\.\/(fixtures|model|prototype\.module\.css))$/);
+  });
+
+  it("the reply composer is a preview that cannot publish", () => {
+    const code = codeOf(`${DIR}/prototype.tsx`);
+    expect(code).toMatch(/Preview — nothing is sent/);
+    expect(code).toMatch(/Publishing isn&apos;t part of this preview/);
+    expect(code).not.toMatch(/type="submit"[^>]*>\s*Publish|ReplyComposer|simulateReplyAction|publishReplyAction/);
+  });
+});
+
 describe("app shell (UI-3)", () => {
   const importsOf = (file: string): string[] => [...codeOf(file).matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "");
 

@@ -198,7 +198,9 @@ describe("Managed accounts (Step 7G-H5): local configuration only", () => {
     // Step 7B-15H: + the reply-drafts signed-out boundary (clears in-memory drafts; its rule is in inbox-composer-guards).
     // Step 7B-17K: + the in-app link and the drafts' conversation boundary (their rules are in inbox-composer-guards).
     // Step 7B-17R: + the local-time reading (Comments 2.1; its rule is in inbox-composer-guards).
-    expect(clients).toEqual([PENDING_BUTTON, "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/navigation/app-link.tsx", "ui/time/local-time.tsx"]);
+    // Step 7B-17V: + the development-only Comments redesign prototype (a 404 outside `next dev`; local state only; its
+    // rules are in brand-guards, and it passes the client-module syntax rules of inbox-composer-guards like every other).
+    expect(clients).toEqual(["app/dev/ui-reference/comments-redesign/prototype.tsx", PENDING_BUTTON, "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/navigation/app-link.tsx", "ui/time/local-time.tsx"]);
     expect(importsOf(PENDING_BUTTON)).toEqual(["react-dom"]);
     expect(codeOf(PENDING_BUTTON)).toMatch(/disabled=\{pending\}/);
   });
