@@ -1,9 +1,11 @@
 /*
  * App shell (UI-3; Manual de Marca v1.1 §5 product grid: rail 56 · sidebar 220 · fluid content · panel 360).
  * Desktop: three columns (four with a detail panel). Tablet: the sidebar folds into a top strip. Phone: the rail
- * becomes a bottom bar and the sidebar a top bar. Depth is a surface step and a 1px divider, never a shadow; the
- * active destination is marked by weight, the primary text color and a 2px bar — never blue, which stays for a
- * person, links and focus.
+ * becomes a bottom bar and the sidebar a top bar. Depth is a surface step and a 1px divider, never a shadow.
+ * Amendment 1 (Direction C, PO-approved 2026-11-17): navigation sits on the application canvas (bg.app) and the work
+ * area on the content surface (bg.content); the active destination is marked in Electric Blue (selection.*) — in the
+ * rail a tile with a 3px selection-indicator bar (a shape, not only a color: 7B-17V-VISUAL-FIX V-2), in the sidebar a
+ * soft blue item in heavier type. Selection is where you are, never urgency or a classification.
  */
 
 .shell {
@@ -11,7 +13,7 @@
   grid-template-columns: 56px 220px minmax(0, 1fr);
   grid-template-rows: minmax(100dvh, auto);
   grid-template-areas: "rail side main";
-  background: var(--wk-bg-canvas);
+  background: var(--wk-bg-app);
   color: var(--wk-text-primary);
 }
 
@@ -44,8 +46,8 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  background: var(--wk-bg-surface);
-  border-right: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-app);
+  border-right: 1px solid transparent;
   position: sticky;
   top: 0;
   height: 100dvh;
@@ -87,11 +89,14 @@
 
 .railItem:hover {
   color: var(--wk-text-primary);
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-content);
 }
 
+/* The active section: a content-surface tile with the label and icon in the selection blue, and the 3px indicator bar
+   that tells it from a hovered item without relying on color alone. */
 .railItem[aria-current="page"] {
-  color: var(--wk-text-primary);
+  color: var(--wk-selection-fg);
+  background: var(--wk-bg-content);
 }
 
 .railItem[aria-current="page"]::before {
@@ -100,9 +105,9 @@
   left: 0;
   top: 10px;
   bottom: 10px;
-  width: 2px;
+  width: 3px;
   border-radius: var(--wk-radius-full);
-  background: var(--wk-text-primary);
+  background: var(--wk-selection-indicator);
 }
 
 .railBottom {
@@ -139,7 +144,7 @@
 .accountSummary:hover,
 .account[open] > .accountSummary {
   color: var(--wk-text-primary);
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-content);
 }
 
 .accountMenu {
@@ -170,8 +175,8 @@
   flex-direction: column;
   gap: var(--wk-space-20);
   padding: var(--wk-space-16);
-  background: var(--wk-bg-surface);
-  border-right: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-app);
+  border-right: 1px solid transparent;
   position: sticky;
   top: 0;
   height: 100dvh;
@@ -241,7 +246,7 @@
 
 .switcherSummary:hover {
   color: var(--wk-text-primary);
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-content);
 }
 
 .switcherList {
@@ -268,7 +273,7 @@
 }
 
 a.switcherItem:hover {
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-content);
 }
 
 .switcherItemOrganization {
@@ -314,18 +319,23 @@ a.switcherItem:hover {
 
 .sideItem:hover {
   color: var(--wk-text-primary);
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-content);
 }
 
+/* The active view: soft selection blue with its text in the selection color. */
 .sideItem[aria-current="page"] {
-  color: var(--wk-text-primary);
-  background: var(--wk-bg-hover);
+  color: var(--wk-selection-fg);
+  background: var(--wk-selection-bg);
+  font-weight: 600;
 }
 
 /* Content and panel */
 .main {
   grid-area: main;
   min-width: 0;
+  background: var(--wk-bg-content);
+  /* An elevated surface: hovers and soft fills inside it use the elevated-hover role (tokens.ts, Amendment 1). */
+  --wk-bg-hover: var(--wk-bg-elevated-hover);
   padding: var(--wk-space-24) var(--wk-space-32) var(--wk-space-64);
 }
 
@@ -337,7 +347,9 @@ a.switcherItem:hover {
   grid-area: panel;
   min-width: 0;
   border-left: 1px solid var(--wk-border-default);
-  background: var(--wk-bg-surface);
+  background: var(--wk-bg-reading);
+  /* An elevated surface: hovers and soft fills inside it use the elevated-hover role (tokens.ts, Amendment 1). */
+  --wk-bg-hover: var(--wk-bg-elevated-hover);
   padding: var(--wk-space-24) var(--wk-space-16);
 }
 
@@ -457,7 +469,7 @@ a.switcherItem:hover {
     top: 0;
     bottom: auto;
     width: auto;
-    height: 2px;
+    height: 3px;
   }
 
   .railBottom {
@@ -608,7 +620,7 @@ a.switcherItem:hover {
 .railItem:has(> .linkPending[data-pending="true"]),
 .switcherItem:has(> .linkPending[data-pending="true"]),
 .sideItem:has(> .linkPending[data-pending="true"]) {
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-content);
   cursor: progress;
 }
 

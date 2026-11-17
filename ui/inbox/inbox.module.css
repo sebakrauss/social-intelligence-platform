@@ -1,8 +1,10 @@
 /*
  * Inbox (UI-4; Step 7B-15B; Manual de Marca v1.1 §5 product grid, §7 boxes). One wide list; the selected conversation
  * expands inside its own row (no permanent second pane); one screen below 768px. Rows are separated by 1px dividers, never cards;
- * the selected row is marked by the hover surface and a 2px bar in the text color — never blue, which stays for a
- * person, links and focus. Depth is a surface step, not a shadow.
+ * Depth is a surface step, not a shadow. Amendment 1 (Direction C, PO-approved 2026-11-17): the selected
+ * conversation is marked in Electric Blue — the soft selection surface on its row and a 3px selection indicator down its
+ * side — and the open conversation reads on the reading surface. Selection is where you are, never urgency, an AI
+ * classification or a priority; labels stay neutral. Wrenkind's own replies carry the 2px brand-reply accent.
  */
 
 /* Work surface (Step 7B-15B): one wide column; the selected conversation opens inside its own row. */
@@ -15,6 +17,8 @@
   width: 100%;
   max-width: 1180px;
   margin-inline: auto;
+  /* An elevated surface: hovers and soft fills inside it use the elevated-hover role (tokens.ts, Amendment 1). */
+  --wk-bg-hover: var(--wk-bg-elevated-hover);
 }
 
 .standalone {
@@ -196,18 +200,17 @@
 }
 
 .row[aria-current="page"] {
-  background: var(--wk-bg-surface);
+  background: var(--wk-selection-bg);
 }
 
 .row[aria-current="page"]::before {
   content: "";
   position: absolute;
   left: 0;
-  top: var(--wk-space-8);
-  bottom: var(--wk-space-8);
-  width: 2px;
-  border-radius: var(--wk-radius-full);
-  background: var(--wk-text-primary);
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--wk-selection-indicator);
 }
 
 /* Step 7B-15O: who wrote it leads the row (avatar, name, where), the comment reads under it, what is known last. */
@@ -362,7 +365,8 @@
   min-width: 0;
   border: 1px solid var(--wk-border-default);
   border-radius: var(--wk-radius-md);
-  background: var(--wk-bg-canvas);
+  /* A card on the reading surface (7B-17V-VISUAL-FIX V-3: not the black canvas in Dark). */
+  background: var(--wk-bg-content);
 }
 
 .contextSummary {
@@ -495,8 +499,10 @@ a.navLink:hover {
   background: var(--wk-bg-hover);
 }
 
+/* Pressed: the hover fill stays and the control moves down 1px, as the Button primitive does (the raised fill it used
+   to switch to equals the content surface in both themes, so the press was invisible). */
 a.navLink:active {
-  background: var(--wk-bg-raised);
+  transform: translateY(1px);
 }
 
 /* An end of the list: the word keeps its place (the bar does not jump) in the disabled text color; not a control. */
@@ -767,8 +773,10 @@ a.navLink:active {
   max-width: 640px;
   padding: var(--wk-space-12);
   border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-md);
-  background: var(--wk-bg-canvas);
+  /* Amendment 1: the brand's own reply — a 2px brand-reply accent, the card itself stays neutral. */
+  border-left: 2px solid var(--wk-accent-brand-reply);
+  border-radius: var(--wk-radius-sm) var(--wk-radius-md) var(--wk-radius-md) var(--wk-radius-sm);
+  background: var(--wk-bg-content);
 }
 
 .outbound {
@@ -818,7 +826,7 @@ a.navLink:active {
   color: var(--wk-text-primary);
 }
 
-/* The selected conversation, in place: a surface step and the 2px bar of the selected row carried down its side. */
+/* The selected conversation, in place: the reading surface and the selection indicator carried down its side. */
 .expandedItem {
   position: relative;
   border-bottom: 1px solid var(--wk-border-default);
@@ -831,12 +839,12 @@ a.navLink:active {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 2px;
-  background: var(--wk-text-primary);
+  width: 3px;
+  background: var(--wk-selection-indicator);
 }
 
 .expandedItem {
-  background: var(--wk-bg-surface);
+  background: var(--wk-bg-reading);
 }
 
 .expandedItem > .row {
@@ -892,7 +900,8 @@ a.navLink:active {
   padding: 0 var(--wk-space-12) 0 var(--wk-space-8);
   border: 1px solid var(--wk-border-strong);
   border-radius: var(--wk-radius-sm);
-  background: var(--wk-bg-canvas);
+  /* Button-like: the raised fill of a secondary button (V-3). */
+  background: var(--wk-bg-raised);
   color: var(--wk-text-primary);
   font: 500 13px / 1 var(--wk-font-ui);
   text-decoration: none;
@@ -904,7 +913,7 @@ a.navLink:active {
 }
 
 .replySlot a:active {
-  background: var(--wk-bg-raised);
+  transform: translateY(1px);
 }
 
 .actions {
@@ -975,7 +984,8 @@ a.navLink:active {
     z-index: 2;
     padding: var(--wk-space-4) 0;
     border-bottom: 1px solid var(--wk-border-default);
-    background: var(--wk-bg-canvas);
+    /* The sticky bar over the open conversation, on the content surface it scrolls over (V-3). */
+    background: var(--wk-bg-content);
   }
 
   .nested {

@@ -46,8 +46,10 @@
   background: var(--wk-bg-raised);
 }
 
+/* The secondary button is itself a raised surface: its hover is the elevated hover in every context (Amendment 1;
+   7B-17V-VISUAL-FIX V-1 — bg.hover is barely perceptible on the Dark raised fill). */
 .secondary:hover:not(:disabled) {
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-elevated-hover);
 }
 
 .ghost {

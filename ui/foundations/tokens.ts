@@ -9,6 +9,21 @@
  *
  * Pure data: no I/O, no framework. The brand rule these tokens encode: black as the base, white to read, blue only
  * where a person decides (human.*), for links and for keyboard focus (interactive.*). Status colors never use blue.
+ *
+ * Amendment 1 (Direction C "Refined Brand", approved by the Product Owner 2026-11-17; record:
+ * design/brand/MANUAL-DE-MARCA-v1.1-AMENDMENT-1.md). New semantic ROLES, every value taken from the existing scales
+ * (or from an existing semantic value), no existing token changed:
+ * - surfaces: bg.app (the canvas behind navigation and work), bg.content (where items are listed and worked on),
+ *   bg.reading (where one conversation is read) and bg.elevated-hover (hover and soft fills ON an elevated surface —
+ *   content, reading, raised. bg.hover was tuned for the old black canvas: on Dark #1A1A1A / #1F1F1F it is barely
+ *   perceptible, and on the reading surface it is the same value. No lighter palette step keeps text.tertiary at 4.5:1,
+ *   so the Dark hover goes DOWN to the canvas black (N950). Each elevated surface's root selector re-points its
+ *   --wk-bg-hover to this role — the only token re-declaration allowed outside tokens.css, pinned per selector by
+ *   brand-guards);
+ * - border.input: the boundary of a text field, ≥ 3:1 against every surface it sits on (WCAG 1.4.11);
+ * - blue extended to active navigation and selection (selection.*) and to the brand's own replies
+ *   (accent.brand-reply). Selection never means urgency, an AI classification or a moderation priority, and manual
+ *   labels never use these tokens.
  */
 
 export const NEUTRAL = {
@@ -69,6 +84,16 @@ export const SEMANTIC_TOKENS = [
   "warning.bg",
   "danger.fg",
   "danger.bg",
+  // Amendment 1 (Direction C).
+  "bg.app",
+  "bg.content",
+  "bg.reading",
+  "bg.elevated-hover",
+  "border.input",
+  "selection.bg",
+  "selection.fg",
+  "selection.indicator",
+  "accent.brand-reply",
 ] as const;
 export type SemanticToken = (typeof SEMANTIC_TOKENS)[number];
 
@@ -98,6 +123,15 @@ export const THEMES: { readonly [T in ThemeName]: { readonly [K in SemanticToken
     "warning.bg": "#2E2208",
     "danger.fg": "#FF6B5E",
     "danger.bg": "#331412",
+    "bg.app": NEUTRAL[900],
+    "bg.content": NEUTRAL[850],
+    "bg.reading": "#1F1F1F",
+    "bg.elevated-hover": NEUTRAL[950],
+    "border.input": NEUTRAL[500],
+    "selection.bg": "#141C33",
+    "selection.fg": BLUE[200],
+    "selection.indicator": BLUE[400],
+    "accent.brand-reply": BLUE[400],
   },
   light: {
     "bg.canvas": NEUTRAL[0],
@@ -123,8 +157,22 @@ export const THEMES: { readonly [T in ThemeName]: { readonly [K in SemanticToken
     "warning.bg": "#FFF4DE",
     "danger.fg": "#C42F24",
     "danger.bg": "#FDECEA",
+    "bg.app": NEUTRAL[50],
+    "bg.content": NEUTRAL[0],
+    "bg.reading": NEUTRAL[25],
+    "bg.elevated-hover": NEUTRAL[50],
+    "border.input": NEUTRAL[500],
+    "selection.bg": BLUE[50],
+    "selection.fg": BLUE[700],
+    "selection.indicator": BLUE[500],
+    "accent.brand-reply": BLUE[500],
   },
 };
+
+/** Amendment 1: the surfaces text and controls are now drawn on, besides the canvas. */
+export const READING_SURFACES = ["bg.canvas", "bg.app", "bg.content", "bg.reading", "bg.elevated-hover", "selection.bg"] as const satisfies readonly SemanticToken[];
+/** Amendment 1: the surfaces a text field can sit on or be filled with; its border must stand out from each (3:1). */
+export const INPUT_ADJACENT_SURFACES = ["bg.canvas", "bg.app", "bg.content", "bg.reading", "bg.raised", "bg.surface"] as const satisfies readonly SemanticToken[];
 
 /**
  * What the manual promises (§3, §11): text tokens read at 4.5:1 or better against the canvas (or against their own
@@ -143,6 +191,19 @@ export const CONTRAST_REQUIREMENTS: readonly { readonly foreground: SemanticToke
   { foreground: "success.fg", background: "bg.canvas", minimum: 4.5 },
   { foreground: "warning.fg", background: "bg.canvas", minimum: 4.5 },
   { foreground: "danger.fg", background: "bg.canvas", minimum: 4.5 },
+  // Amendment 1: every reading color on every new surface, the selection colors on their own surface, the indicator
+  // and the brand-reply accent as graphics, the focus ring wherever it can be drawn.
+  ...(["text.primary", "text.secondary", "text.tertiary", "interactive.link", "human.text", "success.fg", "warning.fg", "danger.fg"] as const).flatMap((foreground) =>
+    (["bg.app", "bg.content", "bg.reading", "bg.elevated-hover", "selection.bg"] as const).map((background) => ({ foreground, background, minimum: 4.5 as const })),
+  ),
+  { foreground: "selection.fg", background: "selection.bg", minimum: 4.5 },
+  { foreground: "selection.fg", background: "bg.content", minimum: 4.5 },
+  { foreground: "selection.indicator", background: "selection.bg", minimum: 3 },
+  { foreground: "selection.indicator", background: "bg.content", minimum: 3 },
+  { foreground: "accent.brand-reply", background: "bg.content", minimum: 3 },
+  { foreground: "accent.brand-reply", background: "bg.reading", minimum: 3 },
+  ...(["bg.app", "bg.content", "bg.reading", "bg.elevated-hover", "selection.bg"] as const).map((background) => ({ foreground: "interactive.focus" as const, background, minimum: 3 as const })),
+  ...(["bg.canvas", "bg.app", "bg.content", "bg.reading", "bg.raised", "bg.surface"] as const).map((background) => ({ foreground: "border.input" as const, background, minimum: 3 as const })),
 ];
 
 /** Manual §5: everything on a 4px base. */

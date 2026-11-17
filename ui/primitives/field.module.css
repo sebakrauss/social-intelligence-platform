@@ -1,6 +1,8 @@
 /*
  * Field (UI-2): label, control, help and error. Radius 6 on inputs (manual §5); 32px control on desktop, 44 on touch
- * (§11). Error is never color alone: an icon and the message accompany the red border.
+ * (§11). Error is never color alone: an icon and the message accompany the red border. Amendment 1 (Direction C): the
+ * boundary is border.input, ≥ 3:1 against every surface a field sits on (WCAG 1.4.11); disabled fields keep the quiet
+ * default border (inactive controls are exempt).
  */
 
 .field {
@@ -26,7 +28,7 @@
   width: 100%;
   min-height: 32px;
   padding: var(--wk-space-4) var(--wk-space-12);
-  border: 1px solid var(--wk-border-strong);
+  border: 1px solid var(--wk-border-input);
   border-radius: var(--wk-radius-sm);
   background: var(--wk-bg-raised);
   color: var(--wk-text-primary);
@@ -39,7 +41,7 @@
 }
 
 .control:hover:not(:disabled) {
-  border-color: var(--wk-text-tertiary);
+  border-color: var(--wk-text-secondary);
 }
 
 .control:disabled {
@@ -54,7 +56,9 @@
   resize: vertical;
 }
 
-.invalid {
+/* The error border holds on hover too (the hover rule above is more specific and used to turn it grey). */
+.invalid,
+.invalid:hover:not(:disabled) {
   border-color: var(--wk-danger-fg);
 }
 

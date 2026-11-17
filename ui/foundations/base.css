@@ -4,13 +4,15 @@
  * interactive blue, and the keyboard focus ring the manual requires (§11). No component styling lives here.
  */
 
+/* Amendment 1 (Direction C): the page itself is the application canvas — a soft neutral (Light) or charcoal (Dark) —
+   so navigation, content and reading surfaces can step off it. */
 html {
-  background: var(--wk-bg-canvas);
+  background: var(--wk-bg-app);
   color: var(--wk-text-primary);
 }
 
 body {
-  background: var(--wk-bg-canvas);
+  background: var(--wk-bg-app);
   color: var(--wk-text-primary);
   font-family: var(--wk-font-ui);
   font-size: 14px;

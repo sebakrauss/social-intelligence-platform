@@ -4,7 +4,11 @@
  * what the redesigned Comments page must draw: short and long comments in English, Spanish and Portuguese, replies to
  * replies, a long thread, replies the brand published earlier (from Wrenkind and directly on the platform), hidden and
  * removed comments, unknown post details and organic/paid source, several manual labels per comment, and one account
- * whose verified name is not available. Nothing here is real, read from a database or sent anywhere.
+ * whose verified name is not available. Step 7B-17V-UX adds what the comment actions need to be drawn honestly: posts
+ * whose comments a platform does not let other apps manage (an Instagram live video and story ad, a post another
+ * account owns), ads whose moderation is not validated, a connection that needs attention, comments past the private
+ * reply window, and synthetic examples of automatic assessments. Nothing here is real, read from a database or sent
+ * anywhere.
  */
 
 export type Platform = "facebook" | "instagram";
@@ -21,18 +25,38 @@ export interface Account {
   readonly verifiedName: string | null;
   /** Read coverage of this account's comments (a summary of the coverage record). */
   readonly coverage: "complete" | "partial";
+  /** Connection health (a prototype control can make every connection healthy). */
+  readonly health: "healthy" | "needs_attention";
 }
 
 export interface Post {
   readonly id: string;
   readonly accountId: string;
-  readonly kind: "Post" | "Reel" | "Video" | "Ad";
+  readonly kind: "Post" | "Reel" | "Video" | "Ad" | "Live video" | "Story ad";
   readonly source: Source;
   /** The first words of the post; null when Wrenkind has not read the post itself. */
   readonly caption: string | null;
+  /**
+   * Where the comments live, as far as comment actions are concerned: an ordinary post, a live video or a story ad
+   * (Instagram does not let other apps manage those comments), or a Facebook ad that never ran as a Page post (a
+   * "dark post": moderating its comments is not validated).
+   */
+  readonly surface: "feed" | "live" | "story_ad" | "dark_post";
+  /** Null: the connected account posted it. Otherwise the account that did (the connected account is only tagged). */
+  readonly owner: string | null;
 }
 
 export type Author = { readonly kind: "audience"; readonly name: string } | { readonly kind: "own" } | { readonly kind: "unknown" };
+
+/**
+ * A SYNTHETIC example of an automatic assessment (Wrenkind's understanding of a comment). Shown only when the prototype
+ * control asks for examples: no assessment is produced today, by AI or otherwise. `protected` marks the meanings that
+ * are never hidden automatically (complaints, accusations against the brand, commercial objections — S2, S3).
+ */
+export interface Assessment {
+  readonly meaning: "Complaint" | "Question" | "Spam" | "Praise" | "Accusation against the brand" | "Commercial objection";
+  readonly protected: boolean;
+}
 
 export interface Comment {
   readonly id: string;
@@ -76,21 +100,27 @@ export const WORKSPACE = { name: "Lumen Coffee", organization: "Lumen Group" } a
 export const AS_OF = "2026-11-17T15:00:00Z";
 
 export const ACCOUNTS: readonly Account[] = [
-  { id: "acc-fb-main", platform: "facebook", verifiedName: "Lumen Coffee", coverage: "complete" },
-  { id: "acc-ig-main", platform: "instagram", verifiedName: "@lumen.coffee", coverage: "complete" },
-  { id: "acc-fb-events", platform: "facebook", verifiedName: "Lumen Coffee Eventos", coverage: "partial" },
+  { id: "acc-fb-main", platform: "facebook", verifiedName: "Lumen Coffee", coverage: "complete", health: "healthy" },
+  { id: "acc-ig-main", platform: "instagram", verifiedName: "@lumen.coffee", coverage: "complete", health: "healthy" },
+  // A connection that needs attention: actions on its comments are blocked with a recovery, never called unsupported.
+  { id: "acc-fb-events", platform: "facebook", verifiedName: "Lumen Coffee Eventos", coverage: "partial", health: "needs_attention" },
   // A connected account whose name Wrenkind does not have: the page must fall back to a neutral description.
-  { id: "acc-ig-roastery", platform: "instagram", verifiedName: null, coverage: "complete" },
+  { id: "acc-ig-roastery", platform: "instagram", verifiedName: null, coverage: "complete", health: "healthy" },
 ];
 
 export const POSTS: readonly Post[] = [
-  { id: "post-1", accountId: "acc-ig-main", kind: "Reel", source: "organic", caption: "The holiday blend is back — notes of cherry, cacao and orange peel." },
-  { id: "post-2", accountId: "acc-ig-main", kind: "Ad", source: "paid", caption: "Free shipping on every subscription this week." },
-  { id: "post-3", accountId: "acc-fb-main", kind: "Post", source: "organic", caption: "We're opening our third café in Palermo on Saturday." },
-  { id: "post-4", accountId: "acc-fb-main", kind: "Video", source: "mixed", caption: "How we roast: a five-minute visit to the roastery." },
-  { id: "post-5", accountId: "acc-fb-events", kind: "Post", source: "unknown", caption: "Latte art workshop — limited places, sign up below." },
-  { id: "post-6", accountId: "acc-ig-roastery", kind: "Post", source: "organic", caption: "New single origin: Huila, Colombia. Washed, bright, honeyed." },
-  { id: "post-7", accountId: "acc-ig-main", kind: "Post", source: "unknown", caption: null },
+  { id: "post-1", accountId: "acc-ig-main", kind: "Reel", source: "organic", caption: "The holiday blend is back — notes of cherry, cacao and orange peel.", surface: "feed", owner: null },
+  { id: "post-2", accountId: "acc-ig-main", kind: "Ad", source: "paid", caption: "Your first subscription box ships free.", surface: "feed", owner: null },
+  { id: "post-3", accountId: "acc-fb-main", kind: "Post", source: "organic", caption: "We're opening our third café in Palermo on Saturday.", surface: "feed", owner: null },
+  { id: "post-4", accountId: "acc-fb-main", kind: "Video", source: "mixed", caption: "How we roast: a five-minute visit to the roastery.", surface: "feed", owner: null },
+  { id: "post-5", accountId: "acc-fb-events", kind: "Post", source: "unknown", caption: "Latte art workshop — limited places, sign up below.", surface: "feed", owner: null },
+  { id: "post-6", accountId: "acc-ig-roastery", kind: "Post", source: "organic", caption: "New single origin: Huila, Colombia. Washed, bright, honeyed.", surface: "feed", owner: null },
+  { id: "post-7", accountId: "acc-ig-main", kind: "Post", source: "unknown", caption: null, surface: "feed", owner: null },
+  { id: "post-8", accountId: "acc-fb-main", kind: "Ad", source: "paid", caption: "Holiday gift boxes: order by 15 December for delivery before Christmas.", surface: "dark_post", owner: null },
+  { id: "post-9", accountId: "acc-ig-main", kind: "Post", source: "organic", caption: "Free shipping on every subscription this week.", surface: "feed", owner: null },
+  { id: "post-10", accountId: "acc-ig-main", kind: "Live video", source: "organic", caption: "Live from the roastery: cupping the holiday blend.", surface: "live", owner: null },
+  { id: "post-11", accountId: "acc-ig-main", kind: "Story ad", source: "paid", caption: "Gift cards: the easiest present this season.", surface: "story_ad", owner: null },
+  { id: "post-12", accountId: "acc-ig-main", kind: "Post", source: "unknown", caption: "Sunday brunch at home with @lumen.coffee beans.", surface: "feed", owner: "@brunch.club.ba" },
 ];
 
 export const SEED_LABELS: readonly Label[] = [
@@ -114,11 +144,15 @@ interface Seed {
   readonly sent?: readonly (readonly [number, string, string])[];
   /** Manual labels already on comments: [message index, label id]. */
   readonly labels?: readonly (readonly [number, string])[];
+  /** Synthetic assessments: [message index, meaning, protected]. */
+  readonly assessed?: readonly (readonly [number, Assessment["meaning"], boolean])[];
+  /** Days to push the whole conversation back in time (the private-reply window is seven days). */
+  readonly daysAgo?: number;
 }
 
 const SEEDS: readonly Seed[] = [
   {
-    post: "post-2",
+    post: "post-9",
     account: "acc-ig-main",
     m: [
       ["caro.mendez", "Ordered on 2 Nov with the free shipping offer and it still hasn't arrived. The tracking link says 'label created' for ten days now. Can someone actually look at this?"],
@@ -126,6 +160,7 @@ const SEEDS: readonly Seed[] = [
       ["caro.mendez", "It's #A-20931. I already wrote to support twice.", 1],
     ],
     labels: [[0, "lbl-delivery"], [0, "lbl-follow"]],
+    assessed: [[0, "Complaint", true]],
   },
   {
     post: "post-1",
@@ -133,6 +168,7 @@ const SEEDS: readonly Seed[] = [
     m: [["joaquin.rv", "This blend is unreal. Best thing you've released this year ☕️🔥"]],
     sent: [[0, "Thank you, Joaquín! It goes fast — the roastery is already on batch four.", "Ana Ruiz"]],
     labels: [[0, "lbl-praise"]],
+    assessed: [[0, "Praise", false]],
   },
   {
     post: "post-3",
@@ -143,12 +179,14 @@ const SEEDS: readonly Seed[] = [
       ["Martina Gómez", "Gracias Lucía! Igual me gustaría que lo confirme la marca.", 1],
     ],
     labels: [[0, "lbl-allergen"]],
+    assessed: [[0, "Question", false]],
   },
   {
-    post: "post-2",
+    post: "post-9",
     account: "acc-ig-main",
     m: [["pedro.salles", "Cobraram o frete mesmo com a promoção. Quero o reembolso da diferença, por favor."]],
     labels: [[0, "lbl-refund"]],
+    assessed: [[0, "Complaint", true]],
   },
   {
     post: "post-4",
@@ -180,9 +218,10 @@ const SEEDS: readonly Seed[] = [
     ],
   },
   {
-    post: "post-2",
+    post: "post-9",
     account: "acc-ig-main",
     m: [["deals4u_official", "🔥 GET 90% OFF ALL COFFEE 🔥 visit our link in bio NOW", 0, "hidden"]],
+    assessed: [[0, "Spam", false]],
   },
   {
     post: "post-3",
@@ -193,6 +232,7 @@ const SEEDS: readonly Seed[] = [
     ],
     sent: [[0, "Ramiro, ya generamos la reposición sin costo. Te llega el lunes.", "Bruno Díaz"]],
     labels: [[0, "lbl-delivery"], [0, "lbl-refund"]],
+    assessed: [[0, "Complaint", true]],
   },
   {
     post: "post-7",
@@ -268,6 +308,7 @@ const SEEDS: readonly Seed[] = [
     ],
     sent: [[4, "Renata, we've escalated your order with the courier — you should see an update by tonight.", "Bruno Díaz"]],
     labels: [[0, "lbl-delivery"], [5, "lbl-delivery"], [5, "lbl-refund"], [9, "lbl-delivery"]],
+    assessed: [[0, "Complaint", true], [5, "Commercial objection", true]],
   },
   {
     post: "post-4",
@@ -287,7 +328,7 @@ const SEEDS: readonly Seed[] = [
     labels: [[0, "lbl-wholesale"]],
   },
   {
-    post: "post-2",
+    post: "post-11",
     account: "acc-ig-main",
     m: [["bia.carvalho", "Qual é o prazo de entrega para Porto Alegre?"]],
   },
@@ -311,16 +352,18 @@ const SEEDS: readonly Seed[] = [
       ["Federico Luna", "Ya escribí ayer y no tuve respuesta.", 1],
     ],
     labels: [[0, "lbl-refund"], [2, "lbl-follow"]],
+    assessed: [[0, "Complaint", true]],
   },
   {
-    post: "post-7",
+    post: "post-10",
     account: "acc-ig-main",
     m: [["mica.ph", "Love the new packaging design!"]],
   },
   {
-    post: "post-4",
+    post: "post-8",
     account: "acc-fb-main",
-    m: [["Ana Laura Vega", "Esto es publicidad engañosa, el café que me llegó no tiene nada que ver con lo del video."]],
+    m: [["Ana Laura Vega", "Esto es publicidad engañosa, la caja que me llegó no tiene nada que ver con la del anuncio."]],
+    assessed: [[0, "Accusation against the brand", true]],
   },
   {
     post: "post-6",
@@ -357,16 +400,23 @@ const SEEDS: readonly Seed[] = [
     account: "acc-ig-main",
     m: [["clara.ok", "Cancelled my subscription and was still charged this month. Please refund."]],
     labels: [[0, "lbl-refund"]],
+    assessed: [[0, "Complaint", true]],
+    // Five days older: the private-reply window closes in less than a day.
+    daysAgo: 5,
   },
   {
-    post: "post-1",
+    // A post another account published and tagged the brand in: its owner, not the brand, manages its comments.
+    post: "post-12",
     account: "acc-ig-main",
     m: [["roberto.a", "Too expensive for what it is honestly"]],
+    assessed: [[0, "Commercial objection", true]],
   },
   {
     post: "post-6",
     account: "acc-ig-roastery",
     m: [["ju.lima", "Arrived beautifully packed, thank you!"]],
+    // Older than seven days: no private reply is possible any more.
+    daysAgo: 9,
   },
 ];
 
@@ -387,7 +437,7 @@ function authorOf(code: string): Author {
  */
 export const CONVERSATIONS: readonly Conversation[] = SEEDS.map((seed, index) => {
   const id = `cv-${pad(index + 1)}`;
-  const last = minutes(AS_OF, -(12 + index * 47));
+  const last = minutes(AS_OF, -(12 + index * 47) - (seed.daysAgo ?? 0) * 1440);
   const count = seed.m.length + (seed.sent?.length ?? 0);
   const start = minutes(last, -count * 16);
   const comments = seed.m.map(([code, text, parent, flag], position): Comment => {
@@ -419,6 +469,15 @@ export const SEED_ASSIGNMENTS: Readonly<Record<string, readonly string[]>> = (()
       const key = `cv-${pad(index + 1)}-m${pad(position)}`;
       (out[key] ??= []).push(label);
     }
+  });
+  return out;
+})();
+
+/** The synthetic assessments (shown only when the prototype control asks for examples): comment id → assessment. */
+export const SEED_ASSESSMENTS: Readonly<Record<string, Assessment>> = (() => {
+  const out: Record<string, Assessment> = {};
+  SEEDS.forEach((seed, index) => {
+    for (const [position, meaning, isProtected] of seed.assessed ?? []) out[`cv-${pad(index + 1)}-m${pad(position)}`] = { meaning, protected: isProtected };
   });
   return out;
 })();

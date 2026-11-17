@@ -3,6 +3,9 @@
  * system preference and under the explicit override), every text and graphic token meets the contrast the manual
  * promises in both themes, the primitives are the manual's scales, and the semantic values that are not in a scale
  * are the known three (bg.hover dark, text.tertiary, human.bg dark).
+ * Amendment 1 (Direction C, PO-approved 2026-11-17): the new roles reuse existing values only; blue extends to
+ * selection.* and accent.brand-reply and nowhere else; status colors still never use blue; a text field's border
+ * stands out (3:1) from every surface it can sit on.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -21,6 +24,7 @@ import {
   THEME_NAMES,
   contrastRatio,
   cssVariable,
+  relativeLuminance,
 } from "@/ui/foundations/tokens";
 
 const CSS = readFileSync(path.resolve(import.meta.dirname, "../../../ui/foundations/tokens.css"), "utf8");
@@ -108,18 +112,92 @@ describe("contrast (manual §3 and §11)", () => {
   });
 });
 
-describe("blue stays where the manual puts it", () => {
-  it("no status token uses a blue step", () => {
-    const blues = new Set<string>(Object.values(BLUE));
+describe("blue stays where the manual puts it (as amended by Amendment 1)", () => {
+  // Manual v1.1: a person deciding (human.*), links and focus (interactive.*). Amendment 1 adds active navigation and
+  // selection (selection.*) and the brand's own replies (accent.brand-reply). Nothing else may be blue.
+  const BLUE_ROLES = (token: string): boolean => token.startsWith("human.") || token.startsWith("interactive.") || token.startsWith("selection.") || token === "accent.brand-reply";
+
+  it("no other token uses a blue step — status colors, surfaces, borders and text never do", () => {
+    const blues = new Set<string>([...Object.values(BLUE), THEMES.dark["human.bg"]]);
     for (const theme of THEME_NAMES) {
       for (const token of SEMANTIC_TOKENS) {
-        if (token.startsWith("human.") || token.startsWith("interactive.")) continue;
+        if (BLUE_ROLES(token)) continue;
         expect(blues.has(THEMES[theme][token]), `${theme} ${token}`).toBe(false);
       }
     }
   });
 
+  it("the blue roles are blue, and selection reuses the human surface rather than a new blue", () => {
+    const blues = new Set<string>([...Object.values(BLUE), THEMES.dark["human.bg"]]);
+    for (const theme of THEME_NAMES) for (const token of SEMANTIC_TOKENS.filter(BLUE_ROLES)) expect(blues.has(THEMES[theme][token]), `${theme} ${token}`).toBe(true);
+    for (const theme of THEME_NAMES) expect(THEMES[theme]["selection.bg"]).toBe(THEMES[theme]["human.bg"]);
+  });
+
   it("the dot is Electric Blue in both themes", () => {
     for (const theme of THEME_NAMES) expect(THEMES[theme]["human.dot"]).toBe(BLUE[500]);
+  });
+});
+
+describe("Amendment 1 (Direction C): new roles reuse approved values only", () => {
+  const NEW_ROLES = ["bg.app", "bg.content", "bg.reading", "bg.elevated-hover", "border.input", "selection.bg", "selection.fg", "selection.indicator", "accent.brand-reply"] as const;
+  const isNew = (token: string): boolean => (NEW_ROLES as readonly string[]).includes(token);
+  // What was approved before the amendment: the two scales and the semantic values of the manual's §3 table.
+  const approvedBefore = new Set<string>([...Object.values(NEUTRAL), ...Object.values(BLUE), ...THEME_NAMES.flatMap((theme) => SEMANTIC_TOKENS.filter((token) => !isNew(token)).map((token) => THEMES[theme][token]))]);
+
+  it("every new role is a neutral or blue scale step or an existing semantic value", () => {
+    expect(SEMANTIC_TOKENS.filter(isNew)).toEqual([...NEW_ROLES]);
+    for (const theme of THEME_NAMES) for (const token of NEW_ROLES) expect(approvedBefore.has(THEMES[theme][token]), `${theme} ${token} ${THEMES[theme][token]}`).toBe(true);
+    expect(THEMES.dark["bg.reading"]).toBe(THEMES.dark["bg.hover"]); // the one non-scale value, already approved
+  });
+
+  it("surfaces step in both themes: canvas (app) → content → reading are three distinct values", () => {
+    for (const theme of THEME_NAMES) expect(new Set([THEMES[theme]["bg.app"], THEMES[theme]["bg.content"], THEMES[theme]["bg.reading"]]).size, theme).toBe(3);
+    expect(THEMES.dark["bg.app"]).not.toBe(NEUTRAL[950]); // Dark is charcoal, not black-on-black
+  });
+
+  // Perceptibility of a hover fill is not a WCAG requirement (1.4.11 covers boundaries and states needed to identify a
+  // control, not hover backgrounds); it is measured here as the CIE L* difference, against the old Dark hover on the
+  // old black canvas (ΔL* 9.0) as the design intent.
+  const lStar = (hex: string): number => {
+    const y = relativeLuminance(hex);
+    return y > 0.008856 ? 116 * Math.cbrt(y) - 16 : 903.3 * y;
+  };
+  const deltaL = (a: string, b: string): number => Math.abs(lStar(a) - lStar(b));
+
+  it("V-1 (7B-17V-VISUAL-AUDIT): a hover on an elevated surface is perceptible in Dark — at least ΔL* 6 on content, raised and reading", () => {
+    for (const surface of ["bg.content", "bg.raised", "bg.reading"] as const) expect(deltaL(THEMES.dark["bg.elevated-hover"], THEMES.dark[surface]), surface).toBeGreaterThanOrEqual(6);
+    // The defect it replaces: the global hover on the new Dark content surface.
+    expect(deltaL(THEMES.dark["bg.hover"], THEMES.dark["bg.content"])).toBeLessThan(3);
+    // Light keeps the hover it always had on white.
+    expect(THEMES.light["bg.elevated-hover"]).toBe(THEMES.light["bg.hover"]);
+  });
+
+  it("V-4: the elevated hover never equals a surface it can be drawn on, in either theme", () => {
+    // Elevated surfaces and what sits on them (bg.surface: Disclosure, quiet controls). Not bg.app: navigation on the
+    // application canvas hovers with bg.content and never re-points its hover (brand-guards pins the allowed selectors).
+    for (const theme of THEME_NAMES) {
+      for (const surface of ["bg.content", "bg.raised", "bg.reading", "bg.surface"] as const) {
+        expect(THEMES[theme]["bg.elevated-hover"], `${theme} ${surface}`).not.toBe(THEMES[theme][surface]);
+      }
+    }
+    expect(deltaL(THEMES.dark["bg.elevated-hover"], THEMES.dark["bg.surface"])).toBeGreaterThanOrEqual(3);
+  });
+
+  it("text and focus keep AA on the elevated hover, and hover never looks like selection in Dark", () => {
+    for (const theme of THEME_NAMES) {
+      for (const text of ["text.primary", "text.secondary", "text.tertiary"] as const) expect(contrastRatio(THEMES[theme][text], THEMES[theme]["bg.elevated-hover"]), `${theme} ${text}`).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(THEMES[theme]["interactive.focus"], THEMES[theme]["bg.elevated-hover"])).toBeGreaterThanOrEqual(3);
+    }
+    expect(deltaL(THEMES.dark["selection.bg"], THEMES.dark["bg.elevated-hover"])).toBeGreaterThanOrEqual(6);
+  });
+
+  it("the input border stands out (≥ 3:1, WCAG 1.4.11) from every surface a field can sit on or be filled with", () => {
+    for (const theme of THEME_NAMES) {
+      for (const surface of ["bg.canvas", "bg.app", "bg.content", "bg.reading", "bg.raised", "bg.surface"] as const) {
+        expect(contrastRatio(THEMES[theme]["border.input"], THEMES[theme][surface]), `${theme} border.input on ${surface}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+    // The old boundary did not: the reason for the amendment.
+    for (const theme of THEME_NAMES) expect(contrastRatio(THEMES[theme]["border.strong"], THEMES[theme]["bg.canvas"])).toBeLessThan(3);
   });
 });

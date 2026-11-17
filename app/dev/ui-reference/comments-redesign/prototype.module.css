@@ -1,8 +1,15 @@
 /*
  * Comments experience redesign (Step 7B-17V) — DEVELOPMENT ONLY. Built from the Wrenkind foundations only (tokens,
- * type families, radii, spacing, motion): depth is a surface step and a 1px divider, never a shadow; the selected
- * destination is marked by weight and the primary text color, never blue; blue stays for focus and links. The rail
- * and sidebar mirror the product shell (UI-3: rail 56 · sidebar 220 · fluid content) so the proposal reads in place.
+ * type families, radii, spacing, motion): depth is a surface step and a 1px divider, never a shadow. The rail and
+ * sidebar mirror the product shell (UI-3: rail 56 · sidebar 220 · fluid content) so the proposal reads in place.
+ * Step 7B-17V-VISUAL-IMPLEMENT — Direction C "Refined Brand" (Manual v1.1 Amendment 1): navigation on the application
+ * canvas (bg.app); list and conversation on one rounded content sheet (bg.content), the conversation on the reading
+ * surface (bg.reading); active navigation and the selected conversation in Electric Blue (selection.*); the brand's own
+ * replies with a 2px brand-reply accent; text fields on border.input. Labels and assessments never use those blues.
+ * 7B-17V-VISUAL-FIX: elevated surfaces (the work sheet, menus) hover with bg.elevated-hover; the active rail item
+ * carries a 3px selection-indicator bar.
+ * Step 7B-17V-UX: everything SIMULATED is drawn dashed (badges, markers, the controls that play the platform), so a
+ * simulated outcome never looks like a product state; manual labels are square, automatic assessments are round.
  */
 
 .shell {
@@ -10,7 +17,7 @@
   grid-template-columns: 56px 232px minmax(0, 1fr);
   grid-template-areas: "rail side main";
   min-height: 100dvh;
-  background: var(--wk-bg-canvas);
+  background: var(--wk-bg-app);
   color: var(--wk-text-primary);
   font: 400 14px / calc(20 / 14) var(--wk-font-ui);
 }
@@ -38,8 +45,7 @@
   position: sticky;
   top: 0;
   height: 100dvh;
-  background: var(--wk-bg-surface);
-  border-right: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-app);
   padding-top: var(--wk-space-8);
 }
 
@@ -58,27 +64,32 @@
   flex-direction: column;
   align-items: center;
   gap: 3px;
-  width: 56px;
+  width: 52px;
   min-height: 52px;
+  margin: 0 auto;
   justify-content: center;
+  border-radius: var(--wk-radius-md);
   color: var(--wk-text-secondary);
   text-decoration: none;
   font: 500 10px / 1 var(--wk-font-ui);
 }
 
+/* The active section: a content-surface tile, its icon and label in the selection blue, and a 3px indicator bar — a
+   shape that tells it from a hovered item without relying on color alone (V-2). */
 .railItem[aria-current="page"] {
-  color: var(--wk-text-primary);
+  color: var(--wk-selection-fg);
+  background: var(--wk-bg-content);
 }
 
 .railItem[aria-current="page"]::before {
   content: "";
   position: absolute;
-  left: 0;
+  left: -2px;
   top: 10px;
   bottom: 10px;
-  width: 2px;
+  width: 3px;
   border-radius: var(--wk-radius-full);
-  background: var(--wk-text-primary);
+  background: var(--wk-selection-indicator);
 }
 
 .railItemQuiet {
@@ -97,8 +108,7 @@
   flex-direction: column;
   gap: var(--wk-space-20);
   padding: var(--wk-space-16);
-  background: var(--wk-bg-surface);
-  border-right: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-app);
   min-width: 0;
 }
 
@@ -177,13 +187,18 @@
 
 .sideItem:hover {
   color: var(--wk-text-primary);
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-content);
 }
 
+/* The active view: soft selection blue — where you are, never urgency or a classification. */
 .sideItem[aria-current="page"] {
-  color: var(--wk-text-primary);
-  background: var(--wk-bg-hover);
+  color: var(--wk-selection-fg);
+  background: var(--wk-selection-bg);
   font-weight: 600;
+}
+
+.sideItem[aria-current="page"] .count {
+  color: var(--wk-selection-fg);
 }
 
 .sideItemName {
@@ -373,11 +388,17 @@
 
 /* ───── the list ───── */
 
+/* The work sheet: the list (and, in two panels, the conversation beside it) on one rounded content surface. */
 .list {
   list-style: none;
   margin: 0;
   padding: 0;
-  border-top: 1px solid var(--wk-border-default);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-lg);
+  background: var(--wk-bg-content);
+  overflow: clip;
+  /* An elevated surface: hovers and soft fills inside it use the elevated-hover role (tokens.ts, Amendment 1). */
+  --wk-bg-hover: var(--wk-bg-elevated-hover);
 }
 
 .empty {
@@ -389,9 +410,22 @@
   border-bottom: 1px solid var(--wk-border-default);
 }
 
+/* Expandable list: the open conversation is the selected one — selection blue on its header, reading surface below. */
 .rowOpen {
+  position: relative;
   border-bottom-color: var(--wk-border-strong);
-  background: var(--wk-bg-surface);
+  background: var(--wk-bg-reading);
+}
+
+.rowOpen::before {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--wk-selection-indicator);
 }
 
 .rowHead {
@@ -403,7 +437,7 @@
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--wk-bg-surface);
+  background: var(--wk-selection-bg);
   border-bottom: 1px solid var(--wk-border-default);
 }
 
@@ -437,28 +471,28 @@
 
 .rowTop {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--wk-space-8);
   min-width: 0;
 }
 
-.rowOrigin {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wk-space-4);
+.rowTop > :first-child {
+  flex: none;
+}
+
+.rowAccount {
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--wk-text-tertiary);
   font: 400 12px / calc(16 / 12) var(--wk-font-ui);
 }
 
-.rowAccount {
-  max-width: 18ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .rowAuthor {
+  flex: 0 1 auto;
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -466,9 +500,14 @@
   white-space: nowrap;
 }
 
-.rowTop > .time {
+/* The conversation's latest activity: only while collapsed — once open, each comment carries its own time. */
+.rowTime {
   margin-left: auto;
   flex: none;
+}
+
+.rowOpen .rowTime {
+  display: none;
 }
 
 .rowExcerpt {
@@ -479,9 +518,15 @@
   color: var(--wk-text-primary);
 }
 
-.rowOpen .rowExcerpt {
-  -webkit-line-clamp: 1;
-  color: var(--wk-text-secondary);
+/* Open: the header shrinks to one line (who, where, when) — the thread below says the rest. */
+.rowOpen .rowExcerpt,
+.rowOpen .rowMeta {
+  display: none;
+}
+
+.rowOpen .rowButton {
+  padding-top: var(--wk-space-8);
+  padding-bottom: var(--wk-space-8);
 }
 
 .rowMeta {
@@ -552,7 +597,7 @@
   padding: 0 var(--wk-space-8);
   border: 1px solid var(--wk-border-default);
   border-radius: var(--wk-radius-xs);
-  background: var(--wk-bg-canvas);
+  background: var(--wk-bg-app);
   font: 500 11px / calc(16 / 11) var(--wk-font-ui);
   color: var(--wk-text-secondary);
 }
@@ -603,15 +648,6 @@
   padding-top: var(--wk-space-12);
 }
 
-.contextLine {
-  display: flex;
-  align-items: center;
-  gap: var(--wk-space-8);
-  min-width: 0;
-  flex: 1 1 320px;
-  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
-  color: var(--wk-text-secondary);
-}
 
 .contextKind {
   font-weight: 500;
@@ -679,6 +715,7 @@
   font-weight: 600;
 }
 
+/* The Persona mark on the brand's own messages, in the brand-reply accent. */
 .ownMark {
   display: inline-grid;
   place-items: center;
@@ -686,8 +723,8 @@
   width: 20px;
   height: 20px;
   border-radius: var(--wk-radius-full);
-  background: var(--wk-bg-raised);
-  color: var(--wk-text-secondary);
+  background: transparent;
+  color: var(--wk-accent-brand-reply);
 }
 
 .timeButton {
@@ -712,11 +749,13 @@
   color: var(--wk-text-primary);
 }
 
+/* The comment's toolbar: after its words, aligned with them; Reply and Hide first, the rest under More. */
 .actions {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
-  margin-left: auto;
+  margin: var(--wk-space-4) 0 0 calc(-1 * var(--wk-space-8));
 }
 
 .action {
@@ -778,6 +817,8 @@
   border: 1px solid var(--wk-border-strong);
   border-radius: var(--wk-radius-lg);
   background: var(--wk-bg-raised);
+  /* An elevated surface: hovers and soft fills inside it use the elevated-hover role (tokens.ts, Amendment 1). */
+  --wk-bg-hover: var(--wk-bg-elevated-hover);
 }
 
 .menu {
@@ -812,8 +853,9 @@
   background: var(--wk-bg-hover);
 }
 
+/* Unavailable but still pressable (it explains why): a readable tertiary text with the lock, never the disabled grey. */
 .menuItemUnavailable {
-  color: var(--wk-text-disabled);
+  color: var(--wk-text-tertiary);
   cursor: not-allowed;
 }
 
@@ -861,7 +903,7 @@
   padding: var(--wk-space-12);
   border: 1px solid var(--wk-border-default);
   border-radius: var(--wk-radius-md);
-  background: var(--wk-bg-canvas);
+  background: var(--wk-bg-content);
   font: 400 12px / calc(16 / 12) var(--wk-font-ui);
 }
 
@@ -902,6 +944,7 @@
   padding: var(--wk-space-12);
   border: 1px solid var(--wk-border-strong);
   border-radius: var(--wk-radius-lg);
+  background: var(--wk-bg-content);
 }
 
 .composerHeading {
@@ -928,50 +971,12 @@
 
 .focusFooter {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--wk-space-8);
-  padding-top: var(--wk-space-12);
-  border-top: 1px solid var(--wk-border-default);
+  justify-content: flex-end;
+  padding-top: var(--wk-space-8);
 }
 
-.convDetails {
-  width: 100%;
-}
 
-.convDetailsSummary::-webkit-details-marker {
-  display: none;
-}
 
-.convDetailsSummary::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  margin-right: var(--wk-space-8);
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform var(--wk-duration-fast) var(--wk-ease-standard);
-}
-
-.convDetails[open] > .convDetailsSummary::before {
-  transform: rotate(45deg);
-}
-
-.convDetailsSummary {
-  list-style: none;
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  cursor: pointer;
-  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
-  color: var(--wk-text-secondary);
-}
-
-.convDetails[open] .facts {
-  margin-top: var(--wk-space-4);
-  max-width: 560px;
-}
 
 /* ───── controls ───── */
 
@@ -984,7 +989,7 @@
   padding: 0 var(--wk-space-12);
   border: 1px solid var(--wk-border-default);
   border-radius: var(--wk-radius-sm);
-  background: var(--wk-bg-surface);
+  background: var(--wk-bg-content);
   color: var(--wk-text-primary);
   font: 500 13px / calc(18 / 13) var(--wk-font-ui);
   cursor: pointer;
@@ -994,10 +999,11 @@
   background: var(--wk-bg-hover);
 }
 
-.btn:disabled {
-  color: var(--wk-text-disabled);
-  cursor: not-allowed;
-}
+/*
+ * Disabled, for every button variant including primary, simulate and danger (audit M-5): the Button primitive's own
+ * disabled look (ui/primitives/button.module.css) — transparent, default border, disabled text — so a disabled primary
+ * never keeps its filled background in either theme. Declared after the variants so it wins over their fill.
+ */
 
 .btnSmall {
   min-height: 32px;
@@ -1032,9 +1038,10 @@
 .textarea {
   min-height: 36px;
   padding: var(--wk-space-4) var(--wk-space-8);
-  border: 1px solid var(--wk-border-strong);
+  /* Amendment 1: a field's boundary is border.input (≥ 3:1, WCAG 1.4.11), its fill the raised surface, as in Field. */
+  border: 1px solid var(--wk-border-input);
   border-radius: var(--wk-radius-sm);
-  background: var(--wk-bg-canvas);
+  background: var(--wk-bg-raised);
   color: var(--wk-text-primary);
   font: 400 13px / calc(18 / 13) var(--wk-font-ui);
 }
@@ -1120,10 +1127,6 @@
     padding-right: var(--wk-space-8);
   }
 
-  .rowAccount {
-    max-width: 12ch;
-  }
-
   .focus {
     padding: 0 var(--wk-space-12) var(--wk-space-12);
   }
@@ -1133,47 +1136,48 @@
     padding-left: var(--wk-space-12);
   }
 
-  /* Content first on a phone too: who and when, the words, the labels — then the comment's actions. */
-  .entryBody {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    column-gap: var(--wk-space-8);
-  }
-
-  .entryBody > * {
-    grid-column: 1 / -1;
-    order: 5;
-  }
-
-  .entryHead {
-    display: contents;
-  }
-
-  .entryHead > .entryAuthor {
-    grid-column: 1;
-    order: 0;
-    align-self: center;
-  }
-
-  .entryHead > :not(.entryAuthor):not(.actions) {
-    grid-column: 2;
-    order: 1;
-    justify-self: end;
-  }
-
-  .entryBody > .entryText {
-    order: 2;
-  }
-
-  .entryBody > .chips {
-    order: 3;
-  }
-
+  /* The toolbar keeps its order (Reply, Hide, Labels, More) and spreads over the width: four 44px targets. */
   .actions {
-    order: 4;
-    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
     margin-left: 0;
-    justify-content: flex-start;
+  }
+
+  .action {
+    justify-content: center;
+  }
+
+  .rowAccount {
+    display: none;
+  }
+
+  .matrixTable thead {
+    display: none;
+  }
+
+  .matrixTable,
+  .matrixTable tbody,
+  .matrixTable tr,
+  .matrixTable th,
+  .matrixTable td {
+    display: block;
+  }
+
+  .matrixTable tr {
+    padding: var(--wk-space-8) 0;
+    border-top: 1px solid var(--wk-border-default);
+  }
+
+  .matrixTable td[data-label]::before {
+    content: attr(data-label) ": ";
+    color: var(--wk-text-tertiary);
+  }
+
+
+  .confirm .inlineActions,
+  .composer .inlineActions {
+    flex-direction: column-reverse;
+    align-items: stretch;
   }
 
   .action,
@@ -1185,7 +1189,10 @@
   .select,
   .input,
   .coverageSummary,
-  .convDetailsSummary,
+  .postSummary,
+  .protoMoreSummary,
+  .matrixSummary,
+  .menuLink,
   .check {
     min-height: 44px;
   }
@@ -1218,5 +1225,786 @@
 @media (prefers-reduced-motion: reduce) {
   .chevron {
     transition: none;
+  }
+}
+
+/* ───── 7B-17V-UX: simulation, actions, context ───── */
+
+/* The prototype bar: a hatched edge so it never reads as product UI. */
+.protoBar {
+  position: relative;
+  flex-direction: column;
+  align-items: stretch;
+  padding-left: calc(var(--wk-space-12) + 8px);
+  overflow: hidden;
+}
+
+.protoBar::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 8px;
+  background: repeating-linear-gradient(135deg, var(--wk-text-tertiary) 0 3px, transparent 3px 7px);
+}
+
+.protoNote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--wk-space-4) var(--wk-space-8);
+}
+
+.protoFlag {
+  padding: 0 var(--wk-space-8);
+  border: 1px dashed var(--wk-text-primary);
+  border-radius: var(--wk-radius-xs);
+  font: 600 11px / 20px var(--wk-font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--wk-text-primary);
+}
+
+.protoMore {
+  position: relative;
+}
+
+.protoMoreSummary,
+.matrixSummary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-sm);
+  cursor: pointer;
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.protoMore[open] > .protoControls {
+  margin-top: var(--wk-space-8);
+}
+
+.matrix {
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+}
+
+.matrixBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-12);
+  margin-top: var(--wk-space-8);
+  padding: var(--wk-space-12);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-surface);
+  color: var(--wk-text-primary);
+  overflow-x: auto;
+}
+
+.matrixTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.matrixCaption {
+  margin-bottom: var(--wk-space-8);
+  text-align: left;
+  color: var(--wk-text-secondary);
+}
+
+.matrixTable th,
+.matrixTable td {
+  padding: var(--wk-space-8);
+  border-top: 1px solid var(--wk-border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+.matrixTable thead th {
+  border-top: 0;
+  font-weight: 500;
+  color: var(--wk-text-tertiary);
+}
+
+.matrixTable tbody th {
+  font-weight: 600;
+}
+
+.docState {
+  display: block;
+  font-weight: 500;
+}
+
+.docNote {
+  display: block;
+}
+
+.matrixTable tr[data-meta="not_documented"] .docState {
+  color: var(--wk-text-secondary);
+}
+
+.matrixNotes {
+  margin: 0;
+  padding-left: var(--wk-space-16);
+  color: var(--wk-text-secondary);
+}
+
+.matrixNotes li + li {
+  margin-top: var(--wk-space-4);
+}
+
+/* Simulated: dashed, everywhere. */
+.simBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--wk-space-8);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-xs);
+  font: 500 11px / 20px var(--wk-font-ui);
+  letter-spacing: 0.02em;
+  color: var(--wk-text-secondary);
+  white-space: nowrap;
+}
+
+.simMarker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  min-height: 24px;
+  padding: 0 var(--wk-space-8);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-full);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-primary);
+}
+
+.simMarkerTag {
+  white-space: pre;
+  font-weight: 400;
+  color: var(--wk-text-tertiary);
+}
+
+
+.markers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-4);
+  margin: 0 0 var(--wk-space-8);
+}
+
+.opLine,
+.privateRecord {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  margin-top: var(--wk-space-8);
+}
+
+.opStatus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4) var(--wk-space-8);
+  margin: 0;
+}
+
+.opSentence {
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.simControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4) var(--wk-space-8);
+  padding: var(--wk-space-8);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-surface);
+}
+
+.simControlsLabel {
+  font: 500 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--wk-text-tertiary);
+}
+
+.simButton {
+  min-height: 28px;
+  padding: 0 var(--wk-space-8);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-surface);
+  color: var(--wk-text-primary);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  cursor: pointer;
+}
+
+.simButton:hover {
+  background: var(--wk-bg-hover);
+}
+
+.btnSim {
+  border-style: dashed;
+  border-color: var(--wk-text-primary);
+}
+
+.btnDanger {
+  border-color: var(--wk-danger-fg);
+  background: var(--wk-danger-fg);
+  /* The canvas color reads on the danger red in both themes (white on the light red, near-black on the dark one). */
+  color: var(--wk-bg-canvas);
+}
+
+.btnDanger:hover:not(:disabled) {
+  background: var(--wk-danger-fg);
+  opacity: 0.9;
+}
+
+/* Thread: the first comment leads; replies sit on one indented rule; the brand's own messages on a surface step. */
+.entryRoot > .entryBody > .entryText {
+  font-size: 15px;
+  line-height: calc(23 / 15);
+}
+
+/* The brand's own messages: a content surface on the reading surface, with the 2px brand-reply accent — the card
+   itself stays neutral. */
+.entryOwn > .entryBody {
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border: 1px solid var(--wk-border-default);
+  border-left: 2px solid var(--wk-accent-brand-reply);
+  border-radius: var(--wk-radius-xs) var(--wk-radius-md) var(--wk-radius-md) var(--wk-radius-xs);
+  background: var(--wk-bg-content);
+}
+
+.entryOwn > .entryBody > .actions {
+  margin-left: calc(-1 * var(--wk-space-8));
+}
+
+.entrySim > .entryBody {
+  border-top: 1px dashed var(--wk-border-strong);
+  border-right: 1px dashed var(--wk-border-strong);
+  border-bottom: 1px dashed var(--wk-border-strong);
+}
+
+.actionUnavailable {
+  color: var(--wk-text-tertiary);
+}
+
+.actionUnavailable:hover {
+  color: var(--wk-text-secondary);
+}
+
+.reasonInline {
+  margin-top: var(--wk-space-8);
+}
+
+/* Automatic assessment (synthetic): round, quiet — never the square chip of a person's label. */
+.assessment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  min-height: 22px;
+  padding: 0 var(--wk-space-8) 0 var(--wk-space-4);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-bg-content);
+  font: 500 11px / calc(16 / 11) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.assessmentProtected {
+  border-color: var(--wk-border-strong);
+  color: var(--wk-text-primary);
+}
+
+.assessmentNote {
+  font-weight: 400;
+}
+
+.rowChips {
+  align-items: center;
+  color: var(--wk-text-tertiary);
+}
+
+.chip > svg {
+  flex: none;
+  color: var(--wk-text-tertiary);
+}
+
+/* The post: one line, its card on demand. */
+.postCard {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.postSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  margin-left: calc(-1 * var(--wk-space-8));
+  border-radius: var(--wk-radius-sm);
+  list-style: none;
+  cursor: pointer;
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.postSummary::-webkit-details-marker {
+  display: none;
+}
+
+.postSummary:hover {
+  background: var(--wk-bg-hover);
+}
+
+.postMore {
+  flex: none;
+  margin-left: auto;
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-interactive-link);
+}
+
+.postCard[open] .postMore {
+  color: var(--wk-text-primary);
+}
+
+.postFacts {
+  margin-top: var(--wk-space-8);
+  max-width: 640px;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-raised);
+  color: var(--wk-text-secondary);
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.noticeConnection {
+  background: var(--wk-warning-bg);
+  color: var(--wk-warning-fg);
+}
+
+.labelSummary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4) var(--wk-space-8);
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+}
+
+.labelSummary > svg {
+  color: var(--wk-text-tertiary);
+}
+
+.labelSummaryItem {
+  color: var(--wk-text-primary);
+}
+
+/* Menus and confirmation */
+.menuHeadingPlatform {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.menuItemDanger {
+  color: var(--wk-danger-fg);
+}
+
+.menuLink {
+  min-height: 32px;
+  margin-top: var(--wk-space-4);
+  padding: 0 var(--wk-space-8);
+  border: 0;
+  border-top: 1px solid var(--wk-border-default);
+  background: transparent;
+  color: var(--wk-interactive-link);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.confirm {
+  width: min(440px, 100%);
+}
+
+.confirmDanger {
+  border-color: var(--wk-danger-fg);
+}
+
+.confirmTitle {
+  font-weight: 600;
+}
+
+.confirmPoints,
+.privateRules {
+  margin: 0;
+  padding-left: var(--wk-space-16);
+  color: var(--wk-text-secondary);
+  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.confirmPoints li + li,
+.privateRules li + li {
+  margin-top: var(--wk-space-4);
+}
+
+.caution,
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+}
+
+.caution {
+  padding: var(--wk-space-8);
+  border-left: 2px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-raised);
+  color: var(--wk-text-primary);
+}
+
+.privateComposer {
+  border-style: solid;
+  background: var(--wk-bg-content);
+}
+
+.privateHeading {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  font-weight: 600;
+}
+
+.privateRecord {
+  max-width: 640px;
+  padding: var(--wk-space-12);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-lg);
+}
+
+@media (max-width: 1023px) {
+  .rowAccount {
+    max-width: 16ch;
+  }
+}
+
+/* Icons beside wrapping text keep their size. */
+.notice > svg,
+.caution > svg,
+.note > svg,
+.reason > svg,
+.privateHeading > svg,
+.composerHeading > svg {
+  flex: none;
+}
+
+/* Phone: the controls defined in this section get the same 44px targets as the rest of the page. */
+@media (max-width: 639px) {
+  .simButton,
+  .menuLink,
+  .postSummary {
+    min-height: 44px;
+  }
+
+  .convNav {
+    justify-content: flex-start;
+  }
+
+  .convNav > :first-child {
+    margin-right: auto;
+  }
+
+  /* The capability table becomes one card per row. */
+  .matrixCaption {
+    display: block;
+  }
+
+  .matrixTable th,
+  .matrixTable td {
+    padding: 2px 0;
+    border-top: 0;
+  }
+}
+
+/* ───── 7B-17V-UX2: simplification and the two-panel alternative ───── */
+
+.glyph {
+  flex: none;
+}
+
+.assessLine {
+  display: block;
+}
+
+/* A person's labels on a comment: quiet, small, square — present only where a label exists. */
+.entryBody > .chips .chip {
+  min-height: 18px;
+  padding: 0 6px;
+  border-color: transparent;
+  background: var(--wk-bg-app);
+  font-size: 11px;
+}
+
+.entryBody > .chips {
+  margin-bottom: var(--wk-space-4);
+}
+
+.btnQuiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--wk-text-secondary);
+}
+
+.btnQuiet:hover:not(:disabled) {
+  color: var(--wk-text-primary);
+}
+
+.menuCount {
+  margin-left: auto;
+  font: 400 11px / 1 var(--wk-font-mono);
+  color: var(--wk-text-tertiary);
+}
+
+/* The source post: a tile in the post's shape (no media), the kind, the source said plainly, the first words — on its
+   own content card on the reading surface. */
+.postSummary {
+  align-items: center;
+  min-height: 56px;
+  padding: var(--wk-space-8) var(--wk-space-12);
+  margin-left: 0;
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-lg);
+  background: var(--wk-bg-content);
+}
+
+.tile {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-app);
+  color: var(--wk-text-tertiary);
+}
+
+.tileSquare {
+  width: 44px;
+  height: 44px;
+}
+
+.tilePortrait {
+  width: 34px;
+  height: 52px;
+}
+
+.tileLandscape {
+  width: 60px;
+  height: 36px;
+}
+
+.postText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.postLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4) var(--wk-space-8);
+}
+
+.tagAd {
+  border-color: var(--wk-text-secondary);
+  color: var(--wk-text-primary);
+}
+
+.tagContext {
+  border-style: dashed;
+}
+
+/* ───── two panels ───── */
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  align-items: start;
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-lg);
+  background: var(--wk-bg-content);
+  overflow: clip;
+  /* An elevated surface: hovers and soft fills inside it use the elevated-hover role (tokens.ts, Amendment 1). */
+  --wk-bg-hover: var(--wk-bg-elevated-hover);
+}
+
+.splitList {
+  position: sticky;
+  top: 0;
+  max-height: 100dvh;
+  overflow-y: auto;
+  border: 0;
+  border-right: 1px solid var(--wk-border-default);
+  border-radius: 0;
+}
+
+/* In the narrow list the account is said by the platform mark and in the panel's title; no chevron (nothing expands). */
+.splitList .rowAccount {
+  display: none;
+}
+
+.splitList .rowButton {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* The selected conversation: soft selection blue and a full-height 3px selection indicator. */
+.rowSelected .rowButton {
+  background: var(--wk-selection-bg);
+}
+
+.rowSelected .rowButton::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--wk-selection-indicator);
+}
+
+.pane {
+  position: sticky;
+  top: 0;
+  align-self: stretch;
+  max-height: 100dvh;
+  overflow-y: auto;
+  min-width: 0;
+  --pane-pad: var(--wk-space-24);
+  padding: 0 var(--pane-pad) var(--pane-pad);
+  background: var(--wk-bg-reading);
+}
+
+.paneEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+}
+
+.paneHead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  margin: 0 calc(-1 * var(--pane-pad)) var(--wk-space-12);
+  padding: var(--wk-space-12) var(--pane-pad);
+  border-bottom: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-content);
+}
+
+.paneTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
+  margin: 0;
+  font: 600 20px / calc(26 / 20) var(--wk-font-brand);
+  letter-spacing: -0.01em;
+}
+
+.backButton {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .splitList,
+  .pane {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .splitList {
+    border-right: 0;
+  }
+
+  .pane {
+    --pane-pad: var(--wk-space-12);
+  }
+
+  .splitActive .splitList,
+  .split:not(.splitActive) .pane {
+    display: none;
+  }
+
+  .backButton {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 639px) {
+  .tileLandscape {
+    width: 52px;
+    height: 32px;
+  }
+
+  .postMore {
+    display: none;
+  }
+}
+
+/* A prototype control and its name stay on one line when the bar wraps. */
+.protoField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  white-space: nowrap;
+}
+
+.assessment {
+  padding-left: var(--wk-space-8);
+}
+
+.btn:disabled,
+.btn.btnPrimary:disabled,
+.btn.btnSim:disabled,
+.btn.btnDanger:disabled {
+  color: var(--wk-text-disabled);
+  background: transparent;
+  border-color: var(--wk-border-default);
+  border-style: solid;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+/* Phone: the rail is a bottom bar, so the active indicator runs along the item's top edge (V-2). */
+@media (max-width: 639px) {
+  .railItem[aria-current="page"]::before {
+    left: 10px;
+    right: 10px;
+    top: 0;
+    bottom: auto;
+    width: auto;
+    height: 3px;
   }
 }

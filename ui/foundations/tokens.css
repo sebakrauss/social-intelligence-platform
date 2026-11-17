@@ -8,6 +8,9 @@
  *
  * Rule: nothing outside this file names a brand color. Components use the semantic variables only, and the blue
  * (--wk-human-*, --wk-blue-*) is reserved for where a person decides, the logo's dot, links and keyboard focus.
+ * Amendment 1 (Direction C, PO-approved 2026-11-17; design/brand/MANUAL-DE-MARCA-v1.1-AMENDMENT-1.md) adds the roles
+ * at the end of each block: surfaces (bg.app, bg.content, bg.reading, bg.elevated-hover), border.input, and blue for active navigation
+ * and selection (selection.*) and for the brand's own replies (accent.brand-reply). Existing values are unchanged.
  */
 
 :root {
@@ -112,6 +115,16 @@
   --wk-warning-bg: #FFF4DE;
   --wk-danger-fg: #C42F24;
   --wk-danger-bg: #FDECEA;
+  /* Amendment 1 (Direction C) */
+  --wk-bg-app: #F4F4F4;
+  --wk-bg-content: #FFFFFF;
+  --wk-bg-reading: #FAFAFA;
+  --wk-bg-elevated-hover: #F4F4F4;
+  --wk-border-input: #7A7A7A;
+  --wk-selection-bg: #EEF3FF;
+  --wk-selection-fg: #2446B0;
+  --wk-selection-indicator: #4C7DFF;
+  --wk-accent-brand-reply: #4C7DFF;
 }
 
 /* Semantic · dark, by system preference unless the page says light */
@@ -141,6 +154,16 @@
     --wk-warning-bg: #2E2208;
     --wk-danger-fg: #FF6B5E;
     --wk-danger-bg: #331412;
+  /* Amendment 1 (Direction C) */
+  --wk-bg-app: #141414;
+  --wk-bg-content: #1A1A1A;
+  --wk-bg-reading: #1F1F1F;
+  --wk-bg-elevated-hover: #0A0A0A;
+  --wk-border-input: #7A7A7A;
+  --wk-selection-bg: #141C33;
+  --wk-selection-fg: #B9CCFF;
+  --wk-selection-indicator: #6E95FF;
+  --wk-accent-brand-reply: #6E95FF;
   }
 }
 
@@ -170,4 +193,14 @@
   --wk-warning-bg: #2E2208;
   --wk-danger-fg: #FF6B5E;
   --wk-danger-bg: #331412;
+  /* Amendment 1 (Direction C) */
+  --wk-bg-app: #141414;
+  --wk-bg-content: #1A1A1A;
+  --wk-bg-reading: #1F1F1F;
+  --wk-bg-elevated-hover: #0A0A0A;
+  --wk-border-input: #7A7A7A;
+  --wk-selection-bg: #141C33;
+  --wk-selection-fg: #B9CCFF;
+  --wk-selection-indicator: #6E95FF;
+  --wk-accent-brand-reply: #6E95FF;
 }

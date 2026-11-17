@@ -67,6 +67,104 @@ describe("one source of color", () => {
   });
 });
 
+describe("Manual v1.1 Amendment 1 (Direction C, PO-approved 2026-11-17): the new blues and surfaces stay in their roles", () => {
+  const css = [...filesUnder("ui", (file) => file.endsWith(".css")), ...filesUnder("app", (file) => file.endsWith(".css"))];
+  const NEW_BLUES = /--wk-selection-|--wk-accent-brand-reply/;
+  /** Where active navigation, a selected conversation and the brand's own replies are drawn. */
+  const SELECTION_USERS = new Set(["ui/foundations/tokens.css", "ui/shell/app-shell.module.css", "ui/inbox/inbox.module.css", "app/dev/ui-reference/comments-redesign/prototype.module.css"]);
+  /** The CSS rules (selector → body) of a stylesheet, comments removed. */
+  const rulesOf = (file: string): { readonly selector: string; readonly body: string }[] =>
+    [...codeOf(file).replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: (m[1] ?? "").trim(), body: m[2] ?? "" }));
+
+  it("selection and brand-reply blues are used only by navigation, the conversation list and the Comments reference", () => {
+    for (const file of [...css, ...sourceFiles(["app", "ui", "server"])]) {
+      if (SELECTION_USERS.has(file)) continue;
+      expect(codeOf(file), file).not.toMatch(NEW_BLUES);
+    }
+  });
+
+  it("selection never marks a label, an assessment, a priority, a status or a tag (selection is not urgency or meaning)", () => {
+    for (const file of [...SELECTION_USERS].filter((file) => file.endsWith(".module.css"))) {
+      for (const rule of rulesOf(file)) {
+        if (!NEW_BLUES.test(rule.body)) continue;
+        expect(rule.selector, `${file}: ${rule.selector}`).not.toMatch(/chip|label|tag|assessment|priority|pill|status|state|badge|marker/i);
+      }
+    }
+    // The label and status primitives stay on neutral and status tokens.
+    for (const file of ["ui/primitives/data-tag.module.css", "ui/primitives/state-pill.module.css"]) expect(codeOf(file), file).not.toMatch(NEW_BLUES);
+  });
+
+  /**
+   * 7B-17V-VISUAL-FIX V-4: the one token re-declaration allowed outside tokens.css — an elevated surface re-pointing
+   * its hover to the elevated-hover role — and ONLY at these root selectors. Anything else (another token, another
+   * value, another selector, another file) fails.
+   */
+  const ELEVATED_HOVER_ROOTS = new Set([
+    "ui/shell/app-shell.module.css .main",
+    "ui/shell/app-shell.module.css .panel",
+    "ui/inbox/inbox.module.css .workspace",
+    "app/dev/ui-reference/comments-redesign/prototype.module.css .list",
+    "app/dev/ui-reference/comments-redesign/prototype.module.css .split",
+    "app/dev/ui-reference/comments-redesign/prototype.module.css .popover",
+  ]);
+
+  it("design tokens are declared only in tokens.css — except the elevated-hover re-point, at the approved root selectors only", () => {
+    const seen = new Set<string>();
+    for (const file of css) {
+      if (file === "ui/foundations/tokens.css") continue;
+      for (const rule of rulesOf(file)) {
+        const declarations = [...rule.body.matchAll(/(--wk-[a-z0-9-]+)\s*:\s*([^;]+);/g)].map((m) => `${m[1] ?? ""}: ${(m[2] ?? "").trim()}`);
+        for (const declaration of declarations) {
+          const where = `${file} ${rule.selector}`;
+          expect(declaration, where).toBe("--wk-bg-hover: var(--wk-bg-elevated-hover)");
+          expect(ELEVATED_HOVER_ROOTS.has(where), `${where} is not an approved elevated-surface root`).toBe(true);
+          seen.add(where);
+        }
+      }
+    }
+    expect([...seen].sort()).toEqual([...ELEVATED_HOVER_ROOTS].sort());
+  });
+
+  it("the active rail item carries a shape indicator in selection.indicator, not only a color (V-2)", () => {
+    for (const file of ["ui/shell/app-shell.module.css", "app/dev/ui-reference/comments-redesign/prototype.module.css"]) {
+      const bar = rulesOf(file).find((rule) => rule.selector === '.railItem[aria-current="page"]::before');
+      expect(bar?.body, file).toMatch(/content: ""/);
+      expect(bar?.body, file).toMatch(/background: var\(--wk-selection-indicator\)/);
+      expect(bar?.body, file).toMatch(/width: 3px/);
+    }
+  });
+
+  it("nothing inside the reading area is painted with the black canvas (V-3): composer, preview, context box, sticky bar", () => {
+    const composer = rulesOf("ui/inbox/reply-composer.module.css");
+    for (const selector of [".composer", ".textarea", ".preview"]) expect(composer.find((rule) => rule.selector === selector)?.body, selector).not.toMatch(/--wk-bg-canvas/);
+    const inbox = rulesOf("ui/inbox/inbox.module.css");
+    for (const selector of [".contextBox", ".replySlot a", ".conversationNav"]) for (const rule of inbox.filter((item) => item.selector === selector)) expect(rule.body, selector).not.toMatch(/--wk-bg-canvas/);
+  });
+
+  it("a secondary button (itself a raised surface) hovers with the elevated hover; an invalid field keeps its error border on hover", () => {
+    const button = rulesOf("ui/primitives/button.module.css").find((rule) => rule.selector === ".secondary:hover:not(:disabled)");
+    expect(button?.body).toMatch(/background: var\(--wk-bg-elevated-hover\)/);
+    const invalid = rulesOf("ui/primitives/field.module.css").find((rule) => rule.selector.includes(".invalid:hover:not(:disabled)"));
+    expect(invalid?.body).toMatch(/border-color: var\(--wk-danger-fg\)/);
+  });
+
+  it("text fields draw their boundary with border.input (WCAG 1.4.11), never the quiet borders", () => {
+    const field = rulesOf("ui/primitives/field.module.css").find((rule) => rule.selector === ".control");
+    expect(field?.body).toMatch(/border: 1px solid var\(--wk-border-input\)/);
+    const composer = rulesOf("ui/inbox/reply-composer.module.css").find((rule) => rule.selector === ".textarea");
+    expect(composer?.body).toMatch(/border: 1px solid var\(--wk-border-input\)/);
+    const prototype = rulesOf("app/dev/ui-reference/comments-redesign/prototype.module.css").find((rule) => /\.input,\s*\.select,\s*\.textarea/.test(rule.selector));
+    expect(prototype?.body).toMatch(/border: 1px solid var\(--wk-border-input\)/);
+  });
+
+  it("the page canvas is the application canvas, and the shell separates navigation (bg.app) from content (bg.content)", () => {
+    expect(textOf("ui/foundations/base.css")).toMatch(/html \{\s*background: var\(--wk-bg-app\)/);
+    const shell = rulesOf("ui/shell/app-shell.module.css");
+    for (const selector of [".rail", ".sidebar"]) expect(shell.find((rule) => rule.selector === selector)?.body, selector).toMatch(/background: var\(--wk-bg-app\)/);
+    expect(shell.find((rule) => rule.selector === ".main")?.body).toMatch(/background: var\(--wk-bg-content\)/);
+  });
+});
+
 describe("foundations are inert", () => {
   const css = filesUnder("ui", (file) => file.endsWith(".css"));
 

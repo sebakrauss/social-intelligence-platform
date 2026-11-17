@@ -14,10 +14,11 @@
   margin-top: var(--wk-space-8);
   max-width: 640px;
   padding: var(--wk-space-12) var(--wk-space-16) var(--wk-space-16);
-  /* Step 7B-15O: the next reply in the thread, not a form on top of it — a quiet border on the page's own surface. */
+  /* Step 7B-15O: the next reply in the thread, not a form on top of it — a quiet border on a content card
+     (7B-17V-VISUAL-FIX V-3: the content surface, not the black canvas in Dark). */
   border: 1px solid var(--wk-border-default);
   border-radius: var(--wk-radius-md);
-  background: var(--wk-bg-canvas);
+  background: var(--wk-bg-content);
 }
 
 .heading {
@@ -63,9 +64,11 @@
   width: 100%;
   min-height: 88px;
   padding: var(--wk-space-8) var(--wk-space-12);
-  border: 1px solid var(--wk-border-strong);
+  /* Amendment 1: a text field's boundary is border.input (≥ 3:1, WCAG 1.4.11). */
+  border: 1px solid var(--wk-border-input);
   border-radius: var(--wk-radius-sm);
-  background: var(--wk-bg-canvas);
+  /* A text field's fill, as in the Field primitive (V-3). */
+  background: var(--wk-bg-raised);
   color: var(--wk-text-primary);
   font: 400 14px / calc(20 / 14) var(--wk-font-ui);
   resize: vertical;
@@ -98,7 +101,7 @@
   margin: 0;
   padding: var(--wk-space-12);
   border-left: 2px solid var(--wk-border-strong);
-  background: var(--wk-bg-canvas);
+  background: var(--wk-bg-content);
   font: 400 14px / calc(20 / 14) var(--wk-font-ui);
   color: var(--wk-text-primary);
   white-space: pre-wrap;
