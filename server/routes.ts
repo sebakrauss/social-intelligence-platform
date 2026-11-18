@@ -59,3 +59,26 @@ export function workspaceConversationReplyPath(workspaceId: unknown, conversatio
   const position = cursor === undefined || cursor === "" ? "" : `cursor=${encodeURIComponent(cursor)}&`;
   return `/workspaces/${id}/inbox/${conversationId}?${position}reply=${memberId}#${threadMemberId(memberId)}`;
 }
+
+/**
+ * Workspace › Comments (COMMENTS-INT-03A): the redesigned list piloted beside the Inbox for allowlisted workspaces
+ * only. The path grants nothing — the server authorizes the workspace and then checks the allowlist on every request.
+ */
+export function workspaceCommentsPath(workspaceId: unknown): string | undefined {
+  const id = parseWorkspaceId(workspaceId);
+  return id === undefined ? undefined : `/workspaces/${id}/comments`;
+}
+
+/** The Comments list at an older-conversations position; the cursor is the opaque, server-issued string. */
+export function workspaceCommentsPagePath(workspaceId: unknown, cursor: string): string | undefined {
+  const base = workspaceCommentsPath(workspaceId);
+  return base === undefined ? undefined : `${base}?cursor=${encodeURIComponent(cursor)}`;
+}
+
+/** Comments with one conversation selected by its address (same ids, cursor and row fragment as the Inbox). */
+export function workspaceCommentsConversationPath(workspaceId: unknown, conversationId: unknown, cursor?: string): string | undefined {
+  const base = workspaceCommentsPath(workspaceId);
+  if (base === undefined || !isUuid(conversationId)) return undefined;
+  const position = cursor === undefined || cursor === "" ? "" : `?cursor=${encodeURIComponent(cursor)}`;
+  return `${base}/${conversationId}${position}#${conversationRowId(conversationId)}`;
+}

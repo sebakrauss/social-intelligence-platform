@@ -71,7 +71,8 @@ describe("Manual v1.1 Amendment 1 (Direction C, PO-approved 2026-11-17): the new
   const css = [...filesUnder("ui", (file) => file.endsWith(".css")), ...filesUnder("app", (file) => file.endsWith(".css"))];
   const NEW_BLUES = /--wk-selection-|--wk-accent-brand-reply/;
   /** Where active navigation, a selected conversation and the brand's own replies are drawn. */
-  const SELECTION_USERS = new Set(["ui/foundations/tokens.css", "ui/shell/app-shell.module.css", "ui/inbox/inbox.module.css", "app/dev/ui-reference/comments-redesign/prototype.module.css"]);
+  // COMMENTS-INT-03A adds ui/inbox/comments.module.css: the redesigned Comments list (the selected conversation only).
+  const SELECTION_USERS = new Set(["ui/foundations/tokens.css", "ui/shell/app-shell.module.css", "ui/inbox/inbox.module.css", "ui/inbox/comments.module.css", "app/dev/ui-reference/comments-redesign/prototype.module.css"]);
   /** The CSS rules (selector → body) of a stylesheet, comments removed. */
   const rulesOf = (file: string): { readonly selector: string; readonly body: string }[] =>
     [...codeOf(file).replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: (m[1] ?? "").trim(), body: m[2] ?? "" }));

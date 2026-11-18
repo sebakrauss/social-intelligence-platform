@@ -52,8 +52,12 @@ export function AppLink({ href, className, pendingClassName, current = false, fo
   const ref = useRef<HTMLAnchorElement>(null);
   useEffect(() => {
     if (focusKey === undefined || focusAfterMove !== focusKey) return;
-    focusAfterMove = undefined;
-    ref.current?.focus({ preventScroll: true });
+    const link = ref.current;
+    if (link === null) return;
+    link.focus({ preventScroll: true });
+    // Taken only by a link that really received the focus: one that is not drawn at this width (a list row behind the
+    // open conversation on a small screen) leaves it to the next link standing for the same anchor (COMMENTS-INT-03A-FIX).
+    if (link.ownerDocument.activeElement === link) focusAfterMove = undefined;
   }, [focusKey, current]);
   const ariaCurrent = current ? { "aria-current": "page" as const } : {};
 

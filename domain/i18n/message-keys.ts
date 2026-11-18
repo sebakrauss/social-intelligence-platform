@@ -327,6 +327,13 @@ export const MESSAGE_KEYS = [
   "inbox.item.read_count_short",
   "inbox.source.mixed_short",
   "inbox.source.unknown_short",
+  // COMMENTS-INT-03A: the redesigned Comments route (pilot, allowlisted workspaces only).
+  "comments.pilot.note",
+  "comments.pilot.inbox_link",
+  "comments.pane.label",
+  "comments.pane.empty",
+  "comments.pane.pending",
+  "comments.pane.open_in_inbox",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

@@ -75,12 +75,21 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/page.tsx",
       "app/sign-in/page.tsx",
       "app/sign-up/page.tsx",
+      // COMMENTS-INT-03A: Workspace › Comments, the redesigned list piloted beside the Inbox. Read only (the Inbox's own
+      // queries); offered only to workspaces on the server-side allowlist, 404 otherwise (comments-route tests prove it).
+      "app/workspaces/[workspaceId]/comments/[conversationId]/page.tsx",
+      "app/workspaces/[workspaceId]/comments/layout.tsx",
+      "app/workspaces/[workspaceId]/comments/page.tsx",
+      "app/workspaces/[workspaceId]/comments/views.tsx",
       // Step 7A: Workspace › Inbox, conversation list and one conversation (Step 7B-3: the reply composer posts to
       // server/inbox/actions.ts, the one Inbox server action; the pages themselves still only read).
       "app/workspaces/[workspaceId]/inbox/[conversationId]/page.tsx",
       // UI-3: section layouts draw the app shell around the existing pages; the composition reads only (brand-guards).
       "app/workspaces/[workspaceId]/inbox/layout.tsx",
       "app/workspaces/[workspaceId]/inbox/page.tsx",
+      // COMMENTS-INT-03A-FIX: the Inbox's read-only pieces (times, closed states, "what has been read"), split from
+      // views.tsx so a read-only page can draw them without the reply composer's action (no read, no action here).
+      "app/workspaces/[workspaceId]/inbox/read-views.tsx",
       // UI-4: views.tsx draws the Step 7A view models (no read, no action). No loading.tsx: a Suspense boundary would
       // turn the sign-in redirect into a streamed 200, and the redirect stays a 307.
       "app/workspaces/[workspaceId]/inbox/views.tsx",

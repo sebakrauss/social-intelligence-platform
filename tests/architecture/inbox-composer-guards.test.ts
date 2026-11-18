@@ -575,7 +575,14 @@ describe("reply drafts: memory only, never publishing (syntax tree)", () => {
     expect([...shell.matchAll(/<AppLink\b[^>]*>/g)]).toHaveLength(3);
     expect([...shell.matchAll(/<a\b[^>]*>/g)].map((m) => m[0])).toEqual(['<a href={`#${CONTENT_ID}`} className={styles["skip"]}>']);
     // Nothing else composes the in-app link (a new caller is a reviewed change, not an accident).
-    expect(sourceFiles([...PRODUCTION_ROOTS]).filter((file) => file !== APP_LINK && /@\/ui\/navigation\/app-link/.test(codeOf(file))).sort()).toEqual(["ui/inbox/inbox.tsx", "ui/shell/app-shell.tsx"]);
+    expect(sourceFiles([...PRODUCTION_ROOTS]).filter((file) => file !== APP_LINK && /@\/ui\/navigation\/app-link/.test(codeOf(file))).sort()).toEqual(["ui/inbox/comments.tsx", "ui/inbox/inbox.tsx", "ui/shell/app-shell.tsx"]);
+    // COMMENTS-INT-03A: the redesigned Comments list has two in-app links — its row (the same contract as the Inbox row)
+    // and, since 03A-FIX, the way back to the list, which stands for the selected row's anchor so focus is never lost.
+    expect([...codeOf("ui/inbox/comments.tsx").matchAll(/<AppLink href=\{[^}]+\}[^>]*>/g)].map((m) => m[0])).toEqual([
+      '<AppLink href={href} className={styles["row"]} pendingClassName={styles["rowPending"]} current={current} focusKey={id}>',
+      '<AppLink href={back.href} className={styles["backLink"]} focusKey={back.focusKey}>',
+    ]);
+    expect([...codeOf("ui/inbox/comments.tsx").matchAll(/<a\b[^>]*>/g)]).toHaveLength(0);
   });
 
   it("Step 7B-17K: the in-app link is never prefetched, never navigates by script, and is a plain link while a draft is kept", () => {

@@ -1,0 +1,75 @@
+// @vitest-environment happy-dom
+/**
+ * In-app link focus hand-off (COMMENTS-INT-03A-FIX, audit L-5). After an in-app move to `#anchor`, the link standing
+ * for that anchor takes the keyboard focus. A link that can't take it — a list row that is not drawn while the open
+ * conversation fills a small screen — must leave it to the next link standing for the same anchor (the way back to the
+ * list), so the focus never falls to the top of the page; and going back hands it to the row again.
+ */
+import { act, createElement as h, forwardRef, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/link", () => ({
+  default: forwardRef<HTMLAnchorElement, { href: string; className?: string; onNavigate?: () => void; children?: ReactNode }>(function Link({ href, className, onNavigate, children, ...rest }, ref) {
+    const passed = Object.fromEntries(Object.entries(rest).filter(([key]) => key.startsWith("aria-")));
+    return h("a", { ref, href, className, ...passed, onClick: (event: { preventDefault: () => void }) => { event.preventDefault(); onNavigate?.(); } }, children);
+  }),
+  useLinkStatus: () => ({ pending: false }),
+}));
+
+const { AppLink } = await import("@/ui/navigation/app-link");
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const ROW = "row-1";
+let container: HTMLElement;
+let root: Root;
+const render = async (node: ReactNode): Promise<void> => { await act(async () => { root.render(node); await Promise.resolve(); }); };
+const link = (text: string): HTMLAnchorElement => [...container.querySelectorAll("a")].find((a) => a.textContent === text) as HTMLAnchorElement;
+const active = (): Element | null => container.ownerDocument.activeElement;
+
+/** The list page (the row, nothing selected) and the conversation page (the row selected, plus the way back). */
+const listPage = (): ReactNode => h("div", null, h(AppLink, { href: `/c/1#${ROW}`, focusKey: ROW, current: false, children: "row" }));
+const conversationPage = (): ReactNode => h("div", null, h(AppLink, { href: `/c/1#${ROW}`, focusKey: ROW, current: true, children: "row" }), h(AppLink, { href: `/c#${ROW}`, focusKey: ROW, children: "back" }));
+
+beforeEach(() => {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+afterEach(async () => {
+  await act(async () => { root.unmount(); await Promise.resolve(); });
+  container.remove();
+});
+
+describe("in-app link: who takes the focus after a move", () => {
+  it("wide screen: the selected row takes the focus, the way back does not", async () => {
+    await render(listPage());
+    await act(async () => { link("row").click(); await Promise.resolve(); });
+    await render(conversationPage());
+    expect(active()).toBe(link("row"));
+  });
+
+  it("small screen: the row is not drawn and can't take the focus — the way back takes it, never the page body", async () => {
+    await render(listPage());
+    const row = link("row");
+    // Not drawn (its column is display:none): focusing it does nothing, as in a browser.
+    Object.defineProperty(row, "focus", { configurable: true, value: () => undefined });
+    await act(async () => { row.click(); await Promise.resolve(); });
+    await render(conversationPage());
+    expect(active()).toBe(link("back"));
+    expect(active()).not.toBe(document.body);
+    // Going back: the row is drawn again and takes the focus.
+    Reflect.deleteProperty(row, "focus");
+    await act(async () => { link("back").click(); await Promise.resolve(); });
+    await render(listPage());
+    expect(active()).toBe(link("row"));
+  });
+
+  it("a move to another anchor moves no focus here", async () => {
+    await render(h("div", null, h(AppLink, { href: "/c/2#row-2", children: "other" }), h(AppLink, { href: `/c/1#${ROW}`, focusKey: ROW, current: false, children: "row" })));
+    await act(async () => { link("other").click(); await Promise.resolve(); });
+    await render(conversationPage());
+    expect(active()).not.toBe(link("row"));
+    expect(active()).not.toBe(link("back"));
+  });
+});

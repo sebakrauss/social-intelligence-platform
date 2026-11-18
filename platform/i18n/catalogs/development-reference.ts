@@ -332,4 +332,10 @@ export const developmentReferenceCatalog: Catalog = {
   "inbox.item.read_count_short": "{count} read",
   "inbox.source.mixed_short": "Mixed",
   "inbox.source.unknown_short": "Organic or paid: not known",
+  "comments.pilot.note": "Preview of the new Comments layout. It shows the same conversations as the Inbox.",
+  "comments.pilot.inbox_link": "Go to the Inbox",
+  "comments.pane.label": "Conversation",
+  "comments.pane.empty": "Select a conversation to read it here.",
+  "comments.pane.pending": "Reading a conversation here isn't part of this preview yet.",
+  "comments.pane.open_in_inbox": "Open this conversation in the Inbox",
 };
