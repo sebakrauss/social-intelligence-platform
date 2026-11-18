@@ -1,24 +1,27 @@
 // @vitest-environment happy-dom
 /**
- * Comments experience redesign (Step 7B-17V) — the prototype in a real client runtime (React + happy-dom), driven
- * the way a person would: clicks, typing, Enter and Escape. Each task counts its steps (one click, one typed text or
- * one key = one step), so the interaction matrix in the design note is a measured, repeatable number — not a claim
- * about human usability, which only a review with people can give. Synthetic data; nothing is read or sent.
- * Step 7B-17V-UX: the comment toolbar and platform menus, confirmations, the private-reply reference and the simulated
- * operation states — every one of them labelled as a simulation. Step 7B-17V-UX2: three visible actions (labels moved
- * into More: one more step to reach them), no repeated label or review notices, the source preview, and the
- * two-panel layout next to the expandable list.
+ * Comments workspace (Step UX-04) — the interactive prototype in a real client runtime (React + happy-dom), driven the
+ * way a person would: clicks, typing, Enter and Escape. It checks that every action changes ONE shared state, so list
+ * membership, counts, statuses, Previous / Next and the activity follow: the A1 → A2 → A3 Needs attention journey,
+ * conversation management (assign, Urgent, escalate, Done with a resolution, Reopen), search and filters, comment
+ * actions with their confirmations and simulated outcomes, labels (assigning ≠ creating; Settings), the Details drawer,
+ * and the UX4 safety regressions (H-1, H-2, M-1…M-5). Layout itself (widths, breakpoints) is verified in a browser;
+ * here the single-panel structure (Back, splitActive) is checked. Synthetic data; nothing is read or sent.
  */
 import { act, createElement as h } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SEED_ASSIGNMENTS, SEED_LABELS } from "@/app/dev/ui-reference/comments-redesign/fixtures";
+import { NO_FILTERS, PAGE_SIZE, SEED_SIM, SEED_WORKFLOW, listOf, viewCounts, type WorkContext } from "@/app/dev/ui-reference/comments-redesign/model";
 import { CommentsRedesign } from "@/app/dev/ui-reference/comments-redesign/prototype";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const CTX: WorkContext = { labels: { labels: SEED_LABELS, assignments: SEED_ASSIGNMENTS, nextId: 1 }, wf: SEED_WORKFLOW, sim: SEED_SIM, allHealthy: false, target: 240 };
+const START = viewCounts(CTX);
+
 let container: HTMLElement;
 let root: Root | undefined;
-let steps = 0;
 
 async function settle(run: () => void): Promise<void> {
   await act(async () => {
@@ -32,62 +35,61 @@ const q = (selector: string, scope: ParentNode = container): HTMLElement => {
   if (!(found instanceof HTMLElement)) throw new Error(`not found: ${selector}`);
   return found;
 };
-/** The same, checked to be of one element class. */
-const qa = <E extends HTMLElement>(kind: new () => E, selector: string, scope: ParentNode = container): E => {
-  const found = q(selector, scope);
-  if (!(found instanceof kind)) throw new Error(`not a ${kind.name}: ${selector}`);
-  return found;
-};
 const buttonsIn = (scope: ParentNode): HTMLButtonElement[] => [...scope.querySelectorAll("button")];
+const named = (button: HTMLButtonElement): string => button.textContent.replace(/\s+/g, " ").trim();
 const buttonNamed = (scope: ParentNode, text: string): HTMLButtonElement => {
-  const found = buttonsIn(scope).find((button) => button.textContent.trim().startsWith(text));
+  const found = buttonsIn(scope).find((button) => named(button).startsWith(text));
   if (found === undefined) throw new Error(`no button "${text}"`);
   return found;
 };
+const hasButton = (scope: ParentNode, text: string): boolean => buttonsIn(scope).some((button) => named(button).startsWith(text));
 const article = (commentId: string): HTMLElement => q(`[aria-labelledby="c-${commentId}"]`);
-const row = (conversationId: string): HTMLButtonElement => qa(HTMLButtonElement, `#row-${conversationId}`);
+const row = (conversationId: string): HTMLButtonElement => q(`#row-${conversationId}`) as HTMLButtonElement;
+const pane = (conversationId: string): HTMLElement => q(`#focus-${conversationId}`);
+const management = (conversationId: string): HTMLElement => q('[aria-label="Manage this conversation"]', pane(conversationId));
+const text = (element: Element): string => element.textContent.replace(/\s+/g, " ").trim();
+const listedIds = (): string[] => [...container.querySelectorAll<HTMLButtonElement>("[id^=row-]")].map((button) => button.id.slice(4));
+const announced = (): string => text(q('[role="status"][aria-live="polite"]'));
+const active = (): Element | null => container.ownerDocument.activeElement;
+const sideView = (name: string): HTMLButtonElement => buttonNamed(q('nav[aria-label="Comments views"]'), name);
 
 async function click(element: HTMLElement): Promise<void> {
-  steps += 1;
   await settle(() => { element.click(); });
 }
-async function type(element: HTMLInputElement | HTMLTextAreaElement, text: string): Promise<void> {
-  steps += 1;
-  // React tracks the value through the prototype's setter: set it there (as a person typing would), then announce it.
-  const prototype = Object.getPrototypeOf(element) as object;
+async function type(element: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+  const proto = Object.getPrototypeOf(element) as object;
   await settle(() => {
-    Reflect.set(prototype, "value", text, element);
+    Reflect.set(proto, "value", value, element);
     element.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 async function key(element: Element, name: string): Promise<void> {
-  steps += 1;
   await settle(() => element.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true })));
 }
-/** A prototype control (role, read model…): not counted, it is not part of a task. */
-async function choose(label: string, value: string): Promise<void> {
-  const select = [...container.querySelectorAll<HTMLSelectElement>('[aria-label="Prototype controls"] select')].find((item) => item.labels[0]?.textContent === label);
-  if (select === undefined) throw new Error(label);
+async function pick(select: HTMLSelectElement, value: string): Promise<void> {
   await settle(() => {
     select.value = value;
     select.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
-/** Labels now live in More: More, then "Labels…" (two steps). */
-async function openLabels(commentId: string): Promise<void> {
-  await click(buttonNamed(article(commentId), "More"));
-  await click(buttonNamed(q('[aria-label="More actions"]', article(commentId)), "Labels"));
+/** A prototype control (role, workspace…): not product UI. */
+async function choose(label: string, value: string): Promise<void> {
+  const select = [...container.querySelectorAll<HTMLSelectElement>('[aria-label="Prototype controls"] select')].find((item) => item.labels[0]?.textContent.startsWith(label) === true);
+  if (select === undefined) throw new Error(label);
+  await pick(select, value);
 }
-const sideLabel = (name: string): HTMLButtonElement => buttonNamed(q('nav[aria-label="Comments views"]'), name);
-const listedIds = (): string[] => [...container.querySelectorAll<HTMLButtonElement>("[id^=row-]")].map((button) => button.id.slice(4));
+const toolbarSelect = (label: string): HTMLSelectElement => {
+  const found = [...container.querySelectorAll<HTMLSelectElement>('[role="search"] select')].find((item) => item.labels[0]?.textContent === label);
+  if (found === undefined) throw new Error(label);
+  return found;
+};
+const title = (): string => text(q("h1"));
 
 beforeEach(async () => {
-  steps = 0;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  // The 17V–UX2 tests read the expandable list; the review default is two panels (UX3), covered below.
-  await settle(() => root?.render(h(CommentsRedesign, { initialLayout: "expand" })));
+  await settle(() => root?.render(h(CommentsRedesign)));
 });
 afterEach(async () => {
   await settle(() => root?.unmount());
@@ -95,795 +97,1027 @@ afterEach(async () => {
   container.remove();
 });
 
-describe("opening and closing a conversation (6.1)", () => {
-  it("the whole row header opens Focus inline and the same header closes it: one step each, with the state announced", async () => {
-    const header = row("cv-01");
-    expect(header.getAttribute("aria-expanded")).toBe("false");
-    expect(header.querySelector("svg")).not.toBeNull(); // the chevron
-    await click(header);
-    expect(header.getAttribute("aria-expanded")).toBe("true");
-    const region = q(`#${header.getAttribute("aria-controls") ?? ""}`);
-    expect(region.tagName).toBe("SECTION");
-    expect(region.getAttribute("aria-labelledby")).toBe("row-cv-01");
-    expect(steps).toBe(1);
-    await click(header);
-    expect(header.getAttribute("aria-expanded")).toBe("false");
-    expect(container.querySelector("#focus-cv-01")).toBeNull();
-    expect(steps).toBe(2);
-  });
+/* ───────────── the workspace ───────────── */
 
-  it("no interactive element is nested in a row header (one target, no click conflicts)", async () => {
-    await click(row("cv-01"));
-    for (const header of container.querySelectorAll("[id^=row-]")) expect(header.querySelectorAll("button, a, input, select, textarea, [tabindex]")).toHaveLength(0);
-  });
-
-  it("Escape closes the open conversation and returns focus to its header; Previous / Next move focus to the next header", async () => {
-    await click(row("cv-01"));
-    await click(buttonNamed(q("#focus-cv-01"), "Next"));
-    const second = listedIds()[1] ?? "";
-    expect(row(second).getAttribute("aria-expanded")).toBe("true");
-    expect(document.activeElement).toBe(row(second));
-    expect(q(`#focus-${second}`).textContent).toContain("2 of 36");
-    await click(buttonNamed(q(`#focus-${second}`), "Previous"));
-    expect(document.activeElement).toBe(row("cv-01"));
-    await key(q("#focus-cv-01 ol"), "Escape");
-    expect(row("cv-01").getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement).toBe(row("cv-01"));
-  });
-});
-
-describe("content first, context on demand (B, C, F, G)", () => {
-  it("understanding a comment and its reply history takes one step: the thread is the first thing after a one-line post context", async () => {
-    await click(row("cv-19"));
-    expect(steps).toBe(1);
-    const focus = q("#focus-cv-19");
-    const thread = q("ol", focus);
-    expect(thread.querySelectorAll(":scope > li")).toHaveLength(15);
-    // Before the thread there is only the one-line context and Previous / Next — no notice paragraphs.
-    const before = [...focus.querySelectorAll("*")].filter((element) => !element.contains(thread) && element.compareDocumentPosition(thread) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(before.some((element) => element.textContent.includes("assessment"))).toBe(false);
-    expect(before.some((element) => element.textContent.includes("isn't available"))).toBe(false);
-    // The review status is said once for the whole list, never inside a conversation.
-    expect(focus.textContent).not.toMatch(/assess/i);
-    expect(container.textContent.match(/Automatic assessment isn't on yet/g)).toHaveLength(1);
-  });
-
-  it("no per-comment 'Exact times' disclosure; the exact record is one step away from the visible time", async () => {
-    await click(row("cv-19"));
-    const focus = q("#focus-cv-19");
-    expect(focus.textContent).not.toMatch(/Exact times/);
-    expect(focus.querySelectorAll("dl")).toHaveLength(1); // the closed "Conversation details" only
-    const before = steps;
-    await click(q("button[aria-expanded]", article("cv-19-m00")));
-    expect(steps - before).toBe(1);
-    const facts = q("dl", article("cv-19-m00"));
-    expect(facts.textContent).toMatch(/Written on Instagram.*Read by Wrenkind.*Private reply(Possible until|Window closed on)/);
-    expect(facts.querySelectorAll("time[datetime]")).toHaveLength(3);
-  });
-
-  it("unknown context stays in the conversation details, never as a chip in the header", async () => {
-    await click(row("cv-11")); // a post Wrenkind has not read, source not reported
-    const focus = q("#focus-cv-11");
-    expect(q("summary", focus).textContent).toContain("Post not read yet");
-    expect(focus.textContent).not.toMatch(/Organic(?! or paid)/);
-    expect(q("details dl", focus).textContent).toContain("Not reported by the platform");
-  });
-});
-
-describe("the publishing account (D, 6.4)", () => {
-  it("a published reply shows the verified account name, the Sent state and its time — one step (opening the conversation)", async () => {
-    await click(row("cv-02"));
-    const sent = q('[aria-labelledby^="r-cv-02-s"]');
-    expect(steps).toBe(1);
-    expect(sent.textContent).toContain("@lumen.coffee");
-    expect(sent.textContent).toContain("Your Instagram account");
-    expect(sent.textContent).toContain("Sent");
-    expect(sent.querySelector("time[datetime]")).not.toBeNull();
-    expect(sent.textContent).not.toContain("joaquin.rv"); // the commenter is not the author of the reply
-    // Who pressed Publish is a separate, internal fact.
-    await click(q("button[aria-expanded]", sent));
-    expect(q("dl", sent).textContent).toMatch(/Published as@lumen\.coffee.*Requested in Wrenkind byAna Ruiz/);
-  });
-
-  it("without a verified name (today's read model, or an account without one) the page says 'Your … account', never a made-up name", async () => {
-    await choose("Read model", "today");
-    await click(row("cv-02"));
-    expect(q('[aria-labelledby^="r-cv-02-s"]').textContent).toMatch(/^Your Instagram account/);
-    expect(q("#focus-cv-02").textContent).not.toContain("@lumen.coffee");
-    await choose("Read model", "planned");
-    await click(row("cv-08")); // the account whose name is not available
-    expect(article("cv-08-m01").textContent).toMatch(/^Your Instagram account/);
-  });
-});
-
-describe("actions at the point of work (A, 6.2, 6.6)", () => {
-  it("each comment carries three actions — Reply · Hide · More — named for that comment; Instagram's More has no Like or Block", async () => {
-    await click(row("cv-01"));
-    const actions = q('[role="group"]', article("cv-01-m00"));
-    expect(actions.getAttribute("aria-label")).toBe("Actions for caro.mendez's comment");
-    expect(buttonsIn(actions).map((button) => button.textContent.trim())).toEqual(["Reply", "Hide", "More for caro.mendez's comment"]);
-    await click(buttonNamed(actions, "More"));
-    const menu = q('[aria-label="More actions"]', article("cv-01-m00"));
-    expect(menu.textContent).toContain("On InstagramSimulated");
-    const platformItems = buttonsIn(menu).map((button) => button.textContent.trim()).filter((name) => !/^(Labels|Details)/.test(name));
-    expect(platformItems).toEqual(["Reply privately", "Delete comment…"]);
-    // In Wrenkind first (labels, details); no API explanation in an ordinary menu.
-    expect(buttonsIn(menu).map((button) => button.textContent.trim()).slice(0, 2)).toEqual(["Labels…2", "Details and exact times"]);
-    expect(menu.textContent).not.toMatch(/Like|Block|other apps|API|Graph|v2\d/);
-  });
-
-  it("Facebook's More adds Like and Block author; Block is about the author, Delete is about the comment", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    const menu = q('[aria-label="More actions"]', article("cv-03-m00"));
-    expect(buttonsIn(menu).map((button) => button.textContent.trim()).filter((name) => !/^(Labels|Details)/.test(name))).toEqual(["Reply privately", "Like", "Delete comment…", "Block author…"]);
-    expect(menu.textContent).not.toContain("aren't offered");
-  });
-
-  it("as in Wrenkind today: Reply explains at the comment why it is unavailable; More's actions are unavailable with their reason; Monitor-only says so in its own words", async () => {
-    await choose("Actions", "today");
-    await click(row("cv-01"));
-    await click(buttonNamed(article("cv-01-m00"), "Reply"));
-    expect(article("cv-01-m00").textContent).toContain("Public replies aren't enabled in Wrenkind yet for this content.");
-    expect(container.querySelector("textarea")).toBeNull();
-    await click(buttonNamed(article("cv-01-m00"), "More"));
-    const menu = q('[aria-label="More actions"]', article("cv-01-m00"));
-    const unavailable = buttonsIn(menu).filter((button) => button.getAttribute("aria-disabled") === "true");
-    expect(unavailable.map((button) => button.textContent.trim())).toEqual(["Reply privately", "Delete comment…"]);
-    expect(menu.textContent).toContain("Not available in Wrenkind yet.");
-    expect(menu.textContent).not.toContain("Simulated");
-    await choose("Workspace", "monitor");
-    expect(article("cv-01-m00").textContent).toContain("This workspace is Monitor-only.");
-  });
-
-  it("the composer only simulates publishing, and a draft survives closing and reopening the conversation (UX-20)", async () => {
-    await click(row("cv-01"));
-    await click(buttonNamed(article("cv-01-m00"), "Reply"));
-    expect(article("cv-01-m00").textContent).toContain("Preview — nothing is sent");
-    await type(qa(HTMLTextAreaElement, "textarea", article("cv-01-m00")), "We're on it, Caro.");
-    await click(row("cv-01"));
-    await click(row("cv-01"));
-    // Reopened: the composer is where it was, with the unsent text.
-    expect(qa(HTMLTextAreaElement, "textarea", article("cv-01-m00")).value).toBe("We're on it, Caro.");
-    expect(article("cv-01-m00").textContent).toContain("Draft kept from earlier in this tab.");
-    await click(buttonNamed(article("cv-01-m00"), "Review reply"));
-    expect(article("cv-01-m00").textContent).toContain("Publishing isn't part of this preview");
-    expect(buttonsIn(article("cv-01-m00")).some((button) => /^Publish/.test(button.textContent.trim()))).toBe(false);
-    expect(buttonNamed(article("cv-01-m00"), "Simulate publishing")).toBeDefined();
-  });
-});
-
-describe("simulated operations (7B-17V-UX §3, §9): never confused with a real one", () => {
-  it("a simulated reply is Sending until a person answers for the platform; Sent says nothing reached Instagram", async () => {
-    await click(row("cv-01"));
-    await click(buttonNamed(article("cv-01-m00"), "Reply"));
-    await type(qa(HTMLTextAreaElement, "textarea", article("cv-01-m00")), "Checking with the courier now.");
-    await click(buttonNamed(article("cv-01-m00"), "Review reply"));
-    await click(buttonNamed(article("cv-01-m00"), "Simulate publishing"));
-    const entry = q("[data-sim-reply]", q("#focus-cv-01"));
-    expect(entry.textContent).toContain("Checking with the courier now.");
-    expect(entry.textContent).toMatch(/SimulatedSending/);
-    expect(entry.textContent).toContain("Simulated — nothing is sent to Instagram.");
-    expect(q('[role="status"]').textContent).toBe("Publishing this reply… Simulated — nothing is sent to Instagram.");
-    // The answer buttons are prototype controls, named as such.
-    const controls = q('[aria-label="Prototype: simulate the platform\'s answer"]', entry);
-    expect(buttonsIn(controls).map((button) => button.textContent)).toEqual(["Confirmed", "Failed", "No answer", "Stopped"]);
-    await click(buttonNamed(controls, "Confirmed"));
-    expect(entry.textContent).toMatch(/SimulatedSent/);
-    expect(entry.textContent).toContain("Simulated outcome: published. Nothing was sent to Instagram.");
-    expect(row("cv-01").textContent).toContain("You replied 2×");
-  });
-
-  it("REPLY_IN_FLIGHT: a second reply to the same comment is refused while the first is Sending or Checking", async () => {
-    await click(row("cv-01"));
-    await click(buttonNamed(article("cv-01-m00"), "Reply"));
-    await type(qa(HTMLTextAreaElement, "textarea", article("cv-01-m00")), "First.");
-    await click(buttonNamed(article("cv-01-m00"), "Review reply"));
-    await click(buttonNamed(article("cv-01-m00"), "Simulate publishing"));
-    await click(buttonNamed(article("cv-01-m00"), "Reply"));
-    const refused = "A reply to this comment is on its way or being checked. You can write another once its outcome is known.";
-    expect(article("cv-01-m00").textContent).toContain(refused);
-    const entry = q("[data-sim-reply]", q("#focus-cv-01"));
-    await click(buttonNamed(entry, "No answer"));
-    expect(entry.textContent).toMatch(/SimulatedChecking/);
-    expect(entry.textContent).toContain("It may already be public");
-    expect(article("cv-01-m00").textContent).toContain(refused);
-    await click(buttonNamed(entry, "It didn't"));
-    expect(entry.textContent).toMatch(/SimulatedFailed/);
-    expect(article("cv-01-m00").querySelector("textarea")).not.toBeNull();
-  });
-
-  it("Hide is one step and shows Unhide afterwards; the hidden state is marked simulated, in the thread and in the row", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "Hide"));
-    expect(article("cv-03-m00").textContent).toContain("Hiding this comment… Simulated — nothing is sent to Facebook.");
-    expect(article("cv-03-m00").textContent).not.toContain("Hidden on Facebook");
-    expect(buttonNamed(article("cv-03-m00"), "More").getAttribute("aria-expanded")).toBe("false");
-    // While it is on its way, another platform action on the comment waits.
-    await click(buttonNamed(q('[role="group"]', article("cv-03-m00")), "Hide"));
-    expect(article("cv-03-m00").textContent).toContain("Another action on this comment is still waiting for its outcome.");
-    await click(buttonNamed(article("cv-03-m00"), "Confirmed"));
-    expect(article("cv-03-m00").textContent).toContain("Hidden on Facebook (simulated)");
-    expect(buttonsIn(q('[role="group"]', article("cv-03-m00"))).map((button) => button.textContent.trim())).toContain("Unhide");
-    expect(row("cv-03").textContent).toContain("Hidden (simulated)");
-  });
-
-  it("Delete asks first, with its consequences; Cancel changes nothing; after a simulated delete no platform action is left", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "Delete comment…"));
-    const confirm = q('[role="group"][aria-labelledby]', article("cv-03-m00"));
-    expect(confirm.textContent).toContain("Delete Martina Gómez's comment from Facebook?");
-    expect(confirm.textContent).toContain("can't be restored there");
-    expect(confirm.textContent).toContain("Simulated: nothing is sent to Facebook.");
-    expect(document.activeElement?.textContent).toBe("Cancel"); // the safe choice has focus
-    await click(buttonNamed(confirm, "Cancel"));
-    expect(article("cv-03-m00").textContent).not.toContain("Deleting");
-    expect(document.activeElement).toBe(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "Delete comment…"));
-    await click(buttonNamed(q('[role="group"][aria-labelledby]', article("cv-03-m00")), "Delete comment"));
-    await click(buttonNamed(article("cv-03-m00"), "Confirmed"));
-    expect(article("cv-03-m00").textContent).toContain("Deleted from Facebook (simulated)");
-    expect(buttonsIn(q('[role="group"]', article("cv-03-m00"))).map((button) => button.textContent.trim())).toEqual(["More for Martina Gómez's comment"]);
-  });
-
-  it("Block author (Facebook) is confirmed as an action on the person: every comment by them is marked; Unblock promises no fixed cooldown", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "Block author…"));
-    const confirm = q('[role="group"][aria-labelledby]', article("cv-03-m00"));
-    expect(confirm.textContent).toContain("Block Martina Gómez from Lumen Coffee?");
-    expect(confirm.textContent).toContain("This acts on the person, not on this comment");
-    expect(confirm.textContent).not.toMatch(/author's ID|API/); // the API detail lives in the capability reference
-    await click(buttonNamed(confirm, "Block author"));
-    await click(buttonNamed(article("cv-03-m00"), "Confirmed"));
-    for (const id of ["cv-03-m00", "cv-03-m02"]) expect(article(id).textContent).toContain("Martina Gómez blocked by Lumen Coffee (simulated)");
-    expect(article("cv-03-m01").textContent).not.toContain("blocked");
-    await click(buttonNamed(article("cv-03-m02"), "More"));
-    await click(buttonNamed(article("cv-03-m02"), "Unblock author…"));
-    const unblock = q('[role="group"][aria-labelledby]', article("cv-03-m02"));
-    expect(unblock.textContent).toContain("Facebook may refuse it for a while");
-    expect(unblock.textContent).not.toMatch(/48|hours/);
-  });
-
-  it("Instagram keeps the root: replying to a reply is composed under the top-level comment and names the person", async () => {
-    await click(row("cv-19"));
-    await click(buttonNamed(article("cv-19-m01"), "Reply"));
-    expect(article("cv-19-m01").textContent).toContain("Instagram attaches replies to the top-level comment: this reply would appear under renata.soto's comment, naming fran.gil.");
-    expect(qa(HTMLTextAreaElement, "textarea", article("cv-19-m01")).value).toBe("@fran.gil ");
-    expect(buttonNamed(article("cv-19-m01"), "Review reply").disabled).toBe(true);
-  });
-});
-
-describe("private replies (7B-17V-UX §6)", () => {
-  it("explain the one-message, seven-day rule and that there is no inbox; one sent, no second one is offered", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "Reply privately"));
-    const area = q('[role="group"][aria-labelledby]', article("cv-03-m00"));
-    expect(area.textContent).toContain("Reply privately to Martina GómezSimulated");
-    expect(area.textContent).toContain("One per comment, within 7 days of it");
-    expect(area.textContent).toContain("continues in Facebook's own messages");
-    expect(area.textContent).toContain("Wrenkind has no message inbox");
-    await type(qa(HTMLTextAreaElement, "textarea", area), "Hola Martina, te escribimos por acá.");
-    await click(buttonNamed(area, "Simulate sending"));
-    await click(buttonNamed(article("cv-03-m00"), "Confirmed"));
-    expect(article("cv-03-m00").textContent).toContain("Private reply to Martina Gómez");
-    expect(q("#focus-cv-03 ol").querySelector("[data-sim-reply]")).toBeNull(); // never in the public thread
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    const menu = q('[aria-label="More actions"]', article("cv-03-m00"));
-    expect(buttonNamed(menu, "Reply privately").getAttribute("aria-disabled")).toBe("true");
-    expect(menu.textContent).toContain("A private reply was already sent for this comment. Only one is allowed.");
-  });
-
-  it("past seven days the private reply is unavailable, with the reason", async () => {
-    await click(row("cv-36"));
-    await click(buttonNamed(article("cv-36-m00"), "More"));
-    const menu = q('[aria-label="More actions"]', article("cv-36-m00"));
-    expect(buttonNamed(menu, "Reply privately").getAttribute("aria-disabled")).toBe("true");
-    expect(menu.textContent).toContain("Private replies can only be sent within 7 days of the comment.");
-  });
-});
-
-describe("platform restrictions and connection health are different reasons (7B-17V-UX §5)", () => {
-  it("an Instagram live video: the post preview says so, and each action gives its reason when pressed — never a connection problem", async () => {
-    await click(row("cv-27"));
-    expect(q("#focus-cv-27 summary").textContent).toContain("Managed in the Instagram app");
-    expect(q("#focus-cv-27").querySelector("[data-cause]")).toBeNull(); // no banner for a platform context
-    await click(buttonNamed(article("cv-27-m00"), "Hide"));
-    expect(article("cv-27-m00").textContent).toContain("Hide unavailable. Comments on live videos can only be managed in the Instagram app.");
-    expect(article("cv-27-m00").textContent).not.toContain("Hiding");
-  });
-
-  it("a post another account owns: no Hide or Delete; an ad: moderation not assumed", async () => {
-    await click(row("cv-35"));
-    expect(q("#focus-cv-35 summary").textContent).toContain("Posted by @brunch.club.ba");
-    await click(buttonNamed(article("cv-35-m00"), "More"));
-    expect(q('[aria-label="More actions"]', article("cv-35-m00")).textContent).toContain("Only @brunch.club.ba, who posted this, can hide or delete its comments.");
-    await click(row("cv-28"));
-    await click(buttonNamed(article("cv-28-m00"), "Hide"));
-    expect(article("cv-28-m00").textContent).toContain("Not available yet for comments on ads.");
-  });
-
-  it("a connection that needs attention blocks actions with its recovery; healthy again, they are offered", async () => {
-    await click(row("cv-06"));
-    expect(q("#focus-cv-06").textContent).toContain("Lumen Coffee Eventos needs to be reconnected.");
-    await click(buttonNamed(article("cv-06-m00"), "Hide"));
-    expect(article("cv-06-m00").textContent).toContain("Reconnect Lumen Coffee Eventos to act on its comments.");
-    await choose("Connections", "healthy");
-    expect(q("#focus-cv-06").textContent).not.toContain("needs to be reconnected");
-    expect(buttonNamed(q('[role="group"]', article("cv-06-m00")), "Hide").getAttribute("aria-disabled")).toBeNull();
-  });
-});
-
-describe("assessments, labels and the capability reference", () => {
-  it("synthetic assessments are round, separate from a person's labels; hiding a protected comment asks first, with a caution", async () => {
-    await choose("Assessments", "examples");
-    await click(row("cv-03"));
-    await click(row("cv-10"));
-    const comment = article("cv-10-m00");
-    expect(comment.textContent).toContain("Automatic assessment, synthetic example: Complaint· never auto-hidden");
-    expect(q('ul[aria-label="Labels"]', comment).textContent).not.toContain("Complaint");
-    await click(buttonNamed(q('[role="group"]', comment), "Hide"));
-    const confirm = q('[role="group"][aria-labelledby]', comment);
-    expect(confirm.textContent).toContain("Assessed as “Complaint” (synthetic example). Wrenkind never hides or removes these automatically");
-    expect(comment.textContent).not.toContain("Hiding this comment");
-    expect(q("#focus-cv-10").textContent).not.toContain("synthetic examples: Wrenkind");
-    expect(q("#comments-main > header").textContent).toContain("Assessments shown are synthetic examples");
-  });
-
-  it("labels are said once, on their comments: no conversation-level summary; a conversation without labels has no label clutter", async () => {
-    await click(row("cv-19"));
-    expect(q("#focus-cv-19").textContent).not.toContain("Labels on comments here");
-    expect(q('ul[aria-label="Labels"]', article("cv-19-m05")).textContent).toBe("DeliveryRefund request");
-    await click(row("cv-07"));
-    expect(q("#focus-cv-07").querySelector('ul[aria-label="Labels"]')).toBeNull();
-    expect(row("cv-07").querySelector("[data-row-chips]")).toBeNull();
-  });
-
-  it("the prototype says, at all times, that actions are simulated; the capability reference separates Meta, Wrenkind and the prototype", async () => {
-    expect(q('[aria-label="Prototype controls"]').textContent).toContain("Facebook and Instagram actions are simulated in this tab. Nothing is sent to Meta");
-    await click(q("summary", q("table").closest("details") ?? container));
-    const matrix = q("table");
-    expect(matrix.closest("details")?.open).toBe(true);
-    const rowText = (name: string, platform: string): string => [...matrix.querySelectorAll("tbody tr")].find((tr) => tr.querySelector("th")?.textContent.startsWith(name) === true && tr.textContent.includes(platform))?.textContent ?? "";
-    expect(rowText("Public reply", "Instagram")).toMatch(/Documented, with limits.*Built, turned off.*Simulated here/);
-    expect(rowText("Like / unlike", "Instagram")).toMatch(/Not documented.*Not built.*Not offered/);
-    expect(rowText("Block / unblock author", "Facebook")).toMatch(/Documented, with limits.*Not built.*Simulated here/);
-    expect(q("table").closest("details")?.textContent).toContain("There is no Mute.");
-  });
-});
-
-describe("manual labels (J, 6.3)", () => {
-  it("assign an existing label: 3 steps (More, Labels…, the checkbox — or type + Enter) from an open conversation", async () => {
-    await click(row("cv-06"));
-    const start = steps;
-    await openLabels("cv-06-m00");
-    const box = [...article("cv-06-m00").querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((input) => input.parentElement?.textContent === "Follow up Monday");
-    if (box === undefined) throw new Error("checkbox");
-    await click(box);
-    expect(steps - start).toBe(3);
-    expect(q('ul[aria-label="Labels"]', article("cv-06-m00")).textContent).toContain("Follow up Monday");
-    // Keyboard: the field has focus; the exact name + Enter applies it (UX4: a partial name never does — see below).
-    const field = qa(HTMLInputElement, 'input:not([type="checkbox"])', article("cv-06-m00"));
-    expect(document.activeElement).toBe(field);
-    await type(field, "allergens");
-    await key(field, "Enter");
-    expect(q('ul[aria-label="Labels"]', article("cv-06-m00")).textContent).toContain("Allergens");
-  });
-
-  it("create a label from a comment and it is assigned there: More, Labels…, type, Enter (4 steps); the sidebar counts it", async () => {
-    await click(row("cv-06"));
-    const start = steps;
-    await openLabels("cv-06-m00");
-    const field = qa(HTMLInputElement, 'input:not([type="checkbox"])', article("cv-06-m00"));
-    await type(field, "Workshop sign-up");
-    expect(buttonNamed(article("cv-06-m00"), "Create “Workshop sign-up” and add it")).toBeDefined();
-    await key(field, "Enter");
-    expect(steps - start).toBe(4);
-    expect(q('ul[aria-label="Labels"]', article("cv-06-m00")).textContent).toContain("Workshop sign-up");
-    expect(sideLabel("Workshop sign-up").textContent).toMatch(/1$/);
-    expect(q('[role="status"]').textContent).toBe("Label Workshop sign-up created and added to Sofía Quiroga's comment");
-  });
-
-  it("duplicate and over-long names are refused with a reason; nothing is created", async () => {
-    await click(row("cv-06"));
-    await openLabels("cv-06-m00");
-    const field = qa(HTMLInputElement, 'input:not([type="checkbox"])', article("cv-06-m00"));
-    await type(field, "x".repeat(41));
-    await key(field, "Enter");
-    expect(q('[role="alert"]', article("cv-06-m00")).textContent).toBe("Use 40 characters or fewer.");
-    expect(container.querySelectorAll('nav[aria-label="Comments views"] li')).toHaveLength(7);
-  });
-
-  it("several labels per comment, removable from the chip itself; Escape closes the editor and returns focus to More", async () => {
-    await click(row("cv-10"));
-    const chips = q('ul[aria-label="Labels"]', article("cv-10-m00"));
-    expect(chips.textContent).toContain("Delivery");
-    expect(chips.textContent).toContain("Refund request");
-    await click(q('button[aria-label="Remove label Delivery from Ramiro Paz\'s comment"]', article("cv-10-m00")));
-    expect(q('ul[aria-label="Labels"]', article("cv-10-m00")).textContent).not.toContain("Delivery");
-    await openLabels("cv-10-m00");
-    await key(q('[role="group"][aria-label^="Labels for"]', article("cv-10-m00")), "Escape");
-    expect(container.querySelector('[aria-label^="Labels for"]')).toBeNull();
-    expect(document.activeElement).toBe(buttonNamed(article("cv-10-m00"), "More"));
-    expect(row("cv-10").getAttribute("aria-expanded")).toBe("true"); // the editor's Escape does not also close Focus
-  });
-
-  it("filtering by a label in the sidebar: one step; Previous / Next stay inside the filtered list; the filter is removable", async () => {
-    await click(sideLabel("Refund request"));
-    expect(steps).toBe(1);
-    expect(listedIds().sort()).toEqual(["cv-04", "cv-10", "cv-19", "cv-26", "cv-34"]);
-    expect(q("h1").textContent).toBe("Refund request");
-    expect(sideLabel("Refund request").getAttribute("aria-current")).toBe("page");
-    const first = listedIds()[0] ?? "";
-    await click(row(first));
-    expect(q(`#focus-${first}`).textContent).toContain("1 of 5");
-    await click(q('button[aria-label="Clear the label filter Refund request"]'));
-    expect(listedIds()).toHaveLength(36);
-    expect(row(first).getAttribute("aria-expanded")).toBe("true"); // still listed, still open
-  });
-
-  it("rows show up to two label chips, then +N", async () => {
-    await click(row("cv-19"));
-    await openLabels("cv-19-m00");
-    for (const name of ["Praise", "Allergens"]) {
-      const box = [...article("cv-19-m00").querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((input) => input.parentElement?.textContent === name);
-      if (box !== undefined) await click(box);
-    }
-    const rowChips = q("[data-row-chips]", row("cv-19"));
-    expect(rowChips.querySelectorAll('span[aria-hidden="true"]')).toHaveLength(3);
-    expect(rowChips.textContent).toMatch(/\+2$/);
-    // Read as one sentence inside the header's name: every label, not just the two drawn, and where they are.
-    expect(rowChips.querySelector(".wk-sr-only")?.textContent).toBe("Labels on comments in this conversation: Delivery, Praise, Allergens, Refund request.");
-    expect(row("cv-19").querySelector("ul, li, div, p")).toBeNull(); // phrasing content only inside the button
-  });
-});
-
-describe("roles (6.3)", () => {
-  it("Agent (Responder) replies, hides, likes and replies privately, but has no Delete or Block without a grant", async () => {
-    await choose("Role", "agent");
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    const menu = q('[aria-label="More actions"]', article("cv-03-m00"));
-    expect(buttonsIn(menu).map((button) => button.textContent.trim()).filter((name) => !/^(Labels|Details)/.test(name))).toEqual(["Reply privately", "Like"]);
-  });
-
-  it("Agent assigns existing labels but cannot create one", async () => {
-    await choose("Role", "agent");
-    await click(row("cv-06"));
-    await openLabels("cv-06-m00");
-    const field = qa(HTMLInputElement, 'input:not([type="checkbox"])', article("cv-06-m00"));
-    await type(field, "Brand new");
-    expect(buttonsIn(article("cv-06-m00")).some((button) => button.textContent.includes("Create"))).toBe(false);
-    expect(article("cv-06-m00").textContent).toContain("Owners, admins and managers create labels.");
-    await key(field, "Enter");
-    expect(container.querySelectorAll('nav[aria-label="Comments views"] li')).toHaveLength(7);
-    expect(buttonsIn(q('nav[aria-label="Comments views"]')).some((button) => button.textContent.includes("New label"))).toBe(false);
-  });
-
-  it("Analyst sees labels and filters, but has no Reply or Labels action and no remove control", async () => {
-    await choose("Role", "analyst");
-    await click(row("cv-01"));
-    const actions = q('[role="group"]', article("cv-01-m00"));
-    expect(buttonsIn(actions).map((button) => button.textContent.trim())).toEqual(["More for caro.mendez's comment"]);
-    expect(q('ul[aria-label="Labels"]', article("cv-01-m00")).querySelectorAll("button")).toHaveLength(0);
-    await click(sideLabel("Delivery"));
-    expect(listedIds()).toHaveLength(3);
-  });
-
-  it("Client guest is denied: no comment, label or account is drawn", async () => {
-    await choose("Role", "guest");
-    expect(q("h1").textContent).toBe("Comments aren't available to you");
-    expect(container.querySelectorAll("[id^=row-]")).toHaveLength(0);
-    expect(container.textContent).not.toMatch(/caro\.mendez|Refund request|@lumen\.coffee/);
-  });
-});
-
-describe("UX2: time, collapse, source preview", () => {
-  it("the header's time is the conversation's latest activity; every comment and reply keeps its own time", async () => {
-    expect(row("cv-02").textContent).toContain("Latest activity");
-    await click(row("cv-02"));
-    const thread = q("#focus-cv-02 ol");
-    expect(thread.querySelectorAll(":scope > li")).toHaveLength(2);
-    for (const entry of thread.querySelectorAll(":scope > li")) expect(entry.querySelector("time[datetime]"), entry.textContent).not.toBeNull();
-  });
-
-  it("collapsing says Collapse — not Close, nothing implies the case is resolved — and returns focus to the row", async () => {
-    await click(row("cv-01"));
-    expect(q("#focus-cv-01").textContent).not.toMatch(/Close conversation|Resolve|Done/);
-    const collapse = buttonNamed(q("#focus-cv-01"), "Collapse");
-    expect(collapse.textContent).toContain("nothing about it changes");
-    await click(collapse);
-    expect(row("cv-01").getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement).toBe(row("cv-01"));
-  });
-
-  it("the source preview names the kind and the source plainly and draws no media", async () => {
-    await click(row("cv-02"));
-    expect(q("#focus-cv-02 summary").textContent).toMatch(/^ReelOrganic“The holiday blend is back/);
-    await click(row("cv-19"));
-    expect(q("#focus-cv-19 summary").textContent).toMatch(/^AdPaid“Your first subscription box ships free\.”/);
-    await click(row("cv-11"));
-    expect(q("#focus-cv-11 summary").textContent).toMatch(/^PostSource not reportedPost not read yet/);
-    expect(container.querySelectorAll("img, video, picture")).toHaveLength(0);
-    expect(q("#focus-cv-11 details dl").textContent).toContain("MediaNot retrieved — no image or video is shown");
-  });
-});
-
-describe("UX2: the two-panel layout, next to the expandable list", () => {
-  it("a row selects its conversation into the panel beside the list; another row replaces it; Next moves; Back to list deselects", async () => {
-    await choose("Layout", "split");
+describe("the workspace: views, list and two panels", () => {
+  it("opens on Needs attention with its count; the sidebar lists the workflow views and labels — and no Intelligence", () => {
+    expect(title()).toBe(`Needs attention ${String(START.attention)}`);
+    const views = buttonsIn(q('nav[aria-label="Comments views"]')).map(named);
+    expect(views.slice(0, 5)).toEqual([`Needs attention${String(START.attention)}`, `Open${String(START.open)}`, `Assigned to me${String(START.mine)}`, `Escalated${String(START.escalated)}`, "Done"]);
+    expect(text(q('nav[aria-label="Comments views"]'))).not.toMatch(/Intelligence|Needs review|Priority/);
+    expect(listedIds()).toEqual(listOf("attention", NO_FILTERS, "", "attention", CTX).map((item) => item.id));
     expect(container.textContent).toContain("Select a conversation to read it here.");
-    await click(row("cv-01"));
-    expect(row("cv-01").getAttribute("aria-current")).toBe("true");
-    expect(row("cv-01").hasAttribute("aria-expanded")).toBe(false);
-    const pane = q("#focus-cv-01");
-    expect(pane.closest("li")).toBeNull(); // beside the list, not inside the row
-    expect(q("h2", pane).textContent).toContain("caro.mendez");
-    expect(pane.textContent).not.toContain("Collapse");
-    await click(row("cv-03"));
-    expect(container.querySelector("#focus-cv-01")).toBeNull();
-    expect(row("cv-03").getAttribute("aria-current")).toBe("true");
-    await click(buttonNamed(q("#focus-cv-03"), "Next"));
-    const third = listedIds()[3] ?? "";
-    expect(row(third).getAttribute("aria-current")).toBe("true");
-    await click(buttonNamed(q(`#focus-${third}`), "Back to list"));
+  });
+
+  it("a row selects its conversation into the panel: identity · management · navigation, in three zones", async () => {
+    await click(row("cv-10"));
+    expect(row("cv-10").getAttribute("aria-current")).toBe("true");
+    expect(q(".splitActive, [class*=splitActive]")).toBeDefined();
+    const head = q("header", pane("cv-10"));
+    expect(text(q("h2", head))).toContain("Ramiro Paz");
+    expect(text(head)).toContain("on Lumen Coffee");
+    expect(text(head)).toContain("Open");
+    expect(text(head)).toContain("Urgent");
+    expect(text(head)).toContain("New reply · 40 min");
+    expect(buttonsIn(management("cv-10")).map(named)).toEqual(["BDBruno Díaz, assigned — change", "Urgent", "Escalate", "Mark done", "More for this conversation"]);
+    expect(text(q('nav[aria-label="Move through Needs attention"]', pane("cv-10")))).toMatch(/^1 of \d+ in Needs attention$/);
+  });
+
+  it("Previous / Next move through the list and keep focus on the same control (M-1); Back deselects (one panel at a time)", async () => {
+    const list = listedIds();
+    await click(row(list[0] ?? ""));
+    await click(q('[data-nav="next"]', pane(list[0] ?? "")));
+    expect(row(list[1] ?? "").getAttribute("aria-current")).toBe("true");
+    expect(active()?.getAttribute("data-nav")).toBe("next");
+    await click(buttonNamed(pane(list[1] ?? ""), "Needs attention"));
     expect(container.querySelector("[aria-current=true][id^=row-]")).toBeNull();
-    expect(document.activeElement).toBe(row(third));
+    expect(active()).toBe(row(list[1] ?? ""));
+    expect(container.querySelector("[class*=splitActive]")).toBeNull();
   });
 
-  it("the comment actions are the same in both layouts", async () => {
-    await choose("Layout", "split");
-    await click(row("cv-03"));
-    expect(buttonsIn(q('[role="group"]', article("cv-03-m00"))).map((button) => button.textContent.trim())).toEqual(["Reply", "Hide", "More for Martina Gómez's comment"]);
-    await click(buttonNamed(article("cv-03-m00"), "Hide"));
-    await click(buttonNamed(article("cv-03-m00"), "Confirmed"));
-    expect(article("cv-03-m00").textContent).toContain("Hidden on Facebook (simulated)");
-  });
-});
-
-describe("UX3: two panels first, the theme through the product's own override", () => {
-  it("rendered as the page renders it, the prototype opens in two panels", async () => {
-    // A fresh root: React keeps a mounted component's state, so the default is read on a new mount.
-    await settle(() => root?.unmount());
-    root = createRoot(container);
-    await settle(() => root?.render(h(CommentsRedesign)));
-    expect(container.textContent).toContain("Select a conversation to read it here.");
-    expect(row("cv-01").hasAttribute("aria-expanded")).toBe(false);
+  it("Escape in the conversation keeps it selected and returns focus to its row", async () => {
+    await click(row("cv-07"));
+    await key(q("h2", pane("cv-07")), "Escape");
+    expect(row("cv-07").getAttribute("aria-current")).toBe("true");
+    expect(active()).toBe(row("cv-07"));
   });
 
-  it("System sets nothing; Light and Dark set data-theme on <html>; System or leaving puts back what was there", async () => {
-    const html = document.documentElement;
-    html.removeAttribute("data-theme");
-    expect(html.hasAttribute("data-theme")).toBe(false);
-    await choose("Theme", "light");
-    expect(html.getAttribute("data-theme")).toBe("light");
-    await choose("Theme", "dark");
-    expect(html.getAttribute("data-theme")).toBe("dark");
-    await choose("Theme", "system");
-    expect(html.hasAttribute("data-theme")).toBe(false);
-    // An attribute set by someone else (a future persisted preference) is restored, not erased.
-    html.setAttribute("data-theme", "light");
-    await choose("Theme", "dark");
-    expect(html.getAttribute("data-theme")).toBe("dark");
-    await settle(() => root?.unmount());
-    root = undefined;
-    expect(html.getAttribute("data-theme")).toBe("light");
-    html.removeAttribute("data-theme");
+  it("H-2: each conversation gets a fresh panel (post details opened in one are closed in the next)", async () => {
+    await click(row("cv-10"));
+    const details = q("details", pane("cv-10")) as HTMLDetailsElement;
+    await settle(() => { details.open = true; });
+    await click(q('[data-nav="next"]', pane("cv-10")));
+    const next = listedIds()[1] ?? "";
+    expect((q("details", pane(next)) as HTMLDetailsElement).open).toBe(false);
+  });
+
+  it("the list draws a bounded number of rows and shows more on request", async () => {
+    await click(sideView("Open"));
+    expect(listedIds()).toHaveLength(PAGE_SIZE);
+    await click(buttonNamed(container, "Show "));
+    expect(listedIds()).toHaveLength(START.open);
   });
 });
 
-/* ───────────── Step 7B-17V-UX4: regressions for the independent audit (7B-17V-AUDIT) ───────────── */
+/* ───────────── Needs attention: A1 → A2 → A3 ───────────── */
 
-const opsShown = (commentId: string): number => article(commentId).querySelectorAll("[data-op-status]").length;
+async function replyTo(commentId: string, words: string): Promise<void> {
+  await click(buttonNamed(article(commentId), "Reply"));
+  await type(q("textarea", article(commentId)) as HTMLTextAreaElement, words);
+  await click(buttonNamed(article(commentId), "Review reply"));
+  await click(buttonNamed(article(commentId), "Simulate publishing"));
+}
+const answerButton = (scope: ParentNode, name: string): HTMLButtonElement => {
+  const found = buttonsIn(scope).find((button) => named(button) === name);
+  if (found === undefined) throw new Error(name);
+  return found;
+};
 
-describe("UX4 H-1: every operation is revalidated when it starts; stale panels never act", () => {
-  it("a Delete confirmation left open when the workspace becomes Monitor-only can no longer delete", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "Delete comment…"));
-    expect(buttonNamed(article("cv-03-m00"), "Delete comment")).toBeDefined();
+describe("Needs attention: the reason is explained, a reply resolves it, the list updates when you move on", () => {
+  it("A1 → A2 → A3: waiting over target → reply Sent (still Open, still listed) → moving on leaves it Open, with a way back", async () => {
+    await click(row("cv-07"));
+    expect(text(q("header", pane("cv-07")))).toContain("Needs attention: Waiting 4 h · over target");
+    await replyTo("cv-07-m00", "Both! Whole bean and ground.");
+    expect(text(pane("cv-07"))).toContain("Sending");
+    expect(title()).toBe(`Needs attention ${String(START.attention)}`); // Sending is not an answer yet
+    await click(answerButton(pane("cv-07"), "Confirmed"));
+    // A2: the reason is gone, the conversation stays Open and selected, in place; the count already follows.
+    expect(text(q("header", pane("cv-07")))).not.toContain("Waiting");
+    expect(text(q("header", pane("cv-07")))).toContain("Open");
+    expect(text(q("header", pane("cv-07")))).toContain("No longer in Needs attention · stays here until you move on");
+    expect(title()).toBe(`Needs attention ${String(START.attention - 1)}`);
+    expect(text(row("cv-07"))).toContain("Reply sent · leaves this list when you move on");
+    expect(text(pane("cv-07"))).toContain("Reply sent. Is the question answered, or is something still pending?");
+    expect(hasButton(pane("cv-07"), "Mark done · Replied publicly")).toBe(true);
+    // A3: Keep open, move on; the row leaves, the note says where it went, Show brings it back.
+    await click(buttonNamed(pane("cv-07"), "Keep open"));
+    expect(text(pane("cv-07"))).not.toContain("Reply sent. Is the question");
+    const before = listedIds();
+    const index = before.indexOf("cv-07");
+    const neighbour = before[index - 1] ?? before[index + 1] ?? "";
+    await click(q(`[data-nav="${index > 0 ? "previous" : "next"}"]`, pane("cv-07")));
+    expect(listedIds()).not.toContain("cv-07");
+    expect(new Set(listedIds()).size).toBe(listedIds().length);
+    expect(row(neighbour).getAttribute("aria-current")).toBe("true");
+    expect(text(q('[class*=toast]'))).toContain("nina.coffeelab left Needs attention. It's still Open.");
+    await click(buttonNamed(q("[class*=toast]"), "Show"));
+    expect(row("cv-07").getAttribute("aria-current")).toBe("true");
+    await click(sideView("Open"));
+    expect(listedIds()).toContain("cv-07");
+  });
+
+  it("Mark done from the nudge records the resolution; moving on says it's Done; Done lists it and Reopen brings it back", async () => {
+    await click(row("cv-07"));
+    await replyTo("cv-07-m00", "Both!");
+    await click(answerButton(pane("cv-07"), "Confirmed"));
+    await click(buttonNamed(pane("cv-07"), "Mark done · Replied publicly"));
+    expect(text(q("header", pane("cv-07")))).toContain("Done · Replied publicly");
+    expect(text(row("cv-07"))).toContain("Done · Replied publicly · leaves this list when you move on");
+    await click(row(listedIds().find((id) => id !== "cv-07") ?? ""));
+    expect(text(q("[class*=toast]"))).toContain("It's Done · Replied publicly.");
+    await click(sideView("Done"));
+    expect(listedIds()).toContain("cv-07");
+    await click(row("cv-07"));
+    await click(buttonNamed(management("cv-07"), "Reopen"));
+    expect(text(q("header", pane("cv-07")))).toContain("Open");
+    expect(announced()).toBe("Reopened");
+  });
+
+  it("other reasons stay independent; an unknown outcome is 'Reply not confirmed', never resolved, never retried", async () => {
+    await click(row("cv-07"));
+    await replyTo("cv-07-m00", "Both!");
+    await click(answerButton(pane("cv-07"), "No answer"));
+    expect(text(row("cv-07"))).toContain("Reply not confirmed");
+    expect(text(pane("cv-07"))).toContain("It may already be public");
+    expect(text(pane("cv-07"))).not.toContain("Reply sent. Is the question");
+    expect(buttonsIn(pane("cv-07")).some((button) => /retry|try again/i.test(named(button)))).toBe(false);
+    // Untouched by the other conversation's reply (the synthetic clock moved a minute per recorded action).
+    expect(text(row("cv-10"))).toMatch(/Needs attention: New reply · \d+ min/);
+    // The seeded reply under check (cv-04): resolved by the check, the attention goes.
+    await click(row("cv-04"));
+    expect(text(q("header", pane("cv-04")))).toContain("Reply not confirmed");
+    await click(answerButton(pane("cv-04"), "It went through"));
+    expect(text(q("header", pane("cv-04")))).not.toContain("Reply not confirmed");
+  });
+});
+
+/* ───────────── conversation management ───────────── */
+
+describe("conversation management: assign, Urgent, escalate, Done — separate from comment actions", () => {
+  it("assigning shows in the header, the row, the Assignee filter and the activity", async () => {
+    await click(row("cv-07"));
+    await click(buttonsIn(management("cv-07")).find((button) => named(button).includes("Assign: unassigned")) as HTMLButtonElement);
+    await click(buttonNamed(q('[aria-label="Assign this conversation"]'), "TLTomás Lerner"));
+    expect(text(management("cv-07"))).toContain("Tomás Lerner");
+    expect(text(row("cv-07"))).toContain("Assigned to Tomás Lerner");
+    expect(active()).toBe(buttonNamed(management("cv-07"), "TLTomás Lerner"));
+    await click(buttonNamed(container, "Filters"));
+    await pick(q('[role="dialog"] select[aria-label="Assignee"]') as HTMLSelectElement, "m-tomas");
+    expect(listedIds()).toEqual(["cv-07"]);
+    await click(q("time", article("cv-07-m00")).closest("button") as HTMLButtonElement);
+    expect(text(q('[role="dialog"][aria-labelledby]', pane("cv-07")))).toContain("Assigned to Tomás Lerner · Ana Ruiz");
+  });
+
+  it("Urgent is a pressed toggle (a person's flag); Escalate is a hand-off; neither implies the other", async () => {
+    await click(row("cv-07"));
+    const urgent = buttonNamed(management("cv-07"), "Urgent");
+    expect(urgent.getAttribute("aria-pressed")).toBe("false");
+    await click(urgent);
+    expect(buttonNamed(management("cv-07"), "Urgent").getAttribute("aria-pressed")).toBe("true");
+    expect(text(row("cv-07"))).toContain("Urgent");
+    expect(text(q("header", pane("cv-07")))).not.toContain("Escalated");
+    await click(buttonNamed(management("cv-07"), "Escalate"));
+    await pick(q('[aria-label="Escalate this conversation"] select') as HTMLSelectElement, "Finance");
+    await click(buttonNamed(q('[aria-label="Escalate this conversation"]'), "Escalate"));
+    expect(text(q("header", pane("cv-07")))).toContain("Escalated · Finance");
+    expect(buttonNamed(management("cv-07"), "Urgent").getAttribute("aria-pressed")).toBe("true");
+    expect(text(sideView("Escalated"))).toContain(String(START.escalated + 1));
+    await click(buttonNamed(management("cv-07"), "Urgent"));
+    expect(text(q("header", pane("cv-07")))).toContain("Escalated · Finance");
+    expect(text(q("header", pane("cv-07")))).not.toContain("Urgent (marked");
+  });
+
+  it("Mark done asks how it was resolved; it clears Urgent; Escape closes the menu back on its button", async () => {
+    await click(row("cv-10"));
+    await click(buttonNamed(management("cv-10"), "Mark done"));
+    const menu = q('[aria-label="Mark done as"]');
+    expect(buttonsIn(menu).map(named)).toEqual(["Replied publicly", "Replied privately", "Replied on the platform", "No reply needed", "Moderated"]);
+    // No private reply is confirmed in Ramiro's conversation: that resolution is listed, unavailable, with its reason (UX-05 H-2).
+    const privately = buttonNamed(menu, "Replied privately");
+    expect(privately.getAttribute("aria-disabled")).toBe("true");
+    expect(text(q(`#${CSS.escape(privately.getAttribute("aria-describedby") ?? "")}`))).toBe("No private reply from Wrenkind is confirmed sent in this conversation.");
+    await click(privately);
+    expect(text(q("header", pane("cv-10")))).not.toContain("Done ·");
+    await key(menu, "Escape");
+    expect(container.querySelector('[aria-label="Mark done as"]')).toBeNull();
+    expect(active()).toBe(buttonNamed(management("cv-10"), "Mark done"));
+    await click(buttonNamed(management("cv-10"), "Mark done"));
+    await click(buttonNamed(q('[aria-label="Mark done as"]'), "Replied publicly"));
+    expect(text(q("header", pane("cv-10")))).toContain("Done · Replied publicly");
+    expect(text(q("header", pane("cv-10")))).not.toContain("Urgent");
+    expect(hasButton(management("cv-10"), "Reopen")).toBe(true);
+  });
+
+  it("Monitor-only keeps management (internal) and offers 'Reviewed'; platform actions say Monitor-only; Analyst has no management", async () => {
     await choose("Workspace", "monitor");
-    expect(article("cv-03-m00").textContent).toContain("No longer possible. This workspace is Monitor-only.");
-    expect(buttonsIn(article("cv-03-m00")).some((button) => button.textContent.trim() === "Delete comment")).toBe(false);
-    expect(opsShown("cv-03-m00")).toBe(0);
+    await click(row("cv-07"));
+    expect(container.textContent).toContain("This workspace is Monitor-only: nothing is done on the platform from here.");
+    await click(buttonNamed(management("cv-07"), "Mark done"));
+    expect(hasButton(q('[aria-label="Mark done as"]'), "Reviewed")).toBe(true);
+    await click(buttonNamed(article("cv-07-m00"), "Hide"));
+    expect(text(article("cv-07-m00"))).toContain("Not available here. This workspace is Monitor-only.");
+    await choose("Role", "analyst");
+    expect(pane("cv-07").querySelector('[aria-label="Manage this conversation"]')).toBeNull();
+    expect(hasButton(article("cv-07-m00"), "Reply")).toBe(false);
   });
 
-  it("a Block confirmation left open when the role changes to Agent (no block permission) can no longer block", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "Block author…"));
+  it("a new reply from the author (prototype control) reopens a Done conversation by itself", async () => {
+    await click(sideView("Done"));
+    await click(row("cv-02"));
+    await click(buttonNamed(q('[aria-label="Prototype controls"]'), "Simulate a new reply from joaquin.rv"));
+    expect(text(q("header", pane("cv-02")))).toContain("Open");
+    expect(text(q("header", pane("cv-02")))).toContain("New reply");
+    expect(text(pane("cv-02"))).toContain("Any news on this? Still waiting for an answer.");
+  });
+});
+
+/* ───────────── search, filters, navigation ───────────── */
+
+describe("search, two quick filters, Filters menu, sort — and what Previous / Next moves through", () => {
+  it("search narrows the list, says how many match and where, and is removable; no match is a clear empty state", async () => {
+    await click(sideView("Open"));
+    await type(q('input[type="search"]') as HTMLInputElement, "wholesale");
+    expect(text(q("[class*=activeRow]"))).toMatch(/^\d+ results? in Open/);
+    expect(text(q('[aria-label="Active filters"]'))).toContain("Search:“wholesale”");
+    expect(listedIds()).toContain("cv-05");
+    await type(q('input[type="search"]') as HTMLInputElement, "zzzz nothing");
+    expect(container.textContent).toContain("No conversation in Open matches.");
+    await click(buttonNamed(container, "Clear search and filters"));
+    expect(listedIds().length).toBe(PAGE_SIZE);
+  });
+
+  it("Platform and Label are quick filters; the Filters menu holds the rest; every filter is a removable chip", async () => {
+    await click(sideView("Open"));
+    await pick(toolbarSelect("Platform"), "facebook");
+    await pick(toolbarSelect("Label"), "lbl-wholesale");
+    await click(buttonNamed(container, "Filters"));
+    const menu = q('[role="dialog"][aria-labelledby]');
+    const account = [...menu.querySelectorAll<HTMLLabelElement>("label")].find((label) => label.textContent.includes("Lumen Coffee") && !label.textContent.includes("Eventos"));
+    await click(account?.querySelector("input") as HTMLInputElement);
+    expect(text(buttonNamed(container, "Filters"))).toContain("1");
+    expect([...q('[aria-label="Active filters"]').querySelectorAll("li")].map(text)).toEqual(["Platform:Facebook", "Label:Wholesale lead", "Account:Lumen Coffee"]);
+    expect(listedIds().sort()).toEqual(["cv-05", "cv-22", "cv-42"]);
+    await click(buttonNamed(menu, "Show 3 results"));
+    expect(container.querySelector('[role="dialog"][aria-labelledby]')).toBeNull();
+    expect(active()).toBe(buttonNamed(container, "Filters"));
+    await click(q('[aria-label="Remove the filter Label: Wholesale lead"]'));
+    expect(text(q('[aria-label="Active filters"]'))).not.toContain("Wholesale");
+    await click(buttonNamed(q("[class*=activeRow]"), "Clear all"));
+    expect(container.querySelector('[aria-label="Active filters"]')).toBeNull();
+  });
+
+  it("Previous / Next move only through the filtered, sorted list", async () => {
+    await click(sideView("Open"));
+    await pick(toolbarSelect("Label"), "lbl-wholesale");
+    await pick(toolbarSelect("Platform"), "facebook");
+    const list = listedIds();
+    await click(row(list[0] ?? ""));
+    const nav = q("nav[aria-label^='Move through']", pane(list[0] ?? ""));
+    expect(text(nav)).toBe(`1 of ${String(list.length)} in Open`);
+    for (let index = 1; index < list.length; index += 1) await click(q('[data-nav="next"]', pane(list[index - 1] ?? "")));
+    expect((q('[data-nav="next"]', pane(list.at(-1) ?? "")) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("a filter that no longer lists the selected conversation clears the selection and says why (M-4)", async () => {
+    await click(row("cv-07"));
+    await pick(toolbarSelect("Platform"), "facebook");
+    expect(container.querySelector("#focus-cv-07")).toBeNull();
+    expect(announced()).toContain("The conversation you had open isn't in this list, so nothing is selected.");
+  });
+
+  it("Escape closes the Filters menu and returns focus to its button", async () => {
+    await click(buttonNamed(container, "Filters"));
+    await key(q('[role="dialog"][aria-labelledby]'), "Escape");
+    expect(container.querySelector('[role="dialog"][aria-labelledby]')).toBeNull();
+    expect(active()).toBe(buttonNamed(container, "Filters"));
+  });
+
+  it("Done has no attention order: it sorts by activity", async () => {
+    await click(sideView("Done"));
+    const sort = [...container.querySelectorAll<HTMLSelectElement>('[role="search"] select')].find((item) => item.labels[0]?.textContent === "Sort");
+    expect([...(sort?.options ?? [])].map((option) => option.text)).toEqual(["Newest activity", "Oldest activity"]);
+  });
+});
+
+/* ───────────── comment actions ───────────── */
+
+describe("comment actions: what the platform supports, confirmed when destructive, simulated and labelled as such", () => {
+  it("each comment shows Reply · Reply privately · Hide · More; Instagram's More has no Like or Block; links say why they are missing", async () => {
+    await click(row("cv-07"));
+    expect(buttonsIn(q('[role="group"][aria-label^="Actions for"]', article("cv-07-m00"))).map(named)).toEqual(["Reply", "Reply privately", "Hide", "More for nina.coffeelab's comment"]);
+    await click(buttonNamed(article("cv-07-m00"), "More"));
+    const menu = q('[aria-label="More actions"]', article("cv-07-m00"));
+    expect(menu.getAttribute("data-platform")).toBe("instagram");
+    expect(buttonsIn(menu).map(named)).toEqual(["Open on Instagram", "Copy link", "Delete comment…"]);
+    expect(text(menu)).toContain("No platform link in this synthetic data.");
+  });
+
+  it("Facebook's More adds Like and Block author, destructive actions after a separator", async () => {
+    await click(sideView("Open"));
+    await click(row("cv-39"));
+    await click(buttonNamed(article("cv-39-m00"), "More"));
+    const menu = q('[aria-label="More actions"]', article("cv-39-m00"));
+    expect(buttonsIn(menu).map(named)).toEqual(["Like", "Open on Facebook", "Copy link", "Delete comment…", "Block author…"]);
+  });
+
+  it("Delete asks first; Cancel changes nothing; a failed delete is retried only through the confirmation again", async () => {
+    await click(sideView("Open"));
+    await click(row("cv-39"));
+    await click(buttonNamed(article("cv-39-m00"), "More"));
+    await click(buttonNamed(article("cv-39-m00"), "Delete comment…"));
+    expect(text(article("cv-39-m00"))).toContain("Delete Café Barato Oficial's comment from Facebook?");
+    expect(active()).toBe(buttonNamed(article("cv-39-m00"), "Cancel"));
+    await click(buttonNamed(article("cv-39-m00"), "Cancel"));
+    expect(hasButton(article("cv-39-m00"), "Delete comment")).toBe(false);
+    await click(buttonNamed(article("cv-39-m00"), "More"));
+    await click(buttonNamed(article("cv-39-m00"), "Delete comment…"));
+    await click(answerButton(article("cv-39-m00"), "Delete comment"));
+    await click(answerButton(article("cv-39-m00"), "Failed"));
+    await click(buttonNamed(article("cv-39-m00"), "Try again…"));
+    // Not a second delete: the confirmation, with its consequences, again.
+    expect(text(article("cv-39-m00"))).toContain("Delete Café Barato Oficial's comment from Facebook?");
+    expect([...article("cv-39-m00").querySelectorAll("[data-op-status]")].map((item) => item.getAttribute("data-op-status"))).toEqual(["failed"]);
+  });
+
+  it("Hide is one step and becomes Unhide; the hidden state is marked simulated; focus stays on the toggle (M-2)", async () => {
+    await click(sideView("Open"));
+    await click(row("cv-39"));
+    await click(buttonNamed(article("cv-39-m00"), "Hide"));
+    await click(answerButton(article("cv-39-m00"), "Confirmed"));
+    expect(text(article("cv-39-m00"))).toContain("Hidden on Facebook (simulated)");
+    expect(active()).toBe(buttonNamed(article("cv-39-m00"), "Unhide"));
+  });
+
+  it("public reply: write → review → simulated publishing; a draft survives closing the composer (UX-20)", async () => {
+    await click(row("cv-07"));
+    await click(buttonNamed(article("cv-07-m00"), "Reply"));
+    expect(text(article("cv-07-m00"))).toContain("Preview — nothing is sent");
+    await type(q("textarea", article("cv-07-m00")) as HTMLTextAreaElement, "Draft words");
+    await click(buttonNamed(article("cv-07-m00"), "Reply"));
+    await click(buttonNamed(article("cv-07-m00"), "Reply"));
+    expect((q("textarea", article("cv-07-m00")) as HTMLTextAreaElement).value).toBe("Draft words");
+    expect(text(article("cv-07-m00"))).toContain("Draft kept from earlier in this tab.");
+  });
+
+  it("private reply: write → review → confirm; one per comment; the record says there is no message inbox", async () => {
+    await click(row("cv-07"));
+    await click(buttonNamed(article("cv-07-m00"), "Reply privately"));
+    const composer = q('[role="group"][aria-labelledby]', article("cv-07-m00"));
+    expect(text(composer)).toContain("One per comment, within 7 days of it");
+    expect(text(composer)).toContain("Wrenkind has no message inbox.");
+    await type(q("textarea", composer) as HTMLTextAreaElement, "Hi Nina — sending you our price list.");
+    expect(hasButton(composer, "Simulate sending")).toBe(false);
+    await click(buttonNamed(composer, "Review private reply"));
+    expect(text(article("cv-07-m00"))).toContain("You can send only one private reply to this comment.");
+    await click(buttonNamed(article("cv-07-m00"), "Simulate sending"));
+    await click(answerButton(article("cv-07-m00"), "Confirmed"));
+    expect(text(article("cv-07-m00"))).toContain("Wrenkind has no message inbox, so it won't appear here.");
+    await click(buttonNamed(article("cv-07-m00"), "Reply privately"));
+    expect(text(article("cv-07-m00"))).toContain("A private reply was already sent for this comment. Only one is allowed.");
+    expect(text(pane("cv-07"))).toContain("Mark done · Replied privately");
+  });
+
+  it("an Agent replies and hides but has no Delete or Block; an Analyst has no platform action", async () => {
     await choose("Role", "agent");
-    expect(article("cv-03-m00").textContent).toContain("No longer possible.");
-    expect(buttonsIn(article("cv-03-m00")).some((button) => button.textContent.trim() === "Block author")).toBe(false);
-    expect(article("cv-03-m00").textContent).not.toContain("blocked by");
+    await click(sideView("Open"));
+    await click(row("cv-39"));
+    await click(buttonNamed(article("cv-39-m00"), "More"));
+    expect(buttonsIn(q('[aria-label="More actions"]')).map(named)).toEqual(["Like", "Open on Facebook", "Copy link"]);
+    await choose("Role", "analyst");
+    expect(buttonsIn(q('[role="group"][aria-label^="Actions for"]', article("cv-39-m00"))).map(named)).toEqual(["More for Café Barato Oficial's comment"]);
   });
 
-  it("'Try again' disappears when retrying is no longer allowed, and comes back when it is", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "Hide"));
-    await click(buttonNamed(article("cv-03-m00"), "Failed"));
-    expect(buttonNamed(article("cv-03-m00"), "Try again")).toBeDefined();
+  it("the simulated answers are never focused on their own (Enter twice cannot answer)", async () => {
+    await click(row("cv-07"));
+    await click(buttonNamed(article("cv-07-m00"), "Hide"));
+    expect(active()?.className ?? "").not.toMatch(/simButton/);
+  });
+});
+
+/* ───────────── UX4 H-1: revalidated at the moment of acting ───────────── */
+
+describe("UX4 H-1: a stale panel never acts", () => {
+  it("a Delete confirmation left open when the workspace becomes Monitor-only can no longer delete", async () => {
+    await click(sideView("Open"));
+    await click(row("cv-39"));
+    await click(buttonNamed(article("cv-39-m00"), "More"));
+    await click(buttonNamed(article("cv-39-m00"), "Delete comment…"));
     await choose("Workspace", "monitor");
-    expect(buttonsIn(article("cv-03-m00")).some((button) => button.textContent.trim() === "Try again")).toBe(false);
+    expect(text(article("cv-39-m00"))).toContain("No longer possible. This workspace is Monitor-only.");
+    expect(buttonsIn(article("cv-39-m00")).some((button) => named(button) === "Delete comment")).toBe(false);
+  });
+
+  it("a Block confirmation left open when the role changes to Agent can no longer block", async () => {
+    await click(sideView("Open"));
+    await click(row("cv-39"));
+    await click(buttonNamed(article("cv-39-m00"), "More"));
+    await click(buttonNamed(article("cv-39-m00"), "Block author…"));
+    await choose("Role", "agent");
+    expect(text(article("cv-39-m00"))).toContain("No longer possible.");
+    expect(buttonsIn(article("cv-39-m00")).some((button) => named(button) === "Block author")).toBe(false);
+  });
+
+  it("'Try again' disappears while retrying is not allowed, and comes back when it is", async () => {
+    await click(sideView("Open"));
+    await click(row("cv-39"));
+    await click(buttonNamed(article("cv-39-m00"), "Hide"));
+    await click(answerButton(article("cv-39-m00"), "Failed"));
+    expect(hasButton(article("cv-39-m00"), "Try again")).toBe(true);
+    await choose("Workspace", "monitor");
+    expect(hasButton(article("cv-39-m00"), "Try again")).toBe(false);
     await choose("Workspace", "standard");
-    expect(buttonNamed(article("cv-03-m00"), "Try again")).toBeDefined();
+    expect(hasButton(article("cv-39-m00"), "Try again")).toBe(true);
   });
 
-  it("a reply under review cannot be simulated after the workspace becomes Monitor-only; the draft is kept", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "Reply"));
-    await type(qa(HTMLTextAreaElement, "textarea", article("cv-03-m00")), "Sí, en Palermo también.");
-    await click(buttonNamed(article("cv-03-m00"), "Review reply"));
+  it("a reply under review cannot be published after Monitor-only; the draft is kept", async () => {
+    await click(row("cv-07"));
+    await click(buttonNamed(article("cv-07-m00"), "Reply"));
+    await type(q("textarea", article("cv-07-m00")) as HTMLTextAreaElement, "Both!");
+    await click(buttonNamed(article("cv-07-m00"), "Review reply"));
     await choose("Workspace", "monitor");
-    expect(article("cv-03-m00").textContent).toContain("Reply unavailable. This workspace is Monitor-only.");
-    expect(buttonsIn(article("cv-03-m00")).some((button) => button.textContent.includes("Simulate publishing"))).toBe(false);
+    expect(text(article("cv-07-m00"))).toContain("Reply unavailable. This workspace is Monitor-only.");
     expect(container.querySelector("[data-sim-reply]")).toBeNull();
     await choose("Workspace", "standard");
-    // Back where it was: the review of the same, unsent text.
-    expect(article("cv-03-m00").textContent).toContain("Sí, en Palermo también.");
-    expect(buttonNamed(article("cv-03-m00"), "Simulate publishing")).toBeDefined();
+    expect(text(article("cv-07-m00"))).toContain("Both!");
   });
 
   it("a private reply composer left open when actions switch to 'as in Wrenkind today' can no longer send", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "Reply privately"));
+    await click(row("cv-07"));
+    await click(buttonNamed(article("cv-07-m00"), "Reply privately"));
     await choose("Actions", "today");
-    expect(article("cv-03-m00").textContent).toContain("No longer possible. Not available in Wrenkind yet.");
-    expect(buttonsIn(article("cv-03-m00")).some((button) => button.textContent.includes("Simulate sending"))).toBe(false);
-  });
-
-  it("the labels editor closes for a role that cannot assign labels", async () => {
-    await click(row("cv-03"));
-    await openLabels("cv-03-m00");
-    await choose("Role", "analyst");
-    expect(article("cv-03-m00").querySelector('[aria-label^="Labels for"]')).toBeNull();
+    expect(text(article("cv-07-m00"))).toContain("No longer possible. Not available in Wrenkind yet.");
+    expect(hasButton(article("cv-07-m00"), "Simulate sending")).toBe(false);
   });
 });
 
-describe("UX4 H-2 and M-1: two panels — a fresh panel per conversation, focus stays in the panel", () => {
-  it("open post details do not carry over to the next conversation; the panel is a new one", async () => {
-    await choose("Layout", "split");
-    await click(row("cv-03"));
-    const firstPane = q("#focus-cv-03");
-    const details = q("details", firstPane);
-    await click(q("summary", details));
-    expect(qa(HTMLDetailsElement, "details", firstPane).open).toBe(true);
-    await click(buttonNamed(firstPane, "Next"));
-    const next = listedIds()[3] ?? "";
-    const pane = q(`#focus-${next}`);
-    expect(pane).not.toBe(firstPane);
-    expect(qa(HTMLDetailsElement, "details", pane).open).toBe(false);
-    expect(pane.scrollTop).toBe(0);
+/* ───────────── labels ───────────── */
+
+describe("labels: assigning an existing label ≠ creating a workspace label", () => {
+  it("+ Label opens the picker; a checkbox adds the label to this comment, the row and the sidebar count, and the activity", async () => {
+    await click(row("cv-07"));
+    const before = text(buttonNamed(q('nav[aria-label="Comments views"]'), "Praise"));
+    await click(buttonNamed(article("cv-07-m00"), "Label"));
+    const picker = q('[aria-label="Labels on nina.coffeelab\'s comment"]');
+    expect(text(picker)).toContain("Create workspace label…");
+    const praise = [...picker.querySelectorAll("label")].find((label) => label.textContent.includes("Praise"));
+    await click(praise?.querySelector("input") as HTMLInputElement);
+    expect(text(q('ul[aria-label="Labels"]', article("cv-07-m00")))).toContain("Praise");
+    expect(text(row("cv-07"))).toContain("Praise");
+    expect(text(buttonNamed(q('nav[aria-label="Comments views"]'), "Praise"))).not.toBe(before);
+    expect(announced()).toBe("Label Praise added to nina.coffeelab's comment");
   });
 
-  it("Previous / Next keep focus on the same control in the new conversation, never on a row of the list", async () => {
-    await choose("Layout", "split");
-    await click(row("cv-01"));
-    await click(buttonNamed(q("#focus-cv-01"), "Next"));
-    const second = listedIds()[1] ?? "";
-    expect(document.activeElement).toBe(buttonNamed(q(`#focus-${second}`), "Next"));
-    expect(document.activeElement?.id.startsWith("row-")).toBe(false);
-    await click(buttonNamed(q(`#focus-${second}`), "Previous"));
-    // At the first conversation Previous is disabled: focus goes to the conversation's title in the panel.
-    expect(document.activeElement).toBe(q("#pane-cv-01"));
-  });
-
-  it("Escape in two panels keeps the conversation selected and returns focus to its row", async () => {
-    await choose("Layout", "split");
-    await click(row("cv-01"));
-    await key(q("#focus-cv-01 ol"), "Escape");
-    expect(row("cv-01").getAttribute("aria-current")).toBe("true");
-    expect(container.querySelector("#focus-cv-01")).not.toBeNull();
-    expect(document.activeElement).toBe(row("cv-01"));
-  });
-});
-
-describe("UX4 M-2: focus always lands on a control that exists", () => {
-  it("More → Details and exact times returns focus to More", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "Details and exact times"));
-    expect(q("dl", article("cv-03-m00"))).toBeDefined();
-    expect(document.activeElement).toBe(buttonNamed(article("cv-03-m00"), "More"));
-  });
-
-  it("removing a label chip moves focus to the next chip, then to More when none is left", async () => {
+  it("Enter acts only on an exact name and never creates (M-3); Escape closes back on + Label", async () => {
     await click(row("cv-10"));
-    await click(q('button[aria-label="Remove label Delivery from Ramiro Paz\'s comment"]', article("cv-10-m00")));
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Remove label Refund request from Ramiro Paz's comment");
-    await click(document.activeElement as HTMLElement);
-    expect(document.activeElement).toBe(buttonNamed(article("cv-10-m00"), "More"));
+    await click(buttonNamed(article("cv-10-m00"), "Label"));
+    const input = q("input", q('[aria-label^="Labels on Ramiro"]')) as HTMLInputElement;
+    await type(input, "Refund");
+    await key(input, "Enter");
+    expect(text(q('ul[aria-label="Labels"]', article("cv-10-m00")))).toContain("Refund request");
+    await type(input, "Brand new name");
+    await key(input, "Enter");
+    expect(container.textContent).not.toContain("Brand new name created");
+    expect(text(q('[aria-label^="Labels on Ramiro"]'))).toContain("Create it as a workspace label below.");
+    await type(input, "praise");
+    await key(input, "Enter");
+    expect(text(q('ul[aria-label="Labels"]', article("cv-10-m00")))).toContain("Praise");
+    await key(input, "Escape");
+    expect(active()).toBe(buttonNamed(article("cv-10-m00"), "Label"));
   });
 
-  it("confirming moves focus to More (not to the simulated answers: Enter twice cannot answer); settling hands it back to the comment", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "More"));
-    await click(buttonNamed(article("cv-03-m00"), "Delete comment…"));
-    await click(buttonNamed(q('[role="group"][aria-labelledby]', article("cv-03-m00")), "Delete comment"));
-    expect(document.activeElement).toBe(buttonNamed(article("cv-03-m00"), "More"));
-    expect(document.activeElement?.closest('[aria-label^="Prototype"]')).toBeNull();
-    // A second Enter on More only opens the menu; the deletion is still waiting for an explicit answer.
-    await key(document.activeElement as HTMLElement, "Enter");
-    expect(article("cv-03-m00").textContent).toContain("Deleting this comment… Simulated");
-    await click(buttonNamed(article("cv-03-m00"), "No answer"));
-    expect(document.activeElement?.textContent).toBe("It went through");
-    await click(buttonNamed(article("cv-03-m00"), "It went through"));
-    expect(document.activeElement).toBe(buttonNamed(article("cv-03-m00"), "More"));
+  it("creating is its own step: workspace scope, gray by default (five approved colors), validation, optional add", async () => {
+    await click(row("cv-07"));
+    await click(buttonNamed(article("cv-07-m00"), "Label"));
+    await click(buttonNamed(container, "Create workspace label…"));
+    const panel = q('[role="group"][aria-labelledby]', article("cv-07-m00"));
+    expect(text(panel)).toContain("Labels belong to the Lumen Coffee workspace: everyone here can use it on any comment.");
+    const markers = [...panel.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
+    expect(markers.map((input) => [input.value, input.checked, input.disabled])).toEqual([["gray", true, false], ["teal", false, false], ["plum", false, false], ["magenta", false, false], ["olive", false, false]]);
+    await click(buttonNamed(panel, "Create label"));
+    expect(text(panel)).toContain("Write a name for the label.");
+    await type(q("input:not([type])", panel) as HTMLInputElement, "delivery");
+    await click(buttonNamed(panel, "Create label"));
+    expect(text(panel)).toContain("A label with this name already exists.");
+    await type(q("input:not([type])", panel) as HTMLInputElement, "Supplier inquiry");
+    await click(buttonNamed(panel, "Create label"));
+    expect(text(q('ul[aria-label="Labels"]', article("cv-07-m00")))).toContain("Supplier inquiry");
+    expect(hasButton(q('nav[aria-label="Comments views"]'), "Supplier inquiry")).toBe(true);
   });
 
-  it("a confirmed hide focuses the toggle, now Unhide; a confirmed reply focuses the reply itself", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "Hide"));
-    const toggle = buttonsIn(q('[role="group"]', article("cv-03-m00")))[1];
-    expect(document.activeElement).toBe(toggle); // while waiting it says why it can't be pressed again
-    expect(toggle?.getAttribute("aria-disabled")).toBe("true");
-    await click(buttonNamed(article("cv-03-m00"), "Confirmed"));
-    expect(document.activeElement?.textContent.trim()).toBe("Unhide");
-    await click(buttonNamed(article("cv-03-m02"), "Reply"));
-    await type(qa(HTMLTextAreaElement, "textarea", article("cv-03-m02")), "Gracias, Martina.");
-    await click(buttonNamed(article("cv-03-m02"), "Review reply"));
-    await click(buttonNamed(article("cv-03-m02"), "Simulate publishing"));
-    expect(document.activeElement?.textContent.trim()).toBe("Reply");
-    const entry = q("[data-sim-reply]");
-    await click(buttonNamed(entry, "Confirmed"));
-    expect(document.activeElement).toBe(q("article", entry));
+  it("an Agent assigns existing labels but sees no create entry and no Manage", async () => {
+    await choose("Role", "agent");
+    await click(row("cv-07"));
+    await click(buttonNamed(article("cv-07-m00"), "Label"));
+    expect(hasButton(container, "Create workspace label…")).toBe(false);
+    expect(container.textContent).toContain("Only owners, admins and managers create labels.");
+    expect(hasButton(q('nav[aria-label="Comments views"]'), "Manage")).toBe(false);
+  });
+
+  it("removing a chip moves focus to the next chip, then to + Label (M-2)", async () => {
+    await click(row("cv-10"));
+    await click(q('[aria-label="Remove label Delivery from Ramiro Paz\'s comment"]'));
+    expect(active()?.getAttribute("aria-label")).toBe("Remove label Refund request from Ramiro Paz's comment");
+    await click(q('[aria-label="Remove label Refund request from Ramiro Paz\'s comment"]'));
+    expect(active()).toBe(buttonNamed(article("cv-10-m00"), "Label"));
+  });
+
+  it("Settings › Labels: rename (validated), delete behind a confirmation; comments stay, assignments go, activity records it", async () => {
+    await click(buttonNamed(q('nav[aria-label="Comments views"]'), "Manage"));
+    expect(title()).toContain("Labels");
+    await click(buttonNamed(container, "Edit Follow up Monday"));
+    await type(q("input", q("[class*=editingRow]")) as HTMLInputElement, "Delivery");
+    await click(buttonNamed(container, "Save"));
+    expect(container.textContent).toContain("A label with this name already exists.");
+    await type(q("input", q("[class*=editingRow]")) as HTMLInputElement, "Follow up later");
+    await click(buttonNamed(container, "Save"));
+    expect(container.textContent).toContain("Follow up later");
+    await click(buttonNamed(container, "Delete Refund request"));
+    const dialog = q('[role="alertdialog"]');
+    expect(text(dialog)).toContain("It's removed from the 5 comments that use it. No comment is deleted.");
+    expect(active()).toBe(buttonNamed(dialog, "Cancel"));
+    await click(buttonNamed(dialog, "Delete label"));
+    expect(announced()).toBe("Label Refund request deleted. It was removed from 5 comments; no comment was deleted.");
+    await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Comments"));
+    await click(row("cv-10"));
+    expect(text(q('ul[aria-label="Labels"]', article("cv-10-m00")))).toBe("Delivery");
+    expect(text(article("cv-10-m00"))).toContain("El último pedido llegó con el paquete roto");
+    await click(q("time", article("cv-10-m00")).closest("button") as HTMLButtonElement);
+    expect(text(q('[role="dialog"]', pane("cv-10")))).toContain("Label Refund request deleted in Settings");
+  });
+
+  it("an Agent sees Settings › Labels read-only", async () => {
+    await choose("Role", "agent");
+    await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Settings"));
+    expect(container.textContent).toContain("Your role can use labels on comments but can't create, rename or delete them.");
+    expect(hasButton(container, "New label")).toBe(false);
+    expect(hasButton(container, "Edit")).toBe(false);
   });
 });
 
-describe("UX4 M-3: Enter on a label name acts only on an exact name", () => {
-  it("a partial name never toggles an existing label ('Refund' keeps 'Refund request') and creates nothing", async () => {
+/* ───────────── Details ───────────── */
+
+describe("Details: an overlay drawer tied to one comment", () => {
+  it("opens from the comment's time; exact times, what happened, the author here, capabilities last; Escape returns focus", async () => {
+    await click(row("cv-10"));
+    const opener = q("#time-cv-10-m00") as HTMLButtonElement;
+    await click(opener);
+    expect(opener.getAttribute("aria-expanded")).toBe("true");
+    const drawer = q('[role="dialog"]', pane("cv-10"));
+    expect(drawer.tagName).toBe("ASIDE");
+    expect(text(drawer)).toContain("About Ramiro Paz's comment");
+    expect(text(drawer)).toContain("Written on Facebook");
+    expect(text(drawer)).toContain("Edited");
+    expect(text(drawer)).toContain("Read by Wrenkind");
+    expect(text(drawer)).toContain("What happened in this conversation");
+    expect(text(drawer)).toContain("Marked urgent · Ana Ruiz");
+    expect(text(drawer)).toContain("Ramiro Paz in this workspace");
+    const sections = [...drawer.querySelectorAll("h3, summary")].map(text);
+    expect(sections.at(-1)).toMatch(/^Why some actions aren't available here/);
+    expect(q("article", pane("cv-10")).closest("li")?.className ?? "").toMatch(/entryAnchored/);
+    expect(active()?.textContent).toContain("Details");
+    await key(drawer, "Escape");
+    expect(pane("cv-10").querySelector('[role="dialog"]')).toBeNull();
+    expect(active()).toBe(q("#time-cv-10-m00"));
+    expect(row("cv-10").getAttribute("aria-current")).toBe("true");
+  });
+
+  it("the close button returns focus too; moving to another conversation never carries the drawer over", async () => {
+    await click(row("cv-10"));
+    await click(q("#time-cv-10-m00"));
+    await click(q('[aria-label="Close details"]'));
+    expect(active()).toBe(q("#time-cv-10-m00"));
+    await click(q("#time-cv-10-m00"));
+    await click(q('[data-nav="next"]', pane("cv-10")));
+    const next = listedIds()[1] ?? "";
+    expect(pane(next).querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+/* ───────────── the frame: guest, theme, prototype controls, no Intelligence ───────────── */
+
+describe("the frame", () => {
+  it("a client guest is denied: no comment, label or account is drawn", async () => {
+    await choose("Role", "guest");
+    expect(container.textContent).toContain("Comments aren't available to you");
+    expect(container.querySelector("[id^=row-]")).toBeNull();
+  });
+
+  it("the prototype controls say what is simulated and what is a proposal, apart from the product UI; Reset restores", async () => {
+    const bar = q('[aria-label="Prototype controls"]');
+    expect(text(bar)).toContain("Facebook and Instagram actions are simulated in this tab. Workflow, attention and labels are proposals.");
+    await click(row("cv-07"));
+    await click(buttonNamed(management("cv-07"), "Urgent"));
+    await click(buttonNamed(bar, "Reset data"));
+    expect(container.querySelector("#focus-cv-07")).toBeNull();
+    expect(text(row("cv-07"))).not.toContain("Urgent");
+    expect(announced()).toContain("Prototype data reset");
+  });
+
+  it("System sets nothing; Light and Dark set data-theme on <html>; System puts back what was there", async () => {
+    const html = container.ownerDocument.documentElement;
+    html.removeAttribute("data-theme");
+    await choose("Theme", "dark");
+    expect(html.getAttribute("data-theme")).toBe("dark");
+    await choose("Theme", "light");
+    expect(html.getAttribute("data-theme")).toBe("light");
+    await choose("Theme", "system");
+    expect(html.hasAttribute("data-theme")).toBe(false);
+  });
+
+  it("no AI output anywhere: no Signals, assessments or priorities; Settings › Intelligence says it is not active", async () => {
+    await click(row("cv-10"));
+    expect(text(pane("cv-10"))).not.toMatch(/Complaint|Signal|P1|P2|never auto-hidden/);
+    await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Settings"));
+    await click(buttonNamed(q('nav[aria-label="Settings"]'), "Intelligence"));
+    expect(container.textContent).toContain("Not active for this workspace. Nothing in Comments is classified, prioritized or summarized by Wrenkind today.");
+    expect(hasButton(container, "Turn on")).toBe(false);
+  });
+});
+
+/* ───────────── UX-05: independent audit remediation ───────────── */
+
+describe("UX-05 H-1 / H-2: replies whose outcome isn't known", () => {
+  it("a second reply (Sending, then Sent) to another comment never hides the first reply's failure", async () => {
+    await click(row("cv-10"));
+    await replyTo("cv-10-m00", "We're on it.");
+    await click(answerButton(pane("cv-10"), "Failed"));
+    expect(text(q("header", pane("cv-10")))).toContain("Needs attention: Reply failed");
+    await replyTo("cv-10-m02", "Ramiro, the replacement left today.");
+    expect(text(q("header", pane("cv-10")))).toContain("Needs attention: Reply failed");
+    await click(answerButton(pane("cv-10"), "Confirmed"));
+    expect(text(q("header", pane("cv-10")))).toContain("Needs attention: Reply failed");
+    expect(text(row("cv-10"))).toContain("Reply failed");
+  });
+
+  it("Mark done is refused, with the reason, while a reply is Checking; once confirmed it offers the resolution the reply supports", async () => {
     await click(row("cv-04"));
-    await openLabels("cv-04-m00");
-    const field = qa(HTMLInputElement, 'input:not([type="checkbox"])', article("cv-04-m00"));
-    await type(field, "Refund");
-    await key(field, "Enter");
-    expect(q('ul[aria-label="Labels"]', article("cv-04-m00")).textContent).toContain("Refund request");
-    expect(container.querySelectorAll('nav[aria-label="Comments views"] li')).toHaveLength(7);
-    expect(article("cv-04-m00").textContent).toContain("Enter only adds an exact name.");
+    await click(buttonNamed(management("cv-04"), "Mark done"));
+    const blocked = q('[aria-label="Mark done"]');
+    expect(text(blocked)).toContain("A reply's outcome is still being checked: it isn't known whether it reached the platform.");
+    expect(hasButton(blocked, "Replied")).toBe(false);
+    expect(hasButton(blocked, "No reply needed")).toBe(false);
+    await click(answerButton(pane("cv-04"), "It went through"));
+    const menu = q('[aria-label="Mark done as"]');
+    expect(buttonNamed(menu, "Replied publicly").getAttribute("aria-disabled")).toBeNull();
+    expect(buttonNamed(menu, "Replied privately").getAttribute("aria-disabled")).toBe("true");
+    await click(buttonNamed(menu, "Replied publicly"));
+    expect(text(q("header", pane("cv-04")))).toContain("Done · Replied publicly");
   });
 
-  it("the exact name toggles (either case); a name matching nothing is created and added", async () => {
-    await click(row("cv-04"));
-    await openLabels("cv-04-m00");
-    const field = qa(HTMLInputElement, 'input:not([type="checkbox"])', article("cv-04-m00"));
-    await type(field, "refund REQUEST");
-    await key(field, "Enter");
-    expect(article("cv-04-m00").querySelector('ul[aria-label="Labels"]')).toBeNull();
-    await type(field, "Courier issue");
-    await key(field, "Enter");
-    expect(q('ul[aria-label="Labels"]', article("cv-04-m00")).textContent).toBe("Courier issue");
-  });
-});
-
-describe("UX4 M-4: a filtered list never keeps a conversation that left it", () => {
-  it("removing the last matching label clears the selection, says why, and moves focus to the list title", async () => {
-    await choose("Layout", "split");
-    await click(sideLabel("Allergens"));
-    await click(row("cv-03"));
-    await click(q('button[aria-label="Remove label Allergens from Martina Gómez\'s comment"]', article("cv-03-m00")));
-    expect(container.querySelector("#row-cv-03")).toBeNull();
-    expect(container.querySelector("#focus-cv-03")).toBeNull();
-    expect(container.textContent).toContain("Select a conversation to read it here.");
-    expect(q('[role="status"]').textContent).toBe("Label Allergens removed from Martina Gómez's comment. The conversation no longer has a comment labelled Allergens, so it left this list.");
-    expect(document.activeElement).toBe(q("h1"));
+  it("while a reply is Sending there is no nudge and Done is refused; a person's choice never confirms a reply", async () => {
+    await click(row("cv-07"));
+    await replyTo("cv-07-m00", "Both!");
+    expect(text(pane("cv-07"))).not.toContain("Reply sent. Is the question");
+    await click(buttonNamed(management("cv-07"), "Mark done"));
+    expect(text(q('[aria-label="Mark done"]'))).toContain("A reply is still being sent.");
+    await key(q('[aria-label="Mark done"]'), "Escape");
+    await click(answerButton(pane("cv-07"), "Failed"));
+    await click(buttonNamed(management("cv-07"), "Mark done"));
+    expect(buttonNamed(q('[aria-label="Mark done as"]'), "Replied publicly").getAttribute("aria-disabled")).toBe("true");
+    await click(buttonNamed(q('[aria-label="Mark done as"]'), "Replied on the platform"));
+    expect(text(q("header", pane("cv-07")))).toContain("Done · Replied on the platform");
+    expect(text(pane("cv-07"))).toContain("Failed");
   });
 });
 
-describe("UX4: other interaction corrections", () => {
-  it("the simulated answers are never focused on their own", async () => {
-    await click(row("cv-03"));
-    await click(buttonNamed(article("cv-03-m00"), "Hide"));
-    expect(document.activeElement?.closest('[aria-label^="Prototype"]')).toBeNull();
+describe("UX-05 M-1: Details takes focus and covers what is under it", () => {
+  it("focus lands on the drawer's title; the reading area under it is inert; Escape gives focus back to the opener", async () => {
+    await click(row("cv-10"));
+    await click(q("#time-cv-10-m00"));
+    const drawer = q('[role="dialog"]', pane("cv-10"));
+    expect(drawer.contains(active())).toBe(true);
+    expect(active()?.tagName).toBe("H2");
+    expect(q("[class*=paneBody]", pane("cv-10")).hasAttribute("inert")).toBe(true);
+    // Below 1024 px the page behind is hidden while Details is open (the shell carries the state the CSS reads).
+    expect(container.querySelector("[class*=drawerOpen]")).not.toBeNull();
+    await key(active() as Element, "Escape");
+    expect(q("[class*=paneBody]", pane("cv-10")).hasAttribute("inert")).toBe(false);
+    expect(container.querySelector("[class*=drawerOpen]")).toBeNull();
+    expect(active()).toBe(q("#time-cv-10-m00"));
+  });
+});
+
+describe("UX-05 M-2: comments on ads", () => {
+  it("public and private replies on an Instagram ad are unavailable with the reason; the post says it is an ad", async () => {
+    await click(sideView("Open"));
+    await click(row("cv-43"));
+    expect(text(pane("cv-43"))).toContain("Ad · replies and moderation not validated yet");
+    await click(buttonNamed(article("cv-43-m00"), "Reply privately"));
+    expect(text(article("cv-43-m00"))).toContain("Replying to comments on ads isn't validated in Wrenkind yet.");
+    await click(buttonNamed(article("cv-43-m00"), "Reply"));
+    expect(text(article("cv-43-m00"))).toContain("Replying to comments on ads isn't validated in Wrenkind yet.");
+    expect(hasButton(article("cv-43-m00"), "Review reply")).toBe(false);
+    expect(hasButton(article("cv-43-m00"), "Simulate publishing")).toBe(false);
+  });
+});
+
+describe("UX-05 small fixes", () => {
+  it("a row that leaves Needs attention for another reason never says 'Reply sent'", async () => {
+    await click(row("cv-10"));
+    await click(buttonNamed(article("cv-10-m02"), "Hide"));
+    await click(answerButton(article("cv-10-m02"), "Confirmed"));
+    expect(text(row("cv-10"))).toContain("No longer in Needs attention · leaves this list when you move on");
+    expect(text(row("cv-10"))).not.toContain("Reply sent");
   });
 
-  it("Reset says what it resets and what it keeps", () => {
-    const reset = buttonNamed(q('[aria-label="Prototype controls"]'), "Reset data");
-    const description = q(`#${CSS.escape(reset.getAttribute("aria-describedby") ?? "")}`).textContent;
-    expect(description).toContain("Restores labels, simulated actions, drafts, the filter and the selection");
-    expect(description).toContain("Role, workspace, actions, layout, theme and scenario stay as chosen");
+  it("one live region: the 'left the list' note is announced once, the toast itself is silent", async () => {
+    await click(row("cv-07"));
+    await click(buttonNamed(management("cv-07"), "Mark done"));
+    await click(buttonNamed(q('[aria-label="Mark done as"]'), "No reply needed"));
+    await click(row(listedIds().find((id) => id !== "cv-07") ?? ""));
+    expect(text(q("[class*=toast]"))).toContain("It's Done · No reply needed.");
+    expect(container.querySelectorAll('[role="status"], [aria-live]')).toHaveLength(1);
+    expect(announced()).toContain("It's Done · No reply needed.");
+  });
+
+  it("losing label management closes an open Edit row and a Delete confirmation in Settings", async () => {
+    await click(buttonNamed(q('nav[aria-label="Comments views"]'), "Manage"));
+    await click(buttonNamed(container, "Delete Refund request"));
+    expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
+    await choose("Role", "agent");
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    await choose("Role", "manager");
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull(); // not brought back either
+    await click(buttonNamed(container, "Edit Praise"));
+    expect(container.querySelector("[class*=editingRow]")).not.toBeNull();
+    await choose("Role", "analyst");
+    expect(container.querySelector("[class*=editingRow]")).toBeNull();
+  });
+
+  it("deleting the label the list is filtered by keeps the selected conversation in its true place", async () => {
+    await click(sideView("Open"));
+    await click(buttonNamed(q('nav[aria-label="Comments views"]'), "Wholesale lead"));
+    await click(row("cv-42"));
+    const filteredAt = listedIds().indexOf("cv-42");
+    await click(buttonNamed(q('nav[aria-label="Comments views"]'), "Manage"));
+    await click(buttonNamed(container, "Delete Wholesale lead"));
+    await click(buttonNamed(q('[role="alertdialog"]'), "Delete label"));
+    expect(announced()).toMatch(/^Label Wholesale lead deleted\. .* Open: \d+ conversations$/);
+    await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Comments"));
+    const pinned = listedIds();
+    await click(buttonNamed(pane("cv-42"), "Open")); // Back: the selection (and its pin) ends
+    expect(listedIds()).toEqual(pinned);
+    expect(pinned.indexOf("cv-42")).not.toBe(filteredAt);
+  });
+
+  it("labels carry one tag-shaped marker everywhere (never a round dot); long member names are offered in full", async () => {
+    const side = q('nav[aria-label="Comments views"]');
+    expect(side.querySelectorAll("svg[data-marker]")).toHaveLength(SEED_LABELS.length);
+    await click(row("cv-10"));
+    expect(article("cv-10-m00").querySelectorAll('ul[aria-label="Labels"] svg[data-marker]')).toHaveLength(2);
+    expect(container.querySelectorAll("span[data-marker]")).toHaveLength(0);
+    await click(buttonNamed(management("cv-10"), "BD"));
+    expect(hasButton(q('[aria-label="Assign this conversation"]'), "MFMaximiliana Fernández-Etcheverry")).toBe(true);
+  });
+});
+
+describe("UX-05: header menus close from outside", () => {
+  it("a press outside the More menu closes it; a press inside does not; Escape returns focus to More", async () => {
+    await click(row("cv-10"));
+    const more = buttonNamed(management("cv-10"), "More for this conversation");
+    await click(more);
+    const menu = q('[aria-label="More for this conversation"][role="group"]');
+    await settle(() => menu.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+    expect(container.querySelector('[aria-label="More for this conversation"][role="group"]')).not.toBeNull();
+    await settle(() => q("[class*=paneBody]", pane("cv-10")).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+    expect(container.querySelector('[aria-label="More for this conversation"][role="group"]')).toBeNull();
+    await click(more);
+    await key(q('[aria-label="More for this conversation"][role="group"]'), "Escape");
+    expect(active()).toBe(more);
+  });
+});
+
+/* ───────────── UX-05-FINALFIX ───────────── */
+
+describe("UX-05-FINALFIX R-1 and the small corrections", () => {
+  it("R-1: a Sent reply to camila.r's second comment never resolves the failed reply to her first (same Instagram top level)", async () => {
+    await click(sideView("Open"));
+    await type(q('[role="search"] input') as HTMLInputElement, "camila"); // beyond the first page of Open: found by search
+    await click(row("cv-12"));
+    await replyTo("cv-12-m01", "@camila.r thanks for the tip!");
+    await click(answerButton(pane("cv-12"), "Failed"));
+    expect(text(q("header", pane("cv-12")))).toContain("Needs attention: Reply failed");
+    await replyTo("cv-12-m03", "@camila.r good point about grinding fresh.");
+    await click(answerButton(pane("cv-12"), "Confirmed"));
+    expect(text(q("header", pane("cv-12")))).toContain("Needs attention: Reply failed");
+    expect(text(row("cv-12"))).toContain("Reply failed");
+    expect(text(pane("cv-12"))).not.toContain("Reply sent. Is the question");
+    // Answering the first comment again, confirmed, resolves it.
+    await replyTo("cv-12-m01", "@camila.r thanks again!");
+    await click(answerButton(pane("cv-12"), "Confirmed"));
+    expect(text(q("header", pane("cv-12")))).not.toContain("Reply failed");
+  });
+
+  it("no false 'Reply sent' while a newer reply is still Sending: no nudge, and the row names no success", async () => {
+    await click(row("cv-07"));
+    await replyTo("cv-07-m00", "Both!");
+    await click(answerButton(pane("cv-07"), "Confirmed"));
+    expect(text(row("cv-07"))).toContain("Reply sent · leaves this list when you move on");
+    await replyTo("cv-07-m00", "And the 1 kg bag too.");
+    expect(text(pane("cv-07"))).not.toContain("Reply sent. Is the question");
+    expect(text(row("cv-07"))).not.toContain("Reply sent");
+    expect(text(row("cv-07"))).toContain("No longer in Needs attention");
+  });
+
+  it("a long assignee is shown compactly once selected; the full name stays in the title and the accessible name", async () => {
+    await click(row("cv-10"));
+    await click(buttonNamed(management("cv-10"), "BD"));
+    await click(buttonNamed(q('[aria-label="Assign this conversation"]'), "MFMaximiliana"));
+    const control = buttonsIn(management("cv-10"))[0] as HTMLButtonElement;
+    expect(text(q("[class*=assignName]", control))).toBe("Maximiliana F.");
+    expect(control.title).toBe("Assigned to Maximiliana Fernández-Etcheverry");
+    expect(named(control)).toContain("(Maximiliana Fernández-Etcheverry), assigned — change");
+    expect(text(row("cv-10"))).toContain("Assigned to Maximiliana Fernández-Etcheverry");
+  });
+});
+
+/* ───────────── UX-06-IMPLEMENT: label colors (Manual v1.1 Amendment 2) ───────────── */
+
+describe("label colors: the approved palette, owned by the workspace label", () => {
+  const markerIn = (scope: ParentNode, name: string): string | null => {
+    const holder = [...scope.querySelectorAll("li, button, label, span")].find((item) => item.textContent.replace(/\s+/g, " ").trim().startsWith(name) && item.querySelector("svg[data-marker]") !== null);
+    return holder?.querySelector("svg[data-marker]")?.getAttribute("data-marker") ?? null;
+  };
+  const sidebarMarker = (name: string): string | null => buttonNamed(q('nav[aria-label="Comments views"]'), name).querySelector("svg[data-marker]")?.getAttribute("data-marker") ?? null;
+  const goSettings = async (): Promise<void> => { await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Settings")); };
+  const goComments = async (): Promise<void> => { await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Comments")); };
+  const pickColor = async (scope: ParentNode, id: string): Promise<void> => { await click(q(`input[type="radio"][value="${id}"]`, scope)); };
+
+  it("seeded colors show the same marker in the sidebar, the row and the comment chip; gray stays the default", async () => {
+    expect(sidebarMarker("Refund request")).toBe("magenta");
+    expect(sidebarMarker("Delivery")).toBe("gray");
+    await click(row("cv-10"));
+    expect(markerIn(q('ul[aria-label="Labels"]', article("cv-10-m00")), "Refund request")).toBe("magenta");
+    expect(markerIn(q('ul[aria-label="Labels"]', article("cv-10-m00")), "Delivery")).toBe("gray");
+    expect(row("cv-10").querySelector('svg[data-marker="magenta"]')).not.toBeNull();
+    // Only identifiers in the page: no color value anywhere, no brown.
+    expect(container.querySelector('[data-marker="brown"]')).toBeNull();
+    expect(container.querySelectorAll('[style*="#"], [style*="rgb"], [fill^="#"]')).toHaveLength(0);
+  });
+
+  it("a label created from a comment with a color carries it everywhere at once", async () => {
+    await click(row("cv-07"));
+    await click(buttonNamed(article("cv-07-m00"), "Label"));
+    await click(buttonNamed(container, "Create workspace label…"));
+    const panel = q('[role="group"][aria-labelledby]', article("cv-07-m00"));
+    await type(q("input:not([type])", panel) as HTMLInputElement, "Supplier inquiry");
+    await pickColor(panel, "plum");
+    expect((q('input[value="plum"]', panel) as HTMLInputElement).checked).toBe(true);
+    await click(buttonNamed(panel, "Create label"));
+    expect(markerIn(q('ul[aria-label="Labels"]', article("cv-07-m00")), "Supplier inquiry")).toBe("plum");
+    expect(sidebarMarker("Supplier inquiry")).toBe("plum");
+    expect(announced()).toContain("Workspace label Supplier inquiry (Plum) created");
+  });
+
+  it("Settings: choosing a color previews it; Cancel discards; Save recolors every appearance; Reset to gray restores the default", async () => {
+    await goSettings();
+    await click(buttonNamed(container, "Edit Follow up Monday"));
+    const editing = q("[class*=editingRow]");
+    expect(text(editing)).not.toContain("Reset to gray"); // already the default
+    await pickColor(editing, "teal");
+    expect(editing.querySelector("svg[data-marker]")?.getAttribute("data-marker")).toBe("teal"); // the preview
+    await click(buttonNamed(editing, "Cancel"));
+    await goComments();
+    expect(sidebarMarker("Follow up Monday")).toBe("gray");
+    await goSettings();
+    await click(buttonNamed(container, "Edit Follow up Monday"));
+    await pickColor(q("[class*=editingRow]"), "teal");
+    await click(buttonNamed(container, "Save"));
+    expect(announced()).toBe("Label Follow up Monday is now Teal.");
+    expect(text(q("[class*=settingsTable]"))).toContain("Teal");
+    await goComments();
+    expect(sidebarMarker("Follow up Monday")).toBe("teal");
+    await click(row("cv-10"));
+    for (const svg of [...container.querySelectorAll("svg[data-marker]")].filter((item) => item.parentElement?.textContent.includes("Follow up Monday") === true)) expect(svg.getAttribute("data-marker")).toBe("teal");
+    await goSettings();
+    await click(buttonNamed(container, "Edit Follow up Monday"));
+    await click(buttonNamed(q("[class*=editingRow]"), "Reset to gray"));
+    expect((q('input[value="gray"]', q("[class*=editingRow]")) as HTMLInputElement).checked).toBe(true);
+    await click(buttonNamed(container, "Save"));
+    expect(announced()).toBe("Label Follow up Monday reset to gray.");
+    await goComments();
+    expect(sidebarMarker("Follow up Monday")).toBe("gray");
+  });
+
+  it("the color picker is a labelled radio group: each option names its color; the choice is not told by color alone", async () => {
+    await goSettings();
+    await click(buttonNamed(container, "New label"));
+    const group = q("fieldset", q('[role="group"][aria-labelledby]'));
+    expect(text(q("legend", group))).toBe("Color");
+    expect([...group.querySelectorAll("label")].map((item) => text(item))).toEqual(["Gray (default)", "Teal", "Plum", "Magenta", "Olive"]);
+    expect(group.getAttribute("aria-describedby")).not.toBeNull();
+    expect(text(group)).toContain("It never means priority, urgency, sentiment or attention.");
+    await type(q('input:not([type="radio"])', q('[role="group"][aria-labelledby]')) as HTMLInputElement, "VIP");
+    await pickColor(group, "olive");
+    await click(buttonNamed(container, "Create label"));
+    expect(announced()).toBe("Workspace label VIP (Olive) created");
+    expect(text(q("[class*=settingsTable]"))).toMatch(/Olive\s*VIP/);
+  });
+
+  it("permissions are unchanged: an Agent sees the colors but cannot change or create them; losing the permission closes the form", async () => {
+    await goSettings();
+    await click(buttonNamed(container, "Edit Praise"));
+    await pickColor(q("[class*=editingRow]"), "magenta");
+    await choose("Role", "agent");
+    expect(container.querySelector("[class*=editingRow]")).toBeNull();
+    expect(container.querySelector('input[type="radio"]')).toBeNull();
+    expect(hasButton(container, "Edit")).toBe(false);
+    expect(q("[class*=settingsTable]").querySelector('svg[data-marker="plum"]')).not.toBeNull(); // Praise unchanged, still visible
+    await goComments();
+    await click(row("cv-07"));
+    await click(buttonNamed(article("cv-07-m00"), "Label"));
+    expect(hasButton(container, "Create workspace label…")).toBe(false);
+    expect(q('[aria-label^="Labels on"]').querySelectorAll("svg[data-marker]").length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+/* ───────────── UX-06-CLOSEOUT: Settings › Labels focus, and the two surviving mutations ───────────── */
+
+describe("Settings › Labels: focus returns to what opened a form, never to the page body", () => {
+  const openSettings = async (): Promise<void> => { await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Settings")); };
+  const editButton = (name: string): HTMLButtonElement => buttonNamed(container, `Edit ${name}`);
+  const heading = (): HTMLElement => q("h1", q("[class*=settings]"));
+  const editingRow = (): HTMLElement | null => container.querySelector<HTMLElement>("[class*=editingRow]");
+
+  it("Save returns focus to the label's Edit control — the same label, under its new name", async () => {
+    await openSettings();
+    await click(editButton("Follow up Monday"));
+    expect(editingRow()?.contains(active())).toBe(true);
+    await type(q("input", editingRow() as HTMLElement) as HTMLInputElement, "Follow up later");
+    await click(buttonNamed(editingRow() as HTMLElement, "Save"));
+    expect(editingRow()).toBeNull();
+    expect(active()).toBe(editButton("Follow up later"));
+    expect(active()).not.toBe(container.ownerDocument.body);
+  });
+
+  it("Cancel and Escape close the editor and return focus to its Edit control", async () => {
+    await openSettings();
+    await click(editButton("Praise"));
+    await click(buttonNamed(editingRow() as HTMLElement, "Cancel"));
+    expect(editingRow()).toBeNull();
+    expect(active()).toBe(editButton("Praise"));
+    await click(editButton("Praise"));
+    await key(q("input", editingRow() as HTMLElement), "Escape");
+    expect(editingRow()).toBeNull();
+    expect(active()).toBe(editButton("Praise"));
+    // Escape from the color group too (focus on a radio), with the unsaved color discarded.
+    await click(editButton("Praise"));
+    await click(q('input[value="olive"]', editingRow() as HTMLElement));
+    await key(q('input[value="olive"]', editingRow() as HTMLElement), "Escape");
+    expect(active()).toBe(editButton("Praise"));
+    expect(q("[class*=settingsTable]").querySelector('svg[data-marker="olive"]')).not.toBeNull(); // Allergens only
+    expect(editButton("Praise").closest("tr")?.querySelector("svg")?.getAttribute("data-marker")).toBe("plum");
+  });
+
+  it("New label: Create, Cancel and Escape return focus to New label", async () => {
+    await openSettings();
+    const newLabel = (): HTMLButtonElement => buttonNamed(container, "New label");
+    await click(newLabel());
+    await click(buttonNamed(q('[role="group"][aria-labelledby]'), "Cancel"));
+    expect(active()).toBe(newLabel());
+    await click(newLabel());
+    await key(q('input:not([type="radio"])', q('[role="group"][aria-labelledby]')), "Escape");
+    expect(container.querySelector('[class*=settingsForm][role="group"]')).toBeNull();
+    expect(active()).toBe(newLabel());
+    await click(newLabel());
+    await type(q('input:not([type="radio"])', q('[role="group"][aria-labelledby]')) as HTMLInputElement, "Supplier inquiry");
+    await click(buttonNamed(q('[role="group"][aria-labelledby]'), "Create label"));
+    expect(active()).toBe(newLabel());
+  });
+
+  it("Delete: Cancel and Escape return to Delete; after deleting, the label's control is gone and the heading takes focus", async () => {
+    await openSettings();
+    const del = (): HTMLButtonElement => buttonNamed(container, "Delete Praise");
+    await click(del());
+    await click(buttonNamed(q('[role="alertdialog"]'), "Cancel"));
+    expect(active()).toBe(del());
+    await click(del());
+    await key(q('[role="alertdialog"]'), "Escape");
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(active()).toBe(del());
+    await click(del());
+    await click(buttonNamed(q('[role="alertdialog"]'), "Delete label"));
+    expect(hasButton(container, "Delete Praise")).toBe(false);
+    expect(active()).toBe(heading());
+    expect(heading().getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("losing the permission closes the editor without moving focus; regaining it never reopens the editor (mutation A)", async () => {
+    await openSettings();
+    await click(editButton("Praise"));
+    await click(q('input[value="magenta"]', editingRow() as HTMLElement));
+    await choose("Role", "agent");
+    expect(editingRow()).toBeNull();
+    expect(active()).not.toBe(heading()); // a role change is not a person closing the form: focus is not taken
+    await choose("Role", "manager");
+    expect(editingRow()).toBeNull();
+    expect(container.querySelector('input[type="radio"]')).toBeNull();
+    expect(editButton("Praise").closest("tr")?.querySelector("svg")?.getAttribute("data-marker")).toBe("plum"); // nothing saved
+  });
+
+  it("New label always starts gray, even right after editing a label of another color (mutation B)", async () => {
+    await openSettings();
+    await click(editButton("Praise"));
+    expect((q('input[value="plum"]', editingRow() as HTMLElement) as HTMLInputElement).checked).toBe(true);
+    await click(buttonNamed(container, "New label")); // straight from an open editor
+    const form = (): HTMLElement => q('[role="group"][aria-labelledby]');
+    expect((q('input[value="gray"]', form()) as HTMLInputElement).checked).toBe(true);
+    await click(buttonNamed(form(), "Cancel"));
+    await click(editButton("Refund request"));
+    await click(q('input[value="olive"]', editingRow() as HTMLElement));
+    await click(buttonNamed(editingRow() as HTMLElement, "Cancel"));
+    await click(buttonNamed(container, "New label")); // after an edit cancelled with another color chosen
+    expect((q('input[value="gray"]', form()) as HTMLInputElement).checked).toBe(true);
+    expect([...form().querySelectorAll<HTMLInputElement>('input[type="radio"]:checked')].map((input) => input.value)).toEqual(["gray"]);
   });
 });

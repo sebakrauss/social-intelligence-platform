@@ -1,20 +1,20 @@
 /*
- * Comments experience redesign (Step 7B-17V) — DEVELOPMENT ONLY. Built from the Wrenkind foundations only (tokens,
- * type families, radii, spacing, motion): depth is a surface step and a 1px divider, never a shadow. The rail and
- * sidebar mirror the product shell (UI-3: rail 56 · sidebar 220 · fluid content) so the proposal reads in place.
- * Step 7B-17V-VISUAL-IMPLEMENT — Direction C "Refined Brand" (Manual v1.1 Amendment 1): navigation on the application
- * canvas (bg.app); list and conversation on one rounded content sheet (bg.content), the conversation on the reading
- * surface (bg.reading); active navigation and the selected conversation in Electric Blue (selection.*); the brand's own
- * replies with a 2px brand-reply accent; text fields on border.input. Labels and assessments never use those blues.
- * 7B-17V-VISUAL-FIX: elevated surfaces (the work sheet, menus) hover with bg.elevated-hover; the active rail item
- * carries a 3px selection-indicator bar.
- * Step 7B-17V-UX: everything SIMULATED is drawn dashed (badges, markers, the controls that play the platform), so a
- * simulated outcome never looks like a product state; manual labels are square, automatic assessments are round.
+ * Comments experience redesign — DEVELOPMENT ONLY. Built from the Wrenkind foundations only (tokens, type families,
+ * radii, spacing, motion): depth is a surface step and a 1px divider, never a shadow.
+ * Direction C "Refined Brand" (Manual v1.1 Amendment 1): navigation on the application canvas (bg.app); list and
+ * conversation on one rounded content sheet (bg.content), the conversation on the reading surface (bg.reading); active
+ * navigation and the selected conversation in Electric Blue (selection.*); the brand's own replies with a 2px
+ * brand-reply accent; text fields on border.input. Labels, attention, Urgent, workflow states and statuses never use
+ * those blues. Elevated surfaces (the work sheet, menus) hover with bg.elevated-hover.
+ * Step UX-04 (UX-03.1): the two-panel workspace with a three-zone conversation header, the toolbar with two quick
+ * filters and a Filters menu, Details as an overlay drawer, label markers (a solid tag in the workspace label's color —
+ * the approved label palette of Manual v1.1 Amendment 2, gray by default), Settings › Labels. Everything SIMULATED is
+ * drawn dashed.
  */
 
 .shell {
   display: grid;
-  grid-template-columns: 56px 232px minmax(0, 1fr);
+  grid-template-columns: 64px 232px minmax(0, 1fr);
   grid-template-areas: "rail side main";
   min-height: 100dvh;
   background: var(--wk-bg-app);
@@ -26,7 +26,7 @@
   position: absolute;
   left: var(--wk-space-8);
   top: var(--wk-space-8);
-  z-index: 5;
+  z-index: 50;
   padding: var(--wk-space-8) var(--wk-space-12);
   border-radius: var(--wk-radius-sm);
   background: var(--wk-action-primary-bg);
@@ -63,19 +63,26 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 3px;
-  width: 52px;
+  width: 56px;
   min-height: 52px;
   margin: 0 auto;
-  justify-content: center;
+  padding: 0;
+  border: 0;
   border-radius: var(--wk-radius-md);
+  background: transparent;
   color: var(--wk-text-secondary);
-  text-decoration: none;
   font: 500 10px / 1 var(--wk-font-ui);
+  cursor: pointer;
 }
 
-/* The active section: a content-surface tile, its icon and label in the selection blue, and a 3px indicator bar — a
-   shape that tells it from a hovered item without relying on color alone (V-2). */
+.railItem:hover {
+  color: var(--wk-text-primary);
+  background: var(--wk-bg-content);
+}
+
+/* The active section: a content-surface tile in the selection color and a 3px indicator bar (V-2). */
 .railItem[aria-current="page"] {
   color: var(--wk-selection-fg);
   background: var(--wk-bg-content);
@@ -84,16 +91,12 @@
 .railItem[aria-current="page"]::before {
   content: "";
   position: absolute;
-  left: -2px;
+  left: -4px;
   top: 10px;
   bottom: 10px;
   width: 3px;
   border-radius: var(--wk-radius-full);
   background: var(--wk-selection-indicator);
-}
-
-.railItemQuiet {
-  color: var(--wk-text-tertiary);
 }
 
 /* ───── sidebar ───── */
@@ -107,7 +110,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--wk-space-20);
-  padding: var(--wk-space-16);
+  padding: var(--wk-space-16) var(--wk-space-12) var(--wk-space-16) var(--wk-space-16);
   background: var(--wk-bg-app);
   min-width: 0;
 }
@@ -125,10 +128,10 @@
   padding: 0 var(--wk-space-4);
 }
 
-.eyebrow,
-.sideHeading {
-  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
-  letter-spacing: 0.01em;
+.eyebrow {
+  margin: 0;
+  font: 500 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--wk-text-tertiary);
 }
@@ -140,7 +143,7 @@
 .sideNav {
   display: flex;
   flex-direction: column;
-  gap: var(--wk-space-12);
+  gap: var(--wk-space-16);
 }
 
 .sideGroup {
@@ -149,15 +152,11 @@
   gap: var(--wk-space-4);
 }
 
-.sideHeading {
-  cursor: pointer;
-  padding: var(--wk-space-4) var(--wk-space-8);
-  border-radius: var(--wk-radius-sm);
-  list-style-position: inside;
-}
-
-.sideHeading:hover {
-  color: var(--wk-text-secondary);
+.sideHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--wk-space-8);
 }
 
 .sideList {
@@ -201,29 +200,23 @@
   color: var(--wk-selection-fg);
 }
 
+/* A label shortcut that is the active Label filter: weight and the content surface, never the selection blue. */
+.sideItem[aria-pressed="true"] {
+  color: var(--wk-text-primary);
+  background: var(--wk-bg-content);
+  font-weight: 600;
+}
+
 .sideItemName {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sideAdd {
-  color: var(--wk-text-tertiary);
-}
-
 .sideEmpty {
   padding: 0 var(--wk-space-8);
-}
-
-.sideCreate {
-  display: flex;
-  flex-direction: column;
-  gap: var(--wk-space-8);
-  padding: var(--wk-space-8);
-  border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-md);
-  background: var(--wk-bg-raised);
 }
 
 .count {
@@ -232,49 +225,43 @@
   color: var(--wk-text-tertiary);
 }
 
+.countStrong {
+  color: var(--wk-text-primary);
+  font-weight: 600;
+}
+
+.futureTag {
+  margin-left: auto;
+  padding: 0 var(--wk-space-8);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-xs);
+  font: 500 11px / 20px var(--wk-font-ui);
+  color: var(--wk-text-tertiary);
+  white-space: nowrap;
+}
+
 /* ───── main ───── */
 
 .main {
   grid-area: main;
   min-width: 0;
-  padding: var(--wk-space-16) var(--wk-space-32) var(--wk-space-64);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-12);
+  height: 100dvh;
+  overflow-y: auto;
+  padding: var(--wk-space-12) var(--wk-space-16) var(--wk-space-16) var(--wk-space-4);
 }
 
 .main:focus {
   outline: none;
 }
 
-.protoBar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--wk-space-8) var(--wk-space-16);
-  margin-bottom: var(--wk-space-24);
-  padding: var(--wk-space-8) var(--wk-space-12);
-  border: 1px dashed var(--wk-border-strong);
-  border-radius: var(--wk-radius-md);
-  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
-  color: var(--wk-text-secondary);
-}
-
-.protoNote strong {
-  color: var(--wk-text-primary);
-  font-weight: 600;
-}
-
-.protoControls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--wk-space-8);
-}
-
 .listHeader {
   display: flex;
   flex-direction: column;
-  gap: var(--wk-space-4);
-  margin-bottom: var(--wk-space-16);
+  gap: var(--wk-space-8);
+  padding: 0 var(--wk-space-8);
 }
 
 .listTitleRow {
@@ -287,12 +274,19 @@
 
 .title {
   margin: 0;
-  font: 600 28px / calc(34 / 28) var(--wk-font-brand);
+  font: 600 26px / calc(32 / 26) var(--wk-font-brand);
   letter-spacing: -0.02em;
 }
 
-.listMeta {
-  font-size: 13px;
+.title:focus {
+  outline: none;
+}
+
+.titleCount {
+  margin-left: var(--wk-space-8);
+  font: 400 14px / 1 var(--wk-font-mono);
+  letter-spacing: 0;
+  color: var(--wk-text-tertiary);
 }
 
 .muted {
@@ -300,38 +294,20 @@
 }
 
 .small {
-  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  font-size: 12px;
+  line-height: calc(16 / 12);
 }
 
 .mono {
-  font: 400 12px / calc(16 / 12) var(--wk-font-mono);
-}
-
-.filterLine {
-  margin-top: var(--wk-space-8);
-}
-
-.filterChip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wk-space-4);
-  padding: 2px 2px 2px var(--wk-space-8);
-  border: 1px solid var(--wk-border-strong);
-  border-radius: var(--wk-radius-sm);
-  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  font-family: var(--wk-font-mono);
+  font-size: 12px;
 }
 
 .viewPicker {
   display: none;
-  align-items: center;
-  gap: var(--wk-space-8);
-  margin-top: var(--wk-space-8);
 }
 
-/* ───── coverage: one quiet line ───── */
-
 .coverage {
-  position: relative;
   font: 400 12px / calc(16 / 12) var(--wk-font-ui);
   color: var(--wk-text-secondary);
 }
@@ -339,7 +315,7 @@
 .coverageSummary {
   display: inline-flex;
   align-items: center;
-  gap: var(--wk-space-4);
+  gap: var(--wk-space-8);
   min-height: 32px;
   padding: 0 var(--wk-space-8);
   border-radius: var(--wk-radius-sm);
@@ -352,18 +328,17 @@
 }
 
 .coverageSummary:hover {
-  background: var(--wk-bg-hover);
-  color: var(--wk-text-primary);
+  background: var(--wk-bg-content);
 }
 
 .coverageBody {
   position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 3;
-  width: min(440px, calc(100vw - 32px));
+  right: var(--wk-space-24);
+  z-index: 20;
+  width: min(520px, calc(100vw - 32px));
+  margin-top: var(--wk-space-4);
   padding: var(--wk-space-12);
-  border: 1px solid var(--wk-border-default);
+  border: 1px solid var(--wk-border-strong);
   border-radius: var(--wk-radius-lg);
   background: var(--wk-bg-raised);
 }
@@ -372,7 +347,6 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 2px var(--wk-space-8);
-  align-items: center;
   padding: var(--wk-space-4) 0;
 }
 
@@ -386,58 +360,265 @@
   padding: 0;
 }
 
-/* ───── the list ───── */
+/* ───── the work sheet: toolbar, active filters, two panels ───── */
 
-/* The work sheet: the list (and, in two panels, the conversation beside it) on one rounded content surface. */
-.list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.sheet {
+  position: relative;
+  flex: 1;
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-lg);
+  border-radius: var(--wk-radius-xl);
   background: var(--wk-bg-content);
+  /*
+   * clip, not hidden: it rounds and clips the same, but is not a scroll container, so focusing a control or revealing a
+   * panel inside never scrolls the sheet's content up and leaves a blank band (UX-05-FINALFIX).
+   */
   overflow: clip;
-  /* An elevated surface: hovers and soft fills inside it use the elevated-hover role (tokens.ts, Amendment 1). */
-  --wk-bg-hover: var(--wk-bg-elevated-hover);
 }
 
-.empty {
-  padding: var(--wk-space-24) 0;
-  color: var(--wk-text-secondary);
-}
-
-.row {
+.toolbar {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-12);
   border-bottom: 1px solid var(--wk-border-default);
 }
 
-/* Expandable list: the open conversation is the selected one — selection blue on its header, reading surface below. */
-.rowOpen {
+.toolbar:has(+ .activeRow) {
+  border-bottom: 0;
+}
+
+.searchField {
   position: relative;
-  border-bottom-color: var(--wk-border-strong);
-  background: var(--wk-bg-reading);
+  display: flex;
+  align-items: center;
+  flex: 1 1 260px;
+  max-width: 440px;
+  color: var(--wk-text-tertiary);
 }
 
-.rowOpen::before {
-  content: "";
+.searchField > svg {
   position: absolute;
-  z-index: 3;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--wk-selection-indicator);
+  left: var(--wk-space-8);
+  pointer-events: none;
 }
 
-.rowHead {
-  background: inherit;
+.searchField > .searchInput {
+  width: 100%;
+  padding-left: 32px;
 }
 
-/* While a conversation is open its header stays in view: closing it is always one click away, however long the thread. */
-.rowHeadOpen {
+.quickFilters {
+  display: inline-flex;
+  gap: var(--wk-space-8);
+}
+
+.quick {
+  font-weight: 500;
+}
+
+/* A quick filter with a value: a heavier boundary, so it reads as applied (the chip row says what). */
+.quickSet {
+  border-color: var(--wk-text-primary);
+  background: var(--wk-bg-app);
+}
+
+.filtersButton {
+  position: relative;
+}
+
+.filtersButtonOpen {
+  border-color: var(--wk-text-primary);
+  background: var(--wk-bg-elevated-hover);
+}
+
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-text-primary);
+  color: var(--wk-bg-content);
+  font: 600 11px / 1 var(--wk-font-ui);
+}
+
+.badgePhone {
+  display: none;
+}
+
+.sortField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  margin-left: auto;
+}
+
+.activeRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  padding: 0 var(--wk-space-12) var(--wk-space-12);
+  border-bottom: 1px solid var(--wk-border-default);
+}
+
+.results {
+  margin: 0 var(--wk-space-4) 0 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.activeChips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-8);
+}
+
+.fpill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  min-height: 24px;
+  padding: 0 2px 0 var(--wk-space-8);
+  border-radius: var(--wk-radius-xs);
+  background: var(--wk-bg-app);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+}
+
+.fpillValue {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fpillRemove,
+.chipRemove {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--wk-radius-xs);
+  background: transparent;
+  color: var(--wk-text-secondary);
+  cursor: pointer;
+}
+
+.fpillRemove:hover,
+.chipRemove:hover {
+  background: var(--wk-bg-elevated-hover);
+  color: var(--wk-text-primary);
+}
+
+.narrowSummary {
+  display: none;
+  font-size: 12px;
+  color: var(--wk-text-secondary);
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--wk-interactive-link);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  cursor: pointer;
+}
+
+.linkButton:hover {
+  text-decoration: underline;
+}
+
+.split {
+  --wk-bg-hover: var(--wk-bg-elevated-hover);
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 380px minmax(0, 1fr);
+}
+
+.listColumn {
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-content);
+}
+
+.list {
+  --wk-bg-hover: var(--wk-bg-elevated-hover);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--wk-space-12);
+  padding: var(--wk-space-24) var(--wk-space-16);
+  color: var(--wk-text-secondary);
+}
+
+.showMore {
+  width: calc(100% - 24px);
+  margin: var(--wk-space-12);
+}
+
+.toast {
   position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--wk-selection-bg);
+  bottom: var(--wk-space-12);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  margin: var(--wk-space-12);
+  padding: var(--wk-space-8) var(--wk-space-4) var(--wk-space-8) var(--wk-space-12);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-action-primary-bg);
+  color: var(--wk-action-primary-fg);
+  font-size: 13px;
+  line-height: calc(18 / 13);
+}
+
+.toast > span {
+  flex: 1;
+}
+
+.toastAction,
+.toastClose {
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border: 0;
+  border-radius: var(--wk-radius-sm);
+  background: transparent;
+  color: var(--wk-action-primary-fg);
+  font: 600 13px / 1 var(--wk-font-ui);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.toastClose {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  padding: 0;
+}
+
+/* ───── a row ───── */
+
+.row {
   border-bottom: 1px solid var(--wk-border-default);
 }
 
@@ -448,16 +629,16 @@
 
 .rowButton {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px;
-  gap: 2px var(--wk-space-12);
   width: 100%;
-  padding: var(--wk-space-12) var(--wk-space-12) var(--wk-space-12) var(--wk-space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  padding: var(--wk-space-12) var(--wk-space-16) var(--wk-space-12) var(--wk-space-20);
   border: 0;
   background: transparent;
   color: inherit;
-  text-align: left;
   font: inherit;
+  text-align: left;
   cursor: pointer;
 }
 
@@ -465,8 +646,24 @@
   background: var(--wk-bg-hover);
 }
 
-.rowButton > * {
-  grid-column: 1;
+/* The selected conversation: soft selection surface and a 3px indicator — where you are, nothing more. */
+.rowSelected .rowButton {
+  background: var(--wk-selection-bg);
+}
+
+.rowSelected .rowButton::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--wk-selection-indicator);
+}
+
+.rowLeaving .rowExcerpt,
+.rowLeaving .rowAuthor {
+  color: var(--wk-text-secondary);
 }
 
 .rowTop {
@@ -476,38 +673,26 @@
   min-width: 0;
 }
 
-.rowTop > :first-child {
-  flex: none;
+.rowAuthor {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .rowAccount {
-  flex: 0 1 auto;
   min-width: 0;
-  max-width: 24ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
   color: var(--wk-text-tertiary);
-  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
 }
 
-.rowAuthor {
-  flex: 0 1 auto;
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The conversation's latest activity: only while collapsed — once open, each comment carries its own time. */
 .rowTime {
   margin-left: auto;
   flex: none;
-}
-
-.rowOpen .rowTime {
-  display: none;
+  color: var(--wk-text-tertiary);
 }
 
 .rowExcerpt {
@@ -515,384 +700,528 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  color: var(--wk-text-primary);
-}
-
-/* Open: the header shrinks to one line (who, where, when) — the thread below says the rest. */
-.rowOpen .rowExcerpt,
-.rowOpen .rowMeta {
-  display: none;
-}
-
-.rowOpen .rowButton {
-  padding-top: var(--wk-space-8);
-  padding-bottom: var(--wk-space-8);
 }
 
 .rowMeta {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--wk-space-4) var(--wk-space-12);
-  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
-  color: var(--wk-text-secondary);
+  gap: var(--wk-space-8);
+  min-height: 24px;
+  min-width: 0;
 }
 
-.rowMeta:empty {
-  display: none;
+.rowSpacer {
+  flex: 1;
 }
 
-.metaItem {
+.rowLabels {
   display: inline-flex;
   align-items: center;
-  gap: var(--wk-space-4);
+  gap: var(--wk-space-8);
+  min-width: 0;
+  overflow: hidden;
 }
 
-.chevron {
-  grid-column: 2;
-  grid-row: 1 / span 3;
-  align-self: center;
-  justify-self: center;
-  color: var(--wk-text-tertiary);
-  transition: transform var(--wk-duration-fast) var(--wk-ease-standard);
+.rowLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 11px / calc(16 / 11) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+  white-space: nowrap;
 }
 
-.chevronOpen {
-  transform: rotate(180deg);
-  color: var(--wk-text-primary);
+.rowAssignee {
+  flex: none;
 }
 
 .time {
   font: 400 12px / calc(16 / 12) var(--wk-font-mono);
-  color: var(--wk-text-tertiary);
   white-space: nowrap;
 }
 
-.tag {
-  padding: 0 var(--wk-space-4);
-  border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-xs);
-  font: 500 10px / 16px var(--wk-font-ui);
-  letter-spacing: 0.02em;
-  color: var(--wk-text-secondary);
-  white-space: nowrap;
-}
+/* ───── what a conversation's state reads as: shapes and words, never only color, never the selection blue ───── */
 
-/* ───── manual label chips: neutral, square-cornered, never colored like an assessment ───── */
-
-.chips {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--wk-space-4);
-}
-
-.chip {
+.attention,
+.escalated,
+.openState,
+.doneState {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  min-height: 20px;
+  gap: var(--wk-space-4);
+  min-height: 22px;
   padding: 0 var(--wk-space-8);
+  border-radius: var(--wk-radius-full);
+  font: 500 12px / 1 var(--wk-font-ui);
+  white-space: nowrap;
+}
+
+.attention {
   border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-xs);
   background: var(--wk-bg-app);
-  font: 500 11px / calc(16 / 11) var(--wk-font-ui);
-  color: var(--wk-text-secondary);
+  color: var(--wk-text-primary);
 }
 
-.chip:has(.chipRemove) {
-  padding-right: 0;
+.attentionWarn {
+  border-color: transparent;
+  background: var(--wk-warning-bg);
+  color: var(--wk-warning-fg);
 }
 
-.chipMore {
+.escalated,
+.openState {
+  border: 1px solid var(--wk-border-strong);
+  color: var(--wk-text-primary);
+}
+
+.doneState {
+  background: var(--wk-success-bg);
+  color: var(--wk-success-fg);
+}
+
+/* A person's Urgent flag: square (it is a fact a person recorded), ink, with the word. */
+.urgentFlag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  min-height: 22px;
+  padding: 0 var(--wk-space-8) 0 6px;
+  border: 1px solid var(--wk-text-primary);
+  border-radius: var(--wk-radius-xs);
+  font: 600 11px / 1 var(--wk-font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--wk-text-primary);
+  white-space: nowrap;
+}
+
+.quietState {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  font-size: 12px;
   color: var(--wk-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.chipRemove {
+.statusLine .quietState {
+  white-space: normal;
+}
+
+.avatar {
   display: inline-grid;
   place-items: center;
+  flex: none;
   width: 24px;
-  height: 20px;
-  border: 0;
-  border-radius: var(--wk-radius-xs);
-  background: transparent;
-  color: var(--wk-text-tertiary);
-  cursor: pointer;
+  height: 24px;
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-bg-app);
+  color: var(--wk-text-secondary);
+  font: 600 10px / 1 var(--wk-font-ui);
 }
 
-.chipRemove:hover {
-  color: var(--wk-text-primary);
-  background: var(--wk-bg-hover);
+.avatarEmpty {
+  border-style: dashed;
 }
 
-/* ───── the open conversation ───── */
-
-.focus {
-  padding: 0 var(--wk-space-16) var(--wk-space-16);
+/*
+ * A label's marker (PO-approved shape and palette, Manual v1.1 Amendment 2): one compact solid tag, the same
+ * everywhere a label appears — never a round status dot. Its fill is the workspace label's color, one approved palette
+ * identifier per rule drawn through its theme token; gray is the default. Only the tag is colored: the chip, its text
+ * and its border stay neutral, and the name is always written beside it. Color never means status, attention,
+ * urgency, sentiment, priority or Intelligence (brand-guards pins these rules).
+ */
+.marker {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 10px;
 }
 
-.focusInner {
+.marker > path {
+  fill: currentColor;
+}
+
+.marker[data-marker="gray"] {
+  color: var(--wk-label-gray);
+}
+
+.marker[data-marker="teal"] {
+  color: var(--wk-label-teal);
+}
+
+.marker[data-marker="plum"] {
+  color: var(--wk-label-plum);
+}
+
+.marker[data-marker="magenta"] {
+  color: var(--wk-label-magenta);
+}
+
+.marker[data-marker="olive"] {
+  color: var(--wk-label-olive);
+}
+
+.colorCell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  white-space: nowrap;
+}
+
+/* ───── the conversation pane: header (identity · management · navigation), body, drawer ───── */
+
+.pane {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--wk-space-12);
+  min-width: 0;
+  min-height: 0;
+  background: var(--wk-bg-reading);
 }
 
-.contextBar {
+.paneEmpty {
+  align-items: center;
+  justify-content: center;
+}
+
+.paneHead {
+  position: relative;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-12) var(--wk-space-16) var(--wk-space-12) var(--wk-space-24);
+  border-bottom: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-content);
+}
+
+.paneTop {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "identity identity nav";
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.paneTop > .backButton {
+  grid-area: back;
+  display: none;
+}
+
+.paneIdentity {
+  grid-area: identity;
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
+}
+
+.paneTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
+  margin: 0;
+  font: 600 20px / calc(26 / 20) var(--wk-font-brand);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.paneTitle > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.paneTitle:focus {
+  outline: none;
+}
+
+.convNav {
+  grid-area: nav;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.convNav > span {
+  margin-right: var(--wk-space-4);
+}
+
+.navView {
+  font-family: var(--wk-font-ui);
+}
+
+.paneContext {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--wk-space-8) var(--wk-space-16);
-  padding-top: var(--wk-space-12);
+  gap: var(--wk-space-8);
+  min-height: 32px;
 }
 
+.statusLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
+  margin: 0;
+  flex: 1;
+}
+
+.management {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  flex: none;
+  margin-left: auto;
+}
+
+.anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.mbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-sm);
+  background: transparent;
+  color: var(--wk-text-primary);
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mbtn:hover {
+  background: var(--wk-bg-elevated-hover);
+}
+
+.mbtn[aria-expanded="true"] {
+  border-color: var(--wk-text-secondary);
+  background: var(--wk-bg-elevated-hover);
+}
+
+.mbtnIcon {
+  width: 32px;
+  padding: 0;
+}
+
+/* Urgent is on: an ink boundary and the canvas fill — a pressed control, not a color code. */
+.mbtnPressed {
+  border-color: var(--wk-text-primary);
+  background: var(--wk-bg-app);
+}
+
+.assignButton {
+  padding-left: 4px;
+}
+
+/* A long assignee name stays on one line in the header; the full name is in the control's accessible name and title. */
+.assignName {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Mark done is the header's one closing action: a stronger boundary than assignment and navigation beside it. */
+.doneButton {
+  border-color: var(--wk-border-strong);
+  font-weight: 600;
+}
+
+.mgSep {
+  width: 1px;
+  height: 20px;
+  margin: 0 var(--wk-space-4);
+  background: var(--wk-border-default);
+}
+
+/* Doubled so a component's own display (a menu item is flex) never brings a phone-only control back on a desktop. */
+.phoneOnly.phoneOnly {
+  display: none;
+}
+
+/* In the header, the person's name gives way before the conversation's title does. */
+.paneTitle {
+  flex: 0 1 auto;
+}
+
+.paneIdentity > .rowAccount {
+  flex: 0 100 auto;
+}
+
+.bodyWrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.paneBody {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-16);
+  padding: var(--wk-space-16) var(--wk-space-24) var(--wk-space-32);
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  margin: 0;
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-content);
+  color: var(--wk-text-primary);
+  font-size: 13px;
+}
+
+.noticeConnection {
+  border-color: transparent;
+  background: var(--wk-warning-bg);
+  color: var(--wk-warning-fg);
+}
+
+.nudge {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  max-width: 640px;
+  margin-left: var(--wk-space-40);
+  padding: var(--wk-space-12) var(--wk-space-16);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-lg);
+  background: var(--wk-bg-content);
+}
+
+.nudgeText {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  margin: 0;
+  font-size: 13px;
+}
+
+.nudgeText > svg {
+  color: var(--wk-success-fg);
+  flex: none;
+  margin-top: 1px;
+}
+
+/* ───── source post ───── */
+
+.postCard {
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-lg);
+  background: var(--wk-bg-content);
+}
+
+.postSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-12);
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-radius: var(--wk-radius-lg);
+  cursor: pointer;
+  list-style: none;
+}
+
+.postSummary::-webkit-details-marker {
+  display: none;
+}
+
+.postSummary:hover {
+  background: var(--wk-bg-elevated-hover);
+}
+
+.tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-app);
+  color: var(--wk-text-tertiary);
+}
+
+.tileSquare {
+  width: 40px;
+  height: 40px;
+}
+
+.tilePortrait {
+  width: 32px;
+  height: 48px;
+}
+
+.tileLandscape {
+  width: 52px;
+  height: 36px;
+}
+
+.postText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.postLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
 
 .contextKind {
-  font-weight: 500;
-  color: var(--wk-text-primary);
+  font-weight: 600;
+  font-size: 13px;
 }
 
 .contextCaption {
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.convNav {
-  display: flex;
-  align-items: center;
-  gap: var(--wk-space-8);
+.postMore {
+  flex: none;
+  font: 500 12px / 1 var(--wk-font-ui);
+  color: var(--wk-interactive-link);
 }
 
-.thread {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
+.postFacts {
+  margin: 0 var(--wk-space-12) var(--wk-space-12);
 }
 
-.entry {
-  padding: var(--wk-space-12) 0;
-  border-top: 1px solid var(--wk-border-default);
-}
-
-.entry:first-child {
-  border-top: 0;
-}
-
-.entryNested {
-  margin-left: var(--wk-space-24);
-  padding-left: var(--wk-space-16);
-  border-left: 1px solid var(--wk-border-default);
-  border-top: 0;
-}
-
-.entryOwn .authorName {
-  color: var(--wk-text-primary);
-}
-
-.entryHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--wk-space-4) var(--wk-space-8);
-}
-
-.entryAuthor {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 var(--wk-space-8);
-  min-width: 0;
-  margin: 0;
-}
-
-.authorName {
-  font-weight: 600;
-}
-
-/* The Persona mark on the brand's own messages, in the brand-reply accent. */
-.ownMark {
-  display: inline-grid;
-  place-items: center;
-  align-self: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--wk-radius-full);
-  background: transparent;
-  color: var(--wk-accent-brand-reply);
-}
-
-.timeButton {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-height: 28px;
+.tag {
   padding: 0 var(--wk-space-4);
-  border: 0;
-  border-radius: var(--wk-radius-xs);
-  background: transparent;
-  color: var(--wk-text-tertiary);
-  cursor: pointer;
-}
-
-.timeButton:hover {
-  background: var(--wk-bg-hover);
-  color: var(--wk-text-primary);
-}
-
-.timeButton[aria-expanded="true"] .time {
-  color: var(--wk-text-primary);
-}
-
-/* The comment's toolbar: after its words, aligned with them; Reply and Hide first, the rest under More. */
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  margin: var(--wk-space-4) 0 0 calc(-1 * var(--wk-space-8));
-}
-
-.action {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wk-space-4);
-  min-height: 32px;
-  padding: 0 var(--wk-space-8);
-  border: 1px solid transparent;
-  border-radius: var(--wk-radius-sm);
-  background: transparent;
-  color: var(--wk-text-secondary);
-  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
-  cursor: pointer;
-}
-
-.action:hover,
-.action[aria-expanded="true"] {
-  color: var(--wk-text-primary);
-  background: var(--wk-bg-hover);
-}
-
-.action[aria-expanded="true"] {
-  border-color: var(--wk-border-default);
-}
-
-.actionIcon {
-  width: 32px;
-  justify-content: center;
-  padding: 0;
-}
-
-.entryText {
-  margin: var(--wk-space-4) 0 var(--wk-space-8);
-  max-width: 72ch;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.hiddenText {
-  display: block;
-  margin-top: var(--wk-space-4);
-  color: var(--wk-text-secondary);
-}
-
-.entryFacts {
-  margin-top: var(--wk-space-8);
-}
-
-/* ───── panels (labels, more, details, reply) — in the flow, under the comment they belong to ───── */
-
-.popover {
-  display: flex;
-  flex-direction: column;
-  gap: var(--wk-space-8);
-  width: min(360px, 100%);
-  margin-top: var(--wk-space-8);
-  padding: var(--wk-space-12);
   border: 1px solid var(--wk-border-strong);
-  border-radius: var(--wk-radius-lg);
-  background: var(--wk-bg-raised);
-  /* An elevated surface: hovers and soft fills inside it use the elevated-hover role (tokens.ts, Amendment 1). */
-  --wk-bg-hover: var(--wk-bg-elevated-hover);
+  border-radius: var(--wk-radius-xs);
+  font: 500 11px / 18px var(--wk-font-ui);
+  color: var(--wk-text-secondary);
+  white-space: nowrap;
 }
 
-.menu {
-  gap: 2px;
-  width: min(300px, 100%);
-}
-
-.menuHeading {
-  padding: var(--wk-space-8) var(--wk-space-8) var(--wk-space-4);
-  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
-  letter-spacing: 0.01em;
-  text-transform: uppercase;
-  color: var(--wk-text-tertiary);
-}
-
-.menuItem {
-  display: flex;
-  align-items: center;
-  gap: var(--wk-space-8);
-  min-height: 36px;
-  padding: 0 var(--wk-space-8);
-  border: 0;
-  border-radius: var(--wk-radius-sm);
-  background: transparent;
-  color: var(--wk-text-primary);
-  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
-  text-align: left;
-  cursor: pointer;
-}
-
-.menuItem:hover {
-  background: var(--wk-bg-hover);
-}
-
-/* Unavailable but still pressable (it explains why): a readable tertiary text with the lock, never the disabled grey. */
-.menuItemUnavailable {
-  color: var(--wk-text-tertiary);
-  cursor: not-allowed;
-}
-
-.menuItemUnavailable:hover {
-  background: transparent;
-}
-
-.menuReason {
-  padding: 0 var(--wk-space-8) var(--wk-space-4);
-}
-
-.checkList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-.check {
-  display: flex;
-  align-items: center;
-  gap: var(--wk-space-8);
-  min-height: 32px;
-  padding: 0 var(--wk-space-4);
-  border-radius: var(--wk-radius-sm);
-  cursor: pointer;
-}
-
-.check:hover {
-  background: var(--wk-bg-hover);
-}
-
-.check input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--wk-text-primary);
+.tagContext {
+  border-style: dashed;
 }
 
 .facts {
@@ -916,17 +1245,565 @@
   overflow-wrap: anywhere;
 }
 
-.replyArea {
+/* ───── thread ───── */
+
+.thread {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.entry {
+  padding: var(--wk-space-12) 0;
+  border-top: 1px solid var(--wk-border-default);
+}
+
+.entry:first-child {
+  border-top: 0;
+  padding-top: var(--wk-space-4);
+}
+
+.entryNested {
+  margin-left: var(--wk-space-24);
+  padding-left: var(--wk-space-16);
+  border-top: 0;
+  border-left: 1px solid var(--wk-border-strong);
+}
+
+.entryOwn > .entryBody {
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border: 1px solid var(--wk-border-default);
+  border-left: 2px solid var(--wk-accent-brand-reply);
+  border-radius: var(--wk-radius-xs) var(--wk-radius-lg) var(--wk-radius-lg) var(--wk-radius-xs);
+  background: var(--wk-bg-content);
+}
+
+.entrySim > .entryBody {
+  border-style: dashed;
+  border-left: 2px solid var(--wk-accent-brand-reply);
+}
+
+/* The comment Details is about: an outline, so its relation to the drawer is visible. */
+.entryAnchored > .entryBody {
+  outline: 1px solid var(--wk-text-secondary);
+  outline-offset: 6px;
+  border-radius: var(--wk-radius-md);
+}
+
+.entryBody:focus {
+  outline: none;
+}
+
+.entryHead {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
+}
+
+.entryAuthor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--wk-space-8);
+  min-width: 0;
+  margin: 0;
+}
+
+.authorName {
+  font-weight: 600;
+}
+
+.ownMark {
+  display: inline-grid;
+  place-items: center;
+  color: var(--wk-accent-brand-reply);
+}
+
+.timeButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  margin-left: auto;
+  min-height: 28px;
+  padding: 0 var(--wk-space-4);
+  border: 0;
+  border-radius: var(--wk-radius-sm);
+  background: transparent;
+  color: var(--wk-text-tertiary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.timeButton:hover {
+  background: var(--wk-bg-hover);
+  color: var(--wk-text-primary);
+}
+
+.timeButton[aria-expanded="true"] {
+  background: var(--wk-bg-elevated-hover);
+  color: var(--wk-text-primary);
+}
+
+.entryText {
+  max-width: 72ch;
+  margin: var(--wk-space-8) 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.entryRoot > .entryBody > .entryText {
+  font-size: 15px;
+  line-height: calc(23 / 15);
+}
+
+.hiddenText {
+  display: block;
+  margin-top: var(--wk-space-4);
+  color: var(--wk-text-secondary);
+}
+
+.markers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-4);
+  margin: 0 0 var(--wk-space-8);
+}
+
+.labelZone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  margin-bottom: var(--wk-space-4);
+}
+
+.chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-8);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 var(--wk-space-8);
+  border-radius: var(--wk-radius-xs);
+  background: var(--wk-bg-app);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+}
+
+.chip:has(.chipRemove) {
+  padding-right: 2px;
+}
+
+.addLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  min-height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--wk-radius-xs);
+  background: transparent;
+  color: var(--wk-text-secondary);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+  cursor: pointer;
+}
+
+.addLabel:hover,
+.addLabel[aria-expanded="true"] {
+  background: var(--wk-bg-elevated-hover);
+  color: var(--wk-text-primary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: calc(-1 * var(--wk-space-8));
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border: 0;
+  border-radius: var(--wk-radius-sm);
+  background: transparent;
+  color: var(--wk-text-secondary);
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  cursor: pointer;
+}
+
+.action:hover,
+.action[aria-expanded="true"] {
+  background: var(--wk-bg-elevated-hover);
+  color: var(--wk-text-primary);
+}
+
+.actionIcon {
+  width: 32px;
+  justify-content: center;
+  padding: 0;
+}
+
+/* Unavailable but pressable (it explains why): the tertiary text with a lock, never the disabled grey. */
+.actionUnavailable {
+  color: var(--wk-text-tertiary);
+}
+
+.glyph {
+  flex: none;
+}
+
+/* ───── panels: menus, popovers, confirmations, composers ───── */
+
+.popover {
+  --wk-bg-hover: var(--wk-bg-elevated-hover);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  max-width: 100%;
+  padding: var(--wk-space-12);
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-lg);
+  background: var(--wk-bg-raised);
+}
+
+.menu {
+  width: min(320px, 100%);
+  gap: 2px;
   margin-top: var(--wk-space-8);
+  padding: var(--wk-space-4);
+}
+
+.labelPanel {
+  width: min(340px, 100%);
+  margin-top: var(--wk-space-8);
+}
+
+/* A comment's panel scrolled into view keeps a little room around it (and, on a phone, clears the bottom navigation). */
+.labelPanel,
+.menu,
+.confirm {
+  scroll-margin: var(--wk-space-16) 0;
+}
+
+/* The row's "leaves this list" note may take a second line rather than lose its reason to an ellipsis. */
+.rowLeaving .rowMeta {
+  align-items: flex-start;
+}
+
+.rowLeaving .rowMeta > .quietState {
+  flex: 1 1 auto;
+  align-items: flex-start;
+  white-space: normal;
+  overflow: visible;
+  line-height: calc(16 / 12);
+}
+
+.rowLeaving .rowMeta > .quietState > .glyph {
+  flex: none;
+}
+
+/*
+ * A header menu is positioned against its control, so a percentage max-width would be a share of that control — a
+ * 32px button squeezed the Escalate form into a 32px column and pushed More past the window (UX-05). Its width is its
+ * own, limited only by the window; MenuPanel slides it back inside the workspace and limits its height.
+ */
+.headMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: 280px;
+  max-width: calc(100vw - 2 * var(--wk-space-16));
+  margin-top: 0;
+  overflow-y: auto;
+}
+
+.headMenuWide {
+  width: 340px;
+  padding: var(--wk-space-12);
+  gap: var(--wk-space-8);
+}
+
+/*
+ * A header menu lives inside the header's stacking context; while one is open the header rises above the phone's
+ * bottom navigation, so a bottom sheet is never drawn under it.
+ */
+.paneHead:has(.headMenu) {
+  z-index: 40;
+}
+
+.headMenu .menuItem > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.headMenu .select,
+.headMenu .textarea {
+  width: 100%;
+}
+
+.blockedNote {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  margin: 0;
+  padding: var(--wk-space-4) var(--wk-space-8);
+  font-size: 13px;
+  line-height: calc(18 / 13);
+  color: var(--wk-text-secondary);
+}
+
+.blockedNote > svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.menuHead {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.menuTitle {
+  flex: 1;
+  margin: 0;
+  font: 600 14px / calc(20 / 14) var(--wk-font-ui);
+}
+
+.menuTitle:focus {
+  outline: none;
+}
+
+.menuGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.menuHeading {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  margin: 0;
+  padding: var(--wk-space-8) var(--wk-space-8) var(--wk-space-4);
+  font: 500 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--wk-text-tertiary);
+}
+
+.menuHeadingPlatform {
+  justify-content: space-between;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  width: 100%;
+  min-height: 34px;
+  padding: 0 var(--wk-space-8);
+  border: 0;
+  border-radius: var(--wk-radius-sm);
+  background: transparent;
+  color: var(--wk-text-primary);
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover {
+  background: var(--wk-bg-hover);
+}
+
+.menuItem[aria-pressed="true"] {
+  font-weight: 600;
+}
+
+.menuItem > svg:last-child:not(:first-child) {
+  margin-left: auto;
+}
+
+.menuItemUnavailable {
+  color: var(--wk-text-tertiary);
+  cursor: default;
+}
+
+.menuItemDanger {
+  color: var(--wk-danger-fg);
+}
+
+.menuSep {
+  height: 1px;
+  margin: var(--wk-space-4);
+  background: var(--wk-border-default);
+}
+
+.menuNote,
+.menuReason {
+  margin: 0;
+  padding: 2px var(--wk-space-8) var(--wk-space-4);
+  font-size: 12px;
+  line-height: calc(16 / 12);
+  color: var(--wk-text-tertiary);
+}
+
+.checkList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: 0 var(--wk-space-4);
+  border-radius: var(--wk-radius-sm);
+  cursor: pointer;
+}
+
+.check:hover {
+  background: var(--wk-bg-hover);
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--wk-text-primary);
+}
+
+.scope {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  margin: 0;
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-app);
+  font-size: 12px;
+  line-height: calc(17 / 12);
+  color: var(--wk-text-secondary);
+}
+
+.markerPicker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.markerOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-4) var(--wk-space-12);
+}
+
+/* A color option: radio, marker and name. The chosen one is checked, outlined in ink and written heavier — never
+   told by color alone. */
+.markerOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.markerOption:has(input:checked) {
+  padding: 0 calc(var(--wk-space-8) - 1px);
+  border: 2px solid var(--wk-text-primary);
+  font-weight: 600;
+}
+
+.markerOption input {
+  margin: 0;
+  accent-color: var(--wk-text-primary);
+}
+
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--wk-radius-sm);
+  background: transparent;
+  color: var(--wk-text-secondary);
+  cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--wk-bg-elevated-hover);
+  color: var(--wk-text-primary);
+}
+
+.iconButton:disabled {
+  color: var(--wk-text-disabled);
+  cursor: default;
+}
+
+.confirm {
+  width: min(460px, 100%);
+  margin-top: var(--wk-space-8);
+}
+
+.confirmDanger {
+  border-color: var(--wk-danger-fg);
+}
+
+.confirmTitle {
+  margin: 0;
+  font: 600 14px / calc(20 / 14) var(--wk-font-ui);
+}
+
+.confirmPoints {
+  margin: 0;
+  padding-left: var(--wk-space-16);
+  color: var(--wk-text-secondary);
+  font-size: 13px;
+  line-height: calc(19 / 13);
+}
+
+.confirmPoints li + li {
+  margin-top: var(--wk-space-4);
 }
 
 .reason {
   display: inline-flex;
   align-items: flex-start;
   gap: var(--wk-space-8);
+  margin: var(--wk-space-8) 0 0;
   padding: var(--wk-space-8) var(--wk-space-12);
   border-radius: var(--wk-radius-md);
-  background: var(--wk-bg-raised);
+  background: var(--wk-bg-content);
   color: var(--wk-text-secondary);
   font: 400 13px / calc(18 / 13) var(--wk-font-ui);
 }
@@ -934,6 +1811,35 @@
 .reason strong {
   color: var(--wk-text-primary);
   font-weight: 600;
+}
+
+.reasonInline {
+  border: 1px solid var(--wk-border-default);
+}
+
+.caution,
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  margin: 0;
+  font-size: 12px;
+  line-height: calc(16 / 12);
+}
+
+.caution {
+  padding: var(--wk-space-8);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-warning-bg);
+  color: var(--wk-warning-fg);
+}
+
+.note {
+  color: var(--wk-text-secondary);
+}
+
+.replyArea {
+  margin-top: var(--wk-space-8);
 }
 
 .composer {
@@ -952,6 +1858,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--wk-space-8);
+  margin: 0;
   font-weight: 600;
 }
 
@@ -964,19 +1871,43 @@
 }
 
 .reviewText {
+  margin: 0;
   padding: var(--wk-space-8) var(--wk-space-12);
   border-left: 2px solid var(--wk-border-strong);
   white-space: pre-wrap;
 }
 
-.focusFooter {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: var(--wk-space-8);
+.privateRules {
+  margin: 0;
+  padding-left: var(--wk-space-16);
+  color: var(--wk-text-secondary);
+  font-size: 12px;
+  line-height: calc(17 / 12);
 }
 
+.privateRules li + li {
+  margin-top: 2px;
+}
 
+.privateRecord {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  max-width: 640px;
+  margin-top: var(--wk-space-8);
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-md);
+}
 
+.privateHeading {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  margin: 0;
+  font-weight: 600;
+  font-size: 13px;
+}
 
 /* ───── controls ───── */
 
@@ -996,14 +1927,8 @@
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-elevated-hover);
 }
-
-/*
- * Disabled, for every button variant including primary, simulate and danger (audit M-5): the Button primitive's own
- * disabled look (ui/primitives/button.module.css) — transparent, default border, disabled text — so a disabled primary
- * never keeps its filled background in either theme. Declared after the variants so it wins over their fill.
- */
 
 .btnSmall {
   min-height: 32px;
@@ -1022,14 +1947,48 @@
   opacity: 0.9;
 }
 
-.btnCreate {
-  justify-content: flex-start;
-  text-align: left;
+.btnQuiet {
+  border-color: transparent;
+  background: transparent;
+}
+
+.btnSim {
+  border-style: dashed;
+  border-color: var(--wk-text-primary);
+}
+
+.btnDanger {
+  border-color: var(--wk-danger-fg);
+  background: var(--wk-danger-fg);
+  /* The canvas color reads on the danger red in both themes (white on the light red, near-black on the dark one). */
+  color: var(--wk-bg-canvas);
+}
+
+.btnDanger:hover:not(:disabled) {
+  background: var(--wk-danger-fg);
+  opacity: 0.9;
+}
+
+.btnDangerText {
+  color: var(--wk-danger-fg);
+}
+
+/* Disabled, for every variant (audit M-5): the Button primitive's own disabled look. */
+.btn:disabled,
+.btn.btnPrimary:disabled,
+.btn.btnDanger:disabled,
+.btn.btnSim:disabled {
+  border-color: var(--wk-border-default);
+  background: transparent;
+  color: var(--wk-text-disabled);
+  opacity: 1;
+  cursor: not-allowed;
 }
 
 .inlineActions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--wk-space-8);
 }
 
@@ -1047,7 +2006,7 @@
 }
 
 .select {
-  min-height: 32px;
+  min-height: 36px;
 }
 
 .textarea {
@@ -1056,6 +2015,7 @@
 }
 
 .problem {
+  margin: 0;
   color: var(--wk-danger-fg);
   font: 400 12px / calc(16 / 12) var(--wk-font-ui);
 }
@@ -1065,178 +2025,360 @@
   flex-direction: column;
   gap: var(--wk-space-8);
   max-width: 560px;
-  padding: var(--wk-space-32) 0;
+  padding: var(--wk-space-32) var(--wk-space-8);
 }
 
-/* ───── tablet: no sidebar; the same views in one select ───── */
-
-@media (max-width: 1023px) {
-  .shell {
-    grid-template-columns: 56px minmax(0, 1fr);
-    grid-template-areas: "rail main";
-  }
-
-  .sidebar {
-    display: none;
-  }
-
-  .viewPicker {
-    display: flex;
-  }
-
-  .main {
-    padding: var(--wk-space-16) var(--wk-space-20) var(--wk-space-48);
-  }
+.kbd {
+  padding: 0 var(--wk-space-4);
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-xs);
+  font: 400 11px / 18px var(--wk-font-mono);
+  color: var(--wk-text-tertiary);
 }
 
-/* ───── phone: the rail becomes a bottom bar; every target is at least 44px ───── */
+/* ───── filter menu ───── */
 
-@media (max-width: 639px) {
-  .shell {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "main";
-    padding-bottom: 60px;
-  }
-
-  .rail {
-    position: fixed;
-    inset: auto 0 0 0;
-    top: auto;
-    height: 56px;
-    z-index: 4;
-    padding: 0;
-    border-right: 0;
-    border-top: 1px solid var(--wk-border-default);
-  }
-
-  .railList {
-    flex-direction: row;
-    justify-content: center;
-  }
-
-  .main {
-    padding: var(--wk-space-12) var(--wk-space-16) var(--wk-space-48);
-  }
-
-  .title {
-    font-size: 22px;
-  }
-
-  .rowButton {
-    padding-left: var(--wk-space-12);
-    padding-right: var(--wk-space-8);
-  }
-
-  .focus {
-    padding: 0 var(--wk-space-12) var(--wk-space-12);
-  }
-
-  .entryNested {
-    margin-left: var(--wk-space-8);
-    padding-left: var(--wk-space-12);
-  }
-
-  /* The toolbar keeps its order (Reply, Hide, Labels, More) and spreads over the width: four 44px targets. */
-  .actions {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
-    margin-left: 0;
-  }
-
-  .action {
-    justify-content: center;
-  }
-
-  .rowAccount {
-    display: none;
-  }
-
-  .matrixTable thead {
-    display: none;
-  }
-
-  .matrixTable,
-  .matrixTable tbody,
-  .matrixTable tr,
-  .matrixTable th,
-  .matrixTable td {
-    display: block;
-  }
-
-  .matrixTable tr {
-    padding: var(--wk-space-8) 0;
-    border-top: 1px solid var(--wk-border-default);
-  }
-
-  .matrixTable td[data-label]::before {
-    content: attr(data-label) ": ";
-    color: var(--wk-text-tertiary);
-  }
-
-
-  .confirm .inlineActions,
-  .composer .inlineActions {
-    flex-direction: column-reverse;
-    align-items: stretch;
-  }
-
-  .action,
-  .timeButton,
-  .sideItem,
-  .menuItem,
-  .btn,
-  .btnSmall,
-  .select,
-  .input,
-  .coverageSummary,
-  .postSummary,
-  .protoMoreSummary,
-  .matrixSummary,
-  .menuLink,
-  .check {
-    min-height: 44px;
-  }
-
-  .actionIcon {
-    width: 44px;
-  }
-
-  /* On a phone a chip's remove control would need a 44px target: removing happens in the Labels editor instead
-     (its checkboxes are 44px), and the chips are read-only. */
-  .chipRemove {
-    display: none;
-  }
-
-  .chip:has(.chipRemove) {
-    padding-right: var(--wk-space-8);
-  }
-
-  .convNav {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .coverageBody {
-    left: 0;
-    right: auto;
-  }
+.filterMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: var(--wk-space-12);
+  z-index: 25;
+  width: 380px;
+  max-height: min(640px, 75dvh);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .chevron {
-    transition: none;
-  }
+.filterMenu > .menuHead {
+  padding: var(--wk-space-12) var(--wk-space-8) var(--wk-space-12) var(--wk-space-16);
+  border-bottom: 1px solid var(--wk-border-default);
 }
 
-/* ───── 7B-17V-UX: simulation, actions, context ───── */
+.filterBody {
+  overflow-y: auto;
+}
 
-/* The prototype bar: a hatched edge so it never reads as product UI. */
+.filterSet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  margin: 0;
+  padding: var(--wk-space-12) var(--wk-space-16);
+  border: 0;
+  border-bottom: 1px solid var(--wk-border-default);
+}
+
+.filterSet legend {
+  float: left;
+  width: 100%;
+  margin-bottom: var(--wk-space-4);
+  font: 500 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--wk-text-tertiary);
+}
+
+.filterSet > .select {
+  width: 100%;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-4);
+}
+
+.segment {
+  position: relative;
+  display: inline-flex;
+}
+
+.segment input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.segment span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--wk-space-12);
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-sm);
+  font: 500 12px / 1 var(--wk-font-ui);
+}
+
+.segment input:checked + span {
+  border-color: var(--wk-text-primary);
+  background: var(--wk-text-primary);
+  color: var(--wk-bg-content);
+}
+
+.segment input:focus-visible + span {
+  outline: var(--wk-focus-width) solid var(--wk-interactive-focus);
+  outline-offset: var(--wk-focus-offset);
+}
+
+.menuFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-12) var(--wk-space-16);
+}
+
+/* ───── Details drawer: over the reading area, never a third column ───── */
+
+.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 100%);
+  border-left: 1px solid var(--wk-border-strong);
+  background: var(--wk-bg-content);
+  overflow-y: auto;
+}
+
+.drawerHead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-12) var(--wk-space-12) var(--wk-space-12) var(--wk-space-20);
+  border-bottom: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-content);
+}
+
+.drawerHead > .drawerBack {
+  display: none;
+}
+
+.drawerTitle {
+  flex: 1;
+  margin: 0;
+  font: 600 16px / calc(22 / 16) var(--wk-font-brand);
+}
+
+.drawerTitle:focus {
+  outline: none;
+}
+
+.drawerAnchor {
+  padding: var(--wk-space-12) var(--wk-space-20);
+  border-bottom: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-reading);
+}
+
+.drawerAnchor > p {
+  margin: 0;
+}
+
+.drawerExcerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.drawerBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-20);
+  padding: var(--wk-space-16) var(--wk-space-20) var(--wk-space-24);
+}
+
+.drawerSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+}
+
+.drawerSection .facts {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  line-height: calc(19 / 13);
+}
+
+.activityList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  font-size: 13px;
+}
+
+.activityList li {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: var(--wk-space-8);
+}
+
+.activityTime {
+  color: var(--wk-text-tertiary);
+}
+
+.authorList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  font-size: 13px;
+}
+
+.capabilityDisclosure {
+  padding-top: var(--wk-space-12);
+  border-top: 1px solid var(--wk-border-default);
+}
+
+.disclosureSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  color: var(--wk-text-secondary);
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  cursor: pointer;
+  list-style: none;
+}
+
+.disclosureSummary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosureSummary > :last-child {
+  margin-left: auto;
+}
+
+.capabilityList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  font-size: 13px;
+}
+
+/* ───── Settings ───── */
+
+.settings {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-16);
+  padding: var(--wk-space-24) var(--wk-space-32);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-xl);
+  background: var(--wk-bg-content);
+}
+
+.settingsHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--wk-space-16);
+}
+
+.settingsLead {
+  max-width: 640px;
+  margin: var(--wk-space-4) 0 0;
+}
+
+.settingsForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  max-width: 560px;
+  padding: var(--wk-space-16);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-lg);
+  background: var(--wk-bg-reading);
+}
+
+.settingsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.settingsTable th {
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-bottom: 1px solid var(--wk-border-default);
+  font: 500 11px / calc(16 / 11) var(--wk-font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--wk-text-tertiary);
+}
+
+.settingsTable td {
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-bottom: 1px solid var(--wk-border-default);
+  vertical-align: middle;
+}
+
+.editingRow td {
+  background: var(--wk-bg-reading);
+  vertical-align: top;
+}
+
+.editingRow .input {
+  width: min(320px, 100%);
+}
+
+.labelName {
+  font-weight: 500;
+}
+
+.rowActions {
+  justify-content: flex-end;
+}
+
+.dialogLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: var(--wk-space-16);
+  background: color-mix(in srgb, var(--wk-text-primary) 28%, transparent);
+}
+
+.dialog {
+  width: min(440px, 100%);
+  margin: 0;
+  padding: var(--wk-space-20);
+}
+
+/* ───── prototype controls (not product UI): a hatched edge so they never read as the product ───── */
+
 .protoBar {
   position: relative;
+  display: flex;
   flex-direction: column;
-  align-items: stretch;
-  padding-left: calc(var(--wk-space-12) + 8px);
+  gap: var(--wk-space-8);
+  margin: 0 var(--wk-space-8);
+  padding: var(--wk-space-8) var(--wk-space-12) var(--wk-space-8) calc(var(--wk-space-12) + 8px);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-md);
+  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
+  color: var(--wk-text-secondary);
   overflow: hidden;
+  flex: none;
 }
 
 .protoBar::before {
@@ -1252,6 +2394,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--wk-space-4) var(--wk-space-8);
+  margin: 0;
 }
 
 .protoFlag {
@@ -1262,6 +2405,19 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--wk-text-primary);
+}
+
+.protoControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.protoField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
 }
 
 .protoMore {
@@ -1327,10 +2483,6 @@
   color: var(--wk-text-tertiary);
 }
 
-.matrixTable tbody th {
-  font-weight: 600;
-}
-
 .docState {
   display: block;
   font-weight: 500;
@@ -1338,10 +2490,6 @@
 
 .docNote {
   display: block;
-}
-
-.matrixTable tr[data-meta="not_documented"] .docState {
-  color: var(--wk-text-secondary);
 }
 
 .matrixNotes {
@@ -1385,16 +2533,7 @@
   color: var(--wk-text-tertiary);
 }
 
-
-.markers {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--wk-space-4);
-  margin: 0 0 var(--wk-space-8);
-}
-
-.opLine,
-.privateRecord {
+.opLine {
   display: flex;
   flex-direction: column;
   gap: var(--wk-space-8);
@@ -1444,567 +2583,389 @@
 }
 
 .simButton:hover {
-  background: var(--wk-bg-hover);
+  background: var(--wk-bg-elevated-hover);
 }
 
-.btnSim {
-  border-style: dashed;
-  border-color: var(--wk-text-primary);
-}
-
-.btnDanger {
-  border-color: var(--wk-danger-fg);
-  background: var(--wk-danger-fg);
-  /* The canvas color reads on the danger red in both themes (white on the light red, near-black on the dark one). */
-  color: var(--wk-bg-canvas);
-}
-
-.btnDanger:hover:not(:disabled) {
-  background: var(--wk-danger-fg);
-  opacity: 0.9;
-}
-
-/* Thread: the first comment leads; replies sit on one indented rule; the brand's own messages on a surface step. */
-.entryRoot > .entryBody > .entryText {
-  font-size: 15px;
-  line-height: calc(23 / 15);
-}
-
-/* The brand's own messages: a content surface on the reading surface, with the 2px brand-reply accent — the card
-   itself stays neutral. */
-.entryOwn > .entryBody {
-  padding: var(--wk-space-8) var(--wk-space-12);
-  border: 1px solid var(--wk-border-default);
-  border-left: 2px solid var(--wk-accent-brand-reply);
-  border-radius: var(--wk-radius-xs) var(--wk-radius-md) var(--wk-radius-md) var(--wk-radius-xs);
-  background: var(--wk-bg-content);
-}
-
-.entryOwn > .entryBody > .actions {
-  margin-left: calc(-1 * var(--wk-space-8));
-}
-
-.entrySim > .entryBody {
-  border-top: 1px dashed var(--wk-border-strong);
-  border-right: 1px dashed var(--wk-border-strong);
-  border-bottom: 1px dashed var(--wk-border-strong);
-}
-
-.actionUnavailable {
-  color: var(--wk-text-tertiary);
-}
-
-.actionUnavailable:hover {
-  color: var(--wk-text-secondary);
-}
-
-.reasonInline {
-  margin-top: var(--wk-space-8);
-}
-
-/* Automatic assessment (synthetic): round, quiet — never the square chip of a person's label. */
-.assessment {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wk-space-4);
-  min-height: 22px;
-  padding: 0 var(--wk-space-8) 0 var(--wk-space-4);
-  border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-full);
-  background: var(--wk-bg-content);
-  font: 500 11px / calc(16 / 11) var(--wk-font-ui);
-  color: var(--wk-text-secondary);
-}
-
-.assessmentProtected {
-  border-color: var(--wk-border-strong);
-  color: var(--wk-text-primary);
-}
-
-.assessmentNote {
-  font-weight: 400;
-}
-
-.rowChips {
-  align-items: center;
-  color: var(--wk-text-tertiary);
-}
-
-.chip > svg {
-  flex: none;
-  color: var(--wk-text-tertiary);
-}
-
-/* The post: one line, its card on demand. */
-.postCard {
-  flex: 1 1 320px;
-  min-width: 0;
-}
-
-.postSummary {
-  display: flex;
-  align-items: center;
-  gap: var(--wk-space-8);
-  min-height: 32px;
-  padding: 0 var(--wk-space-8);
-  margin-left: calc(-1 * var(--wk-space-8));
-  border-radius: var(--wk-radius-sm);
-  list-style: none;
-  cursor: pointer;
-  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
-  color: var(--wk-text-secondary);
-}
-
-.postSummary::-webkit-details-marker {
-  display: none;
-}
-
-.postSummary:hover {
-  background: var(--wk-bg-hover);
-}
-
-.postMore {
-  flex: none;
-  margin-left: auto;
-  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
-  color: var(--wk-interactive-link);
-}
-
-.postCard[open] .postMore {
-  color: var(--wk-text-primary);
-}
-
-.postFacts {
-  margin-top: var(--wk-space-8);
-  max-width: 640px;
-}
-
-.notice {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--wk-space-8);
-  padding: var(--wk-space-8) var(--wk-space-12);
-  border-radius: var(--wk-radius-md);
-  background: var(--wk-bg-raised);
-  color: var(--wk-text-secondary);
-  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
-}
-
-.noticeConnection {
-  background: var(--wk-warning-bg);
-  color: var(--wk-warning-fg);
-}
-
-.labelSummary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--wk-space-4) var(--wk-space-8);
-  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
-}
-
-.labelSummary > svg {
-  color: var(--wk-text-tertiary);
-}
-
-.labelSummaryItem {
-  color: var(--wk-text-primary);
-}
-
-/* Menus and confirmation */
-.menuHeadingPlatform {
-  display: flex;
-  align-items: center;
-  gap: var(--wk-space-8);
-}
-
-.menuItemDanger {
-  color: var(--wk-danger-fg);
-}
-
-.menuLink {
-  min-height: 32px;
-  margin-top: var(--wk-space-4);
-  padding: 0 var(--wk-space-8);
-  border: 0;
-  border-top: 1px solid var(--wk-border-default);
-  background: transparent;
-  color: var(--wk-interactive-link);
-  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
-  text-align: left;
-  cursor: pointer;
-}
-
-.confirm {
-  width: min(440px, 100%);
-}
-
-.confirmDanger {
-  border-color: var(--wk-danger-fg);
-}
-
-.confirmTitle {
-  font-weight: 600;
-}
-
-.confirmPoints,
-.privateRules {
-  margin: 0;
-  padding-left: var(--wk-space-16);
-  color: var(--wk-text-secondary);
-  font: 400 13px / calc(18 / 13) var(--wk-font-ui);
-}
-
-.confirmPoints li + li,
-.privateRules li + li {
-  margin-top: var(--wk-space-4);
-}
-
-.caution,
-.note {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--wk-space-8);
-  font: 400 12px / calc(16 / 12) var(--wk-font-ui);
-  color: var(--wk-text-secondary);
-}
-
-.caution {
-  padding: var(--wk-space-8);
-  border-left: 2px solid var(--wk-border-strong);
-  border-radius: var(--wk-radius-sm);
-  background: var(--wk-bg-raised);
-  color: var(--wk-text-primary);
-}
-
-.privateComposer {
-  border-style: solid;
-  background: var(--wk-bg-content);
-}
-
-.privateHeading {
-  display: flex;
-  align-items: center;
-  gap: var(--wk-space-8);
-  font-weight: 600;
-}
-
-.privateRecord {
-  max-width: 640px;
-  padding: var(--wk-space-12);
-  border: 1px dashed var(--wk-border-strong);
-  border-radius: var(--wk-radius-lg);
-}
+/* ───── tablet (< 1024 px): no sidebar, one panel at a time, 44px targets ───── */
 
 @media (max-width: 1023px) {
-  .rowAccount {
-    max-width: 16ch;
-  }
-}
-
-/* Icons beside wrapping text keep their size. */
-.notice > svg,
-.caution > svg,
-.note > svg,
-.reason > svg,
-.privateHeading > svg,
-.composerHeading > svg {
-  flex: none;
-}
-
-/* Phone: the controls defined in this section get the same 44px targets as the rest of the page. */
-@media (max-width: 639px) {
-  .simButton,
-  .menuLink,
-  .postSummary {
-    min-height: 44px;
+  .shell {
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-areas: "rail main";
   }
 
-  .convNav {
-    justify-content: flex-start;
+  .sidebar {
+    display: none;
   }
 
-  .convNav > :first-child {
-    margin-right: auto;
-  }
-
-  /* The capability table becomes one card per row. */
-  .matrixCaption {
+  .viewPicker {
     display: block;
   }
 
-  .matrixTable th,
-  .matrixTable td {
-    padding: 2px 0;
-    border-top: 0;
+  .main {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+    padding: var(--wk-space-12);
   }
-}
 
-/* ───── 7B-17V-UX2: simplification and the two-panel alternative ───── */
+  .sheet {
+    min-height: 0;
+    overflow: visible;
+  }
 
-.glyph {
-  flex: none;
-}
-
-.assessLine {
-  display: block;
-}
-
-/* A person's labels on a comment: quiet, small, square — present only where a label exists. */
-.entryBody > .chips .chip {
-  min-height: 18px;
-  padding: 0 6px;
-  border-color: transparent;
-  background: var(--wk-bg-app);
-  font-size: 11px;
-}
-
-.entryBody > .chips {
-  margin-bottom: var(--wk-space-4);
-}
-
-.btnQuiet {
-  border-color: transparent;
-  background: transparent;
-  color: var(--wk-text-secondary);
-}
-
-.btnQuiet:hover:not(:disabled) {
-  color: var(--wk-text-primary);
-}
-
-.menuCount {
-  margin-left: auto;
-  font: 400 11px / 1 var(--wk-font-mono);
-  color: var(--wk-text-tertiary);
-}
-
-/* The source post: a tile in the post's shape (no media), the kind, the source said plainly, the first words — on its
-   own content card on the reading surface. */
-.postSummary {
-  align-items: center;
-  min-height: 56px;
-  padding: var(--wk-space-8) var(--wk-space-12);
-  margin-left: 0;
-  border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-lg);
-  background: var(--wk-bg-content);
-}
-
-.tile {
-  flex: none;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-sm);
-  background: var(--wk-bg-app);
-  color: var(--wk-text-tertiary);
-}
-
-.tileSquare {
-  width: 44px;
-  height: 44px;
-}
-
-.tilePortrait {
-  width: 34px;
-  height: 52px;
-}
-
-.tileLandscape {
-  width: 60px;
-  height: 36px;
-}
-
-.postText {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.postLine {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--wk-space-4) var(--wk-space-8);
-}
-
-.tagAd {
-  border-color: var(--wk-text-secondary);
-  color: var(--wk-text-primary);
-}
-
-.tagContext {
-  border-style: dashed;
-}
-
-/* ───── two panels ───── */
-
-.split {
-  display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  align-items: start;
-  border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-lg);
-  background: var(--wk-bg-content);
-  overflow: clip;
-  /* An elevated surface: hovers and soft fills inside it use the elevated-hover role (tokens.ts, Amendment 1). */
-  --wk-bg-hover: var(--wk-bg-elevated-hover);
-}
-
-.splitList {
-  position: sticky;
-  top: 0;
-  max-height: 100dvh;
-  overflow-y: auto;
-  border: 0;
-  border-right: 1px solid var(--wk-border-default);
-  border-radius: 0;
-}
-
-/* In the narrow list the account is said by the platform mark and in the panel's title; no chevron (nothing expands). */
-.splitList .rowAccount {
-  display: none;
-}
-
-.splitList .rowButton {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-/* The selected conversation: soft selection blue and a full-height 3px selection indicator. */
-.rowSelected .rowButton {
-  background: var(--wk-selection-bg);
-}
-
-.rowSelected .rowButton::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--wk-selection-indicator);
-}
-
-.pane {
-  position: sticky;
-  top: 0;
-  align-self: stretch;
-  max-height: 100dvh;
-  overflow-y: auto;
-  min-width: 0;
-  --pane-pad: var(--wk-space-24);
-  padding: 0 var(--pane-pad) var(--pane-pad);
-  background: var(--wk-bg-reading);
-}
-
-.paneEmpty {
-  display: grid;
-  place-items: center;
-  min-height: 320px;
-}
-
-.paneHead {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: var(--wk-space-8);
-  margin: 0 calc(-1 * var(--pane-pad)) var(--wk-space-12);
-  padding: var(--wk-space-12) var(--pane-pad);
-  border-bottom: 1px solid var(--wk-border-default);
-  background: var(--wk-bg-content);
-}
-
-.paneTitle {
-  display: flex;
-  align-items: center;
-  gap: var(--wk-space-8);
-  min-width: 0;
-  margin: 0;
-  font: 600 20px / calc(26 / 20) var(--wk-font-brand);
-  letter-spacing: -0.01em;
-}
-
-.backButton {
-  display: none;
-}
-
-@media (max-width: 1023px) {
   .split {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .splitList,
-  .pane {
-    position: static;
-    max-height: none;
+  .listColumn {
+    border-right: 0;
     overflow: visible;
   }
 
-  .splitList {
-    border-right: 0;
-  }
-
-  .pane {
-    --pane-pad: var(--wk-space-12);
-  }
-
-  .splitActive .splitList,
   .split:not(.splitActive) .pane {
     display: none;
   }
 
-  .backButton {
+  .splitActive .listColumn {
+    display: none;
+  }
+
+  .paneTop {
+    grid-template-areas:
+      "back . nav"
+      "identity identity identity";
+  }
+
+  .paneTop > .backButton {
     display: inline-flex;
+    justify-self: start;
+  }
+
+  .bodyWrap {
+    display: block;
+  }
+
+  .paneBody {
+    overflow: visible;
+  }
+
+  .drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    width: 100%;
+    border-left: 0;
+  }
+
+  .drawerHead > .drawerBack {
+    display: inline-flex;
+  }
+
+  .kbd {
+    display: none;
+  }
+
+  /* The title stays in the drawer, visually hidden: it is where focus lands when Details opens (UX-05 M-1). */
+  .drawerTitle {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /*
+   * Details covers the whole window here, so nothing under it may take focus, be read or be clicked: the page behind is
+   * hidden while it is open (visibility also removes it from keyboard order and assistive technology).
+   */
+  .drawerOpen {
+    visibility: hidden;
+  }
+
+  .drawerOpen .drawer {
+    visibility: visible;
+  }
+
+  .filterMenu {
+    left: var(--wk-space-12);
+    right: var(--wk-space-12);
+    width: auto;
+  }
+
+  .btn,
+  .mbtn,
+  .action,
+  .markerOption,
+  .menuItem,
+  .sideItem,
+  .select,
+  .input,
+  .check,
+  .addLabel,
+  .timeButton,
+  .railItem,
+  .toastAction,
+  .simButton,
+  .segment span,
+  .linkButton {
+    min-height: 44px;
+  }
+
+  .mbtnIcon,
+  .iconButton,
+  .actionIcon,
+  .toastClose {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  /* Removing a label or a filter is a 44px target here too; the chip keeps its size around it. */
+  .chipRemove,
+  .fpillRemove {
+    width: 44px;
+    height: 44px;
+    margin: -6px -8px -6px -6px;
+  }
+
+  .chip,
+  .fpill {
+    min-height: 32px;
+  }
+
+  .coverageLong {
+    display: none;
+  }
+
+  /* The view select names the view here; the heading stays for assistive technology and focus. */
+  .listHeader .title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 
+/* ───── phone (< 640 px): the rail is a bottom bar; management and filters become sheets ───── */
+
 @media (max-width: 639px) {
-  .tileLandscape {
-    width: 52px;
-    height: 32px;
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "main" "rail";
+  }
+
+  .rail {
+    position: sticky;
+    bottom: 0;
+    top: auto;
+    z-index: 15;
+    height: auto;
+    padding: 0;
+    border-top: 1px solid var(--wk-border-default);
+  }
+
+  .railList {
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 0;
+  }
+
+  .railList > li {
+    flex: 1;
+  }
+
+  .railItem {
+    width: 100%;
+    border-radius: 0;
+  }
+
+  .main {
+    padding: var(--wk-space-8) 0 0;
+    gap: var(--wk-space-8);
+  }
+
+  .listHeader,
+  .protoBar {
+    margin: 0 var(--wk-space-8);
+  }
+
+  .protoNote > span:last-child {
+    display: none;
+  }
+
+  .sheet {
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  .quickFilters,
+  .sortField label {
+    display: none;
+  }
+
+  .searchField {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .badgeDesktop {
+    display: none;
+  }
+
+  .badgePhone {
+    display: inline-grid;
+  }
+
+  .activeChips {
+    display: none;
+  }
+
+  .narrowSummary {
+    display: inline;
+  }
+
+  .filterMenu {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    width: 100%;
+    max-height: none;
+    border-radius: 0;
+    border: 0;
+  }
+
+  .filterMenu > .filterBody {
+    flex: 1;
+  }
+
+  .phoneOnly.phoneOnly {
+    display: flex;
+  }
+
+  .desktopOnly.desktopOnly {
+    display: none;
+  }
+
+  .assignName,
+  .assignButton > .glyph {
+    display: none;
+  }
+
+  .assignButton {
+    width: 44px;
+    padding: 0;
+  }
+
+  .labelPanel,
+  .menu,
+  .confirm {
+    scroll-margin-bottom: 72px;
+  }
+
+  .headMenu {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 35;
+    width: 100%;
+    max-width: none;
+    max-height: 80dvh;
+    overflow-y: auto;
+    border-radius: var(--wk-radius-xl) var(--wk-radius-xl) 0 0;
+    padding: var(--wk-space-12) var(--wk-space-12) var(--wk-space-24);
+  }
+
+  .paneHead {
+    padding: var(--wk-space-8) var(--wk-space-12);
+  }
+
+  .paneTitle {
+    font-size: 18px;
+  }
+
+  .paneIdentity .rowAccount,
+  .navView,
+  .rowAccount,
+  .descriptor,
+  .replyingTo {
+    display: none;
+  }
+
+  .paneBody {
+    padding: var(--wk-space-12);
+  }
+
+  .entryNested {
+    margin-left: var(--wk-space-8);
+    padding-left: var(--wk-space-12);
+  }
+
+  .actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
+    margin-left: 0;
+  }
+
+  .action {
+    justify-content: center;
+  }
+
+  .actionPrivate > span {
+    display: none;
+  }
+
+  .nudge {
+    margin-left: 0;
+  }
+
+  .rowButton {
+    padding: var(--wk-space-12) var(--wk-space-12) var(--wk-space-12) var(--wk-space-16);
   }
 
   .postMore {
     display: none;
   }
-}
 
-/* A prototype control and its name stay on one line when the bar wraps. */
-.protoField {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wk-space-8);
-  white-space: nowrap;
-}
+  .settings {
+    padding: var(--wk-space-16);
+    border-radius: 0;
+  }
 
-.assessment {
-  padding-left: var(--wk-space-8);
-}
+  .matrixTable thead {
+    display: none;
+  }
 
-.btn:disabled,
-.btn.btnPrimary:disabled,
-.btn.btnSim:disabled,
-.btn.btnDanger:disabled {
-  color: var(--wk-text-disabled);
-  background: transparent;
-  border-color: var(--wk-border-default);
-  border-style: solid;
-  opacity: 1;
-  cursor: not-allowed;
-}
+  .matrixTable tr,
+  .matrixTable td,
+  .matrixTable th {
+    display: block;
+  }
 
-/* Phone: the rail is a bottom bar, so the active indicator runs along the item's top edge (V-2). */
-@media (max-width: 639px) {
+  .matrixTable td[data-label]::before {
+    content: attr(data-label) " · ";
+    color: var(--wk-text-tertiary);
+  }
+
   .railItem[aria-current="page"]::before {
-    left: 10px;
-    right: 10px;
+    left: 30%;
+    right: 30%;
     top: 0;
     bottom: auto;
     width: auto;
     height: 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skip {
+    transition: none;
   }
 }

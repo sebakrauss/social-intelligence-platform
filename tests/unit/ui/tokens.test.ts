@@ -6,6 +6,9 @@
  * Amendment 1 (Direction C, PO-approved 2026-11-17): the new roles reuse existing values only; blue extends to
  * selection.* and accent.brand-reply and nowhere else; status colors still never use blue; a text field's border
  * stands out (3:1) from every surface it can sit on.
+ * Amendment 2 (label markers, PO-approved 2026-11-18): exactly the five approved values per theme (gray the default,
+ * Neutral 500 in both; no brown), each at least 3:1 on every surface a marker is drawn on, distinct from each other and
+ * from every status, selection and text color.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -16,6 +19,8 @@ import {
   DURATION_MS,
   EASING,
   FONT_FAMILY,
+  LABEL_MARKER_SURFACES,
+  LABEL_MARKER_TOKENS,
   NEUTRAL,
   RADIUS,
   SEMANTIC_TOKENS,
@@ -141,8 +146,9 @@ describe("blue stays where the manual puts it (as amended by Amendment 1)", () =
 describe("Amendment 1 (Direction C): new roles reuse approved values only", () => {
   const NEW_ROLES = ["bg.app", "bg.content", "bg.reading", "bg.elevated-hover", "border.input", "selection.bg", "selection.fg", "selection.indicator", "accent.brand-reply"] as const;
   const isNew = (token: string): boolean => (NEW_ROLES as readonly string[]).includes(token);
-  // What was approved before the amendment: the two scales and the semantic values of the manual's §3 table.
-  const approvedBefore = new Set<string>([...Object.values(NEUTRAL), ...Object.values(BLUE), ...THEME_NAMES.flatMap((theme) => SEMANTIC_TOKENS.filter((token) => !isNew(token)).map((token) => THEMES[theme][token]))]);
+  // What was approved before the amendment: the two scales and the semantic values of the manual's §3 table (not the
+  // later Amendment 2 label values, which no Amendment 1 role may borrow).
+  const approvedBefore = new Set<string>([...Object.values(NEUTRAL), ...Object.values(BLUE), ...THEME_NAMES.flatMap((theme) => SEMANTIC_TOKENS.filter((token) => !isNew(token) && !token.startsWith("label.")).map((token) => THEMES[theme][token]))]);
 
   it("every new role is a neutral or blue scale step or an existing semantic value", () => {
     expect(SEMANTIC_TOKENS.filter(isNew)).toEqual([...NEW_ROLES]);
@@ -199,5 +205,54 @@ describe("Amendment 1 (Direction C): new roles reuse approved values only", () =
     }
     // The old boundary did not: the reason for the amendment.
     for (const theme of THEME_NAMES) expect(contrastRatio(THEMES[theme]["border.strong"], THEMES[theme]["bg.canvas"])).toBeLessThan(3);
+  });
+});
+
+describe("Amendment 2 (label markers, PO-approved 2026-11-18): an organizational palette for the label marker only", () => {
+  const APPROVED = {
+    light: { "label.gray": "#7A7A7A", "label.teal": "#0F7A7A", "label.plum": "#9A3FA8", "label.magenta": "#B53A6E", "label.olive": "#5F6E1E" },
+    dark: { "label.gray": "#7A7A7A", "label.teal": "#3DB3B0", "label.plum": "#CF8ADB", "label.magenta": "#E8799F", "label.olive": "#A9B65C" },
+  } as const;
+
+  it("carries exactly the five approved values per theme, gray first and the default (Neutral 500 in both themes); no brown", () => {
+    expect([...LABEL_MARKER_TOKENS]).toEqual(["label.gray", "label.teal", "label.plum", "label.magenta", "label.olive"]);
+    expect(SEMANTIC_TOKENS.filter((token) => token.startsWith("label."))).toEqual([...LABEL_MARKER_TOKENS]);
+    for (const theme of THEME_NAMES) for (const token of LABEL_MARKER_TOKENS) expect(THEMES[theme][token], `${theme} ${token}`).toBe(APPROVED[theme][token]);
+    for (const theme of THEME_NAMES) expect(THEMES[theme]["label.gray"]).toBe(NEUTRAL[500]);
+    expect(SEMANTIC_TOKENS.join(" ")).not.toMatch(/brown/);
+    expect(CSS).not.toMatch(/--wk-label-brown/);
+  });
+
+  it("every marker is at least 3:1 (WCAG 1.4.11) on every surface it is drawn on, in both themes", () => {
+    expect([...LABEL_MARKER_SURFACES]).toEqual(["bg.app", "bg.content", "bg.reading", "bg.raised", "selection.bg", "bg.elevated-hover"]);
+    for (const theme of THEME_NAMES)
+      for (const token of LABEL_MARKER_TOKENS)
+        for (const surface of LABEL_MARKER_SURFACES) {
+          expect(CONTRAST_REQUIREMENTS.some((r) => r.foreground === token && r.background === surface && r.minimum === 3), `${token} on ${surface} required`).toBe(true);
+          expect(contrastRatio(THEMES[theme][token], THEMES[theme][surface]), `${theme} ${token} on ${surface}`).toBeGreaterThanOrEqual(3);
+        }
+  });
+
+  it("a colored marker needs its own value per theme: one value for both would fall under 3:1 in one of them", () => {
+    for (const token of LABEL_MARKER_TOKENS.filter((item) => item !== "label.gray")) {
+      const lightInDark = Math.min(...LABEL_MARKER_SURFACES.map((surface) => contrastRatio(THEMES.light[token], THEMES.dark[surface])));
+      const darkInLight = Math.min(...LABEL_MARKER_SURFACES.map((surface) => contrastRatio(THEMES.dark[token], THEMES.light[surface])));
+      expect(Math.min(lightInDark, darkInLight), token).toBeLessThan(3);
+    }
+  });
+
+  it("organizational, not meaning: no label value is a blue step, a status, selection, link or text value; all five differ", () => {
+    const blues = new Set<string>(Object.values(BLUE));
+    for (const theme of THEME_NAMES) {
+      const others = new Set(SEMANTIC_TOKENS.filter((token) => !token.startsWith("label.") && token !== "border.input").map((token) => THEMES[theme][token]));
+      const values = LABEL_MARKER_TOKENS.map((token) => THEMES[theme][token]);
+      expect(new Set(values).size, theme).toBe(values.length);
+      for (const token of LABEL_MARKER_TOKENS) {
+        expect(blues.has(THEMES[theme][token]), `${theme} ${token}`).toBe(false);
+        expect(others.has(THEMES[theme][token]), `${theme} ${token} reuses another role's value`).toBe(false);
+      }
+      // Gray is Neutral 500 — the input border's value too (a neutral, never a meaning); never text.tertiary.
+      expect(THEMES[theme]["label.gray"]).not.toBe(THEMES[theme]["text.tertiary"]);
+    }
   });
 });

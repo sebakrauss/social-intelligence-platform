@@ -24,6 +24,13 @@
  * - blue extended to active navigation and selection (selection.*) and to the brand's own replies
  *   (accent.brand-reply). Selection never means urgency, an AI classification or a moderation priority, and manual
  *   labels never use these tokens.
+ *
+ * Amendment 2 ("Label markers", approved by the Product Owner 2026-11-18; record:
+ * design/brand/MANUAL-DE-MARCA-v1.1-AMENDMENT-2.md). A fifth family beside the neutrals, the blue and the three states:
+ * label.gray (the default; Neutral 500 in both themes), label.teal, label.plum, label.magenta and label.olive. They are
+ * ORGANIZATIONAL only — the fill of the manual-label marker (the solid tag), always beside the label's name — and never
+ * mean status, attention, urgency, sentiment, priority or Intelligence. Never a chip background, text or border;
+ * pinned to the marker by brand-guards. Each is at least 3:1 (WCAG 1.4.11) on every surface a marker is drawn on.
  */
 
 export const NEUTRAL = {
@@ -94,6 +101,12 @@ export const SEMANTIC_TOKENS = [
   "selection.fg",
   "selection.indicator",
   "accent.brand-reply",
+  // Amendment 2 (label markers).
+  "label.gray",
+  "label.teal",
+  "label.plum",
+  "label.magenta",
+  "label.olive",
 ] as const;
 export type SemanticToken = (typeof SEMANTIC_TOKENS)[number];
 
@@ -132,6 +145,11 @@ export const THEMES: { readonly [T in ThemeName]: { readonly [K in SemanticToken
     "selection.fg": BLUE[200],
     "selection.indicator": BLUE[400],
     "accent.brand-reply": BLUE[400],
+    "label.gray": NEUTRAL[500],
+    "label.teal": "#3DB3B0",
+    "label.plum": "#CF8ADB",
+    "label.magenta": "#E8799F",
+    "label.olive": "#A9B65C",
   },
   light: {
     "bg.canvas": NEUTRAL[0],
@@ -166,11 +184,21 @@ export const THEMES: { readonly [T in ThemeName]: { readonly [K in SemanticToken
     "selection.fg": BLUE[700],
     "selection.indicator": BLUE[500],
     "accent.brand-reply": BLUE[500],
+    "label.gray": NEUTRAL[500],
+    "label.teal": "#0F7A7A",
+    "label.plum": "#9A3FA8",
+    "label.magenta": "#B53A6E",
+    "label.olive": "#5F6E1E",
   },
 };
 
 /** Amendment 1: the surfaces text and controls are now drawn on, besides the canvas. */
 export const READING_SURFACES = ["bg.canvas", "bg.app", "bg.content", "bg.reading", "bg.elevated-hover", "selection.bg"] as const satisfies readonly SemanticToken[];
+/** Amendment 2: the label-marker tokens, gray (the default) first. */
+export const LABEL_MARKER_TOKENS = ["label.gray", "label.teal", "label.plum", "label.magenta", "label.olive"] as const satisfies readonly SemanticToken[];
+/** Amendment 2: every surface a label marker is drawn on — sidebar and chip (app), rows and Settings (content), the
+ * reading pane, the picker (raised), a selected row and a hovered row. */
+export const LABEL_MARKER_SURFACES = ["bg.app", "bg.content", "bg.reading", "bg.raised", "selection.bg", "bg.elevated-hover"] as const satisfies readonly SemanticToken[];
 /** Amendment 1: the surfaces a text field can sit on or be filled with; its border must stand out from each (3:1). */
 export const INPUT_ADJACENT_SURFACES = ["bg.canvas", "bg.app", "bg.content", "bg.reading", "bg.raised", "bg.surface"] as const satisfies readonly SemanticToken[];
 
@@ -204,6 +232,8 @@ export const CONTRAST_REQUIREMENTS: readonly { readonly foreground: SemanticToke
   { foreground: "accent.brand-reply", background: "bg.reading", minimum: 3 },
   ...(["bg.app", "bg.content", "bg.reading", "bg.elevated-hover", "selection.bg"] as const).map((background) => ({ foreground: "interactive.focus" as const, background, minimum: 3 as const })),
   ...(["bg.canvas", "bg.app", "bg.content", "bg.reading", "bg.raised", "bg.surface"] as const).map((background) => ({ foreground: "border.input" as const, background, minimum: 3 as const })),
+  // Amendment 2: a label marker is a non-text mark (WCAG 1.4.11), 3:1 on every surface it is drawn on.
+  ...LABEL_MARKER_TOKENS.flatMap((foreground) => LABEL_MARKER_SURFACES.map((background) => ({ foreground, background, minimum: 3 as const }))),
 ];
 
 /** Manual §5: everything on a 4px base. */

@@ -74,11 +74,12 @@ describe("roles (§D.4)", () => {
   it("Owner, Admin and Manager create and assign; Agent assigns existing labels; Analyst views and filters; Client guest is denied", () => {
     const all = { reply: true, replyPrivately: true, hide: true, delete: true, block: true, like: true };
     const none = { reply: false, replyPrivately: false, hide: false, delete: false, block: false, like: false };
-    for (const role of ["owner", "admin", "manager"] as const) expect(abilitiesOf(role)).toEqual({ view: true, assign: true, create: true, ...all });
+    // UX-04: `manage` is conversation management (workflow.internal) — every role that works on comments, never Analyst.
+    for (const role of ["owner", "admin", "manager"] as const) expect(abilitiesOf(role)).toEqual({ view: true, assign: true, create: true, manage: true, ...all });
     // The product's Responder defaults (platform/permissions/catalog.ts): no delete, no block without a grant.
-    expect(abilitiesOf("agent")).toEqual({ view: true, assign: true, create: false, ...all, delete: false, block: false });
-    expect(abilitiesOf("analyst")).toEqual({ view: true, assign: false, create: false, ...none });
-    expect(abilitiesOf("guest")).toEqual({ view: false, assign: false, create: false, ...none });
+    expect(abilitiesOf("agent")).toEqual({ view: true, assign: true, create: false, manage: true, ...all, delete: false, block: false });
+    expect(abilitiesOf("analyst")).toEqual({ view: true, assign: false, create: false, manage: false, ...none });
+    expect(abilitiesOf("guest")).toEqual({ view: false, assign: false, create: false, manage: false, ...none });
   });
 
   it("a role without the ability changes nothing", () => {
@@ -252,11 +253,12 @@ describe("the action resolver: one decision, in the product's order (IA §18)", 
     expect(reasonOf(input("cv-35", 0), "reply")).toBe("platform: Not available yet on posts your account doesn't own.");
   });
 
-  it("ads (an Instagram ad, a Facebook ad that never ran as a Page post): moderation is not assumed; replies are simulated", () => {
+  it("ads (an Instagram ad, a Facebook ad that never ran as a Page post): neither moderation nor replies are assumed (UX-05 M-2)", () => {
     for (const id of ["cv-19", "cv-28"]) {
       expect(reasonOf(input(id, 0), "hide")).toBe("platform: Not available yet for comments on ads.");
       expect(reasonOf(input(id, 0), "delete")).toBe("platform: Not available yet for comments on ads.");
-      expect(availabilityOf({ ...input(id, 0), action: "reply" }).kind).toBe("available");
+      expect(reasonOf(input(id, 0), "reply")).toBe("platform: Replying to comments on ads isn't validated in Wrenkind yet.");
+      expect(reasonOf(input(id, 0), "private_reply")).toBe("platform: Replying to comments on ads isn't validated in Wrenkind yet.");
     }
     expect(reasonOf(input("cv-28", 0), "block")).toBe("platform: Not available yet for comments on ads.");
   });
@@ -311,10 +313,11 @@ describe("simulated operations: Sending until a person answers; the effect only 
   });
 
   it("REPLY_IN_FLIGHT: while a reply to a comment is Sending or Checking, another reply to it is refused; after the outcome it is not", () => {
-    const base = input("cv-19", 4); // renata.soto's reply-to-a-reply: on Instagram the reply goes to cv-19-m00
-    const started = startOp(EMPTY_SIM, { kind: "reply", conversationId: "cv-19", commentId: "cv-19-m00", text: "On it.", answering: "renata.soto" });
+    // caro.mendez's reply-to-a-reply on an organic Instagram post: the reply goes to cv-01-m00 (cv-19, used before, is on an ad).
+    const base = input("cv-01", 2);
+    const started = startOp(EMPTY_SIM, { kind: "reply", conversationId: "cv-01", commentId: "cv-01-m00", text: "On it.", answering: "caro.mendez" });
     expect(reasonOf({ ...base, sim: started.sim }, "reply")).toBe("state: A reply to this comment is on its way or being checked. You can write another once its outcome is known.");
-    expect(reasonOf({ ...input("cv-19", 0), sim: started.sim }, "reply")).toMatch(/^state: A reply to this comment is on its way/);
+    expect(reasonOf({ ...input("cv-01", 0), sim: started.sim }, "reply")).toMatch(/^state: A reply to this comment is on its way/);
     const checking = answerOp(started.sim, started.id, "checking");
     expect(availabilityOf({ ...base, sim: checking, action: "reply" }).kind).toBe("unavailable");
     expect(availabilityOf({ ...base, sim: answerOp(checking, started.id, "sent"), action: "reply" }).kind).toBe("available");
@@ -391,7 +394,8 @@ describe("fixtures for the action rules", () => {
     expect([...surfaces].sort()).toEqual(["dark_post", "feed", "live", "story_ad"]);
     expect(POSTS.some((post) => post.owner !== null)).toBe(true);
     expect(ACCOUNTS.filter((item) => item.health === "needs_attention").map((item) => item.id)).toEqual(["acc-fb-events"]);
-    expect(CONVERSATIONS).toHaveLength(36);
+    // 36 conversations of 7B-17V plus 12 newer ones added for UX-04 (inside the response target).
+    expect(CONVERSATIONS).toHaveLength(48);
     for (const id of Object.keys(SEED_ASSESSMENTS)) {
       const found = CONVERSATIONS.flatMap((item) => item.comments).find((comment) => comment.id === id);
       expect(found?.author.kind, id).toBe("audience");

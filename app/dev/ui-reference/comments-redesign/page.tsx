@@ -2,13 +2,14 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 
 /**
- * Comments experience redesign (Step 7B-17V) — DEVELOPMENT ONLY. The proposed Comments interaction model as one
- * interactive prototype over synthetic fixtures: Focus opened and closed from the whole row header, Reply · Labels ·
- * More at each comment, exact times on demand, the connected account named by its verified name, manual labels created
- * and assigned from a comment, and the label filter in the sidebar. Every change lives in the browser tab's React
- * state: nothing is read from or written to a server, a database, storage or a platform, and the reply composer is a
- * preview that cannot publish. A 404 in every build that is not `next dev`, whose bundles do not contain the prototype. Design notes:
- * design/phase-7b/comments-redesign/COMMENTS-EXPERIENCE-REDESIGN.md.
+ * Comments experience redesign (Steps 7B-17V … UX-04) — DEVELOPMENT ONLY. The proposed Comments workspace as one
+ * interactive prototype over synthetic fixtures: two panels, Needs attention / Open / Assigned to me / Escalated / Done,
+ * search and filters, conversation management (assign, Urgent, escalate, Done with a resolution, Reopen), manual labels
+ * (assigned at a comment, managed in Settings), simulated Facebook and Instagram comment actions with confirmations, and
+ * Details as an overlay drawer. Every change lives in the browser tab's React state: nothing is read from or written to
+ * a server, a database, storage or a platform, and the reply composer is a preview that cannot publish. A 404 in every
+ * build that is not `next dev`, whose bundles do not contain the prototype. Design notes:
+ * design/phase-7b/comments-redesign/ (UX04-DECISION-REGISTER.md lists the hypotheses awaiting Product Owner approval).
  */
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "UI reference · comments redesign", robots: { index: false, follow: false } };

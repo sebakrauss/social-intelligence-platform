@@ -417,3 +417,45 @@ describe("root layout", () => {
     expect(layout).toContain("className={FONT_CLASS_NAMES}");
   });
 });
+
+describe("Manual v1.1 Amendment 2 (label markers, PO-approved 2026-11-18): the label palette fills the marker and nothing else", () => {
+  const MARKER_IDS = ["gray", "teal", "plum", "magenta", "olive"] as const;
+  const LABEL_TOKEN = /--wk-label-/;
+  /** Where a label color may be named: the token file and the stylesheet that draws the marker. */
+  const LABEL_USERS = new Set(["ui/foundations/tokens.css", "app/dev/ui-reference/comments-redesign/prototype.module.css"]);
+  const css = [...filesUnder("ui", (file) => file.endsWith(".css")), ...filesUnder("app", (file) => file.endsWith(".css"))];
+  const rulesOf = (file: string): { readonly selector: string; readonly body: string }[] =>
+    [...codeOf(file).replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: (m[1] ?? "").trim(), body: m[2] ?? "" }));
+
+  it("label tokens are referenced only by the token file and the marker's stylesheet — never by components, inline styles or other CSS", () => {
+    for (const file of [...css, ...sourceFiles(["app", "ui", "server"])]) {
+      if (LABEL_USERS.has(file)) continue;
+      expect(codeOf(file), file).not.toMatch(LABEL_TOKEN);
+    }
+  });
+
+  it("only the marker rules use them, each one color for its own marker id, as the marker's fill color — never a background, border or text", () => {
+    const file = "app/dev/ui-reference/comments-redesign/prototype.module.css";
+    const users = rulesOf(file).filter((rule) => LABEL_TOKEN.test(rule.body));
+    const seen: string[] = [];
+    for (const rule of users) {
+      const match = /^\.marker(?:\[data-marker="([a-z]+)"\])?$/.exec(rule.selector);
+      expect(match, `${file}: "${rule.selector}" may not use a label color`).not.toBeNull();
+      const id = match?.[1] ?? "gray";
+      expect(rule.body.trim(), rule.selector).toMatch(new RegExp(`^color: var\\(--wk-label-${id}\\);$`));
+      seen.push(id);
+    }
+    expect(seen.sort()).toEqual([...MARKER_IDS].sort());
+    // The marker draws its fill from currentColor, and selection, status and blue tokens never mark a label.
+    const fill = rulesOf(file).find((rule) => rule.selector === ".marker > path");
+    expect(fill?.body).toMatch(/fill: currentColor/);
+    for (const rule of rulesOf(file).filter((item) => /marker/i.test(item.selector))) expect(rule.body, rule.selector).not.toMatch(/--wk-(selection|accent|human|blue|success|warning|danger)-/);
+  });
+
+  it("the chip that carries a label stays neutral: no label color in a chip, row label, picker or sidebar rule", () => {
+    for (const rule of rulesOf("app/dev/ui-reference/comments-redesign/prototype.module.css")) {
+      if (!/chip|rowLabel|sideItem|check|markerOption|settingsTable|labelPanel/i.test(rule.selector)) continue;
+      expect(rule.body, rule.selector).not.toMatch(LABEL_TOKEN);
+    }
+  });
+});

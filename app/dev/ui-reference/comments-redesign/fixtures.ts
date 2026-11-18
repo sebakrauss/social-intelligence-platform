@@ -7,8 +7,10 @@
  * whose verified name is not available. Step 7B-17V-UX adds what the comment actions need to be drawn honestly: posts
  * whose comments a platform does not let other apps manage (an Instagram live video and story ad, a post another
  * account owns), ads whose moderation is not validated, a connection that needs attention, comments past the private
- * reply window, and synthetic examples of automatic assessments. Nothing here is real, read from a database or sent
- * anywhere.
+ * reply window, and synthetic examples of automatic assessments. Step UX-04 adds a fictional team (assignees), the
+ * conversations' seeded workflow (Open / Done, assignee, a person's Urgent flag, an escalation, their history), twelve
+ * newer conversations inside the response target, and a reply whose outcome is still being checked. Nothing here is
+ * real, read from a database or sent anywhere.
  */
 
 export type Platform = "facebook" | "instagram";
@@ -90,10 +92,39 @@ export interface Conversation {
   readonly sent: readonly SentReply[];
 }
 
+/**
+ * A label's marker color: an identifier of the approved label palette (Manual v1.1 Amendment 2, PO-approved
+ * 2026-11-18), never a color value — the stylesheet draws each through its theme token (--wk-label-*). Gray is the
+ * default. Brown was proposed in UX-03 and rejected; it does not exist.
+ */
+export type Marker = "gray" | "teal" | "plum" | "magenta" | "olive";
+
 export interface Label {
   readonly id: string;
   readonly name: string;
+  /** The workspace label's color (a palette identifier). Absent: gray, the default. */
+  readonly marker?: Marker;
 }
+
+/** The fictional team of the workspace. The person using the prototype is Ana Ruiz, whatever role is chosen. */
+export interface Member {
+  readonly id: string;
+  readonly name: string;
+  readonly initials: string;
+  readonly team: "Support" | "Sales" | "Management";
+}
+
+export const MEMBERS: readonly Member[] = [
+  { id: "m-ana", name: "Ana Ruiz", initials: "AR", team: "Management" },
+  { id: "m-bruno", name: "Bruno Díaz", initials: "BD", team: "Support" },
+  { id: "m-carla", name: "Carla Méndez", initials: "CM", team: "Sales" },
+  { id: "m-tomas", name: "Tomás Lerner", initials: "TL", team: "Sales" },
+  // A long name on purpose (UX-05): menus and the assignee control are checked against it.
+  { id: "m-maximiliana", name: "Maximiliana Fernández-Etcheverry", initials: "MF", team: "Support" },
+];
+export const ME = "m-ana";
+/** Where a conversation can be escalated to (a person or team outside the first answer). */
+export const ESCALATION_TARGETS: readonly string[] = ["Support lead", "Finance", "Product", "Legal", "Customer experience and quality team"];
 
 export const WORKSPACE = { name: "Lumen Coffee", organization: "Lumen Group" } as const;
 /** The synthetic "now" every fixture time is measured from. */
@@ -123,13 +154,14 @@ export const POSTS: readonly Post[] = [
   { id: "post-12", accountId: "acc-ig-main", kind: "Post", source: "unknown", caption: "Sunday brunch at home with @lumen.coffee beans.", surface: "feed", owner: "@brunch.club.ba" },
 ];
 
+/** The workspace's labels. Four carry a color someone chose in Settings; two keep the gray default. */
 export const SEED_LABELS: readonly Label[] = [
   { id: "lbl-delivery", name: "Delivery" },
-  { id: "lbl-refund", name: "Refund request" },
-  { id: "lbl-praise", name: "Praise" },
-  { id: "lbl-wholesale", name: "Wholesale lead" },
+  { id: "lbl-refund", name: "Refund request", marker: "magenta" },
+  { id: "lbl-praise", name: "Praise", marker: "plum" },
+  { id: "lbl-wholesale", name: "Wholesale lead", marker: "teal" },
   { id: "lbl-follow", name: "Follow up Monday" },
-  { id: "lbl-allergen", name: "Allergens" },
+  { id: "lbl-allergen", name: "Allergens", marker: "olive" },
 ];
 
 /* ───────────── compact authoring of the conversations ───────────── */
@@ -148,7 +180,14 @@ interface Seed {
   readonly assessed?: readonly (readonly [number, Assessment["meaning"], boolean])[];
   /** Days to push the whole conversation back in time (the private-reply window is seven days). */
   readonly daysAgo?: number;
+  /** Minutes before "now" of the last message, instead of the position-based spacing (UX-04 scenarios). */
+  readonly minutesAgo?: number;
+  /** Seeded workflow (UX-04): assignee member id, Done with a resolution, a person's Urgent flag, an escalation. */
+  readonly flow?: { readonly assignee?: string; readonly done?: SeedResolution; readonly urgent?: true; readonly escalated?: string };
 }
+
+/** The resolutions a seeded Done conversation can carry (the model owns their wording). */
+export type SeedResolution = "replied_publicly" | "replied_privately" | "replied_on_platform" | "no_reply_needed" | "moderated";
 
 const SEEDS: readonly Seed[] = [
   {
@@ -169,6 +208,7 @@ const SEEDS: readonly Seed[] = [
     sent: [[0, "Thank you, Joaquín! It goes fast — the roastery is already on batch four.", "Ana Ruiz"]],
     labels: [[0, "lbl-praise"]],
     assessed: [[0, "Praise", false]],
+    flow: { done: "replied_publicly" },
   },
   {
     post: "post-3",
@@ -180,6 +220,7 @@ const SEEDS: readonly Seed[] = [
     ],
     labels: [[0, "lbl-allergen"]],
     assessed: [[0, "Question", false]],
+    flow: { assignee: "m-ana", escalated: "Product" },
   },
   {
     post: "post-9",
@@ -187,6 +228,7 @@ const SEEDS: readonly Seed[] = [
     m: [["pedro.salles", "Cobraram o frete mesmo com a promoção. Quero o reembolso da diferença, por favor."]],
     labels: [[0, "lbl-refund"]],
     assessed: [[0, "Complaint", true]],
+    flow: { assignee: "m-ana" },
   },
   {
     post: "post-4",
@@ -194,9 +236,11 @@ const SEEDS: readonly Seed[] = [
     m: [
       ["Diego Herrera", "Do you sell green beans wholesale? We run two cafés in Montevideo and are looking for a new supplier for 2027."],
       ["@", "Hi Diego! Yes — our wholesale team will be glad to help. Could you share your weekly volume?"],
-      ["Diego Herrera", "Around 40 kg a week between both places, mostly espresso.", 1],
+      ["Diego Herrera", "Around 40 kg a week between both places, mostly espresso. Do you deliver to Montevideo?", 1],
     ],
     labels: [[0, "lbl-wholesale"], [2, "lbl-wholesale"]],
+    minutesAgo: 25,
+    flow: { assignee: "m-carla" },
   },
   {
     post: "post-5",
@@ -206,8 +250,9 @@ const SEEDS: readonly Seed[] = [
   {
     post: "post-1",
     account: "acc-ig-main",
+    // UX-04 scenario A: unanswered past the response target (4 h by default).
     m: [["nina.coffeelab", "Is the holiday blend available in whole bean or only ground?"]],
-    sent: [[0, "Both! Whole bean in 250 g and 1 kg, ground in 250 g.", "Ana Ruiz"]],
+    minutesAgo: 250,
   },
   {
     post: "post-6",
@@ -216,12 +261,14 @@ const SEEDS: readonly Seed[] = [
       ["tomas.brews", "What's the recommended ratio for V60 with this one?"],
       ["@", "We like 1:16 with water at 93 °C. Let us know how it goes!"],
     ],
+    flow: { done: "replied_on_platform" },
   },
   {
     post: "post-9",
     account: "acc-ig-main",
     m: [["deals4u_official", "🔥 GET 90% OFF ALL COFFEE 🔥 visit our link in bio NOW", 0, "hidden"]],
     assessed: [[0, "Spam", false]],
+    flow: { done: "moderated" },
   },
   {
     post: "post-3",
@@ -229,10 +276,15 @@ const SEEDS: readonly Seed[] = [
     m: [
       ["Ramiro Paz", "El último pedido llegó con el paquete roto y la mitad del café desparramado en la caja. Pagué envío express para esto.", 0, "edited"],
       ["@", "Ramiro, lamentamos mucho lo ocurrido. Ya te escribimos por privado para reponer el pedido."],
+      // UX-04 scenario B: the customer writes again after the brand's replies.
+      ["Ramiro Paz", "Todavía no me llegó nada y nadie me contesta el privado. ¿Me van a devolver la plata o no?", 0],
     ],
     sent: [[0, "Ramiro, ya generamos la reposición sin costo. Te llega el lunes.", "Bruno Díaz"]],
     labels: [[0, "lbl-delivery"], [0, "lbl-refund"]],
     assessed: [[0, "Complaint", true]],
+    // The customer's new reply is 40 minutes old (the last message of the seed's spacing is 18 minutes after it).
+    minutesAgo: 22,
+    flow: { assignee: "m-bruno", urgent: true },
   },
   {
     post: "post-7",
@@ -246,6 +298,8 @@ const SEEDS: readonly Seed[] = [
       ["valen.cafe", "Mine tastes really sour this time, did something change in the roast?"],
       ["camila.r", "Try a finer grind, mine was sour until I changed it.", 0],
       ["valen.cafe", "Will try, thanks!", 1],
+      // UX-05-FINALFIX (R-1): a second reply by the same person under the same top-level comment — two distinct targets.
+      ["camila.r", "Also: grind right before brewing, it makes a big difference.", 0],
       ["@", "Thanks Camila! Valen, a finer grind and 2–3 °C hotter water usually fixes it. Tell us if it doesn't."],
     ],
   },
@@ -253,6 +307,7 @@ const SEEDS: readonly Seed[] = [
     post: "post-4",
     account: "acc-fb-main",
     m: [["Hernán Ortiz", "Video increíble. ¿Se puede visitar el tostadero?"]],
+    flow: { done: "replied_on_platform" },
   },
   {
     post: "post-2",
@@ -268,17 +323,20 @@ const SEEDS: readonly Seed[] = [
       ["Sofía Quiroga", "¡Qué bueno! Me anoto para este.", 0],
     ],
     labels: [[0, "lbl-praise"]],
+    flow: { done: "no_reply_needed" },
   },
   {
     post: "post-6",
     account: "acc-ig-roastery",
     m: [["andres.v", "Bought two bags and one was clearly stale. Not what I expect at this price.", 0, "removed"]],
+    flow: { done: "no_reply_needed" },
   },
   {
     post: "post-3",
     account: "acc-fb-main",
     m: [["Gabriela Núñez", "¡Por fin en Palermo! ¿Abren los domingos?"]],
     sent: [[0, "¡Sí, Gabriela! Domingos de 9 a 19.", "Ana Ruiz"]],
+    flow: { done: "replied_publicly" },
   },
   {
     post: "post-1",
@@ -309,28 +367,33 @@ const SEEDS: readonly Seed[] = [
     sent: [[4, "Renata, we've escalated your order with the courier — you should see an update by tonight.", "Bruno Díaz"]],
     labels: [[0, "lbl-delivery"], [5, "lbl-delivery"], [5, "lbl-refund"], [9, "lbl-delivery"]],
     assessed: [[0, "Complaint", true], [5, "Commercial objection", true]],
+    flow: { assignee: "m-bruno" },
   },
   {
     post: "post-4",
     account: "acc-fb-main",
     m: [["Julián Benítez", "¿Cuál es la diferencia entre el tueste medio y el oscuro en sabor?"]],
+    flow: { done: "replied_on_platform" },
   },
   {
     post: "post-6",
     account: "acc-ig-roastery",
     m: [["coffee.nerd.ba", "Huila washed is one of my favourites. What's the altitude for this lot?"]],
     sent: [[0, "1,750–1,900 m, from three farms around Pitalito.", "Bruno Díaz"]],
+    flow: { done: "replied_publicly" },
   },
   {
     post: null,
     account: "acc-fb-main",
     m: [["Claudia Ríos", "Hola, ¿hacen facturas para empresa? Queremos pedir café para la oficina todos los meses."]],
     labels: [[0, "lbl-wholesale"]],
+    flow: { assignee: "m-carla" },
   },
   {
     post: "post-11",
     account: "acc-ig-main",
     m: [["bia.carvalho", "Qual é o prazo de entrega para Porto Alegre?"]],
+    flow: { done: "no_reply_needed" },
   },
   {
     post: "post-5",
@@ -342,6 +405,7 @@ const SEEDS: readonly Seed[] = [
     account: "acc-ig-main",
     m: [["lu.barista", "Pulled this as espresso this morning, 18 g in, 38 g out, 29 s. Chocolate bomb. Thank you for this one!"]],
     labels: [[0, "lbl-praise"]],
+    flow: { done: "no_reply_needed" },
   },
   {
     post: "post-3",
@@ -353,11 +417,13 @@ const SEEDS: readonly Seed[] = [
     ],
     labels: [[0, "lbl-refund"], [2, "lbl-follow"]],
     assessed: [[0, "Complaint", true]],
+    flow: { assignee: "m-bruno" },
   },
   {
     post: "post-10",
     account: "acc-ig-main",
     m: [["mica.ph", "Love the new packaging design!"]],
+    flow: { done: "no_reply_needed" },
   },
   {
     post: "post-8",
@@ -378,22 +444,26 @@ const SEEDS: readonly Seed[] = [
     post: "post-2",
     account: "acc-ig-main",
     m: [["gus.martins", "Vocês entregam no Uruguai?"]],
+    flow: { done: "replied_privately" },
   },
   {
     post: "post-1",
     account: "acc-ig-main",
     m: [["?", "Is this the same as last year's holiday blend or a new recipe?"]],
+    flow: { done: "no_reply_needed" },
   },
   {
     post: "post-3",
     account: "acc-fb-main",
     m: [["Silvia Acosta", "¿Tienen accesibilidad para silla de ruedas en el nuevo local?"]],
+    flow: { done: "replied_on_platform" },
   },
   {
     post: "post-5",
     account: "acc-fb-events",
     m: [["Nicolás Ferreyra", "Hacen talleres para empresas? Somos un equipo de 15."]],
     labels: [[0, "lbl-wholesale"]],
+    flow: { assignee: "m-carla" },
   },
   {
     post: "post-2",
@@ -417,7 +487,23 @@ const SEEDS: readonly Seed[] = [
     m: [["ju.lima", "Arrived beautifully packed, thank you!"]],
     // Older than seven days: no private reply is possible any more.
     daysAgo: 9,
+    flow: { done: "no_reply_needed" },
   },
+  // UX-04: newer conversations, inside the response target — Open, but not Needs attention.
+  { post: "post-1", account: "acc-ig-main", m: [["sol.marquez", "What grind would you recommend for a moka pot?"]], minutesAgo: 11 },
+  { post: "post-3", account: "acc-fb-main", m: [["Pablo Ríos", "¿Tienen estacionamiento cerca del local de Palermo?"]], minutesAgo: 18 },
+  // UX-04 scenario D: a spam comment on an organic Facebook post (every moderation action applies).
+  { post: "post-3", account: "acc-fb-main", m: [["Café Barato Oficial", "ESTAFADORES!!! compren café de verdad en www.cafe-barato.xyz 🔥🔥 90% OFF solo hoy"]], minutesAgo: 20 },
+  { post: "post-9", account: "acc-ig-main", m: [["marina.f", "Does the free shipping apply to Uruguay too?"]], minutesAgo: 33 },
+  { post: "post-4", account: "acc-fb-main", m: [["Laura Sánchez", "¿El tostadero hace visitas guiadas para escuelas?"]], minutesAgo: 52 },
+  // UX-04 scenario C: a second wholesale lead, already with sales.
+  { post: "post-4", account: "acc-fb-main", m: [["Valeria Sosa", "¿Tienen precio mayorista para cafeterías? Somos tres locales en Rosario."]], labels: [[0, "lbl-wholesale"]], minutesAgo: 70, flow: { assignee: "m-carla" } },
+  { post: "post-2", account: "acc-ig-main", m: [["rafa.coffee", "Can I pause my subscription in January? Travelling all month."]], labels: [[0, "lbl-follow"]], minutesAgo: 75 },
+  { post: "post-6", account: "acc-ig-roastery", m: [["beto.gomez", "Is this lot available as an espresso roast?"]], minutesAgo: 95 },
+  { post: "post-3", account: "acc-fb-main", m: [["Inés Paredes", "Excelente atención ayer en el local, ¡gracias Martín!"]], labels: [[0, "lbl-praise"]], minutesAgo: 130 },
+  { post: "post-1", account: "acc-ig-main", m: [["dani.k", "Is there a decaf version of the holiday blend? 😅"]], minutesAgo: 160 },
+  { post: "post-8", account: "acc-fb-main", m: [["Jorge Medina", "¿Hacen envíos a Mendoza para la caja de regalo?"]], minutesAgo: 190 },
+  { post: "post-11", account: "acc-ig-main", m: [["ana.paula", "O gift card pode ser enviado por e-mail?"]], minutesAgo: 220 },
 ];
 
 /* ───────────── expansion into dated records ───────────── */
@@ -437,7 +523,7 @@ function authorOf(code: string): Author {
  */
 export const CONVERSATIONS: readonly Conversation[] = SEEDS.map((seed, index) => {
   const id = `cv-${pad(index + 1)}`;
-  const last = minutes(AS_OF, -(12 + index * 47) - (seed.daysAgo ?? 0) * 1440);
+  const last = minutes(AS_OF, -(seed.minutesAgo ?? (12 + index * 47)) - (seed.daysAgo ?? 0) * 1440);
   const count = seed.m.length + (seed.sent?.length ?? 0);
   const start = minutes(last, -count * 16);
   const comments = seed.m.map(([code, text, parent, flag], position): Comment => {
@@ -472,6 +558,21 @@ export const SEED_ASSIGNMENTS: Readonly<Record<string, readonly string[]>> = (()
   });
   return out;
 })();
+
+/** The seeded workflow of each conversation (UX-04): conversation id → what the seed says. */
+export const SEED_FLOWS: Readonly<Record<string, NonNullable<Seed["flow"]>>> = (() => {
+  const out: Record<string, NonNullable<Seed["flow"]>> = {};
+  SEEDS.forEach((seed, index) => {
+    if (seed.flow !== undefined) out[`cv-${pad(index + 1)}`] = seed.flow;
+  });
+  return out;
+})();
+
+/**
+ * A public reply sent from Wrenkind earlier whose outcome is still unknown (UX-04: "Reply not confirmed"): conversation
+ * cv-04, attached to its first comment, Checking until a person resolves it in the prototype.
+ */
+export const SEED_CHECKING_REPLY = { conversationId: "cv-04", commentId: "cv-04-m00", text: "Pedro, sentimos o problema — vamos devolver a diferença do frete hoje mesmo.", at: "2026-11-17T13:20:00Z" } as const;
 
 /** The synthetic assessments (shown only when the prototype control asks for examples): comment id → assessment. */
 export const SEED_ASSESSMENTS: Readonly<Record<string, Assessment>> = (() => {

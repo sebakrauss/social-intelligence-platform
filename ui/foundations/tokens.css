@@ -11,6 +11,9 @@
  * Amendment 1 (Direction C, PO-approved 2026-11-17; design/brand/MANUAL-DE-MARCA-v1.1-AMENDMENT-1.md) adds the roles
  * at the end of each block: surfaces (bg.app, bg.content, bg.reading, bg.elevated-hover), border.input, and blue for active navigation
  * and selection (selection.*) and for the brand's own replies (accent.brand-reply). Existing values are unchanged.
+ * Amendment 2 (label markers, PO-approved 2026-11-18; design/brand/MANUAL-DE-MARCA-v1.1-AMENDMENT-2.md) adds
+ * label.gray (Neutral 500, the default), label.teal, label.plum, label.magenta and label.olive at the end of each block:
+ * the fill of the manual-label marker only, organizational, never status, attention, priority, text, border or chip.
  */
 
 :root {
@@ -125,6 +128,12 @@
   --wk-selection-fg: #2446B0;
   --wk-selection-indicator: #4C7DFF;
   --wk-accent-brand-reply: #4C7DFF;
+  /* Amendment 2 (label markers: organizational only, the marker's fill — never status, text or chip) */
+  --wk-label-gray: #7A7A7A;
+  --wk-label-teal: #0F7A7A;
+  --wk-label-plum: #9A3FA8;
+  --wk-label-magenta: #B53A6E;
+  --wk-label-olive: #5F6E1E;
 }
 
 /* Semantic · dark, by system preference unless the page says light */
@@ -164,6 +173,12 @@
   --wk-selection-fg: #B9CCFF;
   --wk-selection-indicator: #6E95FF;
   --wk-accent-brand-reply: #6E95FF;
+  /* Amendment 2 (label markers: organizational only, the marker's fill — never status, text or chip) */
+  --wk-label-gray: #7A7A7A;
+  --wk-label-teal: #3DB3B0;
+  --wk-label-plum: #CF8ADB;
+  --wk-label-magenta: #E8799F;
+  --wk-label-olive: #A9B65C;
   }
 }
 
@@ -203,4 +218,10 @@
   --wk-selection-fg: #B9CCFF;
   --wk-selection-indicator: #6E95FF;
   --wk-accent-brand-reply: #6E95FF;
+  /* Amendment 2 (label markers: organizational only, the marker's fill — never status, text or chip) */
+  --wk-label-gray: #7A7A7A;
+  --wk-label-teal: #3DB3B0;
+  --wk-label-plum: #CF8ADB;
+  --wk-label-magenta: #E8799F;
+  --wk-label-olive: #A9B65C;
 }
