@@ -11,8 +11,8 @@
  */
 import { t } from "@/server/i18n";
 import { AUTHOR_MESSAGES, CONVERSATION_STATE_MESSAGES, displayTime, platformName, REPLY_REASON_MESSAGES, SOURCE_MESSAGES, when, type ConversationDetail, type InboxConversationItem, type InboxPage } from "@/server/inbox/inbox";
-import { COMMENTS_CONVERSATION_ANCHOR, conversationRowId, workspaceCommentsConversationPath, workspaceCommentsPagePath, workspaceCommentsPath, workspaceConversationPath, workspaceInboxPath } from "@/server/routes";
-import { CommentsAbove, CommentsConversation, CommentsHeader, CommentsList, CommentsListEnd, CommentsListMessage, CommentsPane, CommentsRow, CommentsSplit, CommentsWorkspace } from "@/ui/inbox/comments";
+import { COMMENTS_CONVERSATION_ANCHOR, COMMENTS_NEXT_ANCHOR, COMMENTS_PREVIOUS_ANCHOR, conversationRowId, workspaceCommentsConversationPath, workspaceCommentsPagePath, workspaceCommentsPath, workspaceConversationPath, workspaceInboxPath } from "@/server/routes";
+import { CommentsAbove, CommentsConversation, CommentsConversationNav, CommentsHeader, CommentsList, CommentsListEnd, CommentsListMessage, CommentsPane, CommentsRow, CommentsSplit, CommentsWorkspace } from "@/ui/inbox/comments";
 import { QuietNote, ReplyUnavailable, Thread, ThreadHeading, ThreadOutbound } from "@/ui/inbox/inbox";
 import { DataTag } from "@/ui/primitives/data-tag";
 import { Notice } from "@/ui/primitives/notice";
@@ -87,7 +87,34 @@ export type CommentsSelectionView =
  * the Inbox's conditions), its entries, records and times, without the composer; requests made from Wrenkind with their
  * real state (never optimistic); the Inbox's note when the thread has more members than were read.
  */
-function Conversation({ workspaceId, detail }: { readonly workspaceId: string; readonly detail: ConversationDetail }) {
+/**
+ * COMMENTS-INT-03C-1 — the header's navigation: this conversation's place among the rows LOADED in the list, and
+ * Previous / Next among them. Undefined when the conversation is not on the loaded page (its place is not known, and
+ * nothing outside the page is read to find it). "n of N on this page" whenever the list has other pages (as the Inbox
+ * says it). Which control keeps the focus after a move is the navigation's own rule (ui/inbox/comments.tsx).
+ */
+function navigationFor(workspaceId: string, page: InboxPage, cursor: string | undefined, conversationId: string): React.ReactNode {
+  const index = page.items.findIndex((item) => item.conversationId === conversationId);
+  if (index < 0 || page.items.length < 2) return undefined;
+  const hrefAt = (at: number, anchor: typeof COMMENTS_PREVIOUS_ANCHOR | typeof COMMENTS_NEXT_ANCHOR): string | undefined => {
+    const item = page.items[at];
+    return item === undefined ? undefined : workspaceCommentsConversationPath(workspaceId, item.conversationId, cursor, anchor);
+  };
+  const previous = hrefAt(index - 1, COMMENTS_PREVIOUS_ANCHOR);
+  const next = hrefAt(index + 1, COMMENTS_NEXT_ANCHOR);
+  const paged = cursor !== undefined || page.nextCursor !== null;
+  return (
+    <CommentsConversationNav
+      label={t("inbox.nav.label")}
+      position={t(paged ? "inbox.nav.position_page" : "inbox.nav.position", { index: String(index + 1), count: String(page.items.length) })}
+      previous={{ label: t("inbox.nav.previous"), href: previous }}
+      next={{ label: t("inbox.nav.next"), href: next }}
+      anchors={{ previous: COMMENTS_PREVIOUS_ANCHOR, next: COMMENTS_NEXT_ANCHOR }}
+    />
+  );
+}
+
+function Conversation({ workspaceId, detail, nav }: { readonly workspaceId: string; readonly detail: ConversationDetail; readonly nav: React.ReactNode }) {
   const platformText = platformName(detail.platform) ?? t("inbox.platform.unknown");
   const entries = threadEntries(detail);
   const now = renderNow();
@@ -98,16 +125,18 @@ function Conversation({ workspaceId, detail }: { readonly workspaceId: string; r
   return (
     <CommentsConversation
       title={anchor !== undefined && anchor.observed ? authorOf(anchor) : t("inbox.conversation.heading")}
+      origin={<OriginMark platform={detail.platform} name={platformText} paid={detail.source === "paid"} paidLabel={t("inbox.source.paid")} />}
+      state={<StatePill>{t(CONVERSATION_STATE_MESSAGES[detail.workflowState])}</StatePill>}
       context={
         <>
-          <OriginMark platform={detail.platform} name={platformText} showName paid={detail.source === "paid"} paidLabel={t("inbox.source.paid")} />
+          <DataTag>{platformText}</DataTag>
           <DataTag>{kindOf(detail.contentKind)}</DataTag>
           <DataTag>{t(SOURCE_MESSAGES[detail.source])}</DataTag>
-          <StatePill>{t(CONVERSATION_STATE_MESSAGES[detail.workflowState])}</StatePill>
         </>
       }
       contextNote={t("inbox.context.post_unavailable")}
-      note={inInbox === undefined ? undefined : <TextLink href={inInbox}>{t("comments.pane.open_in_inbox")}</TextLink>}
+      manage={inInbox === undefined ? undefined : <TextLink href={inInbox}>{t("comments.pane.open_in_inbox")}</TextLink>}
+      nav={nav}
     >
       {/* COMMENTS-INT-03B-FIX (L-2): the Inbox's own statements, on the same conditions. Its review note: the read model
           carries no assessment, so the Inbox says so on every conversation — and so does this pane. */}
@@ -182,7 +211,7 @@ export function CommentsListView({ workspaceId, page, cursor, selection }: { rea
         list={<ListColumn workspaceId={workspaceId} page={page} cursor={cursor} selectedId={selectedId} />}
         pane={
           <CommentsPane label={t("comments.pane.label")} back={back} content={selection.kind === "conversation" ? "conversation" : "message"}>
-            {selection.kind === "none" ? <p>{t("comments.pane.empty")}</p> : selection.kind === "closed" ? selection.message : <Conversation workspaceId={workspaceId} detail={selection.detail} />}
+            {selection.kind === "none" ? <p>{t("comments.pane.empty")}</p> : selection.kind === "closed" ? selection.message : <Conversation workspaceId={workspaceId} detail={selection.detail} nav={navigationFor(workspaceId, page, cursor, selection.detail.conversationId)} />}
           </CommentsPane>
         }
       />

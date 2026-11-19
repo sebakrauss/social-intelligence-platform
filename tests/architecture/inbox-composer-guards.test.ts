@@ -135,6 +135,8 @@ const LOCAL_TIME = "ui/time/local-time.tsx";
 const LOCAL_TIME_FORMAT = "ui/time/local-time-format.ts";
 /** COMMENTS-INT-03B-FIX: the Comments list column — keeps the selected row in view inside the list's own scroll. */
 const LIST_COLUMN = "ui/inbox/comments-list-column.tsx";
+/** COMMENTS-INT-03C-1: the Comments conversation area — the prototype's Escape (focus back to the row or the title). */
+const PANE_SECTION = "ui/inbox/comments-pane-section.tsx";
 
 const sourceOf = (file: string): ts.SourceFile => ts.createSourceFile(file, readFileSync(path.join(REPOSITORY_ROOT, file), "utf8"), ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
 const nodesOf = (root: ts.Node): ts.Node[] => {
@@ -392,6 +394,18 @@ describe("reply drafts: memory only, never publishing (syntax tree)", () => {
     expect(code.match(/^let \w+/gm)).toEqual(["let lastPosition"]);
   });
 
+  it("COMMENTS-INT-03C-1: the Comments conversation area only moves the keyboard focus on Escape — no navigation, scroll, state, request, listener or timer", () => {
+    expect(importsOfFile(PANE_SECTION)).toEqual(["type react"]);
+    const code = codeOf(PANE_SECTION);
+    expect(code).toMatch(/^"use client";/);
+    expect(code).not.toMatch(/useState|useEffect|useLayoutEffect|addEventListener|setTimeout|setInterval|requestAnimationFrame|scrollIntoView|scrollTo\(|scrollTop|\bfetch\b|Storage|navigator|location|history|next\/|reply-drafts|dangerouslySetInnerHTML/);
+    // Escape only, outside text fields, not already handled; the row keeps its place (no scroll), the title is the fallback.
+    expect(code).toMatch(/if \(event\.key !== "Escape" \|\| event\.defaultPrevented \|\| content !== "conversation"\) return;/);
+    expect(code).toMatch(/row\?\.focus\(\{ preventScroll: true \}\);/);
+    expect([...code.matchAll(/\.focus\(/g)]).toHaveLength(2);
+    expect([...code.matchAll(/onKeyDown=/g)]).toHaveLength(1);
+  });
+
   it("only the composer, the signed-out boundary, the conversation boundary and the in-app link reach the drafts module — by any import, static or dynamic, anywhere in production code", () => {
     const reachers = sourceFiles([...PRODUCTION_ROOTS]).filter((file) => file !== DRAFTS && /reply-drafts(?!-(boundary|scope))/.test(codeOf(file)));
     expect(reachers.sort()).toEqual([APP_LINK, BOUNDARY, COMPOSER, SCOPE].sort());
@@ -598,6 +612,8 @@ describe("reply drafts: memory only, never publishing (syntax tree)", () => {
     expect([...codeOf("ui/inbox/comments.tsx").matchAll(/<AppLink href=\{[^}]+\}[^>]*>/g)].map((m) => m[0])).toEqual([
       '<AppLink href={href} className={styles["row"]} pendingClassName={styles["rowPending"]} current={current} focusKey={current ? "conversation" : id}>',
       '<AppLink href={back.href} className={styles["backLink"]} focusKey={back.focusKey}>',
+      // COMMENTS-INT-03C-1: Previous / Next in the conversation's header, each standing for its own anchor (focus kept).
+      '<AppLink href={target.href} className={styles["navMove"]} pendingClassName={styles["navPending"]} focusKey={focusKey}>',
     ]);
     expect([...codeOf("ui/inbox/comments.tsx").matchAll(/<a\b[^>]*>/g)]).toHaveLength(0);
   });

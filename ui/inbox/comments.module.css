@@ -310,9 +310,134 @@
 }
 
 .conversationTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
   margin: 0;
   font: 600 18px / calc(24 / 18) var(--wk-font-brand);
   overflow-wrap: anywhere;
+}
+
+/* COMMENTS-INT-03C-1: Escape brings the focus here where the row is not drawn — always visible when it does. */
+.conversationTitle:focus-visible {
+  outline: var(--wk-focus-width) solid var(--wk-interactive-focus);
+  outline-offset: var(--wk-focus-offset);
+}
+
+.titleName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ───── COMMENTS-INT-03C-1: the approved header's three zones ───── */
+
+/* Where Previous / Next lead: the very start of the conversation area, level with the list (as its own anchor). */
+.paneAnchor {
+  display: block;
+  height: 0;
+  scroll-margin-top: var(--wk-space-16);
+}
+
+/* Identity on the left, navigation on the right; they wrap rather than squeeze. */
+.headTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--wk-space-8) var(--wk-space-16);
+}
+
+.headIdentity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8) var(--wk-space-12);
+  min-width: 0;
+}
+
+/* Context on the left, management (the real way to act on it) on the right. */
+.headLower {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--wk-space-8) var(--wk-space-16);
+}
+
+.headContext {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  min-width: 0;
+}
+
+.headManage {
+  font-size: 13px;
+  line-height: calc(18 / 13);
+}
+
+.conversationNav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  flex: none;
+}
+
+.navPosition {
+  margin-right: var(--wk-space-4);
+  font: 400 12px / calc(16 / 12) var(--wk-font-mono);
+  color: var(--wk-text-tertiary);
+}
+
+.navMove {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--wk-radius-sm);
+  /* As the approved prototype draws them: icon controls, a surface only on hover. */
+  background: transparent;
+  color: var(--wk-text-primary);
+  font-size: 16px;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.navMove:hover {
+  background: var(--wk-bg-hover);
+}
+
+.navMove:focus-visible {
+  outline: var(--wk-focus-width) solid var(--wk-interactive-focus);
+  outline-offset: var(--wk-focus-offset);
+}
+
+/* An end of the loaded page: the arrow stays where it was, inert and quiet. */
+.navEnd {
+  color: var(--wk-text-disabled);
+  background: transparent;
+}
+
+/* The "on its way" signal of a Previous / Next move: hidden at rest, drawn only while the move is under way. */
+.navPending {
+  position: absolute;
+  left: var(--wk-space-4);
+  right: var(--wk-space-4);
+  bottom: 3px;
+  height: 2px;
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-text-primary);
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.navPending[data-pending="true"] {
+  opacity: 1;
+  animation: commentsRowPending var(--wk-duration-reveal) var(--wk-ease-enter) forwards;
 }
 
 .conversationContext {
@@ -382,6 +507,12 @@
     min-height: 44px;
   }
 
+  /* COMMENTS-INT-03C-1: Previous / Next are 44px targets here too. */
+  .navMove {
+    width: 44px;
+    height: 44px;
+  }
+
   .row {
     min-height: 44px;
     padding-left: var(--wk-space-16);
@@ -407,7 +538,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rowPending[data-pending="true"] {
+  .rowPending[data-pending="true"],
+  .navPending[data-pending="true"] {
     animation: none;
     transform: scaleX(0.9);
   }

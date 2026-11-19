@@ -487,7 +487,8 @@ describe("Workspace › Comments: the selected conversation, read only (COMMENTS
     const unread = await show(readyDetail({ thread: [member(1, { observed: false, text: null })] }));
     let pane = words(paneOf(unread));
     expect(pane).toContain("Not read yet: only its place in the conversation is known.");
-    expect(unread.match(/id="conversation-title"[^>]*>([^<]*)</)?.[1]).toBe("Conversation"); // its own name, never an invented author
+    // The title's name (beside the platform mark): its own name, never an invented author.
+    expect(unread.match(/class="[^"]*titleName[^"]*">([^<]*)</)?.[1]).toBe("Conversation");
     pane = words(paneOf(await show(readyDetail({ thread: [], outbound: [] }))));
     expect(pane).toContain("No comment of this conversation has been read yet.");
     pane = words(paneOf(await show(readyDetail({ truncated: true }))));
@@ -563,11 +564,16 @@ describe("Workspace › Comments: a conversation opens at its start, and the pan
     const list = await listPage(WS, NEXT);
     env.detail = conversationReady(C2);
     const selected = await selectedPage(WS, C2, NEXT);
+    // Every row goes to the conversation's anchor; Previous / Next (COMMENTS-INT-03C-1) to their own, at the same place.
     for (const html of [list, selected]) {
-      const links = [...html.matchAll(/href="(\/workspaces\/[^"]+\/comments\/[0-9a-f-]{36}[^"]*)"/g)].map((match) => match[1] ?? "");
-      expect(links).toHaveLength(3);
-      for (const link of links) expect(link).toMatch(/#conversation$/);
+      const rows = [...html.matchAll(/<li id="row-[^"]+"[^>]*><a[^>]*href="([^"]+)"/g)].map((match) => match[1] ?? "");
+      expect(rows).toHaveLength(3);
+      for (const link of rows) expect(link).toMatch(/#conversation$/);
     }
+    const moves = [...selected.matchAll(/href="(\/workspaces\/[^"]+\/comments\/[0-9a-f-]{36}[^"]*)"/g)].map((match) => match[1] ?? "").filter((link) => !link.endsWith("#conversation"));
+    expect(moves.map((link) => link.slice(link.indexOf("#")))).toEqual(["#conversation-previous", "#conversation-next"]);
+    expect(selected).toContain('id="conversation-previous"');
+    expect(selected).toContain('id="conversation-next"');
     expect(selected).toContain('<section id="conversation"');
     expect([...selected.matchAll(/id="conversation"/g)]).toHaveLength(1);
     // The way back still returns to the row, at the same list position (the list is the page there; it is not sticky).
@@ -601,6 +607,102 @@ describe("Workspace › Comments: a conversation opens at its start, and the pan
       expect(pane, reply.kind).not.toMatch(/Reply not available|isn&#x27;t available yet|to reply|Reply publicly|Publish reply|<form|<button|<textarea/);
       expect(words(pane), reply.kind).toContain("View conversation in Inbox");
     }
+  });
+});
+
+/* ───────────── COMMENTS-INT-03C-1: the approved conversation header and its navigation ───────────── */
+
+describe("Workspace › Comments: the conversation header — identity, management, navigation (COMMENTS-INT-03C-1)", () => {
+  const words = (html: string): string => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  /** The conversation's own header (inside its article; the page has a header of its own above). */
+  const headOf = (html: string): string => {
+    const start = html.indexOf("<header", html.indexOf("<article"));
+    return html.indexOf("<article") === -1 ? "" : html.slice(start, html.indexOf("</header>", start));
+  };
+  const zone = (html: string, name: string): string => {
+    const start = html.indexOf(`class="${name}`) === -1 ? html.search(new RegExp(`class="[^"]*${name}`)) : html.indexOf(`class="${name}`);
+    return start === -1 ? "" : html.slice(html.indexOf(">", start) + 1, html.indexOf("</div>", start));
+  };
+  const navOf = (html: string): string => {
+    const head = headOf(html);
+    const start = head.indexOf("<nav");
+    return start === -1 ? "" : head.slice(start, head.indexOf("</nav>", start));
+  };
+  const open = async (conversationId: string, list: Ready = ready(), cursor?: string): Promise<string> => {
+    allow(WS);
+    env.list = list;
+    env.detail = conversationReady(conversationId);
+    return selectedPage(WS, conversationId, cursor);
+  };
+  const moves = (nav: string): string[] => [...nav.matchAll(/href="([^"]+)"/g)].map((match) => match[1] ?? "");
+
+  it("identity: the platform mark and who started it in the title, and the real workflow state beside it", async () => {
+    allow(WS);
+    env.list = ready();
+    const state = conversationReady(C2);
+    if (state.kind !== "ready") throw new Error("ready");
+    env.detail = { ...state, detail: { ...state.detail, workflowState: "done", thread: [{ interactionId: C1, parentInteractionId: null, kind: "comment", observed: true, author: "audience", authorLabel: "Header Author", text: "hi", presence: "present", providerCreatedAt: T1, providerEditedAt: null, textObservedAt: T1, earlierVersions: [], olderVersionsOmitted: false, facts: [] }] } };
+    const head = headOf(await selectedPage(WS, C2));
+    const title = head.slice(head.indexOf('id="conversation-title"'), head.indexOf("</h2>"));
+    expect(title).toContain('tabindex="-1"'); // where Escape brings the focus when the row is not drawn
+    expect(words(title)).toContain("Instagram"); // the platform mark's name
+    expect(head).toMatch(/class="[^"]*titleName[^"]*">Header Author</);
+    expect(words(zone(head, "headIdentity"))).toContain("Done");
+  });
+
+  it("management: no control that cannot act — only the real way to act on it today, viewing it in the Inbox", async () => {
+    const head = headOf(await open(C2));
+    const manage = zone(head, "headManage");
+    expect(words(manage)).toBe("View conversation in Inbox");
+    expect(manage).toContain(`href="/workspaces/${WS}/inbox/${C2}#row-${C2}"`);
+    expect(head).not.toMatch(/<button|<form|<input|<select|<textarea/);
+    expect(words(head)).not.toMatch(/Assign|Urgent|Escalat|Mark done|Reopen|Label|More actions/);
+  });
+
+  it("navigation: its place among the LOADED rows, Previous / Next to its neighbours on that page, each to its own anchor", async () => {
+    // ready(): C3, C2, C1 on this page, and an older page exists → "on this page".
+    const nav = navOf(await open(C2, ready(), NEXT));
+    expect(nav).toContain('aria-label="Move between conversations"');
+    expect(words(nav)).toContain("2 of 3 on this page");
+    expect(moves(nav)).toEqual([
+      `/workspaces/${WS}/comments/${C3}?cursor=${encodeURIComponent(NEXT)}#conversation-previous`,
+      `/workspaces/${WS}/comments/${C1}?cursor=${encodeURIComponent(NEXT)}#conversation-next`,
+    ]);
+    expect(words(nav)).toContain("Previous");
+    expect(words(nav)).toContain("Next");
+  });
+
+  it("navigation ends at the loaded page: the first has no Previous, the last no Next — never the older page or an unread conversation", async () => {
+    const first = navOf(await open(C3));
+    expect(moves(first)).toEqual([`/workspaces/${WS}/comments/${C2}#conversation-next`]);
+    expect(words(first)).toContain("1 of 3 on this page");
+    const last = navOf(await open(C1));
+    expect(moves(last)).toEqual([`/workspaces/${WS}/comments/${C2}#conversation-previous`]);
+    expect(last).not.toContain("cursor="); // the older page exists (NEXT), but Next does not lead there
+    expect(words(last)).toContain("3 of 3 on this page");
+    // Every page of the list loaded: plain "n of N".
+    expect(words(navOf(await open(C2, ready(WS, { nextCursor: null }))))).toContain("2 of 3");
+    expect(words(navOf(await open(C2, ready(WS, { nextCursor: null }))))).not.toContain("on this page");
+  });
+
+  it("no navigation where the place is not known: a conversation that is not on the loaded page, or the only one", async () => {
+    expect(navOf(await open(FOREIGN.replace(/^7/, "8")))).toBe("");
+    const only = ready(WS, { items: [item(C2)], nextCursor: null });
+    expect(navOf(await open(C2, only))).toBe("");
+  });
+
+  it("the anchors Previous / Next lead to sit at the very start of the conversation area, as its own does", async () => {
+    const html = await open(C2);
+    const pane = html.slice(html.indexOf('<section id="conversation"'));
+    expect(pane.indexOf('id="conversation-previous"')).toBeLessThan(pane.indexOf("<article"));
+    expect(pane.indexOf('id="conversation-next"')).toBeLessThan(pane.indexOf("<article"));
+    // A closed answer (not found) draws neither anchor: nothing to move to.
+    allow(WS);
+    env.list = ready();
+    env.detail = { kind: "conversation_not_found" };
+    const closed = await selectedPage(WS, FOREIGN);
+    expect(closed).not.toContain('id="conversation-next"');
+    expect(navOf(closed)).toBe("");
   });
 });
 

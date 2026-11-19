@@ -82,11 +82,19 @@ export function workspaceCommentsPagePath(workspaceId: unknown, cursor: string):
  * on one panel, so bringing it into view scrolled the page to an arbitrary place (or not at all).
  */
 export const COMMENTS_CONVERSATION_ANCHOR = "conversation";
+/**
+ * COMMENTS-INT-03C-1: where Previous / Next lead — the same place as the conversation's anchor (its start), under
+ * their own names, so the control used keeps the keyboard focus after the move (the in-app link hands the focus to
+ * the link standing for the anchor it went to).
+ */
+export const COMMENTS_PREVIOUS_ANCHOR = "conversation-previous";
+export const COMMENTS_NEXT_ANCHOR = "conversation-next";
+export type CommentsConversationAnchor = typeof COMMENTS_CONVERSATION_ANCHOR | typeof COMMENTS_PREVIOUS_ANCHOR | typeof COMMENTS_NEXT_ANCHOR;
 
 /** Comments with one conversation selected by its address (same ids and cursor as the Inbox; it opens at its start). */
-export function workspaceCommentsConversationPath(workspaceId: unknown, conversationId: unknown, cursor?: string): string | undefined {
+export function workspaceCommentsConversationPath(workspaceId: unknown, conversationId: unknown, cursor?: string, anchor: CommentsConversationAnchor = COMMENTS_CONVERSATION_ANCHOR): string | undefined {
   const base = workspaceCommentsPath(workspaceId);
   if (base === undefined || !isUuid(conversationId)) return undefined;
   const position = cursor === undefined || cursor === "" ? "" : `?cursor=${encodeURIComponent(cursor)}`;
-  return `${base}/${conversationId}${position}#${COMMENTS_CONVERSATION_ANCHOR}`;
+  return `${base}/${conversationId}${position}#${anchor}`;
 }

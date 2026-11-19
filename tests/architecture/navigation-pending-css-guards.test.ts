@@ -12,7 +12,8 @@ import { REPOSITORY_ROOT } from "../support/source-scan";
 
 const SHEETS: Readonly<Record<string, readonly string[]>> = {
   "ui/inbox/inbox.module.css": ["rowPending", "navPending"],
-  "ui/inbox/comments.module.css": ["rowPending"],
+  // COMMENTS-INT-03C-1: + the Comments conversation's Previous / Next signal.
+  "ui/inbox/comments.module.css": ["rowPending", "navPending"],
   "ui/shell/app-shell.module.css": ["linkPending"],
 };
 const ACTIVE = '[data-pending="true"]';

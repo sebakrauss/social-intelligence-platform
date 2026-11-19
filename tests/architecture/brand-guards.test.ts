@@ -186,7 +186,8 @@ describe("foundations are inert", () => {
    * folders (ui/navigation/app-link.tsx) and is pinned there as well.
    */
   // COMMENTS-INT-03B-FIX: + the Comments list column (one layout effect on its own scroll; pinned in inbox-composer-guards).
-  const CLIENT_COMPONENTS = ["ui/inbox/comments-list-column.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx"];
+  // COMMENTS-INT-03C-1: + the Comments conversation area (Escape hands the focus back; pinned in inbox-composer-guards).
+  const CLIENT_COMPONENTS = ["ui/inbox/comments-list-column.tsx", "ui/inbox/comments-pane-section.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx"];
 
   it("the foundation, brand, icon and primitive components are server components", () => {
     for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell", "ui/inbox"]).filter((file) => !CLIENT_COMPONENTS.includes(file))) {

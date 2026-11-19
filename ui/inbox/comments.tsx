@@ -10,6 +10,7 @@
 import type { ReactNode } from "react";
 import { AppLink } from "@/ui/navigation/app-link";
 import { CommentsListColumn } from "./comments-list-column";
+import { CommentsPaneSection } from "./comments-pane-section";
 import { TimeStamp, type ShownTime } from "./inbox";
 import styles from "./comments.module.css";
 
@@ -121,9 +122,16 @@ export function CommentsPane({ label, back, content = "message", children }: {
   readonly back?: { readonly href: string; readonly label: string; readonly focusKey?: string | undefined } | undefined;
   readonly children: ReactNode;
 }) {
-  // `conversation` is the anchor a link to a conversation goes to (server/routes COMMENTS_CONVERSATION_ANCHOR).
   return (
-    <section id="conversation" className={styles["pane"]} aria-label={label} data-content={content}>
+    <CommentsPaneSection className={styles["pane"]} label={label} content={content}>
+      {/* COMMENTS-INT-03C-1: where Previous / Next lead (server/routes COMMENTS_PREVIOUS_ANCHOR / COMMENTS_NEXT_ANCHOR) — the
+          very start of the conversation area, as its own anchor is; empty and silent. */}
+      {content === "conversation" ? (
+        <>
+          <span id="conversation-previous" className={styles["paneAnchor"]} aria-hidden="true" />
+          <span id="conversation-next" className={styles["paneAnchor"]} aria-hidden="true" />
+        </>
+      ) : null}
       {back === undefined ? null : (
         <div className={styles["paneBack"]}>
           <AppLink href={back.href} className={styles["backLink"]} focusKey={back.focusKey}>
@@ -132,31 +140,92 @@ export function CommentsPane({ label, back, content = "message", children }: {
         </div>
       )}
       <div className={styles[content === "conversation" ? "paneConversation" : "paneMessage"]}>{children}</div>
-    </section>
+    </CommentsPaneSection>
+  );
+}
+
+/** One Previous / Next control: a link, or — at the end of the loaded page — the same mark, not a link. */
+export interface CommentsMove {
+  readonly label: string;
+  readonly href: string | undefined;
+}
+
+/**
+ * COMMENTS-INT-03C-1 — the approved header's navigation zone: where this conversation is among the ones LOADED in the
+ * list ("n of N", or "n of N on this page" when the list has other pages), and Previous / Next among them only — never
+ * a conversation that was not read. Arrows move (↑ previous, ↓ next: the approved icon convention); at an end the arrow
+ * stays, inert. 44px targets where one panel fits.
+ *
+ * Focus (the prototype's behavior): each control leads to its own anchor (`anchors`) and stands for it, so after a move
+ * the control used keeps the keyboard focus; at an end of the page, the remaining control stands for the missing one.
+ */
+export function CommentsConversationNav({ label, position, previous, next, anchors }: {
+  readonly label: string;
+  readonly position: string;
+  readonly previous: CommentsMove;
+  readonly next: CommentsMove;
+  readonly anchors: { readonly previous: string; readonly next: string };
+}) {
+  const move = (target: CommentsMove, glyph: string, focusKey: string) =>
+    target.href === undefined ? (
+      <span className={join(styles["navMove"], styles["navEnd"])} aria-hidden="true">
+        {glyph}
+      </span>
+    ) : (
+      <AppLink href={target.href} className={styles["navMove"]} pendingClassName={styles["navPending"]} focusKey={focusKey}>
+        <span aria-hidden="true">{glyph}</span>
+        <span className="wk-sr-only">{target.label}</span>
+      </AppLink>
+    );
+  return (
+    <nav className={styles["conversationNav"]} aria-label={label}>
+      <span className={styles["navPosition"]}>{position}</span>
+      {move(previous, "↑", next.href === undefined ? anchors.next : anchors.previous)}
+      {move(next, "↓", previous.href === undefined ? anchors.previous : anchors.next)}
+    </nav>
   );
 }
 
 /**
- * COMMENTS-INT-03B — the selected conversation, read only (Direction C): who started it, where it happens (the facts the
- * read model has, and what it does not have about the post), a plain way to view it in the Inbox, then the thread.
+ * COMMENTS-INT-03B / 03C-1 — the selected conversation, read only, under the approved Direction C header. Its three
+ * zones, from the authorized conversation answer only:
+ * - identity and context: the platform and who started it (the title), its real workflow state, then what the read
+ *   model has about where it happens and the Inbox's sentence for what it does not have about the post;
+ * - management: no control that cannot act — only the real way to act on it today (viewing it in the Inbox);
+ * - navigation: among the conversations loaded in the list (absent when this one is not among them).
  * Every value is built and authorized on the server.
  */
-export function CommentsConversation({ title, context, contextNote, note, children }: {
+export function CommentsConversation({ title, origin, state, context, contextNote, manage, nav, children }: {
   readonly title: string;
+  readonly origin: ReactNode;
+  readonly state: ReactNode;
   readonly context: ReactNode;
   readonly contextNote: string;
-  readonly note?: ReactNode;
+  readonly manage?: ReactNode;
+  readonly nav?: ReactNode;
   readonly children: ReactNode;
 }) {
   return (
     <article className={styles["conversation"]} aria-labelledby="conversation-title">
       <header className={styles["conversationHead"]}>
-        <h2 id="conversation-title" className={styles["conversationTitle"]}>
-          {title}
-        </h2>
-        <div className={styles["conversationContext"]}>{context}</div>
-        <p className={styles["conversationNote"]}>{contextNote}</p>
-        {note === undefined ? null : <p className={styles["conversationNote"]}>{note}</p>}
+        <div className={styles["headTop"]}>
+          <div className={styles["headIdentity"]}>
+            {/* Escape hands the focus here where the row is not drawn (one panel). */}
+            <h2 id="conversation-title" className={styles["conversationTitle"]} tabIndex={-1}>
+              {origin}
+              <span className={styles["titleName"]}>{title}</span>
+            </h2>
+            {state}
+          </div>
+          {nav}
+        </div>
+        <div className={styles["headLower"]}>
+          <div className={styles["headContext"]}>
+            <div className={styles["conversationContext"]}>{context}</div>
+            <p className={styles["conversationNote"]}>{contextNote}</p>
+          </div>
+          {manage === undefined ? null : <div className={styles["headManage"]}>{manage}</div>}
+        </div>
       </header>
       <div className={styles["conversationBody"]}>{children}</div>
     </article>

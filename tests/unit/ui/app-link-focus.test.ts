@@ -18,7 +18,7 @@ vi.mock("next/link", () => ({
 }));
 
 const { AppLink } = await import("@/ui/navigation/app-link");
-const { CommentsPane, CommentsRow } = await import("@/ui/inbox/comments");
+const { CommentsConversationNav, CommentsPane, CommentsRow } = await import("@/ui/inbox/comments");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const ROW = "row-1";
@@ -103,5 +103,49 @@ describe("Comments: the focus after opening a conversation (the real row and pan
     await act(async () => { link("back").click(); await Promise.resolve(); });
     await render(list());
     expect(active()).toBe(rowLink());
+  });
+});
+
+/* COMMENTS-INT-03C-1: Previous / Next lead to their own anchors, so the control used keeps the focus (the prototype's
+   behavior: moving again is one key press away); at an end of the page, the remaining control takes it. */
+describe("Comments: the focus after Previous / Next (the real header navigation)", () => {
+  // Each conversation is a new address, so its page is mounted afresh (as the framework does): a key per page.
+  const nav = (previous: string | undefined, next: string | undefined): ReactNode =>
+    h("div", { key: `${String(previous)}|${String(next)}` }, h(CommentsConversationNav, {
+      label: "Move between conversations",
+      position: "2 of 3",
+      previous: { label: "Previous", href: previous },
+      next: { label: "Next", href: next },
+      anchors: { previous: "conversation-previous", next: "conversation-next" },
+    }));
+  const move = (word: string): HTMLAnchorElement => [...container.querySelectorAll("a")].find((a) => a.textContent.includes(word)) as HTMLAnchorElement;
+
+  it("Next keeps the focus on Next", async () => {
+    await render(nav("/c/1#conversation-previous", "/c/3#conversation-next"));
+    await act(async () => { move("Next").click(); await Promise.resolve(); });
+    await render(nav("/c/2#conversation-previous", "/c/4#conversation-next"));
+    expect(active()).toBe(move("Next"));
+  });
+
+  it("Previous keeps the focus on Previous", async () => {
+    await render(nav("/c/1#conversation-previous", "/c/3#conversation-next"));
+    await act(async () => { move("Previous").click(); await Promise.resolve(); });
+    await render(nav("/c/0#conversation-previous", "/c/2#conversation-next"));
+    expect(active()).toBe(move("Previous"));
+  });
+
+  it("at the last conversation of the page Next is not a link: Previous takes the focus, never the page body", async () => {
+    await render(nav("/c/1#conversation-previous", "/c/3#conversation-next"));
+    await act(async () => { move("Next").click(); await Promise.resolve(); });
+    await render(nav("/c/2#conversation-previous", undefined));
+    expect(active()).toBe(move("Previous"));
+    expect(active()).not.toBe(document.body);
+  });
+
+  it("at the first conversation of the page Previous is not a link: Next takes the focus", async () => {
+    await render(nav("/c/1#conversation-previous", "/c/3#conversation-next"));
+    await act(async () => { move("Previous").click(); await Promise.resolve(); });
+    await render(nav(undefined, "/c/2#conversation-next"));
+    expect(active()).toBe(move("Next"));
   });
 });
