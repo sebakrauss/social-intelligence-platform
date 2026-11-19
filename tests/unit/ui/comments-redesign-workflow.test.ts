@@ -172,7 +172,9 @@ describe("conversation management (hypotheses: Urgent ≠ Escalate; Done needs a
   it("Mark done needs a resolution; it clears Urgent and the escalation but keeps their record; Reopen brings it back", () => {
     const urgent = ok(escalateConversation(ok(setUrgent(SEED_WORKFLOW, "manager", "cv-07", true)), "manager", "cv-07", "Product", ""));
     const done = ok(markDone(urgent, "agent", "standard", "cv-07", "no_reply_needed", SEED_SIM));
-    expect(flowOf(done, "cv-07")).toEqual({ status: "done", resolution: "no_reply_needed" });
+    // UX-08A: Done records when (the simulated clock, the moment of its history entry); Reopen removes it.
+    expect(flowOf(done, "cv-07")).toEqual({ status: "done", resolution: "no_reply_needed", resolvedAt: "2026-11-17T15:05:00Z" });
+    expect(done.activity.at(-1)?.at).toBe("2026-11-17T15:05:00Z");
     expect(done.activity.filter((entry) => entry.conversationId === "cv-07").map((entry) => entry.text)).toEqual(["Marked urgent", "Escalated to Product", "Urgent cleared when marked done", "Escalation to Product closed when marked done", "Marked done · No reply needed"]);
     expect(markDone(done, "agent", "standard", "cv-07", "replied_publicly", SEED_SIM)).toEqual({ ok: false, reason: "It's already done." });
     expect(setUrgent(done, "agent", "cv-07", true)).toEqual({ ok: false, reason: "Reopen the conversation to mark it urgent." });
@@ -214,7 +216,7 @@ describe("views, filters, search and sort", () => {
     const open = listOf("open", NO_FILTERS, "", "attention", CTX);
     for (const item of attention) expect(ids(open)).toContain(item.id);
     expect(attention.length).toBeLessThan(open.length);
-    expect(ids(listOf("mine", NO_FILTERS, "", "newest", CTX)).sort()).toEqual(["cv-03", "cv-04"]);
+    expect(ids(listOf("mine", NO_FILTERS, "", "newest", CTX)).sort()).toEqual(["cv-03", "cv-04", "cv-51"]);
     expect(ids(listOf("escalated", NO_FILTERS, "", "newest", CTX))).toEqual(["cv-03"]);
     expect(listOf("done", NO_FILTERS, "", "attention", CTX).every((item) => flowOf(SEED_WORKFLOW, item.id).status === "done")).toBe(true);
   });
@@ -230,7 +232,8 @@ describe("views, filters, search and sort", () => {
     let filters = withFilter(NO_FILTERS, "label", "lbl-wholesale");
     filters = withFilter(filters, "platform", "facebook");
     filters = { ...filters, accounts: ["acc-fb-main"] };
-    expect(ids(listOf("open", filters, "", "newest", CTX)).sort()).toEqual(["cv-05", "cv-22", "cv-42"]);
+    // cv-49 (UX-08A: received in October, never answered) is still Open work: an operational view lists it at all dates.
+    expect(ids(listOf("open", filters, "", "newest", CTX)).sort()).toEqual(["cv-05", "cv-22", "cv-42", "cv-49"]);
     filters = withFilter(filters, "assignee", "m-carla");
     expect(ids(listOf("open", filters, "", "newest", CTX)).sort()).toEqual(["cv-05", "cv-22", "cv-42"]);
     expect(activeFilters(filters, LABELS).map((chip) => `${chip.name}: ${chip.value}`)).toEqual(["Platform: Facebook", "Label: Wholesale lead", "Account: Lumen Coffee", "Assignee: Carla Méndez"]);
@@ -279,13 +282,13 @@ describe("label management (Settings › Labels, the proposed labels.manage)", (
     expect(isMarker("brown")).toBe(false);
   });
 
-  it("a color belongs to the workspace label (an identifier, never a value): every comment carrying it follows; reset is gray", () => {
+  it("a color belongs to the workspace label (an identifier, never a value): every conversation carrying it follows; reset is gray", () => {
     const teal = setMarker(LABELS, "manager", "lbl-follow", "teal");
     if (!teal.ok) throw new Error("not set");
     const label = teal.state.labels.find((item) => item.id === "lbl-follow");
     expect(label?.marker).toBe("teal");
-    expect(teal.state.assignments).toBe(LABELS.assignments); // no comment changes: the label carries the color
-    for (const [commentId, ids] of Object.entries(teal.state.assignments)) if (ids.includes("lbl-follow")) expect(labelsOn(teal.state, commentId)).toContain("lbl-follow");
+    expect(teal.state.assignments).toBe(LABELS.assignments); // no conversation changes: the label carries the color
+    for (const [conversationId, ids] of Object.entries(teal.state.assignments)) if (ids.includes("lbl-follow")) expect(labelsOn(teal.state, conversationId)).toContain("lbl-follow");
     const reset = setMarker(teal.state, "manager", "lbl-follow", DEFAULT_MARKER);
     expect(reset.ok && markerOf(reset.state.labels.find((item) => item.id === "lbl-follow") ?? { id: "", name: "" })).toBe("gray");
     // Seeded labels with no color are gray; the four configured ones keep theirs.
@@ -297,7 +300,7 @@ describe("label management (Settings › Labels, the proposed labels.manage)", (
       expect(setMarker(LABELS, role, "lbl-follow", "teal"), role).toEqual({ ok: false, problem: "not_allowed" });
       expect(createLabel(LABELS, role, "New", undefined, "teal"), role).toEqual({ ok: false, problem: "not_allowed" });
     }
-    const created = createLabel(LABELS, "manager", "Supplier inquiry", "cv-07-m00", "plum");
+    const created = createLabel(LABELS, "manager", "Supplier inquiry", "cv-07", "plum");
     expect(created.ok && created.label).toMatchObject({ name: "Supplier inquiry", marker: "plum" });
     expect(createLabel(LABELS, "manager", "Supplier inquiry", undefined).ok && "gray").toBe("gray");
     expect(createLabel(LABELS, "manager", "Supplier inquiry", undefined, "brown")).toEqual({ ok: false, problem: "marker_unknown" });
@@ -317,14 +320,14 @@ describe("label management (Settings › Labels, the proposed labels.manage)", (
     expect(ids(listOf("open", withFilter(NO_FILTERS, "label", "lbl-follow"), "", "newest", after))).toEqual(ids(listOf("open", withFilter(NO_FILTERS, "label", "lbl-follow"), "", "newest", CTX)));
   });
 
-  it("deleting a label removes it from every comment and deletes no comment; its conversations are named for the record", () => {
+  it("deleting a label removes it from every conversation and deletes no conversation or comment; they are named for the record", () => {
     expect(labelUsage(LABELS, "lbl-refund")).toBe(5);
     expect(conversationsWithLabel(LABELS, "lbl-refund")).toEqual(["cv-04", "cv-10", "cv-19", "cv-26", "cv-34"]);
     const deleted = deleteLabel(LABELS, "manager", "lbl-refund");
     if (!deleted.ok) throw new Error("not deleted");
     expect(deleted.removedFrom).toHaveLength(5);
     expect(deleted.state.labels.some((label) => label.id === "lbl-refund")).toBe(false);
-    expect(labelsOn(deleted.state, "cv-10-m00")).toEqual(["lbl-delivery"]);
+    expect(labelsOn(deleted.state, "cv-10")).toEqual(["lbl-delivery"]);
     expect(CONVERSATIONS.find((item) => item.id === "cv-10")?.comments.length).toBe(3);
     expect(deleteLabel(LABELS, "agent", "lbl-refund").ok).toBe(false);
   });
@@ -430,7 +433,7 @@ describe("UX-05 H-2: Done never while a reply's outcome is unknown, and never cl
     const failed = answerOp(checking, id, "failed");
     expect(markDone(SEED_WORKFLOW, "manager", "standard", "cv-07", "replied_publicly", failed).ok).toBe(false);
     const closed = ok(markDone(SEED_WORKFLOW, "manager", "standard", "cv-07", "replied_on_platform", failed));
-    expect(flowOf(closed, "cv-07")).toEqual({ status: "done", resolution: "replied_on_platform" });
+    expect(flowOf(closed, "cv-07")).toEqual({ status: "done", resolution: "replied_on_platform", resolvedAt: "2026-11-17T15:01:00Z" });
     // Choosing a resolution never marks a reply as delivered: the failure stays in the simulated record.
     expect(failed.ops[0]?.status).toBe("failed");
     expect(unresolvedReplies("cv-07", failed)).toHaveLength(1);
@@ -505,7 +508,7 @@ describe("UX-05: header menus are sized by themselves, never by the control they
     expect(tablet).toMatch(/\.drawerOpen \.drawer \{\s*visibility: visible;/);
     expect(tablet).toMatch(/\.drawerTitle \{[^}]*clip-path: inset\(50%\);/);
     expect(tablet).not.toMatch(/\.drawerTitle[^{]*\{[^}]*display: none/);
-    expect(tablet).toMatch(/\.chipRemove,\s*\.fpillRemove \{\s*width: 44px;\s*height: 44px;/);
+    expect(tablet).toMatch(/\.fpillRemove \{\s*width: 44px;\s*height: 44px;/);
   });
 });
 

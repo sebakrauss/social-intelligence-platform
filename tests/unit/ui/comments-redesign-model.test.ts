@@ -18,7 +18,6 @@ import {
   answerOp,
   availabilityOf,
   contextNotice,
-  labelSummary,
   openOpOn,
   opAvailability,
   opSentence,
@@ -39,6 +38,7 @@ import {
   ownIdentity,
   positionOf,
   requesterOf,
+  samePostCount,
   setAssigned,
   sourceTag,
   threadOf,
@@ -54,9 +54,10 @@ const account = (id: string) => {
 };
 
 describe("synthetic fixtures", () => {
-  it("are realistic in volume and shape: 25–50 conversations, several accounts, long threads, published replies, unknown context", () => {
+  it("are realistic in volume and shape: 25–60 conversations, several accounts, long threads, published replies, unknown context", () => {
+    // 25–50 until UX-08A, which adds six conversations dated in earlier months (cv-49…cv-54) for the periods.
     expect(CONVERSATIONS.length).toBeGreaterThanOrEqual(25);
-    expect(CONVERSATIONS.length).toBeLessThanOrEqual(50);
+    expect(CONVERSATIONS.length).toBeLessThanOrEqual(60);
     expect(new Set(CONVERSATIONS.map((conversation) => conversation.accountId)).size).toBe(4);
     expect(Math.max(...CONVERSATIONS.map((conversation) => conversation.comments.length))).toBeGreaterThanOrEqual(12);
     expect(CONVERSATIONS.filter((conversation) => conversation.sent.length > 0).length).toBeGreaterThanOrEqual(5);
@@ -83,20 +84,20 @@ describe("roles (§D.4)", () => {
   });
 
   it("a role without the ability changes nothing", () => {
-    expect(setAssigned(START, "analyst", "cv-01-m00", "lbl-praise", true)).toBe(START);
-    expect(createLabel(START, "agent", "Urgent", "cv-01-m00")).toEqual({ ok: false, problem: "not_allowed" });
+    expect(setAssigned(START, "analyst", "cv-01", "lbl-praise", true)).toBe(START);
+    expect(createLabel(START, "agent", "Urgent", "cv-01")).toEqual({ ok: false, problem: "not_allowed" });
     expect(createLabel(START, "guest", "Urgent", undefined)).toEqual({ ok: false, problem: "not_allowed" });
   });
 });
 
 describe("manual labels (§D.3)", () => {
-  it("creating from a comment assigns the new label to that comment in the same step", () => {
-    const result = createLabel(START, "manager", "  Press   inquiry ", "cv-06-m00");
+  it("creating from a conversation assigns the new label to that conversation in the same step (UX-07B)", () => {
+    const result = createLabel(START, "manager", "  Press   inquiry ", "cv-06");
     if (!result.ok) throw new Error(result.problem);
     expect(result.label.name).toBe("Press inquiry");
     expect(result.state.labels).toHaveLength(SEED_LABELS.length + 1);
-    expect(labelsOn(result.state, "cv-06-m00")).toEqual([result.label.id]);
-    // Created from the sidebar: no comment receives it.
+    expect(labelsOn(result.state, "cv-06")).toEqual([result.label.id]);
+    // Created in Settings: no conversation receives it.
     const bare = createLabel(START, "owner", "Press inquiry", undefined);
     if (!bare.ok) throw new Error(bare.problem);
     expect(Object.values(bare.state.assignments).flat()).not.toContain(bare.label.id);
@@ -112,22 +113,31 @@ describe("manual labels (§D.3)", () => {
     expect(nameProblem(full, "One more")).toBe("limit");
   });
 
-  it("a comment carries several labels; assign and remove are idempotent", () => {
-    const once = setAssigned(START, "agent", "cv-01-m00", "lbl-praise", true);
-    expect(labelsOn(once, "cv-01-m00")).toEqual(["lbl-delivery", "lbl-follow", "lbl-praise"]);
-    expect(setAssigned(once, "agent", "cv-01-m00", "lbl-praise", true)).toBe(once);
-    const removed = setAssigned(once, "agent", "cv-01-m00", "lbl-delivery", false);
-    expect(labelsOn(removed, "cv-01-m00")).toEqual(["lbl-follow", "lbl-praise"]);
-    expect(setAssigned(removed, "agent", "cv-01-m00", "lbl-delivery", false)).toBe(removed);
-    expect(setAssigned(START, "agent", "cv-01-m00", "lbl-does-not-exist", true)).toBe(START);
+  it("a conversation carries several labels; assign and remove are idempotent (UX-07B: keyed by the conversation)", () => {
+    const once = setAssigned(START, "agent", "cv-01", "lbl-praise", true);
+    expect(labelsOn(once, "cv-01")).toEqual(["lbl-delivery", "lbl-follow", "lbl-praise"]);
+    expect(setAssigned(once, "agent", "cv-01", "lbl-praise", true)).toBe(once);
+    const removed = setAssigned(once, "agent", "cv-01", "lbl-delivery", false);
+    expect(labelsOn(removed, "cv-01")).toEqual(["lbl-follow", "lbl-praise"]);
+    expect(setAssigned(removed, "agent", "cv-01", "lbl-delivery", false)).toBe(removed);
+    expect(setAssigned(START, "agent", "cv-01", "lbl-does-not-exist", true)).toBe(START);
   });
 
-  it("the filter lists a conversation when at least one of its comments carries the label; a missing label shows everything", () => {
+  it("UX-07B: labels are keyed by conversation only — never by a comment, never shared by the conversations of one post", () => {
+    // Every key of the seed is a conversation id; no comment id (…-m00) is a key.
+    for (const key of Object.keys(SEED_ASSIGNMENTS)) expect(key).toMatch(/^cv-\d{2}$/);
+    for (const conversation of CONVERSATIONS) for (const comment of conversation.comments) expect(labelsOn(START, comment.id)).toEqual([]);
+    // cv-19 and cv-14 hang from the same post: a label added to one does not reach the other.
+    expect(samePostCount(conversation("cv-19"))).toBe(4);
+    const added = setAssigned(START, "agent", "cv-19", "lbl-allergen", true);
+    expect(conversationLabels(added, conversation("cv-19"))).toContain("lbl-allergen");
+    for (const sibling of ["cv-14", "cv-30", "cv-34", "cv-43"]) expect(conversationLabels(added, conversation(sibling))).not.toContain("lbl-allergen");
+  });
+
+  it("the filter lists a conversation when it carries the label; a missing label shows everything", () => {
     const refund = visibleConversations(START, "lbl-refund");
     expect(refund.map((conversation) => conversation.id).sort()).toEqual(["cv-04", "cv-10", "cv-19", "cv-26", "cv-34"]);
-    // cv-19: the label is on a reply deep in the thread, not on its first comment.
-    expect(labelsOn(START, "cv-19-m00")).not.toContain("lbl-refund");
-    expect(conversationLabels(START, CONVERSATIONS.find((conversation) => conversation.id === "cv-19") as never)).toContain("lbl-refund");
+    expect(conversationLabels(START, CONVERSATIONS.find((conversation) => conversation.id === "cv-19") as never)).toEqual(["lbl-delivery", "lbl-refund", "lbl-follow"]);
     expect(labelCounts(START)["lbl-refund"]).toBe(5);
     expect(visibleConversations(START, "lbl-gone")).toBe(ORDERED);
     expect(visibleConversations(START, undefined)).toBe(ORDERED);
@@ -370,9 +380,6 @@ describe("context said once, and labels summarized without spreading them to the
     expect(contextNotice(conversation("cv-01"), "healthy", "simulate", "standard")).toBeUndefined();
   });
 
-  it("a conversation's label summary counts the comments that carry each label", () => {
-    expect(labelSummary(START, conversation("cv-19")).map((item) => `${item.label.name}:${String(item.comments)}`)).toEqual(["Delivery:3", "Refund request:1"]);
-  });
 });
 
 describe("source preview (UX2): shape and words only, the source said plainly, never media", () => {
@@ -394,8 +401,9 @@ describe("fixtures for the action rules", () => {
     expect([...surfaces].sort()).toEqual(["dark_post", "feed", "live", "story_ad"]);
     expect(POSTS.some((post) => post.owner !== null)).toBe(true);
     expect(ACCOUNTS.filter((item) => item.health === "needs_attention").map((item) => item.id)).toEqual(["acc-fb-events"]);
-    // 36 conversations of 7B-17V plus 12 newer ones added for UX-04 (inside the response target).
-    expect(CONVERSATIONS).toHaveLength(48);
+    // 36 conversations of 7B-17V, 12 newer ones added for UX-04 (inside the response target) and 6 dated in earlier
+    // months for UX-08A's periods.
+    expect(CONVERSATIONS).toHaveLength(54);
     for (const id of Object.keys(SEED_ASSESSMENTS)) {
       const found = CONVERSATIONS.flatMap((item) => item.comments).find((comment) => comment.id === id);
       expect(found?.author.kind, id).toBe("audience");

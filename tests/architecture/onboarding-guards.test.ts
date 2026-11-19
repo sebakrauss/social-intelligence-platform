@@ -57,6 +57,11 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/dev/ui-reference/comments-redesign/model.ts",
       "app/dev/ui-reference/comments-redesign/page.tsx",
       "app/dev/ui-reference/comments-redesign/prototype.tsx",
+      // COMMENTS-UX-07A: the scroll comparison (three scroll models over the redesign's synthetic fixtures, read-only;
+      // local React state only; no action, no read, no storage), also a 404 outside `next dev` (brand-guards proves it).
+      "app/dev/ui-reference/comments-scroll/comparison.tsx",
+      "app/dev/ui-reference/comments-scroll/data.ts",
+      "app/dev/ui-reference/comments-scroll/page.tsx",
       // Step 7B-15N: the Inbox › Comments product prototype (synthetic fixtures; its only action is the reply harness's
       // development-only simulation), also a 404 outside `next dev` (brand-guards proves it).
       "app/dev/ui-reference/comments/fixtures.ts",

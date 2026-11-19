@@ -3,14 +3,17 @@
  * fictional connected accounts (two Facebook Pages, two Instagram accounts) and 36 conversations written to exercise
  * what the redesigned Comments page must draw: short and long comments in English, Spanish and Portuguese, replies to
  * replies, a long thread, replies the brand published earlier (from Wrenkind and directly on the platform), hidden and
- * removed comments, unknown post details and organic/paid source, several manual labels per comment, and one account
+ * removed comments, unknown post details and organic/paid source, several manual labels on one conversation, and one account
  * whose verified name is not available. Step 7B-17V-UX adds what the comment actions need to be drawn honestly: posts
  * whose comments a platform does not let other apps manage (an Instagram live video and story ad, a post another
  * account owns), ads whose moderation is not validated, a connection that needs attention, comments past the private
  * reply window, and synthetic examples of automatic assessments. Step UX-04 adds a fictional team (assignees), the
  * conversations' seeded workflow (Open / Done, assignee, a person's Urgent flag, an escalation, their history), twelve
- * newer conversations inside the response target, and a reply whose outcome is still being checked. Nothing here is
- * real, read from a database or sent anywhere.
+ * newer conversations inside the response target, and a reply whose outcome is still being checked. UX-08A adds six
+ * conversations dated in earlier months (cv-49…cv-54) for the date periods: an old one still open, one received last
+ * month with activity this month, two on the same post with different labels, one resolved last month, and a month and
+ * a year boundary that fall on different days in UTC and in the workspace's time zone. Nothing here is real, read from
+ * a database or sent anywhere.
  */
 
 export type Platform = "facebook" | "instagram";
@@ -174,14 +177,22 @@ interface Seed {
   readonly m: readonly M[];
   /** Replies published through Wrenkind: [parent index, text, member]. */
   readonly sent?: readonly (readonly [number, string, string])[];
-  /** Manual labels already on comments: [message index, label id]. */
-  readonly labels?: readonly (readonly [number, string])[];
+  /**
+   * Manual labels already on the conversation (UX-07B: a label belongs to the conversation — the root comment and its
+   * replies — never to one reply, and never to every conversation on the same post).
+   */
+  readonly labels?: readonly string[];
   /** Synthetic assessments: [message index, meaning, protected]. */
   readonly assessed?: readonly (readonly [number, Assessment["meaning"], boolean])[];
   /** Days to push the whole conversation back in time (the private-reply window is seven days). */
   readonly daysAgo?: number;
   /** Minutes before "now" of the last message, instead of the position-based spacing (UX-04 scenarios). */
   readonly minutesAgo?: number;
+  /**
+   * UX-08A: the exact moment each message was written (one per message, in order), for the conversations that test
+   * periods — an older month, a month or year that ends at a different moment in the workspace's time zone.
+   */
+  readonly times?: readonly string[];
   /** Seeded workflow (UX-04): assignee member id, Done with a resolution, a person's Urgent flag, an escalation. */
   readonly flow?: { readonly assignee?: string; readonly done?: SeedResolution; readonly urgent?: true; readonly escalated?: string };
 }
@@ -198,7 +209,7 @@ const SEEDS: readonly Seed[] = [
       ["@", "Hi Caro, we're sorry — could you send us your order number by DM so we can check with the courier?"],
       ["caro.mendez", "It's #A-20931. I already wrote to support twice.", 1],
     ],
-    labels: [[0, "lbl-delivery"], [0, "lbl-follow"]],
+    labels: ["lbl-delivery", "lbl-follow"],
     assessed: [[0, "Complaint", true]],
   },
   {
@@ -206,7 +217,7 @@ const SEEDS: readonly Seed[] = [
     account: "acc-ig-main",
     m: [["joaquin.rv", "This blend is unreal. Best thing you've released this year ☕️🔥"]],
     sent: [[0, "Thank you, Joaquín! It goes fast — the roastery is already on batch four.", "Ana Ruiz"]],
-    labels: [[0, "lbl-praise"]],
+    labels: ["lbl-praise"],
     assessed: [[0, "Praise", false]],
     flow: { done: "replied_publicly" },
   },
@@ -218,7 +229,7 @@ const SEEDS: readonly Seed[] = [
       ["Lucía Fernández", "En el de Belgrano tienen leche de avena y de almendras, supongo que acá también.", 0],
       ["Martina Gómez", "Gracias Lucía! Igual me gustaría que lo confirme la marca.", 1],
     ],
-    labels: [[0, "lbl-allergen"]],
+    labels: ["lbl-allergen"],
     assessed: [[0, "Question", false]],
     flow: { assignee: "m-ana", escalated: "Product" },
   },
@@ -226,7 +237,7 @@ const SEEDS: readonly Seed[] = [
     post: "post-9",
     account: "acc-ig-main",
     m: [["pedro.salles", "Cobraram o frete mesmo com a promoção. Quero o reembolso da diferença, por favor."]],
-    labels: [[0, "lbl-refund"]],
+    labels: ["lbl-refund"],
     assessed: [[0, "Complaint", true]],
     flow: { assignee: "m-ana" },
   },
@@ -238,7 +249,7 @@ const SEEDS: readonly Seed[] = [
       ["@", "Hi Diego! Yes — our wholesale team will be glad to help. Could you share your weekly volume?"],
       ["Diego Herrera", "Around 40 kg a week between both places, mostly espresso. Do you deliver to Montevideo?", 1],
     ],
-    labels: [[0, "lbl-wholesale"], [2, "lbl-wholesale"]],
+    labels: ["lbl-wholesale"],
     minutesAgo: 25,
     flow: { assignee: "m-carla" },
   },
@@ -280,7 +291,7 @@ const SEEDS: readonly Seed[] = [
       ["Ramiro Paz", "Todavía no me llegó nada y nadie me contesta el privado. ¿Me van a devolver la plata o no?", 0],
     ],
     sent: [[0, "Ramiro, ya generamos la reposición sin costo. Te llega el lunes.", "Bruno Díaz"]],
-    labels: [[0, "lbl-delivery"], [0, "lbl-refund"]],
+    labels: ["lbl-delivery", "lbl-refund"],
     assessed: [[0, "Complaint", true]],
     // The customer's new reply is 40 minutes old (the last message of the seed's spacing is 18 minutes after it).
     minutesAgo: 22,
@@ -313,7 +324,7 @@ const SEEDS: readonly Seed[] = [
     post: "post-2",
     account: "acc-ig-main",
     m: [["luiza.mota", "Assinei semana passada e ainda não recebi o e-mail de confirmação 🤔"]],
-    labels: [[0, "lbl-follow"]],
+    labels: ["lbl-follow"],
   },
   {
     post: "post-5",
@@ -322,7 +333,7 @@ const SEEDS: readonly Seed[] = [
       ["Paula Ibarra", "Fui al taller del mes pasado y fue lo mejor. 100% recomendado ❤️"],
       ["Sofía Quiroga", "¡Qué bueno! Me anoto para este.", 0],
     ],
-    labels: [[0, "lbl-praise"]],
+    labels: ["lbl-praise"],
     flow: { done: "no_reply_needed" },
   },
   {
@@ -342,7 +353,7 @@ const SEEDS: readonly Seed[] = [
     post: "post-1",
     account: "acc-ig-main",
     m: [["mateo.lopez", "Does the holiday blend contain any nuts or flavourings? My partner has a nut allergy."]],
-    labels: [[0, "lbl-allergen"]],
+    labels: ["lbl-allergen"],
   },
   // The long thread: eleven people and the brand around one shipping complaint.
   {
@@ -365,7 +376,8 @@ const SEEDS: readonly Seed[] = [
       ["renata.soto", "Mine arrived. Thanks for following up.", 6],
     ],
     sent: [[4, "Renata, we've escalated your order with the courier — you should see an update by tonight.", "Bruno Díaz"]],
-    labels: [[0, "lbl-delivery"], [5, "lbl-delivery"], [5, "lbl-refund"], [9, "lbl-delivery"]],
+    // Several labels on one conversation (UX-07B): the row shows two names and "+1"; the header shows all three.
+    labels: ["lbl-delivery", "lbl-refund", "lbl-follow"],
     assessed: [[0, "Complaint", true], [5, "Commercial objection", true]],
     flow: { assignee: "m-bruno" },
   },
@@ -386,7 +398,7 @@ const SEEDS: readonly Seed[] = [
     post: null,
     account: "acc-fb-main",
     m: [["Claudia Ríos", "Hola, ¿hacen facturas para empresa? Queremos pedir café para la oficina todos los meses."]],
-    labels: [[0, "lbl-wholesale"]],
+    labels: ["lbl-wholesale"],
     flow: { assignee: "m-carla" },
   },
   {
@@ -404,7 +416,7 @@ const SEEDS: readonly Seed[] = [
     post: "post-1",
     account: "acc-ig-main",
     m: [["lu.barista", "Pulled this as espresso this morning, 18 g in, 38 g out, 29 s. Chocolate bomb. Thank you for this one!"]],
-    labels: [[0, "lbl-praise"]],
+    labels: ["lbl-praise"],
     flow: { done: "no_reply_needed" },
   },
   {
@@ -415,7 +427,7 @@ const SEEDS: readonly Seed[] = [
       ["@", "Federico, escribinos a ayuda@ con el comprobante y lo resolvemos hoy mismo."],
       ["Federico Luna", "Ya escribí ayer y no tuve respuesta.", 1],
     ],
-    labels: [[0, "lbl-refund"], [2, "lbl-follow"]],
+    labels: ["lbl-refund", "lbl-follow"],
     assessed: [[0, "Complaint", true]],
     flow: { assignee: "m-bruno" },
   },
@@ -462,14 +474,14 @@ const SEEDS: readonly Seed[] = [
     post: "post-5",
     account: "acc-fb-events",
     m: [["Nicolás Ferreyra", "Hacen talleres para empresas? Somos un equipo de 15."]],
-    labels: [[0, "lbl-wholesale"]],
+    labels: ["lbl-wholesale"],
     flow: { assignee: "m-carla" },
   },
   {
     post: "post-2",
     account: "acc-ig-main",
     m: [["clara.ok", "Cancelled my subscription and was still charged this month. Please refund."]],
-    labels: [[0, "lbl-refund"]],
+    labels: ["lbl-refund"],
     assessed: [[0, "Complaint", true]],
     // Five days older: the private-reply window closes in less than a day.
     daysAgo: 5,
@@ -497,13 +509,77 @@ const SEEDS: readonly Seed[] = [
   { post: "post-9", account: "acc-ig-main", m: [["marina.f", "Does the free shipping apply to Uruguay too?"]], minutesAgo: 33 },
   { post: "post-4", account: "acc-fb-main", m: [["Laura Sánchez", "¿El tostadero hace visitas guiadas para escuelas?"]], minutesAgo: 52 },
   // UX-04 scenario C: a second wholesale lead, already with sales.
-  { post: "post-4", account: "acc-fb-main", m: [["Valeria Sosa", "¿Tienen precio mayorista para cafeterías? Somos tres locales en Rosario."]], labels: [[0, "lbl-wholesale"]], minutesAgo: 70, flow: { assignee: "m-carla" } },
-  { post: "post-2", account: "acc-ig-main", m: [["rafa.coffee", "Can I pause my subscription in January? Travelling all month."]], labels: [[0, "lbl-follow"]], minutesAgo: 75 },
+  { post: "post-4", account: "acc-fb-main", m: [["Valeria Sosa", "¿Tienen precio mayorista para cafeterías? Somos tres locales en Rosario."]], labels: ["lbl-wholesale"], minutesAgo: 70, flow: { assignee: "m-carla" } },
+  { post: "post-2", account: "acc-ig-main", m: [["rafa.coffee", "Can I pause my subscription in January? Travelling all month."]], labels: ["lbl-follow"], minutesAgo: 75 },
   { post: "post-6", account: "acc-ig-roastery", m: [["beto.gomez", "Is this lot available as an espresso roast?"]], minutesAgo: 95 },
-  { post: "post-3", account: "acc-fb-main", m: [["Inés Paredes", "Excelente atención ayer en el local, ¡gracias Martín!"]], labels: [[0, "lbl-praise"]], minutesAgo: 130 },
+  { post: "post-3", account: "acc-fb-main", m: [["Inés Paredes", "Excelente atención ayer en el local, ¡gracias Martín!"]], labels: ["lbl-praise"], minutesAgo: 130 },
   { post: "post-1", account: "acc-ig-main", m: [["dani.k", "Is there a decaf version of the holiday blend? 😅"]], minutesAgo: 160 },
   { post: "post-8", account: "acc-fb-main", m: [["Jorge Medina", "¿Hacen envíos a Mendoza para la caja de regalo?"]], minutesAgo: 190 },
   { post: "post-11", account: "acc-ig-main", m: [["ana.paula", "O gift card pode ser enviado por e-mail?"]], minutesAgo: 220 },
+  /*
+   * UX-08A: conversations from earlier months, for the date periods (the workspace's time zone decides which day, month
+   * or year a moment belongs to; Buenos Aires is UTC−3).
+   */
+  // cv-49 — received last month and still open, never answered: an old backlog item an operational view must not hide.
+  // Same post as cv-51, with a different label.
+  {
+    post: "post-8",
+    account: "acc-fb-main",
+    m: [["Marcos Villalba", "¿Siguen teniendo la caja de regalo grande? Necesito doce para fin de año, para el equipo de la oficina."]],
+    labels: ["lbl-wholesale"],
+    times: ["2026-10-14T13:05:00Z"],
+  },
+  // cv-50 — received last month, with activity this month (she wrote again on 16 November).
+  {
+    post: "post-9",
+    account: "acc-ig-main",
+    m: [
+      ["lucia.bm", "My October order arrived without the grinder I paid for. Order #A-19877."],
+      ["@", "So sorry, Lucía — we're sending the grinder this week."],
+      ["lucia.bm", "Still waiting for the grinder — any news?", 1],
+    ],
+    labels: ["lbl-delivery"],
+    times: ["2026-10-28T19:40:00Z", "2026-10-28T20:10:00Z", "2026-11-16T12:15:00Z"],
+  },
+  // cv-51 — received early this month, assigned to Ana. Same post as cv-49, with a different label.
+  {
+    post: "post-8",
+    account: "acc-fb-main",
+    m: [["Rocío Benítez", "Pedí la caja de regalo el 2 de noviembre y figura entregada, pero no llegó nada."]],
+    labels: ["lbl-delivery"],
+    times: ["2026-11-03T14:00:00Z"],
+    flow: { assignee: "m-ana" },
+  },
+  // cv-52 — resolved in an earlier month (answered on the platform and marked Done on 2 October).
+  {
+    post: "post-6",
+    account: "acc-ig-roastery",
+    m: [
+      ["nico.tostado", "Do you ship the Huila lot to Chile?"],
+      ["@", "Not yet — only Argentina and Uruguay for now. We'll post here when that changes."],
+    ],
+    times: ["2026-10-02T14:00:00Z", "2026-10-02T14:20:00Z"],
+    flow: { done: "replied_on_platform" },
+  },
+  // cv-53 — a month boundary: 1 November in UTC, still 31 October in Buenos Aires (22:30 and 23:05 there).
+  {
+    post: "post-1",
+    account: "acc-ig-main",
+    m: [
+      ["mati.r", "Will the holiday blend come in whole bean too?"],
+      ["@", "Yes — whole bean and ground, from Monday."],
+    ],
+    times: ["2026-11-01T01:30:00Z", "2026-11-01T02:05:00Z"],
+  },
+  // cv-54 — a year boundary: 1 January 2026 in UTC, still 31 December 2025 in Buenos Aires; resolved the same night.
+  {
+    post: "post-3",
+    account: "acc-fb-main",
+    m: [["Gabriela Ortiz", "¡Feliz año nuevo, equipo Lumen! Gracias por los cafés de todo el año 🥂"]],
+    labels: ["lbl-praise"],
+    times: ["2026-01-01T02:10:00Z"],
+    flow: { done: "no_reply_needed" },
+  },
 ];
 
 /* ───────────── expansion into dated records ───────────── */
@@ -527,7 +603,7 @@ export const CONVERSATIONS: readonly Conversation[] = SEEDS.map((seed, index) =>
   const count = seed.m.length + (seed.sent?.length ?? 0);
   const start = minutes(last, -count * 16);
   const comments = seed.m.map(([code, text, parent, flag], position): Comment => {
-    const at = minutes(start, position * 16 + (position % 3) * 7);
+    const at = seed.times?.[position] ?? minutes(start, position * 16 + (position % 3) * 7);
     return {
       id: `${id}-m${pad(position)}`,
       parentId: position === 0 ? null : `${id}-m${pad(parent ?? 0)}`,
@@ -547,14 +623,11 @@ export const CONVERSATIONS: readonly Conversation[] = SEEDS.map((seed, index) =>
   return { id, postId: seed.post, accountId: seed.account, comments, sent };
 });
 
-/** The labels already on comments when the prototype starts: comment id → label ids. */
+/** The labels already on conversations when the prototype starts: conversation id → label ids (UX-07B). */
 export const SEED_ASSIGNMENTS: Readonly<Record<string, readonly string[]>> = (() => {
-  const out: Record<string, string[]> = {};
+  const out: Record<string, readonly string[]> = {};
   SEEDS.forEach((seed, index) => {
-    for (const [position, label] of seed.labels ?? []) {
-      const key = `cv-${pad(index + 1)}-m${pad(position)}`;
-      (out[key] ??= []).push(label);
-    }
+    if (seed.labels !== undefined && seed.labels.length > 0) out[`cv-${pad(index + 1)}`] = [...seed.labels];
   });
   return out;
 })();

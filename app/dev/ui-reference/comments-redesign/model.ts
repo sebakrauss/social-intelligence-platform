@@ -2,7 +2,8 @@
  * Comments experience redesign (Step 7B-17V) — DEVELOPMENT ONLY. The prototype's rules as pure functions over the
  * synthetic fixtures, so they can be tested without a page: who may do what (COMMENTS-2.1-CONTRACT §D.4), the manual
  * label rules (§D.3: names 1–40 characters, unique ignoring case, at most 50, flat, one filter at a time), the filter
- * (a conversation is listed under a label when at least one of its comments carries it), Previous / Next, and how the
+ * (a conversation is listed under a label when it carries it — UX-07B: labels belong to the conversation), Previous /
+ * Next, and how the
  * brand's own account is named without inventing an identity. All state is the caller's (React state in the page);
  * nothing is read from or written to a server, a database, browser storage or a platform.
  *
@@ -115,9 +116,15 @@ export function abilitiesOf(role: Role): Abilities {
 export const LABEL_NAME_MAX = 40;
 export const LABELS_PER_WORKSPACE = 50;
 
+/**
+ * UX-07B (PO-approved): a manual label belongs to the CONVERSATION — the root comment and every reply under it, keyed by
+ * the conversation's id — never to one reply, and never to every conversation on the same post. One source of truth:
+ * the header manages it, the list row and the label filter read it. Manual labels are a person's organization; they are
+ * separate from any future automatic classification. (Production persistence is not built — see the UX-07B report.)
+ */
 export interface LabelState {
   readonly labels: readonly Label[];
-  /** comment id → label ids, in the order they were added. */
+  /** conversation id → label ids, in the order they were added. */
   readonly assignments: Readonly<Record<string, readonly string[]>>;
   /** Next synthetic id number for a created label. */
   readonly nextId: number;
@@ -150,33 +157,34 @@ export function nameProblem(labels: readonly Label[], raw: string): NameProblem 
   return undefined;
 }
 
-export const labelsOn = (state: LabelState, commentId: string): readonly string[] => state.assignments[commentId] ?? [];
+/** The label ids on one conversation, in the order they were added. */
+export const labelsOn = (state: LabelState, conversationId: string): readonly string[] => state.assignments[conversationId] ?? [];
 
-/** Assign or remove one label on one comment (idempotent in each direction). Refused without `assign`. */
-export function setAssigned(state: LabelState, role: Role, commentId: string, labelId: string, assigned: boolean): LabelState {
+/** Assign or remove one label on one conversation (idempotent in each direction). Refused without `assign`. */
+export function setAssigned(state: LabelState, role: Role, conversationId: string, labelId: string, assigned: boolean): LabelState {
   if (!abilitiesOf(role).assign || !state.labels.some((label) => label.id === labelId)) return state;
-  const current = labelsOn(state, commentId);
+  const current = labelsOn(state, conversationId);
   const has = current.includes(labelId);
   if (has === assigned) return state;
   const next = assigned ? [...current, labelId] : current.filter((id) => id !== labelId);
-  return { ...state, assignments: { ...state.assignments, [commentId]: next } };
+  return { ...state, assignments: { ...state.assignments, [conversationId]: next } };
 }
 
 export type CreateResult = { readonly ok: true; readonly state: LabelState; readonly label: Label } | { readonly ok: false; readonly problem: NameProblem | "not_allowed" | "marker_unknown" };
 
 /**
- * Create a label from a comment and assign it to that comment in the same step (the PO's requirement). Without the
- * create ability nothing changes. With no comment (`undefined`), the label is only created (sidebar "New label").
+ * Create a label from a conversation and assign it to that conversation in the same step (the PO's requirement).
+ * Without the create ability nothing changes. With no conversation (`undefined`), the label is only created (Settings).
  * Its color is a palette identifier, gray unless chosen; anything outside the approved palette is refused.
  */
-export function createLabel(state: LabelState, role: Role, raw: string, commentId: string | undefined, marker: string = "gray"): CreateResult {
+export function createLabel(state: LabelState, role: Role, raw: string, conversationId: string | undefined, marker: string = "gray"): CreateResult {
   if (!abilitiesOf(role).create) return { ok: false, problem: "not_allowed" };
   const problem = nameProblem(state.labels, raw);
   if (problem !== undefined) return { ok: false, problem };
   if (!isMarker(marker)) return { ok: false, problem: "marker_unknown" };
   const label: Label = { id: `lbl-new-${String(state.nextId)}`, name: normalizeName(raw), marker };
   const created: LabelState = { ...state, labels: [...state.labels, label], nextId: state.nextId + 1 };
-  return { ok: true, label, state: commentId === undefined ? created : setAssigned(created, role, commentId, label.id, true) };
+  return { ok: true, label, state: conversationId === undefined ? created : setAssigned(created, role, conversationId, label.id, true) };
 }
 
 /** Labels sorted for display: by name, ignoring case. */
@@ -196,12 +204,14 @@ export function latestOf(conversation: Conversation): string {
 /** Every conversation, newest activity first. */
 export const ORDERED: readonly Conversation[] = [...CONVERSATIONS].sort((a, b) => (latestOf(a) < latestOf(b) ? 1 : latestOf(a) > latestOf(b) ? -1 : a.id.localeCompare(b.id)));
 
-/** The labels carried by any comment of a conversation, in the order first met. */
+/** The labels of a conversation (that still exist), in the order they were added. */
 export function conversationLabels(state: LabelState, conversation: Conversation): readonly string[] {
-  const seen: string[] = [];
-  for (const comment of conversation.comments) for (const id of labelsOn(state, comment.id)) if (!seen.includes(id)) seen.push(id);
-  return seen.filter((id) => state.labels.some((label) => label.id === id));
+  return labelsOn(state, conversation.id).filter((id) => state.labels.some((label) => label.id === id));
 }
+
+/** How many other conversations hang from the same post (each keeps its own labels: UX-07B). */
+export const samePostCount = (conversation: Conversation, all: readonly Conversation[] = CONVERSATIONS): number =>
+  conversation.postId === null ? 0 : all.filter((other) => other.postId === conversation.postId && other.id !== conversation.id).length;
 
 /** The list under the active filter (one label at a time, or none). A label that no longer exists shows everything. */
 export function visibleConversations(state: LabelState, filter: string | undefined): readonly Conversation[] {
@@ -729,15 +739,6 @@ export const retryable = (op: Operation): boolean => op.status === "failed" && o
 
 export const assessmentOf = (commentId: string): Assessment | undefined => SEED_ASSESSMENTS[commentId];
 
-/** The labels of a conversation with how many of its comments carry each (never "the whole thread"). */
-export function labelSummary(state: LabelState, conversation: Conversation): readonly { readonly label: Label; readonly comments: number }[] {
-  return conversationLabels(state, conversation).flatMap((id) => {
-    const label = state.labels.find((item) => item.id === id);
-    if (label === undefined) return [];
-    return [{ label, comments: conversation.comments.filter((comment) => labelsOn(state, comment.id).includes(id)).length }];
-  });
-}
-
 export const capabilityRows = (action: CapabilityRow["action"]): readonly CapabilityRow[] => CAPABILITIES.filter((row) => row.action === action);
 export const metaDocText = (doc: MetaDoc): string => META_DOC_TEXT[doc];
 export const wrenkindText = (today: WrenkindToday): string => WRENKIND_TEXT[today];
@@ -816,6 +817,11 @@ export interface Flow {
   readonly urgent?: { readonly by: string; readonly at: string };
   /** A hand-off to someone outside the first answer; independent from Urgent. */
   readonly escalation?: { readonly to: string; readonly by: string; readonly at: string; readonly note?: string };
+  /**
+   * UX-08A: when a person marked it Done (the simulated clock, the same moment as its "Marked done" history entry).
+   * Present only while Done; Reopen removes it and a new Done records a new one. The Done view's period reads it.
+   */
+  readonly resolvedAt?: string;
 }
 
 export interface ActivityEntry {
@@ -832,6 +838,8 @@ export interface Workflow {
   readonly activity: readonly ActivityEntry[];
   /** Audience comments a person made arrive with the prototype control (conversation id → comments). */
   readonly arrived: Readonly<Record<string, readonly Comment[]>>;
+  /** UX-08B: conversations started by a new root comment that arrived in the prototype (simulated ingestion). */
+  readonly created: readonly Conversation[];
   /** Minutes after AS_OF on the synthetic clock. */
   readonly clock: number;
   readonly nextId: number;
@@ -872,11 +880,12 @@ export const SEED_WORKFLOW: Workflow = (() => {
     }
     if (seed.done !== undefined) {
       flow.resolution = seed.done;
+      flow.resolvedAt = plusMinutes(anchor, 30);
       log(conversation.id, plusMinutes(anchor, 30), `Marked done · ${resolutionName(seed.done)}`);
     }
     flows[conversation.id] = flow;
   }
-  return { flows, activity, arrived: {}, clock: 0, nextId: next };
+  return { flows, activity, arrived: {}, created: [], clock: 0, nextId: next };
 })();
 
 /** The seeded simulation: one public reply whose outcome is still being checked (attention: "Reply not confirmed"). */
@@ -978,14 +987,14 @@ export function markDone(wf: Workflow, role: Role, mode: Mode, conversationId: s
   if (flow.escalation !== undefined) next = change(next, conversationId, flowOf(next, conversationId), `Escalation to ${flow.escalation.to} closed when marked done`);
   const rest = omit(flow, "urgent", "escalation");
   const text = `Marked done · ${resolutionName(resolution)}`;
-  return { ok: true, wf: change(next, conversationId, { ...rest, status: "done", resolution }, text), message: text };
+  return { ok: true, wf: change(next, conversationId, { ...rest, status: "done", resolution, resolvedAt: plusMinutes(AS_OF, next.clock + 1) }, text), message: text };
 }
 
 export function reopenConversation(wf: Workflow, role: Role, conversationId: string): WorkflowResult {
   if (!abilitiesOf(role).manage) return { ok: false, reason: NOT_ALLOWED };
   const flow = flowOf(wf, conversationId);
   if (flow.status === "open") return { ok: false, reason: "It's already open." };
-  return { ok: true, wf: change(wf, conversationId, { ...omit(flow, "resolution"), status: "open" }, "Reopened"), message: "Reopened" };
+  return { ok: true, wf: change(wf, conversationId, { ...omit(flow, "resolution", "resolvedAt"), status: "open" }, "Reopened"), message: "Reopened" };
 }
 
 export const NOTE_MAX = 500;
@@ -999,8 +1008,11 @@ export function addNote(wf: Workflow, role: Role, conversationId: string, raw: s
 }
 
 /**
- * Prototype control: the conversation's author writes again (synthetic text). A Done conversation reopens by itself
- * (IA-04 auto-reopen), recorded as Wrenkind's change; an Open one gains "New reply" attention when the brand had answered.
+ * Prototype control: the conversation's author writes again (synthetic text). A Done conversation reopens by itself,
+ * recorded as Wrenkind's change; an Open one gains "New reply" attention when the brand had answered. IA-04 states
+ * auto-reopen "on new audience messages needing attention"; reopening on ANY reply, as simulated here, is the H-1
+ * hypothesis — an unapproved governance decision, simulated and unchanged. UX-09 (L-6): like a manual Reopen, it ends the
+ * resolution and its timestamp (Flow.resolvedAt); the earlier Done stays in the activity history.
  */
 export function audienceWritesAgain(wf: Workflow, conversation: Conversation): Workflow {
   const live = liveOf(conversation, wf);
@@ -1014,9 +1026,57 @@ export function audienceWritesAgain(wf: Workflow, conversation: Conversation): W
   let next = logActivity({ ...wf, arrived }, conversation.id, `New reply from ${author.name}`, author.name);
   const flow = flowOf(next, conversation.id);
   if (flow.status === "done") {
-    next = change(next, conversation.id, { ...omit(flow, "resolution"), status: "open" }, `Reopened automatically: ${author.name} wrote again`, "Wrenkind");
+    next = change(next, conversation.id, { ...omit(flow, "resolution", "resolvedAt"), status: "open" }, `Reopened automatically: ${author.name} wrote again`, "Wrenkind");
   }
   return next;
+}
+
+/* ───── UX-08B: a new root comment → a new Open conversation (simulated ingestion; a lifecycle PROPOSAL) ─────
+ *
+ * The conversation's identity is its ROOT COMMENT (the platform's comment id): a root comment already known never starts
+ * a second conversation. It starts Open and unassigned (no routing rule exists), keeps its post and account, carries no
+ * label, and enters each list only by that list's own rule — All conversations by its received date, Needs attention
+ * only when the attention rules say so (a fresh comment inside the response target does not), never Assigned to me or
+ * Escalated by itself. A reply to an existing conversation goes to that conversation (audienceWritesAgain), never here. */
+
+export interface IncomingRoot {
+  /** The platform's id for the root comment: the conversation's identity. */
+  readonly rootId: string;
+  readonly postId: string;
+  readonly accountId: string;
+  readonly author: string;
+  readonly text: string;
+}
+
+/** A new root comment ingested (deduplicated by its identity): the workflow with the new Open conversation, or unchanged. */
+export function ingestRootComment(wf: Workflow, incoming: IncomingRoot): { readonly wf: Workflow; readonly id: string | undefined } {
+  if (liveConversations(wf).some((conversation) => conversation.comments.some((comment) => comment.id === incoming.rootId))) return { wf, id: undefined };
+  const at = plusMinutes(AS_OF, wf.clock + 1);
+  const id = `cv-new-${String(wf.created.length + 1).padStart(2, "0")}`;
+  const conversation: Conversation = {
+    id,
+    postId: incoming.postId,
+    accountId: incoming.accountId,
+    comments: [{ id: incoming.rootId, parentId: null, author: { kind: "audience", name: incoming.author }, text: incoming.text, at, editedAt: null, readAt: plusMinutes(at, 1), presence: "present" }],
+    sent: [],
+  };
+  const next = change({ ...wf, created: [...wf.created, conversation] }, id, OPEN_FLOW, `New comment from ${incoming.author} · conversation started`, incoming.author);
+  return { wf: next, id };
+}
+
+/** The synthetic comments the prototype's "new comment" control brings in, in turn. */
+const NEW_ROOTS: readonly Omit<IncomingRoot, "rootId">[] = [
+  { postId: "post-1", accountId: "acc-ig-main", author: "vale.rios", text: "Is the holiday blend available in 1 kg bags?" },
+  { postId: "post-3", accountId: "acc-fb-main", author: "Hernán Castro", text: "¿El local nuevo abre también los domingos?" },
+  { postId: "post-9", accountId: "acc-ig-main", author: "bia.costa", text: "O frete grátis vale para assinaturas anuais?" },
+];
+
+/** The prototype control: the next synthetic root comment arrives (each one a different platform comment). */
+export function newRootArrives(wf: Workflow): { readonly wf: Workflow; readonly id: string | undefined } {
+  const n = wf.created.length;
+  const template = NEW_ROOTS[n % NEW_ROOTS.length] ?? NEW_ROOTS[0];
+  if (template === undefined) return { wf, id: undefined };
+  return ingestRootComment(wf, { ...template, rootId: `root-new-${String(n + 1).padStart(2, "0")}` });
 }
 
 /* ───── outgoing replies: what is still unknown or unresolved (UX-05 H-1, H-2) ───── */
@@ -1174,15 +1234,26 @@ export function quietStateOf(conversation: Conversation, ctx: WorkContext): stri
 
 /* ───── views, filters, search, sort ───── */
 
-export type View = "attention" | "open" | "mine" | "escalated" | "done";
+export type View = "attention" | "open" | "mine" | "escalated" | "done" | "all";
 
+/**
+ * UX-08A: the four operational views (the work: what still needs a person), Done, and All conversations (every
+ * conversation, Open and Done — for browsing by period). PO polish (2026-11-19): Open comes first — the landing view —
+ * then Needs attention (a queue derived from Open), Assigned to me, Escalated and Done; the sidebar and the one-panel
+ * view picker both read this order. Only the order changed: membership, counts and periods are as before.
+ */
 export const VIEWS: readonly { readonly id: View; readonly name: string }[] = [
-  { id: "attention", name: "Needs attention" },
   { id: "open", name: "Open" },
+  { id: "attention", name: "Needs attention" },
   { id: "mine", name: "Assigned to me" },
   { id: "escalated", name: "Escalated" },
   { id: "done", name: "Done" },
+  { id: "all", name: "All conversations" },
 ];
+
+/** The views whose sidebar count is the size of the work, at all dates (UX-08A). Done and All conversations show none. */
+export const OPERATIONAL_VIEWS: readonly View[] = ["open", "attention", "mine", "escalated"];
+export const isOperational = (view: View): boolean => OPERATIONAL_VIEWS.includes(view);
 export const viewName = (view: View): string => VIEWS.find((item) => item.id === view)?.name ?? "Comments";
 
 export function inView(conversation: Conversation, view: View, ctx: WorkContext): boolean {
@@ -1198,11 +1269,12 @@ export function inView(conversation: Conversation, view: View, ctx: WorkContext)
       return flow.status === "open" && flow.escalation !== undefined;
     case "done":
       return flow.status === "done";
+    case "all":
+      return true;
   }
 }
 
 export type SourceFilter = Post["source"];
-export type DateFilter = "day" | "week";
 
 export interface Filters {
   readonly platform?: Platform;
@@ -1211,7 +1283,6 @@ export interface Filters {
   readonly source?: SourceFilter;
   /** A member id, or "unassigned". */
   readonly assignee?: string;
-  readonly date?: DateFilter;
   readonly post?: string;
   readonly reason?: AttentionReason;
 }
@@ -1228,7 +1299,6 @@ export function activeFilters(filters: Filters, labels: LabelState): readonly { 
   }
   if (filters.source !== undefined) out.push({ key: "source", name: "Organic or paid", value: SOURCE_TEXT[filters.source] });
   if (filters.assignee !== undefined) out.push({ key: "assignee", name: "Assignee", value: filters.assignee === "unassigned" ? "Unassigned" : (memberOf(filters.assignee)?.name ?? "Unknown") });
-  if (filters.date !== undefined) out.push({ key: "date", name: "Date", value: filters.date === "day" ? "Last 24 hours" : "Last 7 days" });
   if (filters.post !== undefined) out.push({ key: "post", name: "Post", value: postOf(filters.post)?.caption ?? "Post not read yet" });
   if (filters.reason !== undefined) out.push({ key: "reason", name: "Attention", value: ATTENTION_REASONS.find((item) => item.id === filters.reason)?.name ?? "" });
   return out;
@@ -1240,8 +1310,11 @@ export function withoutFilter(filters: Filters, key: string): Filters {
   return Object.fromEntries(Object.entries(filters).filter(([name]) => name !== key || name === "accounts")) as unknown as Filters;
 }
 
-/** How many filters the Filters menu holds (Platform and Label are the quick filters beside it). */
-export const menuFilterCount = (filters: Filters): number => filters.accounts.length + [filters.source, filters.assignee, filters.date, filters.post, filters.reason].filter((value) => value !== undefined).length;
+/**
+ * How many filters the Filters menu holds (Platform and Label are the quick filters beside it). UX-08A: dates are not
+ * one of them — the period, beside the list's title, is the one place a list is narrowed by date.
+ */
+export const menuFilterCount = (filters: Filters): number => filters.accounts.length + [filters.source, filters.assignee, filters.post, filters.reason].filter((value) => value !== undefined).length;
 
 const fold = (text: string): string => text.normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase("en");
 
@@ -1265,13 +1338,11 @@ export function matchesFilters(conversation: Conversation, filters: Filters, ctx
   const account = accountOf(conversation.accountId);
   const post = postOf(conversation.postId);
   const flow = flowOf(ctx.wf, conversation.id);
-  const now = nowOf(ctx.wf);
   if (filters.platform !== undefined && account?.platform !== filters.platform) return false;
   if (filters.label !== undefined && !conversationLabels(ctx.labels, conversation).includes(filters.label)) return false;
   if (filters.accounts.length > 0 && !filters.accounts.includes(conversation.accountId)) return false;
   if (filters.source !== undefined && (post?.source ?? "unknown") !== filters.source) return false;
   if (filters.assignee !== undefined && (filters.assignee === "unassigned" ? flow.assignee !== undefined : flow.assignee !== filters.assignee)) return false;
-  if (filters.date !== undefined && minutesBetween(latestOf(conversation), now) > (filters.date === "day" ? 1440 : 7 * 1440)) return false;
   if (filters.post !== undefined && conversation.postId !== filters.post) return false;
   if (filters.reason !== undefined && attentionOf(conversation, ctx)?.reason !== filters.reason) return false;
   return true;
@@ -1284,6 +1355,15 @@ export const SORTS: readonly { readonly id: Sort; readonly name: string }[] = [
   { id: "oldest", name: "Oldest activity" },
 ];
 export const sortName = (sort: Sort): string => SORTS.find((item) => item.id === sort)?.name ?? "";
+
+/**
+ * UX-08B: where Comments opens — the approved Phase 1 default, Open by most recent activity. Needs attention is a
+ * simulated queue in this prototype until its rules and data coverage are approved; it is never the landing.
+ */
+export const LANDING_VIEW: View = "open";
+
+/** Each list starts at its own order (UX-08B): Needs attention by attention, every other list newest activity first. */
+export const defaultSort = (view: View): Sort => (view === "attention" ? "attention" : "newest");
 
 const REASON_ORDER: readonly AttentionReason[] = ATTENTION_REASONS.map((item) => item.id);
 
@@ -1312,20 +1392,27 @@ export function compareFor(sort: Sort, ctx: WorkContext): (a: Conversation, b: C
 }
 
 /** Every conversation as the prototype sees it now (with arrived comments). */
-export const liveConversations = (wf: Workflow): readonly Conversation[] => CONVERSATIONS.map((conversation) => liveOf(conversation, wf));
+export const liveConversations = (wf: Workflow): readonly Conversation[] => [...CONVERSATIONS, ...wf.created].map((conversation) => liveOf(conversation, wf));
 
-/** The list: the view, then the filters, then the search, in the chosen order. */
-export function listOf(view: View, filters: Filters, query: string, sort: Sort, ctx: WorkContext): readonly Conversation[] {
+/**
+ * The list: the view, then the period (UX-08A: which conversations enter — never which comments of one are shown), then
+ * the filters, then the search, in the chosen order. The order is the sort's alone: a period never reorders.
+ */
+export function listOf(view: View, filters: Filters, query: string, sort: Sort, ctx: WorkContext, when: When = ALL_DATES): readonly Conversation[] {
+  const range = rangeOf(when.period, todayOf(ctx.wf, when.zone));
   return liveConversations(ctx.wf)
-    .filter((conversation) => inView(conversation, view, ctx) && matchesFilters(conversation, filters, ctx) && matchesQuery(conversation, query, ctx.sim))
+    .filter((conversation) => inView(conversation, view, ctx) && inRange(conversation, when.period.basis, range, ctx.wf, when.zone) && matchesFilters(conversation, filters, ctx) && matchesQuery(conversation, query, ctx.sim))
     .sort(compareFor(view === "done" && sort === "attention" ? "newest" : sort, ctx));
 }
 
-/** How many conversations each view lists (no filter or search). */
+/**
+ * How many conversations each view lists, at ALL DATES, with no filter or search (UX-08A: the sidebar's counts are the
+ * size of the work — a period chosen in a list never changes them).
+ */
 export function viewCounts(ctx: WorkContext): Readonly<Record<View, number>> {
   const all = liveConversations(ctx.wf);
   const count = (view: View): number => all.filter((conversation) => inView(conversation, view, ctx)).length;
-  return { attention: count("attention"), open: count("open"), mine: count("mine"), escalated: count("escalated"), done: count("done") };
+  return { attention: count("attention"), open: count("open"), mine: count("mine"), escalated: count("escalated"), done: count("done"), all: all.length };
 }
 
 /**
@@ -1341,7 +1428,8 @@ export interface Pin {
 export function withPin(list: readonly Conversation[], pin: Pin | undefined, wf: Workflow): readonly Conversation[] {
   if (pin === undefined) return list;
   const without = list.filter((conversation) => conversation.id !== pin.id);
-  const pinned = CONVERSATIONS.find((conversation) => conversation.id === pin.id);
+  // The recorded conversation (seeded or started here), made live once below — never live twice.
+  const pinned = [...CONVERSATIONS, ...wf.created].find((conversation) => conversation.id === pin.id);
   if (pinned === undefined) return list;
   const at = Math.min(Math.max(pin.index, 0), without.length);
   return [...without.slice(0, at), liveOf(pinned, wf), ...without.slice(at)];
@@ -1386,7 +1474,7 @@ export const isMarker = (value: string): value is Marker => MARKERS.some((item) 
 export const markerOf = (label: Label): Marker => label.marker ?? DEFAULT_MARKER;
 export const markerName = (marker: Marker): string => MARKERS.find((item) => item.id === marker)?.name ?? "Gray";
 
-/** How many comments carry a label. */
+/** How many conversations carry a label. */
 export const labelUsage = (state: LabelState, labelId: string): number => Object.values(state.assignments).filter((ids) => ids.includes(labelId)).length;
 
 export type ManageResult = { readonly ok: true; readonly state: LabelState } | { readonly ok: false; readonly problem: NameProblem | "not_allowed" | "missing" | "marker_unknown" };
@@ -1431,19 +1519,16 @@ export function setMarker(state: LabelState, role: Role, labelId: string, marker
   return { ok: true, state: { ...state, labels: state.labels.map((label) => (label.id === labelId ? { ...label, marker } : label)) } };
 }
 
-/** Delete a label: it leaves every comment that carried it. Comments themselves are never touched. */
+/** Delete a label: it leaves every conversation that carried it. Conversations and comments are never touched. */
 export function deleteLabel(state: LabelState, role: Role, labelId: string): ManageResult & { readonly removedFrom?: readonly string[] } {
   if (!abilitiesOf(role).create) return { ok: false, problem: "not_allowed" };
   if (!state.labels.some((label) => label.id === labelId)) return { ok: false, problem: "missing" };
   const removedFrom = Object.entries(state.assignments)
     .filter(([, ids]) => ids.includes(labelId))
-    .map(([commentId]) => commentId);
-  const assignments = Object.fromEntries(Object.entries(state.assignments).map(([commentId, ids]) => [commentId, ids.filter((id) => id !== labelId)]));
+    .map(([conversationId]) => conversationId);
+  const assignments = Object.fromEntries(Object.entries(state.assignments).map(([conversationId, ids]) => [conversationId, ids.filter((id) => id !== labelId)]));
   return { ok: true, removedFrom, state: { ...state, labels: state.labels.filter((label) => label.id !== labelId), assignments } };
 }
-
-/** The conversation that holds a comment. */
-export const conversationOfComment = (commentId: string): string => commentId.replace(/-[mn]\d+$/, "");
 
 /** Revalidated destructive retry (UX-04): a failed Delete or Block is offered again only through its confirmation. */
 export const confirmsBeforeRetry = (kind: OpKind): boolean => kind === "delete" || kind === "block" || kind === "unblock";
@@ -1508,15 +1593,327 @@ export function conversationAuthor(conversation: Conversation): string {
 /** The view counts, read one at a time (the client module may not index a record). */
 export const countOf = (counts: Readonly<Record<View, number>>, view: View): number => counts[view];
 
-/** The conversations whose comments carry a label (the activity of a rename or a deletion is recorded there). */
+/** The conversations that carry a label (the activity of a rename or a deletion is recorded there). */
 export function conversationsWithLabel(state: LabelState, labelId: string): readonly string[] {
-  const ids = new Set<string>();
-  for (const [commentId, labelIds] of Object.entries(state.assignments)) if (labelIds.includes(labelId)) ids.add(conversationOfComment(commentId));
-  return [...ids].sort();
+  return Object.entries(state.assignments)
+    .filter(([, labelIds]) => labelIds.includes(labelId))
+    .map(([conversationId]) => conversationId)
+    .sort();
 }
 
 /** One filter set or cleared (undefined clears it), keeping every other criterion. */
 export function withFilter<K extends Exclude<keyof Filters, "accounts">>(filters: Filters, key: K, value: Filters[K] | undefined): Filters {
   const rest = withoutFilter(filters, key);
   return value === undefined ? rest : { ...rest, [key]: value };
+}
+
+/* ───────────── UX-08A: periods (which conversations enter a list, by date) ─────────────
+ *
+ * One period per list, chosen beside its title — never in the Filters menu. A period answers "which conversations
+ * enter this list"; it never hides a comment or reply of a conversation that entered, and it never reorders (the sort
+ * does). It reads ONE date of each conversation, named in the control:
+ *   · Received — when its first (root) comment was posted on the platform. Fixed: a conversation belongs to one day.
+ *   · Latest activity — the newest comment or reply Wrenkind has READ (what the list's sort uses). It says nothing about
+ *     what the platform holds and Wrenkind has not read (coverage), so the page never calls it "the latest on Facebook".
+ *   · Resolved — when a person marked it Done (Done only; the simulated record, Flow.resolvedAt).
+ * Days, months and years are the WORKSPACE's (a prototype control: Buenos Aires by default). The times on rows and
+ * comments stay in the reader's own time zone, as they always were. Production needs a workspace time-zone setting and
+ * date queries in that zone; neither exists today and this prototype creates neither. */
+
+export type PeriodPreset = "all" | "today" | "yesterday" | "last_7" | "last_30" | "this_month" | "last_month" | "custom";
+
+export const PERIOD_PRESETS: readonly { readonly id: PeriodPreset; readonly name: string }[] = [
+  { id: "all", name: "All dates" },
+  { id: "today", name: "Today" },
+  { id: "yesterday", name: "Yesterday" },
+  { id: "last_7", name: "Last 7 days" },
+  { id: "last_30", name: "Last 30 days" },
+  { id: "this_month", name: "This month" },
+  { id: "last_month", name: "Last month" },
+  { id: "custom", name: "Custom range" },
+];
+
+export type DateBasis = "received" | "activity" | "resolved";
+
+export const DATE_BASES: readonly { readonly id: DateBasis; readonly name: string; readonly hint: string }[] = [
+  { id: "received", name: "Received", hint: "When the first comment was posted. It never changes." },
+  { id: "activity", name: "Latest activity", hint: "The newest comment or reply Wrenkind has read — not necessarily the newest on the platform." },
+  { id: "resolved", name: "Resolved", hint: "When someone marked it Done." },
+];
+
+export interface Period {
+  readonly preset: PeriodPreset;
+  readonly basis: DateBasis;
+  /** Custom range only: the first and last day, inclusive ("YYYY-MM-DD", in the workspace's time zone). */
+  readonly from?: string;
+  readonly to?: string;
+}
+
+/** A period and the time zone its days are counted in. */
+export interface When {
+  readonly period: Period;
+  readonly zone: string;
+}
+
+/** The workspace time-zone ASSUMPTION the prototype offers (no such setting exists in the product yet). */
+export const ZONES: readonly { readonly id: string; readonly name: string }[] = [
+  { id: "America/Argentina/Buenos_Aires", name: "Buenos Aires (UTC−3)" },
+  { id: "UTC", name: "UTC" },
+  { id: "Asia/Tokyo", name: "Tokyo (UTC+9)" },
+];
+export const DEFAULT_ZONE = "America/Argentina/Buenos_Aires";
+export const zoneName = (zone: string): string => ZONES.find((item) => item.id === zone)?.name ?? zone;
+
+export const ALL_DATES: When = { period: { preset: "all", basis: "received" }, zone: DEFAULT_ZONE };
+
+/**
+ * Each list's starting period (UX-08A). The operational views start at All dates — an unresolved conversation from an
+ * earlier month is still work and is never hidden by default. Done starts at This month by resolution date (the
+ * simulated record has one). All conversations and a label's own list start at This month by received date.
+ */
+export function defaultPeriod(view: View, labelPage: boolean): Period {
+  if (labelPage || view === "all") return { preset: "this_month", basis: "received" };
+  if (view === "done") return { preset: "this_month", basis: "resolved" };
+  return { preset: "all", basis: "received" };
+}
+
+export const isDefaultPeriod = (period: Period, view: View, labelPage: boolean): boolean => {
+  const start = defaultPeriod(view, labelPage);
+  return period.preset === start.preset && period.basis === start.basis;
+};
+
+/** The dates a list can be read by: Resolved only in Done (an Open conversation has none). */
+export const basesFor = (view: View, labelPage: boolean): readonly { readonly id: DateBasis; readonly name: string; readonly hint: string }[] =>
+  DATE_BASES.filter((item) => item.id !== "resolved" || (view === "done" && !labelPage));
+
+/* ───── calendar days as "YYYY-MM-DD" keys (string order is date order) ───── */
+
+const DAY_MS = 86_400_000;
+const dayFormats = new Map<string, Intl.DateTimeFormat>();
+
+/** The workspace day a moment falls on. */
+export function dayKey(iso: string, zone: string): string {
+  let format = dayFormats.get(zone);
+  if (format === undefined) {
+    format = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" });
+    dayFormats.set(zone, format);
+  }
+  const parts = format.formatToParts(new Date(iso));
+  const part = (type: string): string => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+const keyTime = (key: string): number => Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, Number(key.slice(8, 10)));
+const keyOf = (time: number): string => new Date(time).toISOString().slice(0, 10);
+
+export const addDays = (key: string, days: number): string => keyOf(keyTime(key) + days * DAY_MS);
+export const monthKeyOf = (key: string): string => key.slice(0, 7);
+export const firstOfMonth = (key: string): string => `${key.slice(0, 7)}-01`;
+
+/** The same day (clamped to the month's last) `months` months away. */
+export function addMonths(key: string, months: number): string {
+  const year = Number(key.slice(0, 4));
+  const month = Number(key.slice(5, 7)) - 1 + months;
+  const first = Date.UTC(year, month, 1);
+  const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return keyOf(first + (Math.min(Number(key.slice(8, 10)), last) - 1) * DAY_MS);
+}
+
+export const lastOfMonth = (key: string): string => addDays(addMonths(firstOfMonth(key), 1), -1);
+
+/** Monday-first weeks: 0 is Monday … 6 is Sunday. */
+const weekday = (key: string): number => (new Date(keyTime(key)).getUTCDay() + 6) % 7;
+export const startOfWeek = (key: string): string => addDays(key, -weekday(key));
+export const endOfWeek = (key: string): string => addDays(key, 6 - weekday(key));
+
+/** Today, in the workspace, on the prototype's synthetic clock. */
+export const todayOf = (wf: Workflow, zone: string): string => dayKey(nowOf(wf), zone);
+
+export interface DayRange {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** The days a period covers, both included (undefined: all dates). This month runs from its first day to today. */
+export function rangeOf(period: Period, today: string): DayRange | undefined {
+  switch (period.preset) {
+    case "all":
+      return undefined;
+    case "today":
+      return { from: today, to: today };
+    case "yesterday":
+      return { from: addDays(today, -1), to: addDays(today, -1) };
+    case "last_7":
+      return { from: addDays(today, -6), to: today };
+    case "last_30":
+      return { from: addDays(today, -29), to: today };
+    case "this_month":
+      return { from: firstOfMonth(today), to: today };
+    case "last_month": {
+      const first = addMonths(firstOfMonth(today), -1);
+      return { from: first, to: lastOfMonth(first) };
+    }
+    case "custom":
+      return period.from === undefined || period.to === undefined ? undefined : { from: period.from, to: period.to };
+  }
+}
+
+/** The one date a period reads from a conversation (undefined: it has none — an Open conversation is never Resolved). */
+export function dateOf(conversation: Conversation, basis: DateBasis, wf: Workflow): string | undefined {
+  if (basis === "received") return conversation.comments[0]?.at;
+  if (basis === "activity") return latestOf(conversation);
+  const flow = flowOf(wf, conversation.id);
+  return flow.status === "done" ? flow.resolvedAt : undefined;
+}
+
+export function inRange(conversation: Conversation, basis: DateBasis, range: DayRange | undefined, wf: Workflow, zone: string): boolean {
+  if (range === undefined) return true;
+  const at = dateOf(conversation, basis, wf);
+  if (at === undefined) return false;
+  const key = dayKey(at, zone);
+  return key >= range.from && key <= range.to;
+}
+
+/* ───── how dates and periods read ───── */
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
+const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
+const monthIndex = (key: string): number => Number(key.slice(5, 7)) - 1;
+const dayNumber = (key: string): number => Number(key.slice(8, 10));
+const yearOf = (key: string): string => key.slice(0, 4);
+const shortMonth = (key: string): string => (MONTHS[monthIndex(key)] ?? "").slice(0, 3);
+
+/** The day of the month, as a calendar cell writes it ("7"). */
+export const dayOfMonth = (key: string): string => String(dayNumber(key));
+/** "17 Nov 2026". */
+export const shortDay = (key: string): string => `${String(dayNumber(key))} ${shortMonth(key)} ${yearOf(key)}`;
+/** "Tuesday, 17 November 2026" (what a calendar day says to a screen reader). */
+export const longDay = (key: string): string => `${WEEKDAY_NAMES[weekday(key)] ?? ""}, ${String(dayNumber(key))} ${MONTHS[monthIndex(key)] ?? ""} ${yearOf(key)}`;
+/** "November 2026". */
+export const monthTitle = (key: string): string => `${MONTHS[monthIndex(key)] ?? ""} ${yearOf(key)}`;
+
+/** "17 Nov 2026", "1–17 Nov 2026", "28 Oct – 3 Nov 2026", "28 Dec 2025 – 3 Jan 2026". */
+export function rangeText(range: DayRange): string {
+  if (range.from === range.to) return shortDay(range.from);
+  if (yearOf(range.from) !== yearOf(range.to)) return `${shortDay(range.from)} – ${shortDay(range.to)}`;
+  if (monthIndex(range.from) !== monthIndex(range.to)) return `${String(dayNumber(range.from))} ${shortMonth(range.from)} – ${shortDay(range.to)}`;
+  return `${String(dayNumber(range.from))}–${shortDay(range.to)}`;
+}
+
+/** The period's name on its control: the preset, or the custom range's days. */
+export function periodName(period: Period): string {
+  if (period.preset === "custom" && period.from !== undefined && period.to !== undefined) return rangeText({ from: period.from, to: period.to });
+  return PERIOD_PRESETS.find((item) => item.id === period.preset)?.name ?? "All dates";
+}
+
+const BASIS_PHRASE: { readonly [B in DateBasis]: string } = { received: "received", activity: "with activity", resolved: "resolved" };
+
+/** What a list's count is counted over: "received 1–17 Nov 2026", "with activity 17 Nov 2026" or "all dates". */
+export function periodPhrase(period: Period, today: string): string {
+  const range = rangeOf(period, today);
+  return range === undefined ? "all dates" : `${BASIS_PHRASE[period.basis]} ${rangeText(range)}`;
+}
+
+/* ───── a custom range: typed and picked days ───── */
+
+/** A typed day: "YYYY-MM-DD" that exists on the calendar (2026-02-30 does not), or undefined. */
+export function parseDay(raw: string): string | undefined {
+  const text = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return undefined;
+  const month = Number(text.slice(5, 7));
+  const day = Number(text.slice(8, 10));
+  if (month < 1 || month > 12 || day < 1) return undefined;
+  return keyOf(keyTime(text)) === text ? text : undefined;
+}
+
+export type RangeProblem = { readonly field: "from" | "to"; readonly text: string };
+
+/** Why a custom range can't be applied yet (one problem, on the field to fix), or undefined. */
+export function rangeProblem(fromRaw: string, toRaw: string): RangeProblem | undefined {
+  if (fromRaw.trim() === "") return { field: "from", text: "Enter a start date." };
+  const from = parseDay(fromRaw);
+  if (from === undefined) return { field: "from", text: "Enter the start date as YYYY-MM-DD, for example 2026-10-01." };
+  if (toRaw.trim() === "") return { field: "to", text: "Enter an end date." };
+  const to = parseDay(toRaw);
+  if (to === undefined) return { field: "to", text: "Enter the end date as YYYY-MM-DD, for example 2026-10-31." };
+  if (to < from) return { field: "to", text: "The end date is before the start date." };
+  return undefined;
+}
+
+/** A month of the calendar: Monday-first weeks, with the days outside the month left empty. */
+export function monthGrid(month: string): readonly (readonly (string | undefined)[])[] {
+  const first = firstOfMonth(month);
+  const last = lastOfMonth(first);
+  const weeks: (string | undefined)[][] = [];
+  for (let start = startOfWeek(first); start <= last; start = addDays(start, 7)) {
+    weeks.push(Array.from({ length: 7 }, (_, index) => {
+      const key = addDays(start, index);
+      return key >= first && key <= last ? key : undefined;
+    }));
+  }
+  return weeks;
+}
+
+export const WEEKDAY_HEADS: readonly { readonly short: string; readonly long: string }[] = WEEKDAY_NAMES.map((name) => ({ short: name.slice(0, 2), long: name }));
+
+/** The calendar's keyboard (WAI-ARIA date picker grid): the day focus moves to, or undefined for another key. */
+export function calendarMove(key: string, input: { readonly key: string; readonly shift: boolean }): string | undefined {
+  switch (input.key) {
+    case "ArrowLeft":
+      return addDays(key, -1);
+    case "ArrowRight":
+      return addDays(key, 1);
+    case "ArrowUp":
+      return addDays(key, -7);
+    case "ArrowDown":
+      return addDays(key, 7);
+    case "Home":
+      return startOfWeek(key);
+    case "End":
+      return endOfWeek(key);
+    case "PageUp":
+      return addMonths(key, input.shift ? -12 : -1);
+    case "PageDown":
+      return addMonths(key, input.shift ? 12 : 1);
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * A day picked on the calendar: the first pick starts a range, the second ends it (an earlier day starts it again).
+ * Picking after a complete range starts a new one.
+ */
+export function pickDay(range: { readonly from?: string | undefined; readonly to?: string | undefined }, key: string): { readonly from: string; readonly to?: string } {
+  if (range.from === undefined || range.to !== undefined || key < range.from) return { from: key };
+  return { from: range.from, to: key };
+}
+
+/** Why the open conversation isn't in the list any more (UX-08A: said where it was, never a generic empty panel). */
+export type MissReason = "period" | "narrowed" | "view";
+
+export function missReason(conversation: Conversation, view: View, filters: Filters, query: string, ctx: WorkContext, when: When): MissReason {
+  if (!inView(conversation, view, ctx)) return "view";
+  const range = rangeOf(when.period, todayOf(ctx.wf, when.zone));
+  if (!inRange(conversation, when.period.basis, range, ctx.wf, when.zone)) return "period";
+  return matchesFilters(conversation, filters, ctx) && matchesQuery(conversation, query, ctx.sim) ? "view" : "narrowed";
+}
+
+/** The day of a conversation's date a period reads, in words ("Received 28 Oct 2026"), or undefined. */
+export function dateLine(conversation: Conversation, basis: DateBasis, wf: Workflow, zone: string): string | undefined {
+  const at = dateOf(conversation, basis, wf);
+  if (at === undefined) return basis === "resolved" ? "Not resolved" : undefined;
+  const name = DATE_BASES.find((item) => item.id === basis)?.name ?? "";
+  return `${name} ${shortDay(dayKey(at, zone))}`;
+}
+
+/**
+ * A row's note of the date a period reads, when that differs from the day of the row's time (latest activity): a
+ * conversation received last month but active today says "Received 28 Oct 2026", so it is clear why it is listed.
+ */
+export function dateNote(conversation: Conversation, period: Period, wf: Workflow, zone: string): string | undefined {
+  if (period.preset === "all" || period.basis === "activity") return undefined;
+  const at = dateOf(conversation, period.basis, wf);
+  if (at === undefined || dayKey(at, zone) === dayKey(latestOf(conversation), zone)) return undefined;
+  return dateLine(conversation, period.basis, wf, zone);
 }

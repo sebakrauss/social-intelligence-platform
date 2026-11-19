@@ -10,6 +10,13 @@
  * filters and a Filters menu, Details as an overlay drawer, label markers (a solid tag in the workspace label's color —
  * the approved label palette of Manual v1.1 Amendment 2, gray by default), Settings › Labels. Everything SIMULATED is
  * drawn dashed.
+ * UX-07B: refined scroll model C at ≥1024 px — the page is the one scroller and carries the conversation; the list sticks
+ * beside it with its own scroll (no trap: at its ends the page takes over); the conversation header sticks, Details hangs
+ * under it, and anything scrolled into view in the thread stops below it. Below 1024 px: one panel, natural page scroll.
+ * Labels sit in the conversation header (never on a comment); the disclosure chevron turns when open.
+ * UX-08A: one period control beside the list's title (a dialog with presets, the date it reads, and a custom range
+ * typed or picked on a calendar), the list's count naming its period, the sidebar's views then labels (a label opens
+ * its own list), and a reading panel that names the conversation a new period or filter left out.
  */
 
 .shell {
@@ -200,13 +207,6 @@
   color: var(--wk-selection-fg);
 }
 
-/* A label shortcut that is the active Label filter: weight and the content surface, never the selection blue. */
-.sideItem[aria-pressed="true"] {
-  color: var(--wk-text-primary);
-  background: var(--wk-bg-content);
-  font-weight: 600;
-}
-
 .sideItemName {
   min-width: 0;
   flex: 1;
@@ -248,8 +248,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--wk-space-12);
-  height: 100dvh;
-  overflow-y: auto;
+  /* UX-07B: the page is the scroller (no inner scroll here), so the wheel and the keyboard work anywhere on it. */
+  min-height: 100dvh;
   padding: var(--wk-space-12) var(--wk-space-16) var(--wk-space-16) var(--wk-space-4);
 }
 
@@ -282,11 +282,294 @@
   outline: none;
 }
 
-.titleCount {
-  margin-left: var(--wk-space-8);
-  font: 400 14px / 1 var(--wk-font-mono);
-  letter-spacing: 0;
+.titleMarker {
+  display: inline-flex;
+  margin-right: var(--wk-space-8);
+  vertical-align: middle;
+}
+
+/* UX-08A: All conversations is a place to browse, set a step apart from the views of work and Done. */
+.sideAll {
+  padding-top: var(--wk-space-8);
+  border-top: 1px solid var(--wk-border-default);
+}
+
+/* What the sidebar's numbers count, said once, right under them (UX-08A). */
+.sideNote {
+  margin: var(--wk-space-4) 0 var(--wk-space-8);
+  padding: 0 var(--wk-space-8);
+  font: 400 11px / calc(16 / 11) var(--wk-font-ui);
   color: var(--wk-text-tertiary);
+}
+
+/* ───── UX-08A: the period, beside the list's title ───── */
+
+.periodRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8) var(--wk-space-12);
+}
+
+.periodControl {
+  position: relative;
+}
+
+.periodButton {
+  font-weight: 500;
+}
+
+/* UX-08B: its chevron at the same inset as the selects' and the header's menu buttons' (after .btn's padding). */
+.btn.periodButton {
+  padding-right: var(--wk-space-8);
+}
+
+/* A period other than the list's own default: the heavier boundary of an applied quick filter. */
+.periodButtonSet {
+  border-color: var(--wk-text-primary);
+  background: var(--wk-bg-app);
+}
+
+.periodSummary {
+  margin: 0;
+  font-size: 12px;
+  line-height: calc(16 / 12);
+}
+
+.periodCount {
+  font-weight: 600;
+}
+
+.periodMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 25;
+  width: 372px;
+  max-height: min(760px, 85dvh);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+/* Wider than its control: the generic popover's max-width (100% of the control) doesn't apply here. */
+.popover.periodMenu {
+  max-width: calc(100vw - 32px);
+}
+
+.periodMenu > .menuHead {
+  padding: var(--wk-space-12) var(--wk-space-8) var(--wk-space-12) var(--wk-space-16);
+  border-bottom: 1px solid var(--wk-border-default);
+}
+
+.periodBody {
+  overflow-y: auto;
+}
+
+/* A custom range beside the presets (≥ 1024 px): the calendar is in view without scrolling the panel. */
+@media (min-width: 1024px) {
+  /*
+   * UX-09 (L-4): the presets column is as wide as its widest row (a fieldset never shrinks below its content, so a
+   * fixed 280px let "Last 30 days · 19 Oct – 17 Nov 2026" run 1.6px over the divider); the panel is wider by about
+   * that much, so the calendar keeps its width.
+   */
+  .popover.periodCustom {
+    width: 728px;
+  }
+
+  .periodCustom > .periodBody {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .periodCustom > .periodBody > :first-child,
+  .periodCustom > .periodBody > .periodZone {
+    grid-column: 1 / -1;
+  }
+
+  .periodCustom .customRange {
+    border-left: 1px solid var(--wk-border-default);
+  }
+}
+
+.periodMenu > .menuFoot {
+  border-top: 1px solid var(--wk-border-default);
+}
+
+.presetList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.presetOption {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border-radius: var(--wk-radius-sm);
+  cursor: pointer;
+}
+
+.presetOption:hover {
+  background: var(--wk-bg-hover);
+}
+
+.presetName {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.presetRange {
+  font: 400 12px / 1 var(--wk-font-mono);
+  color: var(--wk-text-tertiary);
+  white-space: nowrap;
+}
+
+.dateFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--wk-space-8);
+}
+
+.dateField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+}
+
+.dateField > .input {
+  width: 100%;
+}
+
+.dateField > .input[aria-invalid="true"] {
+  border-color: var(--wk-danger-fg);
+}
+
+.fieldProblem {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  margin: 0;
+  color: var(--wk-danger-fg);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+}
+
+.calendar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  margin-top: var(--wk-space-8);
+}
+
+.calendarHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.calendarTitle {
+  margin: 0;
+  font: 600 13px / calc(18 / 13) var(--wk-font-ui);
+}
+
+.calendarGrid {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.calendarGrid th {
+  padding: var(--wk-space-4) 0;
+  font: 500 11px / 1 var(--wk-font-ui);
+  color: var(--wk-text-tertiary);
+}
+
+.day {
+  height: 32px;
+  padding: 0;
+  border-radius: var(--wk-radius-sm);
+  text-align: center;
+  font: 400 13px / 1 var(--wk-font-ui);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.day:hover {
+  background: var(--wk-bg-hover);
+}
+
+.day:focus-visible {
+  outline: var(--wk-focus-width) solid var(--wk-interactive-focus);
+  outline-offset: -2px;
+}
+
+/* Days inside the range: the content step; its two ends: solid, as a checked segment. Never the selection blue. */
+.dayInRange {
+  border-radius: 0;
+  background: var(--wk-bg-app);
+}
+
+.dayEdge {
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-text-primary);
+  color: var(--wk-bg-content);
+  font-weight: 600;
+}
+
+.dayEdge:hover {
+  background: var(--wk-text-primary);
+}
+
+.dayToday {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.periodZone {
+  margin: 0;
+  padding: var(--wk-space-12) var(--wk-space-16);
+}
+
+.searchAll {
+  margin-left: auto;
+}
+
+/* A row's note of the date the period reads, when it isn't the day of the row's time. */
+.rowDate {
+  font: 400 11px / calc(16 / 11) var(--wk-font-mono);
+  color: var(--wk-text-tertiary);
+  white-space: nowrap;
+}
+
+/* ───── UX-08A: the conversation a new period, filter or search left out ───── */
+
+.paneMissed {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.missed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  max-width: 440px;
+  padding: 0 var(--wk-space-24);
+}
+
+.missedTitle {
+  margin: 0;
+  font: 600 16px / calc(22 / 16) var(--wk-font-ui);
+}
+
+.missed p {
+  margin: 0;
 }
 
 .muted {
@@ -424,7 +707,7 @@
 /* A quick filter with a value: a heavier boundary, so it reads as applied (the chip row says what). */
 .quickSet {
   border-color: var(--wk-text-primary);
-  background: var(--wk-bg-app);
+  background-color: var(--wk-bg-app);
 }
 
 .filtersButton {
@@ -501,8 +784,7 @@
   white-space: nowrap;
 }
 
-.fpillRemove,
-.chipRemove {
+.fpillRemove {
   display: inline-grid;
   place-items: center;
   width: 20px;
@@ -515,8 +797,7 @@
   cursor: pointer;
 }
 
-.fpillRemove:hover,
-.chipRemove:hover {
+.fpillRemove:hover {
   background: var(--wk-bg-elevated-hover);
   color: var(--wk-text-primary);
 }
@@ -548,10 +829,18 @@
   grid-template-columns: 380px minmax(0, 1fr);
 }
 
+/*
+ * UX-07B: the list stays in view beside the conversation — sticky, as tall as the window at most, with its own scroll
+ * (the only inner one). Its scroll is never contained: at its top or end the page takes over. It keeps its place while
+ * the page carries the thread and when another conversation opens.
+ */
 .listColumn {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100dvh;
   min-height: 0;
   overflow-y: auto;
-  border-right: 1px solid var(--wk-border-default);
   background: var(--wk-bg-content);
 }
 
@@ -702,10 +991,12 @@
   overflow: hidden;
 }
 
+/* UX-07B: a crowded row wraps rather than clipping: the two label names and "+N" are never cut off. */
 .rowMeta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--wk-space-8);
+  gap: var(--wk-space-4) var(--wk-space-8);
   min-height: 24px;
   min-width: 0;
 }
@@ -874,22 +1165,28 @@
 
 /* ───── the conversation pane: header (identity · management · navigation), body, drawer ───── */
 
+/* The divider is the reading column's own edge, so it runs the full height of a long thread beside the shorter list. */
 .pane {
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 0;
+  min-height: 100dvh;
+  border-left: 1px solid var(--wk-border-default);
   background: var(--wk-bg-reading);
 }
 
+/* The empty reading column says what to do near its top, never centred in a column as tall as the window. */
 .paneEmpty {
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  padding-top: var(--wk-space-48);
 }
 
+/* The header sticks while the page carries the thread (UX-07B). Opaque, so nothing reads through it. */
 .paneHead {
-  position: relative;
+  position: sticky;
+  top: 0;
   z-index: 6;
   display: flex;
   flex-direction: column;
@@ -954,6 +1251,19 @@
 
 .navView {
   font-family: var(--wk-font-ui);
+}
+
+/* Whatever scrolls into view in the thread — a control taking focus, a panel opening — stops below the sticky header. */
+.split .paneBody * {
+  scroll-margin-top: calc(var(--pane-head, 0px) + var(--wk-space-16));
+}
+
+/* The conversation's labels: all of them, and the one control that changes them (UX-07B). */
+.paneLabels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
 }
 
 .paneContext {
@@ -1072,7 +1382,6 @@
 .paneBody {
   flex: 1;
   min-width: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--wk-space-16);
@@ -1372,14 +1681,6 @@
   margin: 0 0 var(--wk-space-8);
 }
 
-.labelZone {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--wk-space-8);
-  margin-bottom: var(--wk-space-4);
-}
-
 .chips {
   list-style: none;
   margin: 0;
@@ -1398,30 +1699,6 @@
   border-radius: var(--wk-radius-xs);
   background: var(--wk-bg-app);
   font: 500 12px / calc(16 / 12) var(--wk-font-ui);
-}
-
-.chip:has(.chipRemove) {
-  padding-right: 2px;
-}
-
-.addLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wk-space-4);
-  min-height: 24px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--wk-radius-xs);
-  background: transparent;
-  color: var(--wk-text-secondary);
-  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
-  cursor: pointer;
-}
-
-.addLabel:hover,
-.addLabel[aria-expanded="true"] {
-  background: var(--wk-bg-elevated-hover);
-  color: var(--wk-text-primary);
 }
 
 .actions {
@@ -1464,6 +1741,40 @@
 
 .glyph {
   flex: none;
+}
+
+/*
+ * UX-08B: a select that trails the kit's chevron (ChoiceSelect). The browser's arrow is replaced so the chevron sits at
+ * the inset the buttons give theirs (8px from the border, as .mbtn); the text keeps a gap to it. Forced colors keep the
+ * native arrow, the platform's own affordance there.
+ */
+.choice {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+
+.choice > .select {
+  appearance: none;
+  padding-right: calc(var(--wk-space-8) + 16px + var(--wk-space-4));
+}
+
+.choice > .glyph {
+  position: absolute;
+  right: var(--wk-space-8);
+  pointer-events: none;
+}
+
+@media (forced-colors: active) {
+  .choice > .select {
+    appearance: auto;
+    padding-right: var(--wk-space-8);
+  }
+
+  .choice > .glyph {
+    display: none;
+  }
 }
 
 /* ───── panels: menus, popovers, confirmations, composers ───── */
@@ -1530,6 +1841,14 @@
   max-width: calc(100vw - 2 * var(--wk-space-16));
   margin-top: 0;
   overflow-y: auto;
+}
+
+/*
+ * UX-08A: when little room is left under the header (a taller list header, a short window), the menu itself scrolls;
+ * its parts keep their height — an inner list never collapses to nothing.
+ */
+.headMenu > * {
+  flex-shrink: 0;
 }
 
 .headMenuWide {
@@ -1719,32 +2038,67 @@
 .markerOptions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--wk-space-4) var(--wk-space-12);
+  gap: var(--wk-space-4);
 }
 
-/* A color option: radio, marker and name. The chosen one is checked, outlined in ink and written heavier — never
-   told by color alone. */
+/* PO polish (2026-11-19): a color option is a compact round swatch — its name is not written beside it (it is the
+   option's accessible name, in hidden text, and its tooltip). The native radio covers the whole target, so a click
+   anywhere on it chooses and arrow keys move. The chosen one carries a check and an ink ring — never told by color
+   alone — and keyboard focus draws the focus ring around it. */
 .markerOption {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 var(--wk-space-8);
-  border: 1px solid var(--wk-border-default);
-  border-radius: var(--wk-radius-sm);
-  font-size: 12px;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
   cursor: pointer;
 }
 
-.markerOption:has(input:checked) {
-  padding: 0 calc(var(--wk-space-8) - 1px);
-  border: 2px solid var(--wk-text-primary);
-  font-weight: 600;
+.markerOption input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
-.markerOption input {
-  margin: 0;
-  accent-color: var(--wk-text-primary);
+.markerRing {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.markerOption:hover .markerRing {
+  border-color: var(--wk-border-strong);
+}
+
+.markerOption:has(input:checked) .markerRing {
+  border-color: var(--wk-text-primary);
+}
+
+.markerOption:has(input:focus-visible) .markerRing {
+  outline: var(--wk-focus-width) solid var(--wk-interactive-focus);
+  outline-offset: 1px;
+}
+
+.marker.swatch {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+/* The check reads on every swatch in both themes: the page color on the palette's mid tones (≥ 4.3:1). */
+.marker > .swatchCheck {
+  fill: none;
+  stroke: var(--wk-bg-canvas);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .iconButton {
@@ -2135,11 +2489,12 @@
 
 /* ───── Details drawer: over the reading area, never a third column ───── */
 
+/* Hung under the sticky header (its containing block): from the header's bottom to the window's (UX-07B). */
 .drawer {
   position: absolute;
-  top: 0;
+  top: 100%;
   right: 0;
-  bottom: 0;
+  height: calc(100dvh - 100%);
   z-index: 4;
   display: flex;
   flex-direction: column;
@@ -2159,10 +2514,6 @@
   padding: var(--wk-space-12) var(--wk-space-12) var(--wk-space-12) var(--wk-space-20);
   border-bottom: 1px solid var(--wk-border-default);
   background: var(--wk-bg-content);
-}
-
-.drawerHead > .drawerBack {
-  display: none;
 }
 
 .drawerTitle {
@@ -2263,6 +2614,11 @@
 
 .disclosureSummary > :last-child {
   margin-left: auto;
+}
+
+/* One chevron for opening in place: it points right when closed and turns down when open. */
+.capabilityDisclosure[open] > .disclosureSummary > .glyph:first-child {
+  transform: rotate(90deg);
 }
 
 .capabilityList {
@@ -2602,6 +2958,25 @@
     display: block;
   }
 
+  /* One panel: the conversation a period left out is said above the list, where the list is. */
+  .split:not(.splitActive) .paneMissed.paneMissed {
+    display: flex;
+    grid-column: auto;
+    grid-row: auto;
+    min-height: 0;
+    padding: var(--wk-space-16) 0;
+    border-left: 0;
+    border-bottom: 1px solid var(--wk-border-default);
+  }
+
+  .missed {
+    padding: 0 var(--wk-space-16);
+  }
+
+  .day {
+    height: 44px;
+  }
+
   .main {
     height: auto;
     min-height: 100dvh;
@@ -2618,9 +2993,25 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* One panel at a time: the list flows with the page. */
   .listColumn {
-    border-right: 0;
+    position: static;
+    max-height: none;
     overflow: visible;
+  }
+
+  .pane {
+    min-height: 0;
+    border-left: 0;
+  }
+
+  /* The page scrolls naturally here: the header does not stick (it is tall on a narrow screen). */
+  .paneHead {
+    position: relative;
+  }
+
+  .split .paneBody * {
+    scroll-margin-top: var(--wk-space-16);
   }
 
   .split:not(.splitActive) .pane {
@@ -2655,11 +3046,8 @@
     inset: 0;
     z-index: 30;
     width: 100%;
+    height: auto;
     border-left: 0;
-  }
-
-  .drawerHead > .drawerBack {
-    display: inline-flex;
   }
 
   .kbd {
@@ -2697,33 +3085,34 @@
   .btn,
   .mbtn,
   .action,
-  .markerOption,
   .menuItem,
   .sideItem,
   .select,
   .input,
   .check,
-  .addLabel,
   .timeButton,
   .railItem,
   .toastAction,
   .simButton,
   .segment span,
-  .linkButton {
+  .linkButton,
+  .presetOption,
+  .coverageSummary,
+  .disclosureSummary {
     min-height: 44px;
   }
 
   .mbtnIcon,
   .iconButton,
   .actionIcon,
-  .toastClose {
+  .toastClose,
+  .markerOption {
     width: 44px;
     height: 44px;
     min-height: 44px;
   }
 
-  /* Removing a label or a filter is a 44px target here too; the chip keeps its size around it. */
-  .chipRemove,
+  /* Removing a filter is a 44px target here too; the pill keeps its size around it. */
   .fpillRemove {
     width: 44px;
     height: 44px;
@@ -2842,6 +3231,41 @@
 
   .filterMenu > .filterBody {
     flex: 1;
+  }
+
+  .periodMenu {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    width: 100%;
+    max-height: none;
+    border-radius: 0;
+    border: 0;
+  }
+
+  .periodMenu > .periodBody {
+    flex: 1;
+  }
+
+  /* UX-09 (L-1): the sheet is the whole window; the popover's limit (100vw − 32px) left a strip of the page beside it. */
+  .popover.periodMenu {
+    max-width: none;
+  }
+
+  /*
+   * UX-09 (L-2): Period and Filters are sheets over the whole window here, as Details is below 1024 px, so nothing under
+   * them may take focus, be read or be clicked: the page behind is hidden while one is open.
+   */
+  .shell:has(.periodMenu, .filterMenu) {
+    visibility: hidden;
+  }
+
+  .shell:has(.periodMenu, .filterMenu) :is(.periodMenu, .filterMenu) {
+    visibility: visible;
+  }
+
+  .periodSummary {
+    flex-basis: 100%;
   }
 
   .phoneOnly.phoneOnly {

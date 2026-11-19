@@ -72,7 +72,8 @@ describe("Manual v1.1 Amendment 1 (Direction C, PO-approved 2026-11-17): the new
   const NEW_BLUES = /--wk-selection-|--wk-accent-brand-reply/;
   /** Where active navigation, a selected conversation and the brand's own replies are drawn. */
   // COMMENTS-INT-03A adds ui/inbox/comments.module.css: the redesigned Comments list (the selected conversation only).
-  const SELECTION_USERS = new Set(["ui/foundations/tokens.css", "ui/shell/app-shell.module.css", "ui/inbox/inbox.module.css", "ui/inbox/comments.module.css", "app/dev/ui-reference/comments-redesign/prototype.module.css"]);
+  // COMMENTS-UX-07A adds the development-only scroll comparison (the selected row and the brand's own replies only).
+  const SELECTION_USERS = new Set(["ui/foundations/tokens.css", "ui/shell/app-shell.module.css", "ui/inbox/inbox.module.css", "ui/inbox/comments.module.css", "app/dev/ui-reference/comments-redesign/prototype.module.css", "app/dev/ui-reference/comments-scroll/comparison.module.css"]);
   /** The CSS rules (selector → body) of a stylesheet, comments removed. */
   const rulesOf = (file: string): { readonly selector: string; readonly body: string }[] =>
     [...codeOf(file).replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: (m[1] ?? "").trim(), body: m[2] ?? "" }));
@@ -357,8 +358,11 @@ describe("Comments experience redesign prototype (Step 7B-17V, development only)
     expect(codeOf(`${DIR}/prototype.tsx`)).toMatch(/^"use client";/);
     for (const file of [`${DIR}/page.tsx`, `${DIR}/model.ts`, `${DIR}/fixtures.ts`]) expect(codeOf(file), file).not.toMatch(/["']use client["']/);
     // Its imports are the brand UI (logo, icons, primitives, the local-time element) and its own files.
+    // UX-07B: + next/navigation, only to keep the open conversation in the address (?conversation=…) so the browser's
+    // Back and Forward behave as on the product's own routes — the router, the path and the search parameters, nothing else.
     const imports = [...codeOf(`${DIR}/prototype.tsx`).matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
-    for (const specifier of imports) expect(specifier).toMatch(/^(react|@\/ui\/(brand\/logo|icons\/icon|primitives|time\/local-time|time\/local-time-format)|\.\/(fixtures|model|prototype\.module\.css))$/);
+    for (const specifier of imports) expect(specifier).toMatch(/^(react|next\/navigation|@\/ui\/(brand\/logo|icons\/icon|primitives|time\/local-time|time\/local-time-format)|\.\/(fixtures|model|prototype\.module\.css))$/);
+    expect(codeOf(`${DIR}/prototype.tsx`)).toMatch(/^import \{ usePathname, useRouter, useSearchParams \} from "next\/navigation";$/m);
   });
 
   it("the reply composer is a preview that cannot publish", () => {
@@ -366,6 +370,42 @@ describe("Comments experience redesign prototype (Step 7B-17V, development only)
     expect(code).toMatch(/Preview — nothing is sent/);
     expect(code).toMatch(/Publishing isn&apos;t part of this preview/);
     expect(code).not.toMatch(/type="submit"[^>]*>\s*Publish|ReplyComposer|simulateReplyAction|publishReplyAction/);
+  });
+});
+
+describe("Comments scroll comparison (COMMENTS-UX-07A, development only)", () => {
+  const DIR = "app/dev/ui-reference/comments-scroll";
+
+  it("is a 404 outside next dev, indexes nothing, and loads the client comparison only on the development path", () => {
+    const page = codeOf(`${DIR}/page.tsx`);
+    expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+    expect((page.match(/process\.env/g) ?? []).length).toBe(1);
+    expect(page).toMatch(/if \(process\.env\.NODE_ENV === "development"\) \{\n\s+const \{ ScrollComparison \} = await import\("\.\/comparison"\);\n\s+return <ScrollComparison \/>;\n\s+\}\n\s+notFound\(\);\n\}/);
+    expect([...page.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])).toEqual(["next/navigation", "next"]);
+    expect((page.match(/import\(/g) ?? []).length).toBe(1);
+  });
+
+  it("reads nothing, sends nothing, stores nothing, and leaves the approved prototype alone: synthetic fixtures read-only, local React state", () => {
+    for (const file of [`${DIR}/page.tsx`, `${DIR}/comparison.tsx`, `${DIR}/data.ts`]) {
+      const code = codeOf(file);
+      expect(code, file).not.toMatch(/@\/server\/|@\/platform\/|@\/modules\/|@\/db\/|@\/mutations\/|@\/integrations\/|@\/ai\/|@\/jobs\/|"use server"|<form|formAction|fetch\(|XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|indexedDB|cookie|dangerouslySetInnerHTML|history\.|location\.|ReplyComposer|publishReplyAction/);
+    }
+    expect(codeOf(`${DIR}/comparison.tsx`)).toMatch(/^"use client";/);
+    for (const file of [`${DIR}/page.tsx`, `${DIR}/data.ts`]) expect(codeOf(file), file).not.toMatch(/["']use client["']/);
+    const imports = [...codeOf(`${DIR}/comparison.tsx`).matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
+    for (const specifier of imports) expect(specifier).toMatch(/^(react|@\/ui\/icons\/icon|\.\/(data|comparison\.module\.css))$/);
+    // The data module reads the approved prototype's fixtures and nothing else of it (never its model, UI or styles).
+    expect([...codeOf(`${DIR}/data.ts`).matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])).toEqual(["../comments-redesign/fixtures"]);
+  });
+
+  it("labels are the conversation's: no reply carries a label control, and the comment menu acts on nothing", () => {
+    const code = codeOf(`${DIR}/comparison.tsx`);
+    // The reference sheet (Conventions) names "+ Label" only to say it goes; the comparison itself never draws one.
+    expect(code.slice(0, code.indexOf("function Conventions("))).not.toMatch(/\+ Label|Add label/);
+    const entry = code.slice(code.indexOf("function Entry("), code.indexOf("function MenuItem("));
+    expect(entry).not.toMatch(/util-tag|Labels|onToggleLabel/);
+    expect(code).toMatch(/<button type="button" className=\{c\("menuItem", danger && "menuDanger"\)\} aria-disabled="true">/);
+    expect(code.slice(code.indexOf("function MenuItem("), code.indexOf("function Cell("))).not.toMatch(/onClick/);
   });
 });
 

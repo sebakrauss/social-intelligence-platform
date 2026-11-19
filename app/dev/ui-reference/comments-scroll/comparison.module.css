@@ -1,0 +1,1089 @@
+/*
+ * COMMENTS-UX-07A — DEVELOPMENT ONLY. The scroll comparison: one layout and three scroll models, which differ ONLY by
+ * the rules under [data-mode] below — same rows, thread, density and Direction C tokens (bg.app navigation canvas,
+ * bg.content list, bg.reading conversation, selection.* for the selected row, the 2px brand-reply accent on the brand's
+ * own replies). Widths are container queries on the frame, so the tablet and phone presets work inside a desktop
+ * window and on a real device alike: ≥1280 rail + sidebar + two panels; 1024–1279 rail + two panels; <1024 one panel.
+ *   A  [data-mode="a"]  the page is exactly the viewport; the list and the thread scroll inside their own areas.
+ *   B  [data-mode="b"]  the page is the only scroller; nothing in the workspace sticks.
+ *   C  [data-mode="c"]  the page scrolls the thread; the list sticks beside it (its own scroll area) and the
+ *                       conversation header sticks while reading.
+ */
+
+.root {
+  min-height: 100dvh;
+  background: var(--wk-bg-app);
+  color: var(--wk-text-primary);
+  font: 400 14px / calc(20 / 14) var(--wk-font-ui);
+}
+
+/* ───── comparison controls (not part of the product) ───── */
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-12) var(--wk-space-24);
+  border-bottom: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-app);
+}
+
+.controlsHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--wk-space-4) var(--wk-space-12);
+}
+
+.controlsTitle {
+  margin: 0;
+  font: 600 18px / calc(24 / 18) var(--wk-font-brand);
+}
+
+.controlsNote {
+  margin: 0;
+  font-size: 12px;
+  line-height: calc(16 / 12);
+  color: var(--wk-text-secondary);
+}
+
+.controlsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-8) var(--wk-space-12);
+}
+
+.segment {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-content);
+}
+
+.segmentLabel {
+  padding: 0 var(--wk-space-8);
+  font-size: 12px;
+  color: var(--wk-text-tertiary);
+}
+
+.segmentButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--wk-radius-sm);
+  background: transparent;
+  color: var(--wk-text-secondary);
+  font: 500 13px / 1 var(--wk-font-ui);
+  cursor: pointer;
+}
+
+.segmentButton:hover {
+  background: var(--wk-bg-elevated-hover);
+  color: var(--wk-text-primary);
+}
+
+.segmentButton[aria-pressed="true"] {
+  background: var(--wk-action-primary-bg);
+  color: var(--wk-action-primary-fg);
+}
+
+.segmentLetter {
+  font: 600 12px / 1 var(--wk-font-mono);
+}
+
+.guide {
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-content);
+}
+
+.guideSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 36px;
+  padding: 0 var(--wk-space-12);
+  list-style: none;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.guideSummary::-webkit-details-marker {
+  display: none;
+}
+
+.guide[open] > .guideSummary > .glyph {
+  transform: rotate(90deg);
+}
+
+.guideBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: 0 var(--wk-space-12) var(--wk-space-12) 36px;
+  font-size: 13px;
+  line-height: calc(18 / 13);
+}
+
+.guideBehaves {
+  margin: 0;
+  font-weight: 500;
+}
+
+.guideList {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--wk-text-secondary);
+}
+
+.guideActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-8);
+}
+
+.guideHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: calc(16 / 12);
+  color: var(--wk-text-tertiary);
+}
+
+.pill {
+  position: fixed;
+  right: var(--wk-space-16);
+  bottom: var(--wk-space-16);
+  z-index: 30;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-full);
+  background: var(--wk-bg-raised);
+}
+
+.pillButton {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 var(--wk-space-8);
+  border: 0;
+  border-radius: var(--wk-radius-full);
+  background: transparent;
+  color: var(--wk-text-secondary);
+  font: 600 13px / 1 var(--wk-font-mono);
+  cursor: pointer;
+}
+
+.pillButton:hover {
+  background: var(--wk-bg-elevated-hover);
+  color: var(--wk-text-primary);
+}
+
+.pillButton[aria-pressed="true"] {
+  background: var(--wk-action-primary-bg);
+  color: var(--wk-action-primary-fg);
+}
+
+.pillWide {
+  padding: 0 var(--wk-space-12);
+  font-family: var(--wk-font-ui);
+  font-weight: 500;
+}
+
+/* ───── the frame: one container, three widths ───── */
+
+.frame {
+  container: app / inline-size;
+  width: 100%;
+  margin: 0 auto;
+  background: var(--wk-bg-app);
+}
+
+.frame[data-width="1280"] {
+  max-width: 1280px;
+  border-inline: 1px solid var(--wk-border-default);
+}
+
+.frame[data-width="834"] {
+  max-width: 834px;
+  border-inline: 1px solid var(--wk-border-default);
+}
+
+.frame[data-width="390"] {
+  max-width: 390px;
+  border-inline: 1px solid var(--wk-border-default);
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 64px 208px minmax(0, 1fr);
+  grid-template-areas: "rail side work";
+}
+
+.rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--wk-space-4);
+  padding-top: var(--wk-space-12);
+  color: var(--wk-text-secondary);
+}
+
+.railItem {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--wk-radius-md);
+}
+
+.railActive {
+  background: var(--wk-bg-content);
+  color: var(--wk-text-primary);
+}
+
+.sidebar {
+  grid-area: side;
+  padding: var(--wk-space-16) var(--wk-space-12);
+}
+
+.sideWorkspace {
+  margin: 0 0 var(--wk-space-16);
+  font: 600 14px / calc(20 / 14) var(--wk-font-brand);
+}
+
+.sideItem {
+  margin: 0;
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-radius: var(--wk-radius-sm);
+  color: var(--wk-text-secondary);
+}
+
+.sideActive {
+  background: var(--wk-bg-content);
+  color: var(--wk-text-primary);
+  font-weight: 500;
+}
+
+.workspace {
+  grid-area: work;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  margin: var(--wk-space-8) var(--wk-space-8) 0 0;
+  border: 1px solid var(--wk-border-default);
+  border-bottom: 0;
+  border-radius: var(--wk-radius-lg) var(--wk-radius-lg) 0 0;
+  background: var(--wk-bg-content);
+}
+
+.pageHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--wk-space-4) var(--wk-space-12);
+  padding: var(--wk-space-16) var(--wk-space-24) var(--wk-space-12);
+  border-bottom: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-lg) var(--wk-radius-lg) 0 0;
+  background: var(--wk-bg-content);
+}
+
+.pageTitle {
+  margin: 0;
+  font: 600 20px / calc(28 / 20) var(--wk-font-brand);
+}
+
+.pageMeta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--wk-text-tertiary);
+}
+
+.split {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+}
+
+.listCol {
+  min-width: 0;
+  background: var(--wk-bg-content);
+}
+
+.listCol:focus-visible,
+.readBody:focus-visible {
+  outline-offset: -2px;
+}
+
+.readCol {
+  min-width: 0;
+  border-left: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-reading);
+}
+
+/* ───── A: independent panels — the page is the viewport; two scroll areas ───── */
+
+.root[data-mode="a"] {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.root[data-mode="a"] .controls {
+  flex: none;
+}
+
+.root[data-mode="a"] .frameWrap {
+  flex: 1;
+  min-height: 0;
+}
+
+.root[data-mode="a"] .frame,
+.root[data-mode="a"] .app {
+  height: 100%;
+}
+
+.root[data-mode="a"] .workspace,
+.root[data-mode="a"] .split {
+  min-height: 0;
+}
+
+.root[data-mode="a"] .listCol {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.root[data-mode="a"] .readCol {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.root[data-mode="a"] .pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.root[data-mode="a"] .readBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ───── B and C: the page scrolls; the shell's rail and sidebar stay in view, as in the product ───── */
+
+.root:not([data-mode="a"]) .rail,
+.root:not([data-mode="a"]) .sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100dvh;
+}
+
+/* ───── C: hybrid — the list sticks beside the thread; the conversation header sticks while reading ───── */
+
+.root[data-mode="c"] .listCol {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100dvh;
+  overflow-y: auto;
+}
+
+.root[data-mode="c"] .convBar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+/* ───── a row ───── */
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  border-bottom: 1px solid var(--wk-border-default);
+}
+
+.rowButton {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-4);
+  padding: var(--wk-space-12) var(--wk-space-16) var(--wk-space-12) var(--wk-space-20);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowButton:hover {
+  background: var(--wk-bg-elevated-hover);
+}
+
+/* The selected conversation: the soft selection surface and a 3px indicator — where you are, nothing more. */
+.rowButton[data-selected] {
+  background: var(--wk-selection-bg);
+}
+
+.rowButton[data-selected]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--wk-selection-indicator);
+}
+
+.rowTop {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
+}
+
+.rowAuthor {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowAccount {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--wk-text-tertiary);
+}
+
+.rowTime {
+  flex: none;
+  margin-left: auto;
+  font: 400 12px / 1 var(--wk-font-mono);
+  color: var(--wk-text-tertiary);
+}
+
+.rowExcerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--wk-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.rowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  font-size: 12px;
+  color: var(--wk-text-tertiary);
+}
+
+.listEnd {
+  margin: 0;
+  padding: var(--wk-space-16) var(--wk-space-16) 88px;
+  font-size: 12px;
+  color: var(--wk-text-tertiary);
+}
+
+/* ───── labels: neutral chips (the conversation's, never a reply's) ───── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  min-height: 22px;
+  padding: 0 6px;
+  border-radius: var(--wk-radius-xs);
+  background: var(--wk-bg-app);
+  color: var(--wk-text-primary);
+  font: 500 12px / calc(16 / 12) var(--wk-font-ui);
+}
+
+.chip > .glyph {
+  color: var(--wk-text-tertiary);
+}
+
+.chipMore {
+  color: var(--wk-text-secondary);
+}
+
+/* ───── the conversation ───── */
+
+.emptyPane {
+  padding: var(--wk-space-48) var(--wk-space-24);
+  color: var(--wk-text-secondary);
+}
+
+.pane {
+  min-width: 0;
+}
+
+.readTop {
+  height: 0;
+}
+
+.convBar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-12) var(--wk-space-24);
+  border-bottom: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-reading);
+}
+
+.convTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-4) var(--wk-space-8);
+  min-width: 0;
+}
+
+/* Back exists only where the list is not drawn beside the conversation (one panel). Scoped so .btn cannot redraw it. */
+.convTop > .backButton {
+  display: none;
+}
+
+.convTitle {
+  margin: 0;
+  font: 600 16px / calc(22 / 16) var(--wk-font-ui);
+}
+
+.convTitle:focus {
+  outline-offset: 2px;
+}
+
+.convAccount {
+  font-size: 12px;
+  color: var(--wk-text-tertiary);
+}
+
+.convNav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.convPosition {
+  margin-right: var(--wk-space-4);
+  font: 400 12px / 1 var(--wk-font-mono);
+  color: var(--wk-text-secondary);
+}
+
+.convLabels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  width: min(300px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-12);
+  border: 1px solid var(--wk-border-strong);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-raised);
+}
+
+.popoverMenu {
+  width: min(280px, calc(100vw - 32px));
+  gap: 2px;
+  padding: var(--wk-space-8);
+}
+
+/* The Labels control follows the conversation's chips, so its panel opens leftward from the control's right edge. */
+.convLabels .popover {
+  left: auto;
+  right: 0;
+}
+
+.popoverTitle {
+  margin: 0;
+  font-weight: 600;
+}
+
+.popoverNote,
+.popoverFoot {
+  margin: 0;
+  font-size: 12px;
+  line-height: calc(16 / 12);
+  color: var(--wk-text-secondary);
+}
+
+.popoverMenu > .popoverNote {
+  padding: 0 var(--wk-space-4) var(--wk-space-8);
+}
+
+.checkList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 36px;
+  padding: 0 var(--wk-space-4);
+  border-radius: var(--wk-radius-sm);
+  cursor: pointer;
+}
+
+.check:hover {
+  background: var(--wk-bg-elevated-hover);
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-height: 36px;
+  padding: 0 var(--wk-space-8);
+  border: 0;
+  border-radius: var(--wk-radius-sm);
+  background: transparent;
+  color: var(--wk-text-primary);
+  font: 500 13px / 1 var(--wk-font-ui);
+  text-align: left;
+  cursor: default;
+}
+
+.menuDanger {
+  color: var(--wk-danger-fg);
+}
+
+.readBody {
+  padding: var(--wk-space-16) var(--wk-space-24) 88px;
+}
+
+.postContext {
+  margin: 0 0 var(--wk-space-12);
+  font-size: 13px;
+  line-height: calc(18 / 13);
+}
+
+.muted {
+  color: var(--wk-text-secondary);
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entry {
+  padding: var(--wk-space-12) 0;
+  border-top: 1px solid var(--wk-border-default);
+}
+
+.entry:first-child {
+  border-top: 0;
+  padding-top: var(--wk-space-4);
+}
+
+.entry[data-depth="1"],
+.entry[data-depth="2"],
+.entry[data-depth="3"] {
+  padding-left: var(--wk-space-16);
+  border-top: 0;
+  border-left: 1px solid var(--wk-border-strong);
+}
+
+.entry[data-depth="1"] {
+  margin-left: var(--wk-space-24);
+}
+
+.entry[data-depth="2"] {
+  margin-left: var(--wk-space-48);
+}
+
+.entry[data-depth="3"] {
+  margin-left: 72px;
+}
+
+.entryOwn > .entryBody {
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border: 1px solid var(--wk-border-default);
+  border-left: 2px solid var(--wk-accent-brand-reply);
+  border-radius: var(--wk-radius-xs) var(--wk-radius-lg) var(--wk-radius-lg) var(--wk-radius-xs);
+  background: var(--wk-bg-content);
+}
+
+.entryHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--wk-space-4) var(--wk-space-8);
+  margin: 0;
+  font-size: 13px;
+}
+
+.entryAuthor {
+  font-weight: 600;
+}
+
+.entryTime {
+  margin-left: auto;
+  font: 400 12px / 1 var(--wk-font-mono);
+  color: var(--wk-text-tertiary);
+}
+
+.tag {
+  padding: 1px 6px;
+  border-radius: var(--wk-radius-xs);
+  background: var(--wk-bg-app);
+  color: var(--wk-text-secondary);
+  font-size: 11px;
+  line-height: calc(14 / 11);
+}
+
+.replyingTo {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--wk-text-tertiary);
+}
+
+.entryText {
+  margin: var(--wk-space-4) 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.entryActions {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-4);
+  margin-top: var(--wk-space-4);
+  margin-left: calc(-1 * var(--wk-space-8));
+}
+
+.replyArea {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--wk-space-8);
+  margin-top: var(--wk-space-16);
+  padding: var(--wk-space-16);
+  border: 1px dashed var(--wk-border-strong);
+  border-radius: var(--wk-radius-md);
+  background: var(--wk-bg-content);
+}
+
+.replyTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.replyNote {
+  margin: 0;
+  font-size: 13px;
+  color: var(--wk-text-secondary);
+}
+
+/* ───── buttons and glyphs ───── */
+
+.glyph {
+  flex: none;
+  vertical-align: -3px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wk-space-4);
+  min-height: 36px;
+  padding: 0 var(--wk-space-12);
+  border: 1px solid var(--wk-border-default);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-content);
+  color: var(--wk-text-primary);
+  font: 500 13px / calc(18 / 13) var(--wk-font-ui);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--wk-bg-elevated-hover);
+}
+
+.btn:disabled {
+  color: var(--wk-text-disabled);
+  cursor: default;
+}
+
+.btnSmall {
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  font-size: 12px;
+}
+
+.btnQuiet {
+  border-color: transparent;
+  background: transparent;
+}
+
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--wk-radius-sm);
+  background: transparent;
+  color: var(--wk-text-secondary);
+  cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--wk-bg-elevated-hover);
+  color: var(--wk-text-primary);
+}
+
+.iconButton:disabled {
+  color: var(--wk-text-disabled);
+  cursor: default;
+}
+
+/* ───── the reference sheet ───── */
+
+.sheet {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: var(--wk-space-24) var(--wk-space-24) 96px;
+}
+
+.sheetSection {
+  margin-bottom: var(--wk-space-40);
+}
+
+.sheetTitle {
+  margin: 0 0 var(--wk-space-8);
+  font: 600 18px / calc(24 / 18) var(--wk-font-brand);
+}
+
+.sheetSub {
+  margin: var(--wk-space-20) 0 var(--wk-space-8);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sheetLead {
+  margin: 0 0 var(--wk-space-12);
+  max-width: 72ch;
+  color: var(--wk-text-secondary);
+}
+
+.sheetList {
+  margin: 0;
+  padding-left: 18px;
+  max-width: 80ch;
+}
+
+.sheetList > li + li {
+  margin-top: var(--wk-space-8);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--wk-bg-content);
+  font-size: 13px;
+  line-height: calc(18 / 13);
+}
+
+.table th {
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-bottom: 1px solid var(--wk-border-strong);
+  text-align: left;
+  font-weight: 600;
+}
+
+.cell {
+  padding: var(--wk-space-8) var(--wk-space-12);
+  border-bottom: 1px solid var(--wk-border-default);
+  vertical-align: top;
+}
+
+/* ───── 1024–1279: the sidebar folds; rail and two panels ───── */
+
+@container app (max-width: 1279px) {
+  .app {
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-areas: "rail work";
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .split {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+}
+
+/* ───── below 1024: one panel at a time (the list, or the open conversation), 44px touch targets ───── */
+
+@container app (max-width: 1023px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "work";
+  }
+
+  .rail {
+    display: none;
+  }
+
+  .workspace {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .pageHead {
+    padding: var(--wk-space-12) var(--wk-space-16);
+    border-radius: 0;
+  }
+
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .frame[data-view="conversation"] .listCol,
+  .frame[data-view="conversation"] .pageHead,
+  .frame[data-view="list"] .readCol {
+    display: none;
+  }
+
+  .readCol {
+    border-left: 0;
+  }
+
+  .convTop > .backButton {
+    display: inline-flex;
+    min-height: 44px;
+    margin-left: calc(-1 * var(--wk-space-8));
+  }
+
+  .convBar {
+    padding: var(--wk-space-4) var(--wk-space-16) var(--wk-space-8);
+  }
+
+  .convTitle {
+    flex-basis: 100%;
+    order: 1;
+  }
+
+  .convAccount {
+    order: 2;
+  }
+
+  .readBody {
+    padding: var(--wk-space-12) var(--wk-space-16) 88px;
+  }
+
+  .entry[data-depth="1"] {
+    margin-left: var(--wk-space-8);
+  }
+
+  .entry[data-depth="2"] {
+    margin-left: var(--wk-space-20);
+  }
+
+  .entry[data-depth="3"] {
+    margin-left: var(--wk-space-32);
+  }
+
+  .iconButton {
+    width: 44px;
+    height: 44px;
+  }
+
+  .btn,
+  .check,
+  .menuItem {
+    min-height: 44px;
+  }
+
+  /* One panel: a popover opens in place, full width under its button, so it never leaves a narrow screen. */
+  .anchor {
+    display: contents;
+  }
+
+  .entryActions {
+    flex-wrap: wrap;
+  }
+
+  .popover,
+  .popoverMenu {
+    position: static;
+    flex-basis: 100%;
+    width: auto;
+  }
+
+  /* C on one panel: the list flows with the page under a sticky list header. */
+  .root[data-mode="c"] .listCol {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .root[data-mode="c"] .pageHead {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
+}

@@ -10,12 +10,21 @@
  */
 import { act, createElement as h } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SEED_ASSIGNMENTS, SEED_LABELS } from "@/app/dev/ui-reference/comments-redesign/fixtures";
 import { NO_FILTERS, PAGE_SIZE, SEED_SIM, SEED_WORKFLOW, listOf, viewCounts, type WorkContext } from "@/app/dev/ui-reference/comments-redesign/model";
 import { CommentsRedesign } from "@/app/dev/ui-reference/comments-redesign/prototype";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// UX-07B: the prototype keeps the open conversation in the address through the App Router. Here the address stays where
+// it is (pushes are recorded, never applied), so these journeys run exactly as before; Back / Forward are covered in
+// comments-redesign-ux07b.test.ts.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: () => undefined, replace: () => undefined }),
+  usePathname: () => "/dev/ui-reference/comments-redesign",
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 const CTX: WorkContext = { labels: { labels: SEED_LABELS, assignments: SEED_ASSIGNMENTS, nextId: 1 }, wf: SEED_WORKFLOW, sim: SEED_SIM, allHealthy: false, target: 240 };
 const START = viewCounts(CTX);
@@ -52,6 +61,10 @@ const listedIds = (): string[] => [...container.querySelectorAll<HTMLButtonEleme
 const announced = (): string => text(q('[role="status"][aria-live="polite"]'));
 const active = (): Element | null => container.ownerDocument.activeElement;
 const sideView = (name: string): HTMLButtonElement => buttonNamed(q('nav[aria-label="Comments views"]'), name);
+/** UX-07B: a conversation's labels and their one control, in its header. */
+const headerLabels = (conversationId: string): HTMLElement => q('[role="group"][aria-label="Labels on this conversation"]', pane(conversationId));
+const labelsButton = (conversationId: string): HTMLButtonElement => buttonNamed(headerLabels(conversationId), "Labels");
+const picker = (): HTMLElement => q('[role="group"][aria-label="Labels for this conversation"]');
 
 async function click(element: HTMLElement): Promise<void> {
   await settle(() => { element.click(); });
@@ -84,12 +97,17 @@ const toolbarSelect = (label: string): HTMLSelectElement => {
   return found;
 };
 const title = (): string => text(q("h1"));
+/** UX-08A: the list's count under its title, with the period it counts. */
+const listCount = (): string => text(q("#list-count"));
 
 beforeEach(async () => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   await settle(() => root?.render(h(CommentsRedesign)));
+  // UX-08B: the page opens on Open (the approved Phase 1 landing; see comments-redesign-ux08b.test.ts). These scenarios
+  // were written in Needs attention and start there, chosen in the sidebar as a person would.
+  await settle(() => { sideView("Needs attention").click(); });
 });
 afterEach(async () => {
   await settle(() => root?.unmount());
@@ -100,10 +118,13 @@ afterEach(async () => {
 /* ───────────── the workspace ───────────── */
 
 describe("the workspace: views, list and two panels", () => {
-  it("opens on Needs attention with its count; the sidebar lists the workflow views and labels — and no Intelligence", () => {
-    expect(title()).toBe(`Needs attention ${String(START.attention)}`);
+  it("Needs attention with its count; the sidebar lists the workflow views and labels — and no Intelligence", () => {
+    // UX-08A: the title is the list's name; its count, under it, names the period it counts (here: all dates).
+    expect(title()).toBe("Needs attention");
+    expect(listCount()).toBe(`${String(START.attention)} conversations · all dates`);
     const views = buttonsIn(q('nav[aria-label="Comments views"]')).map(named);
-    expect(views.slice(0, 5)).toEqual([`Needs attention${String(START.attention)}`, `Open${String(START.open)}`, `Assigned to me${String(START.mine)}`, `Escalated${String(START.escalated)}`, "Done"]);
+    expect(views.slice(0, 6)).toEqual([`Open${String(START.open)}`, `Needs attention${String(START.attention)}`, `Assigned to me${String(START.mine)}`, `Escalated${String(START.escalated)}`, "Done", "All conversations"]);
+    expect(text(q('nav[aria-label="Comments views"]'))).toContain("Counts include all dates");
     expect(text(q('nav[aria-label="Comments views"]'))).not.toMatch(/Intelligence|Needs review|Priority/);
     expect(listedIds()).toEqual(listOf("attention", NO_FILTERS, "", "attention", CTX).map((item) => item.id));
     expect(container.textContent).toContain("Select a conversation to read it here.");
@@ -129,7 +150,7 @@ describe("the workspace: views, list and two panels", () => {
     await click(q('[data-nav="next"]', pane(list[0] ?? "")));
     expect(row(list[1] ?? "").getAttribute("aria-current")).toBe("true");
     expect(active()?.getAttribute("data-nav")).toBe("next");
-    await click(buttonNamed(pane(list[1] ?? ""), "Needs attention"));
+    await click(buttonNamed(pane(list[1] ?? ""), "Back to Needs attention"));
     expect(container.querySelector("[aria-current=true][id^=row-]")).toBeNull();
     expect(active()).toBe(row(list[1] ?? ""));
     expect(container.querySelector("[class*=splitActive]")).toBeNull();
@@ -179,13 +200,13 @@ describe("Needs attention: the reason is explained, a reply resolves it, the lis
     expect(text(q("header", pane("cv-07")))).toContain("Needs attention: Waiting 4 h · over target");
     await replyTo("cv-07-m00", "Both! Whole bean and ground.");
     expect(text(pane("cv-07"))).toContain("Sending");
-    expect(title()).toBe(`Needs attention ${String(START.attention)}`); // Sending is not an answer yet
+    expect(listCount()).toBe(`${String(START.attention)} conversations · all dates`); // Sending is not an answer yet
     await click(answerButton(pane("cv-07"), "Confirmed"));
     // A2: the reason is gone, the conversation stays Open and selected, in place; the count already follows.
     expect(text(q("header", pane("cv-07")))).not.toContain("Waiting");
     expect(text(q("header", pane("cv-07")))).toContain("Open");
     expect(text(q("header", pane("cv-07")))).toContain("No longer in Needs attention · stays here until you move on");
-    expect(title()).toBe(`Needs attention ${String(START.attention - 1)}`);
+    expect(listCount()).toBe(`${String(START.attention - 1)} conversations · all dates`);
     expect(text(row("cv-07"))).toContain("Reply sent · leaves this list when you move on");
     expect(text(pane("cv-07"))).toContain("Reply sent. Is the question answered, or is something still pending?");
     expect(hasButton(pane("cv-07"), "Mark done · Replied publicly")).toBe(true);
@@ -331,7 +352,7 @@ describe("search, two quick filters, Filters menu, sort — and what Previous / 
     expect(text(q('[aria-label="Active filters"]'))).toContain("Search:“wholesale”");
     expect(listedIds()).toContain("cv-05");
     await type(q('input[type="search"]') as HTMLInputElement, "zzzz nothing");
-    expect(container.textContent).toContain("No conversation in Open matches.");
+    expect(container.textContent).toContain("No conversation in Open · All dates matches.");
     await click(buttonNamed(container, "Clear search and filters"));
     expect(listedIds().length).toBe(PAGE_SIZE);
   });
@@ -346,8 +367,9 @@ describe("search, two quick filters, Filters menu, sort — and what Previous / 
     await click(account?.querySelector("input") as HTMLInputElement);
     expect(text(buttonNamed(container, "Filters"))).toContain("1");
     expect([...q('[aria-label="Active filters"]').querySelectorAll("li")].map(text)).toEqual(["Platform:Facebook", "Label:Wholesale lead", "Account:Lumen Coffee"]);
-    expect(listedIds().sort()).toEqual(["cv-05", "cv-22", "cv-42"]);
-    await click(buttonNamed(menu, "Show 3 results"));
+    // cv-49: received in October and never answered — still Open work at the operational view's default, All dates.
+    expect(listedIds().sort()).toEqual(["cv-05", "cv-22", "cv-42", "cv-49"]);
+    await click(buttonNamed(menu, "Show 4 results"));
     expect(container.querySelector('[role="dialog"][aria-labelledby]')).toBeNull();
     expect(active()).toBe(buttonNamed(container, "Filters"));
     await click(q('[aria-label="Remove the filter Label: Wholesale lead"]'));
@@ -398,7 +420,7 @@ describe("comment actions: what the platform supports, confirmed when destructiv
     await click(buttonNamed(article("cv-07-m00"), "More"));
     const menu = q('[aria-label="More actions"]', article("cv-07-m00"));
     expect(menu.getAttribute("data-platform")).toBe("instagram");
-    expect(buttonsIn(menu).map(named)).toEqual(["Open on Instagram", "Copy link", "Delete comment…"]);
+    expect(buttonsIn(menu).map(named)).toEqual(["Open on Instagram", "Copy link", "Delete comment"]);
     expect(text(menu)).toContain("No platform link in this synthetic data.");
   });
 
@@ -407,20 +429,20 @@ describe("comment actions: what the platform supports, confirmed when destructiv
     await click(row("cv-39"));
     await click(buttonNamed(article("cv-39-m00"), "More"));
     const menu = q('[aria-label="More actions"]', article("cv-39-m00"));
-    expect(buttonsIn(menu).map(named)).toEqual(["Like", "Open on Facebook", "Copy link", "Delete comment…", "Block author…"]);
+    expect(buttonsIn(menu).map(named)).toEqual(["Like", "Open on Facebook", "Copy link", "Delete comment", "Block author"]);
   });
 
   it("Delete asks first; Cancel changes nothing; a failed delete is retried only through the confirmation again", async () => {
     await click(sideView("Open"));
     await click(row("cv-39"));
     await click(buttonNamed(article("cv-39-m00"), "More"));
-    await click(buttonNamed(article("cv-39-m00"), "Delete comment…"));
+    await click(buttonNamed(article("cv-39-m00"), "Delete comment"));
     expect(text(article("cv-39-m00"))).toContain("Delete Café Barato Oficial's comment from Facebook?");
     expect(active()).toBe(buttonNamed(article("cv-39-m00"), "Cancel"));
     await click(buttonNamed(article("cv-39-m00"), "Cancel"));
     expect(hasButton(article("cv-39-m00"), "Delete comment")).toBe(false);
     await click(buttonNamed(article("cv-39-m00"), "More"));
-    await click(buttonNamed(article("cv-39-m00"), "Delete comment…"));
+    await click(buttonNamed(article("cv-39-m00"), "Delete comment"));
     await click(answerButton(article("cv-39-m00"), "Delete comment"));
     await click(answerButton(article("cv-39-m00"), "Failed"));
     await click(buttonNamed(article("cv-39-m00"), "Try again…"));
@@ -491,7 +513,7 @@ describe("UX4 H-1: a stale panel never acts", () => {
     await click(sideView("Open"));
     await click(row("cv-39"));
     await click(buttonNamed(article("cv-39-m00"), "More"));
-    await click(buttonNamed(article("cv-39-m00"), "Delete comment…"));
+    await click(buttonNamed(article("cv-39-m00"), "Delete comment"));
     await choose("Workspace", "monitor");
     expect(text(article("cv-39-m00"))).toContain("No longer possible. This workspace is Monitor-only.");
     expect(buttonsIn(article("cv-39-m00")).some((button) => named(button) === "Delete comment")).toBe(false);
@@ -501,7 +523,7 @@ describe("UX4 H-1: a stale panel never acts", () => {
     await click(sideView("Open"));
     await click(row("cv-39"));
     await click(buttonNamed(article("cv-39-m00"), "More"));
-    await click(buttonNamed(article("cv-39-m00"), "Block author…"));
+    await click(buttonNamed(article("cv-39-m00"), "Block author"));
     await choose("Role", "agent");
     expect(text(article("cv-39-m00"))).toContain("No longer possible.");
     expect(buttonsIn(article("cv-39-m00")).some((button) => named(button) === "Block author")).toBe(false);
@@ -543,44 +565,78 @@ describe("UX4 H-1: a stale panel never acts", () => {
 /* ───────────── labels ───────────── */
 
 describe("labels: assigning an existing label ≠ creating a workspace label", () => {
-  it("+ Label opens the picker; a checkbox adds the label to this comment, the row and the sidebar count, and the activity", async () => {
+  it("UX-07B: the header's one Labels control adds a label to the conversation — its header, its row, the label's own list and the activity", async () => {
     await click(row("cv-07"));
-    const before = text(buttonNamed(q('nav[aria-label="Comments views"]'), "Praise"));
-    await click(buttonNamed(article("cv-07-m00"), "Label"));
-    const picker = q('[aria-label="Labels on nina.coffeelab\'s comment"]');
-    expect(text(picker)).toContain("Create workspace label…");
-    const praise = [...picker.querySelectorAll("label")].find((label) => label.textContent.includes("Praise"));
+    await click(labelsButton("cv-07"));
+    expect(labelsButton("cv-07").getAttribute("aria-expanded")).toBe("true");
+    expect(text(picker())).toContain("Create workspace label");
+    expect(text(picker())).toContain("This conversation only — not the 8 other conversations on the same post.");
+    const praise = [...picker().querySelectorAll("label")].find((label) => label.textContent.includes("Praise"));
     await click(praise?.querySelector("input") as HTMLInputElement);
-    expect(text(q('ul[aria-label="Labels"]', article("cv-07-m00")))).toContain("Praise");
+    expect(text(q('ul[aria-label="Labels"]', headerLabels("cv-07")))).toContain("Praise");
     expect(text(row("cv-07"))).toContain("Praise");
-    expect(text(buttonNamed(q('nav[aria-label="Comments views"]'), "Praise"))).not.toBe(before);
-    expect(announced()).toBe("Label Praise added to nina.coffeelab's comment");
+    expect(announced()).toBe("Label Praise added to this conversation");
+    // UX-08A: the sidebar carries no label counts; the label's own list (this month) now holds the conversation.
+    await click(buttonNamed(q('nav[aria-label="Comments views"]'), "Praise"));
+    expect(listedIds()).toContain("cv-07");
   });
 
-  it("Enter acts only on an exact name and never creates (M-3); Escape closes back on + Label", async () => {
+  it("UX-07B: no comment or reply carries a label control or its own labels", async () => {
+    await click(sideView("Open"));
+    await click(row("cv-19"));
+    const thread = q('ol[aria-label="Comments and replies"]', pane("cv-19"));
+    expect(thread.querySelectorAll("article").length).toBeGreaterThanOrEqual(14);
+    expect(thread.querySelectorAll('ul[aria-label="Labels"]')).toHaveLength(0);
+    expect(buttonsIn(thread).some((button) => /\blabel/i.test(named(button)))).toBe(false);
+    // The header carries all three of this conversation's labels; the row shows two and "+1".
+    expect([...q('ul[aria-label="Labels"]', headerLabels("cv-19")).querySelectorAll("li")].map(text)).toEqual(["Delivery", "Refund request", "Follow up Monday"]);
+    expect(text(row("cv-19"))).toMatch(/Delivery\s*Refund request\s*\+1/);
+  });
+
+  it("UX-07B: a label added to one conversation never reaches the other conversations on the same post", async () => {
+    await click(sideView("Open"));
+    const siblings = ["cv-14", "cv-30", "cv-34", "cv-43"].filter((id) => container.querySelector(`#row-${id}`) !== null);
+    expect(siblings.length).toBeGreaterThan(0);
+    // Compared by their labels (the rows' relative times move with the prototype's clock as activity is recorded).
+    const labelsOf = (id: string): string => text(row(id).querySelector("[class*=rowLabels]") ?? container.ownerDocument.createElement("span"));
+    const before = siblings.map(labelsOf);
+    await click(row("cv-19"));
+    await click(labelsButton("cv-19"));
+    const allergens = [...picker().querySelectorAll("label")].find((label) => label.textContent.includes("Allergens"));
+    await click(allergens?.querySelector("input") as HTMLInputElement);
+    expect(text(row("cv-19"))).toContain("+2");
+    expect(siblings.map(labelsOf)).toEqual(before);
+    expect(before.some((labels) => labels !== "")).toBe(true);
+    await click(row(siblings[0] ?? ""));
+    expect(text(pane(siblings[0] ?? ""))).not.toContain("Allergens");
+  });
+
+  it("Enter acts only on an exact name and never creates (M-3); Escape closes back on the Labels control", async () => {
     await click(row("cv-10"));
-    await click(buttonNamed(article("cv-10-m00"), "Label"));
-    const input = q("input", q('[aria-label^="Labels on Ramiro"]')) as HTMLInputElement;
+    await click(labelsButton("cv-10"));
+    const input = q("input", picker()) as HTMLInputElement;
     await type(input, "Refund");
     await key(input, "Enter");
-    expect(text(q('ul[aria-label="Labels"]', article("cv-10-m00")))).toContain("Refund request");
+    expect(text(q('ul[aria-label="Labels"]', headerLabels("cv-10")))).toContain("Refund request");
     await type(input, "Brand new name");
     await key(input, "Enter");
     expect(container.textContent).not.toContain("Brand new name created");
-    expect(text(q('[aria-label^="Labels on Ramiro"]'))).toContain("Create it as a workspace label below.");
+    expect(text(picker())).toContain("Create it as a workspace label below.");
     await type(input, "praise");
     await key(input, "Enter");
-    expect(text(q('ul[aria-label="Labels"]', article("cv-10-m00")))).toContain("Praise");
+    expect(text(q('ul[aria-label="Labels"]', headerLabels("cv-10")))).toContain("Praise");
     await key(input, "Escape");
-    expect(active()).toBe(buttonNamed(article("cv-10-m00"), "Label"));
+    expect(active()).toBe(labelsButton("cv-10"));
   });
 
   it("creating is its own step: workspace scope, gray by default (five approved colors), validation, optional add", async () => {
     await click(row("cv-07"));
-    await click(buttonNamed(article("cv-07-m00"), "Label"));
-    await click(buttonNamed(container, "Create workspace label…"));
-    const panel = q('[role="group"][aria-labelledby]', article("cv-07-m00"));
-    expect(text(panel)).toContain("Labels belong to the Lumen Coffee workspace: everyone here can use it on any comment.");
+    await click(labelsButton("cv-07"));
+    await click(buttonNamed(picker(), "Create workspace label"));
+    const panel = q('[role="group"][aria-label="New workspace label"]');
+    expect(active()).toBe(q("input:not([type])", panel));
+    expect(text(panel)).toContain("Labels belong to the Lumen Coffee workspace: everyone here can use it on any conversation.");
+    expect(text(panel)).toContain("Also add it to this conversation");
     const markers = [...panel.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
     expect(markers.map((input) => [input.value, input.checked, input.disabled])).toEqual([["gray", true, false], ["teal", false, false], ["plum", false, false], ["magenta", false, false], ["olive", false, false]]);
     await click(buttonNamed(panel, "Create label"));
@@ -590,25 +646,41 @@ describe("labels: assigning an existing label ≠ creating a workspace label", (
     expect(text(panel)).toContain("A label with this name already exists.");
     await type(q("input:not([type])", panel) as HTMLInputElement, "Supplier inquiry");
     await click(buttonNamed(panel, "Create label"));
-    expect(text(q('ul[aria-label="Labels"]', article("cv-07-m00")))).toContain("Supplier inquiry");
+    expect(text(q('ul[aria-label="Labels"]', headerLabels("cv-07")))).toContain("Supplier inquiry");
     expect(hasButton(q('nav[aria-label="Comments views"]'), "Supplier inquiry")).toBe(true);
+    // Back to the picker, with the arrow and its destination.
+    expect(hasButton(picker(), "Create workspace label")).toBe(true);
   });
 
   it("an Agent assigns existing labels but sees no create entry and no Manage", async () => {
     await choose("Role", "agent");
     await click(row("cv-07"));
-    await click(buttonNamed(article("cv-07-m00"), "Label"));
-    expect(hasButton(container, "Create workspace label…")).toBe(false);
+    await click(labelsButton("cv-07"));
+    expect(hasButton(container, "Create workspace label")).toBe(false);
     expect(container.textContent).toContain("Only owners, admins and managers create labels.");
     expect(hasButton(q('nav[aria-label="Comments views"]'), "Manage")).toBe(false);
   });
 
-  it("removing a chip moves focus to the next chip, then to + Label (M-2)", async () => {
+  it("an Analyst sees the conversation's labels but has no Labels control", async () => {
+    await choose("Role", "analyst");
     await click(row("cv-10"));
-    await click(q('[aria-label="Remove label Delivery from Ramiro Paz\'s comment"]'));
-    expect(active()?.getAttribute("aria-label")).toBe("Remove label Refund request from Ramiro Paz's comment");
-    await click(q('[aria-label="Remove label Refund request from Ramiro Paz\'s comment"]'));
-    expect(active()).toBe(buttonNamed(article("cv-10-m00"), "Label"));
+    expect(text(q('ul[aria-label="Labels"]', headerLabels("cv-10")))).toContain("Delivery");
+    expect(hasButton(headerLabels("cv-10"), "Labels")).toBe(false);
+  });
+
+  it("the header's chips are read-only: removing is unchecking in the same control (one way in); focus stays in the panel", async () => {
+    await click(row("cv-10"));
+    expect(buttonsIn(q('ul[aria-label="Labels"]', headerLabels("cv-10")))).toHaveLength(0);
+    await click(labelsButton("cv-10"));
+    const delivery = [...picker().querySelectorAll("label")].find((label) => label.textContent.includes("Delivery"))?.querySelector("input") as HTMLInputElement;
+    expect(delivery.checked).toBe(true);
+    await click(delivery);
+    expect(delivery.checked).toBe(false);
+    // Focus stays in the panel (a real click focuses the checkbox itself; the browser check covers it).
+    expect(picker().contains(active())).toBe(true);
+    expect(text(q('ul[aria-label="Labels"]', headerLabels("cv-10")))).toBe("Refund request");
+    expect(text(row("cv-10"))).not.toContain("Delivery");
+    expect(announced()).toBe("Label Delivery removed from this conversation");
   });
 
   it("Settings › Labels: rename (validated), delete behind a confirmation; comments stay, assignments go, activity records it", async () => {
@@ -623,13 +695,13 @@ describe("labels: assigning an existing label ≠ creating a workspace label", (
     expect(container.textContent).toContain("Follow up later");
     await click(buttonNamed(container, "Delete Refund request"));
     const dialog = q('[role="alertdialog"]');
-    expect(text(dialog)).toContain("It's removed from the 5 comments that use it. No comment is deleted.");
+    expect(text(dialog)).toContain("It's removed from the 5 conversations that use it. No conversation or comment is deleted.");
     expect(active()).toBe(buttonNamed(dialog, "Cancel"));
     await click(buttonNamed(dialog, "Delete label"));
-    expect(announced()).toBe("Label Refund request deleted. It was removed from 5 comments; no comment was deleted.");
+    expect(announced()).toBe("Label Refund request deleted. It was removed from 5 conversations; no conversation or comment was deleted.");
     await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Comments"));
     await click(row("cv-10"));
-    expect(text(q('ul[aria-label="Labels"]', article("cv-10-m00")))).toBe("Delivery");
+    expect(text(q('ul[aria-label="Labels"]', headerLabels("cv-10")))).toBe("Delivery");
     expect(text(article("cv-10-m00"))).toContain("El último pedido llegó con el paquete roto");
     await click(q("time", article("cv-10-m00")).closest("button") as HTMLButtonElement);
     expect(text(q('[role="dialog"]', pane("cv-10")))).toContain("Label Refund request deleted in Settings");
@@ -638,7 +710,7 @@ describe("labels: assigning an existing label ≠ creating a workspace label", (
   it("an Agent sees Settings › Labels read-only", async () => {
     await choose("Role", "agent");
     await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Settings"));
-    expect(container.textContent).toContain("Your role can use labels on comments but can't create, rename or delete them.");
+    expect(container.textContent).toContain("Your role can use labels on conversations but can't create, rename or delete them.");
     expect(hasButton(container, "New label")).toBe(false);
     expect(hasButton(container, "Edit")).toBe(false);
   });
@@ -790,6 +862,7 @@ describe("UX-05 M-1: Details takes focus and covers what is under it", () => {
 describe("UX-05 M-2: comments on ads", () => {
   it("public and private replies on an Instagram ad are unavailable with the reason; the post says it is an ad", async () => {
     await click(sideView("Open"));
+    await pick(toolbarSelect("Sort"), "newest");
     await click(row("cv-43"));
     expect(text(pane("cv-43"))).toContain("Ad · replies and moderation not validated yet");
     await click(buttonNamed(article("cv-43-m00"), "Reply privately"));
@@ -836,7 +909,10 @@ describe("UX-05 small fixes", () => {
 
   it("deleting the label the list is filtered by keeps the selected conversation in its true place", async () => {
     await click(sideView("Open"));
-    await click(buttonNamed(q('nav[aria-label="Comments views"]'), "Wholesale lead"));
+    // UX-08A: the toolbar's Label narrows the view (the sidebar's label opens that label's own list instead).
+    await pick(toolbarSelect("Label"), "lbl-wholesale");
+    // Newest first keeps cv-42 on the first page of Open (the older UX-08A conversations need attention and lead it).
+    await pick(toolbarSelect("Sort"), "newest");
     await click(row("cv-42"));
     const filteredAt = listedIds().indexOf("cv-42");
     await click(buttonNamed(q('nav[aria-label="Comments views"]'), "Manage"));
@@ -845,7 +921,7 @@ describe("UX-05 small fixes", () => {
     expect(announced()).toMatch(/^Label Wholesale lead deleted\. .* Open: \d+ conversations$/);
     await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Comments"));
     const pinned = listedIds();
-    await click(buttonNamed(pane("cv-42"), "Open")); // Back: the selection (and its pin) ends
+    await click(buttonNamed(pane("cv-42"), "Back to Open")); // Back: the selection (and its pin) ends
     expect(listedIds()).toEqual(pinned);
     expect(pinned.indexOf("cv-42")).not.toBe(filteredAt);
   });
@@ -854,7 +930,7 @@ describe("UX-05 small fixes", () => {
     const side = q('nav[aria-label="Comments views"]');
     expect(side.querySelectorAll("svg[data-marker]")).toHaveLength(SEED_LABELS.length);
     await click(row("cv-10"));
-    expect(article("cv-10-m00").querySelectorAll('ul[aria-label="Labels"] svg[data-marker]')).toHaveLength(2);
+    expect(headerLabels("cv-10").querySelectorAll('ul[aria-label="Labels"] svg[data-marker]')).toHaveLength(2);
     expect(container.querySelectorAll("span[data-marker]")).toHaveLength(0);
     await click(buttonNamed(management("cv-10"), "BD"));
     expect(hasButton(q('[aria-label="Assign this conversation"]'), "MFMaximiliana Fernández-Etcheverry")).toBe(true);
@@ -933,28 +1009,28 @@ describe("label colors: the approved palette, owned by the workspace label", () 
   const goComments = async (): Promise<void> => { await click(buttonNamed(q('nav[aria-label="Main navigation"]'), "Comments")); };
   const pickColor = async (scope: ParentNode, id: string): Promise<void> => { await click(q(`input[type="radio"][value="${id}"]`, scope)); };
 
-  it("seeded colors show the same marker in the sidebar, the row and the comment chip; gray stays the default", async () => {
+  it("seeded colors show the same marker in the sidebar, the row and the header chip; gray stays the default", async () => {
     expect(sidebarMarker("Refund request")).toBe("magenta");
     expect(sidebarMarker("Delivery")).toBe("gray");
     await click(row("cv-10"));
-    expect(markerIn(q('ul[aria-label="Labels"]', article("cv-10-m00")), "Refund request")).toBe("magenta");
-    expect(markerIn(q('ul[aria-label="Labels"]', article("cv-10-m00")), "Delivery")).toBe("gray");
+    expect(markerIn(q('ul[aria-label="Labels"]', headerLabels("cv-10")), "Refund request")).toBe("magenta");
+    expect(markerIn(q('ul[aria-label="Labels"]', headerLabels("cv-10")), "Delivery")).toBe("gray");
     expect(row("cv-10").querySelector('svg[data-marker="magenta"]')).not.toBeNull();
     // Only identifiers in the page: no color value anywhere, no brown.
     expect(container.querySelector('[data-marker="brown"]')).toBeNull();
     expect(container.querySelectorAll('[style*="#"], [style*="rgb"], [fill^="#"]')).toHaveLength(0);
   });
 
-  it("a label created from a comment with a color carries it everywhere at once", async () => {
+  it("a label created from a conversation with a color carries it everywhere at once", async () => {
     await click(row("cv-07"));
-    await click(buttonNamed(article("cv-07-m00"), "Label"));
-    await click(buttonNamed(container, "Create workspace label…"));
-    const panel = q('[role="group"][aria-labelledby]', article("cv-07-m00"));
+    await click(labelsButton("cv-07"));
+    await click(buttonNamed(picker(), "Create workspace label"));
+    const panel = q('[role="group"][aria-label="New workspace label"]');
     await type(q("input:not([type])", panel) as HTMLInputElement, "Supplier inquiry");
     await pickColor(panel, "plum");
     expect((q('input[value="plum"]', panel) as HTMLInputElement).checked).toBe(true);
     await click(buttonNamed(panel, "Create label"));
-    expect(markerIn(q('ul[aria-label="Labels"]', article("cv-07-m00")), "Supplier inquiry")).toBe("plum");
+    expect(markerIn(q('ul[aria-label="Labels"]', headerLabels("cv-07")), "Supplier inquiry")).toBe("plum");
     expect(sidebarMarker("Supplier inquiry")).toBe("plum");
     expect(announced()).toContain("Workspace label Supplier inquiry (Plum) created");
   });
@@ -989,16 +1065,29 @@ describe("label colors: the approved palette, owned by the workspace label", () 
     expect(sidebarMarker("Follow up Monday")).toBe("gray");
   });
 
-  it("the color picker is a labelled radio group: each option names its color; the choice is not told by color alone", async () => {
+  it("the color picker is a labelled radio group of compact swatches: each option is named (hidden text and tooltip); the choice is not told by color alone", async () => {
     await goSettings();
     await click(buttonNamed(container, "New label"));
     const group = q("fieldset", q('[role="group"][aria-labelledby]'));
     expect(text(q("legend", group))).toBe("Color");
     expect([...group.querySelectorAll("label")].map((item) => text(item))).toEqual(["Gray (default)", "Teal", "Plum", "Magenta", "Olive"]);
+    // PO polish (2026-11-19): compact round swatches. Each name stays the option's accessible name — hidden text, never
+    // written beside the swatch — and its tooltip; the swatch itself is decorative; only the chosen one is checked.
+    const options = [...group.querySelectorAll("label")];
+    expect(options.map((item) => item.getAttribute("title"))).toEqual(["Gray (default)", "Teal", "Plum", "Magenta", "Olive"]);
+    for (const option of options) {
+      expect(text(q(".wk-sr-only", option))).toBe(option.getAttribute("title"));
+      expect(option.querySelector("svg[data-marker]")?.closest('[aria-hidden="true"]')).not.toBeNull();
+      expect([...option.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== "")).toEqual([]);
+    }
+    const checked = (): (string | null | undefined)[] => [...group.querySelectorAll("[class*=swatchCheck]")].map((path) => path.closest("svg")?.getAttribute("data-marker"));
+    expect(checked()).toEqual(["gray"]);
     expect(group.getAttribute("aria-describedby")).not.toBeNull();
     expect(text(group)).toContain("It never means priority, urgency, sentiment or attention.");
     await type(q('input:not([type="radio"])', q('[role="group"][aria-labelledby]')) as HTMLInputElement, "VIP");
     await pickColor(group, "olive");
+    expect(checked()).toEqual(["olive"]);
+    expect((q('input[value="olive"]', group) as HTMLInputElement).checked).toBe(true);
     await click(buttonNamed(container, "Create label"));
     expect(announced()).toBe("Workspace label VIP (Olive) created");
     expect(text(q("[class*=settingsTable]"))).toMatch(/Olive\s*VIP/);
@@ -1015,9 +1104,9 @@ describe("label colors: the approved palette, owned by the workspace label", () 
     expect(q("[class*=settingsTable]").querySelector('svg[data-marker="plum"]')).not.toBeNull(); // Praise unchanged, still visible
     await goComments();
     await click(row("cv-07"));
-    await click(buttonNamed(article("cv-07-m00"), "Label"));
-    expect(hasButton(container, "Create workspace label…")).toBe(false);
-    expect(q('[aria-label^="Labels on"]').querySelectorAll("svg[data-marker]").length).toBeGreaterThanOrEqual(6);
+    await click(labelsButton("cv-07"));
+    expect(hasButton(container, "Create workspace label")).toBe(false);
+    expect(picker().querySelectorAll("svg[data-marker]").length).toBeGreaterThanOrEqual(6);
   });
 });
 

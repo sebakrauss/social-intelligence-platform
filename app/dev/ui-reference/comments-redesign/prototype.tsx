@@ -3,12 +3,58 @@
  * Comments experience redesign — DEVELOPMENT ONLY, synthetic data, local state only.
  *
  * Step UX-04: the integrated interactive workspace of UX-03.1 — two panels (list + active conversation), the views
- * Needs attention · Open · Assigned to me · Escalated · Done, search with two quick filters (Platform, Label) and a
+ * Open · Needs attention · Assigned to me · Escalated · Done, search with two quick filters (Platform, Label) and a
  * Filters menu, a three-zone conversation header (identity and context · management · navigation), conversation
- * management (assign, Urgent, escalate, notes, Done with a resolution, Reopen), manual labels assigned at a comment and
- * managed in Settings, the comment's platform actions (Reply · Reply privately · Hide/Unhide · More), deliberate
- * confirmations, and Details as an overlay drawer. Every action changes one shared state, so list membership, counts,
- * statuses, Previous / Next and the activity all follow.
+ * management (assign, Urgent, escalate, notes, Done with a resolution, Reopen), manual labels, the comment's platform
+ * actions (Reply · Reply privately · Hide/Unhide · More), deliberate confirmations, and Details as an overlay drawer.
+ * Every action changes one shared state, so list membership, counts, statuses, Previous / Next and the activity follow.
+ *
+ * UX-07B (PO-approved after the UX-07A comparison):
+ * - Scroll, ≥1024 px: refined model C. The page is the one scroller and carries the conversation; the list stays in view
+ *   beside it (sticky, its own scroll, never trapping: at its ends the page takes over) and keeps its place when another
+ *   conversation opens; the conversation header sticks while reading, and focused elements are kept clear of it.
+ *   Below 1024 px: one panel at a time, natural page scrolling, Back restores the list position and focus.
+ * - The open conversation is in the address (?conversation=…), so the browser's Back and Forward move between the list
+ *   and the conversations opened, as the product's own routes do.
+ * - Manual labels belong to the conversation: shown in its list row (two names, then +N) and its header (all), managed
+ *   from the header's one Labels control; no comment or reply carries a label control.
+ * - Icons: arrows move (← back to a named destination, ↑ ↓ previous / next), chevrons open (› turning ˅ in place,
+ *   ˅ trailing a control that opens choices), ··· is more actions, ⓘ opens Details and × closes it.
+ * - Menu wording without ellipses: Delete comment, Block author, Unblock author (their confirmations stay).
+ *
+ * UX-08A (date periods, a PO exploration):
+ * - One period per list, on one control beside the list's title (presets, or a custom range typed or picked on an
+ *   accessible calendar, applied with Apply, discarded with Cancel or Escape). The Filters menu has no date any more.
+ * - A period reads one named date: Received (the first comment) or Latest activity (what Wrenkind has read); Done also
+ *   Resolved. Days are the workspace's (a prototype assumption: a time zone control under Scenario).
+ * - Defaults: the operational views (Open, Needs attention, Assigned to me, Escalated) at All dates — older unresolved
+ *   work is never hidden; Done at This month by resolution date; All conversations and a label's own list at This month.
+ * - Sidebar: views, then labels. A label there opens that label's own list (every status); a label chosen in the
+ *   toolbar narrows the current view instead. Sidebar counts are the work at all dates; a list's count, under its
+ *   title, names the period it counts.
+ * - Search searches the list's period and offers all dates. A conversation that a new period, filter or search leaves
+ *   out is named in the reading panel with the reason and a way back — never a generic empty panel.
+ *
+ * UX-08B (consolidated refinements, no redesign):
+ * - Comments opens on the approved Phase 1 default: Open, newest activity first (Needs attention is a simulated queue).
+ * - Navigation rule: a view or label opened from the sidebar (or the view picker) opens as itself — its own period and
+ *   sort, no search and no filters from the list left behind (said aloud when something was cleared). Within one list,
+ *   whatever a person chose stays until they change it.
+ * - Lifecycle proposal, simulated: "Simulate a new comment" ingests a new root comment as one new Open, unassigned
+ *   conversation (identity = its root comment; never twice). A reply goes to its conversation. A Done conversation
+ *   that receives a reply still follows the H-1 hypothesis (auto-reopen) — an open governance decision, unchanged here.
+ * - The toolbar's selects trail the kit's chevron at the inset of the other dropdown controls; the conversation menu
+ *   drops its ellipses (Mark done, Escalate, Add note), as UX-07B did for the comment menu.
+ *
+ * COMMENTS-UX-09 (independent audit remediation):
+ * - The browser's Back returns to the opened row focused and in view (Chrome re-applies a kept scroll after the list is
+ *   drawn: the row is checked again on the next frame). The browser's scroll restoration setting is not touched.
+ * - Period and Filters: nonmodal popovers from 640 px (focus moving on to the page closes them; never trapped), sheets
+ *   over a hidden page on a phone (as Details); focus returns to their control once they are gone.
+ * - The phone's Period sheet is the whole window; period options, "Read through…" and "Why some actions…" are 44px
+ *   targets below 1024 px; the custom range's presets column fits its widest row.
+ * - An automatic reopen (still the unapproved H-1 hypothesis, simulated) ends the resolution date as a manual Reopen
+ *   does; the Done menu no longer states it as product behaviour.
  *
  * Every Facebook and Instagram action here is a SIMULATION in this component's React state: nothing reaches a server
  * action, a pipeline, a database, the network or a platform, and everything disappears on reload. A simulated
@@ -16,7 +62,8 @@
  * management, attention and labels are prototype HYPOTHESES (design/phase-7b/comments-redesign/UX04-DECISION-REGISTER.md),
  * not approved product rules. The rules are the pure functions in ./model.ts.
  */
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Logo } from "@/ui/brand/logo";
 import { Icon } from "@/ui/icons/icon";
 import { OriginMark, StatePill } from "@/ui/primitives";
@@ -24,6 +71,11 @@ import { LocalTime, LocalTimeStamp } from "@/ui/time/local-time";
 import { ACCOUNTS, ESCALATION_TARGETS, MEMBERS, POSTS, SEED_ASSIGNMENTS, SEED_LABELS, WORKSPACE, type Account, type Comment, type Conversation, type Label, type Marker, type SentReply } from "./fixtures";
 import {
   ATTENTION_REASONS,
+  DEFAULT_ZONE,
+  LANDING_VIEW,
+  PERIOD_PRESETS,
+  WEEKDAY_HEADS,
+  ZONES,
   CAPABILITIES,
   DEFAULT_MARKER,
   MARKERS,
@@ -58,9 +110,16 @@ import {
   conversationAuthor,
   conversationLabels,
   conversationsWithLabel,
+  addMonths,
+  basesFor,
+  calendarMove,
   countOf,
-  countText,
   createLabel,
+  dateLine,
+  dateNote,
+  dayOfMonth,
+  defaultPeriod,
+  defaultSort,
   deleteLabel,
   doneBlocker,
   escalateConversation,
@@ -68,12 +127,13 @@ import {
   flowFor,
   fullUtc,
   historyOf,
-  labelCounts,
+  isDefaultPeriod,
+  isOperational,
   labelUsage,
-  labelsOn,
   latestOf,
   leavingNote,
   listOf,
+  liveConversations,
   listedIn,
   logActivity,
   markDone,
@@ -83,6 +143,21 @@ import {
   memberOf,
   menuFilterCount,
   metaDocText,
+  newRootArrives,
+  missReason,
+  monthGrid,
+  monthKeyOf,
+  monthTitle,
+  longDay,
+  parseDay,
+  periodName,
+  periodPhrase,
+  pickDay,
+  rangeOf,
+  rangeProblem,
+  rangeText,
+  todayOf,
+  zoneName,
   normalizeName,
   nowOf,
   opActivityText,
@@ -105,6 +180,7 @@ import {
   resolutionChoices,
   resolutionName,
   retryable,
+  samePostCount,
   setAssigned,
   setUrgent,
   shortUtc,
@@ -130,7 +206,11 @@ import {
   type Filters,
   type Flow,
   type LabelState,
+  type MissReason,
   type Mode,
+  type Period,
+  type PeriodPreset,
+  type DateBasis,
   type OpAnswer,
   type OpKind,
   type Operation,
@@ -144,6 +224,7 @@ import {
   type ThemeChoice,
   type ThreadEntry,
   type View,
+  type When,
   type WorkContext,
   type Workflow,
   type WorkflowResult,
@@ -159,7 +240,7 @@ const s = (...names: readonly (string | false | undefined)[]): string =>
 const INITIAL_LABELS: LabelState = { labels: SEED_LABELS, assignments: SEED_ASSIGNMENTS, nextId: 1 };
 
 type ConfirmAction = "delete" | "block" | "unblock";
-type PanelKind = "labels" | "create" | "more" | "private" | "confirm" | "reason";
+type PanelKind = "more" | "private" | "confirm" | "reason";
 interface PanelState {
   readonly commentId: string;
   readonly kind: PanelKind;
@@ -167,8 +248,8 @@ interface PanelState {
   readonly reason?: string;
 }
 type Panel = PanelState | undefined;
-/** The conversation-level popovers of the header (management) — never mixed with a comment's menus. */
-type ConvPanel = "assign" | "escalate" | "done" | "more" | undefined;
+/** The conversation-level popovers of the header (management, labels) — never mixed with a comment's menus. */
+type ConvPanel = "assign" | "escalate" | "done" | "more" | "labels" | "createLabel" | undefined;
 type Surface = "comments" | "settings";
 type SettingsPage = "labels" | "intelligence";
 interface Toast {
@@ -204,8 +285,8 @@ interface Bench {
   readonly onReplyClose: () => void;
   readonly onDraft: (commentId: string, text: string) => void;
   readonly onPrivateDraft: (commentId: string, text: string) => void;
-  readonly onAssign: (conversation: Conversation, commentId: string, owner: string, labelId: string, assigned: boolean) => boolean;
-  readonly onCreate: (conversation: Conversation, name: string, commentId: string, owner: string, addHere: boolean, marker: Marker) => string | undefined;
+  readonly onAssign: (conversation: Conversation, labelId: string, assigned: boolean) => boolean;
+  readonly onCreate: (conversation: Conversation, name: string, addHere: boolean, marker: Marker) => string | undefined;
   /** Starts a simulated operation after revalidating it against the current state; false when it was refused. */
   readonly onStart: (conversation: Conversation, comment: Comment, kind: OpKind, text?: string) => boolean;
   readonly onAnswer: (opId: string, answer: OpAnswer) => void;
@@ -239,7 +320,7 @@ const Exact = ({ iso }: { readonly iso: string }) => (
  * Recognizable glyphs the kit does not have yet, drawn in the kit's 16px / 1.5 stroke so they sit with it.
  * Prototype-only: a kit addition would be a brand decision.
  */
-type GlyphName = "eye" | "eyeOff" | "trash" | "ban" | "thumb" | "envelope" | "tag" | "flag" | "check" | "chevronLeft" | "chevronRight" | "chevronDown" | "info";
+type GlyphName = "eye" | "eyeOff" | "trash" | "ban" | "thumb" | "envelope" | "tag" | "flag" | "check" | "arrowLeft" | "arrowRight" | "arrowUp" | "arrowDown" | "chevronRight" | "chevronDown" | "info";
 const GLYPH_PATHS: { readonly [G in GlyphName]: readonly string[] } = {
   eye: ["M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z", "M8 10a2 2 0 100-4 2 2 0 000 4z"],
   eyeOff: ["M2 2l12 12", "M6.6 3.7A6.8 6.8 0 018 3.5c4.1 0 6.5 4.5 6.5 4.5a11 11 0 01-1.9 2.4", "M4.2 4.9C2.4 6.1 1.5 8 1.5 8s2.4 4.5 6.5 4.5c1.1 0 2.1-.3 3-.8", "M6.6 6.6a2 2 0 002.8 2.8"],
@@ -250,7 +331,11 @@ const GLYPH_PATHS: { readonly [G in GlyphName]: readonly string[] } = {
   tag: ["M2 2.5h5.3l6.2 6.2-4.8 4.8-6.2-6.2V2.5z", "M5 5.3h.01"],
   flag: ["M3.5 14.5v-12", "M3.5 2.5h8l-1.6 3 1.6 3h-8"],
   check: ["M3 8.5l3 3 7-7"],
-  chevronLeft: ["M10 3.5L5.5 8l4.5 4.5"],
+  // UX-07B: arrows move (back to a named place, previous / next); chevrons open (in place, or a list of choices).
+  arrowLeft: ["M13 8H3", "M7 4L3 8l4 4"],
+  arrowRight: ["M3 8h10", "M9 4l4 4-4 4"],
+  arrowUp: ["M8 13V3", "M4 7l4-4 4 4"],
+  arrowDown: ["M8 3v10", "M4 9l4 4 4-4"],
   chevronRight: ["M6 3.5L10.5 8 6 12.5"],
   chevronDown: ["M4 6l4 4 4-4"],
   info: ["M8 14.5a6.5 6.5 0 100-13 6.5 6.5 0 000 13z", "M8 7.2v4", "M8 5h.01"],
@@ -267,6 +352,20 @@ function Glyph({ name }: { readonly name: GlyphName }) {
 }
 
 /** The one mark every simulated thing carries: dashed, never a product state of its own. */
+/**
+ * UX-08B: a native select in the toolbar (or the view picker) that trails the same chevron as the other controls that
+ * open choices (Assign, Mark done, Labels, the period), at the same inset — the browser's own arrow sat against the
+ * border. The select keeps its native behavior, keyboard and picker; the chevron is decoration and takes no clicks.
+ */
+function ChoiceSelect({ children }: { readonly children: ReactNode }) {
+  return (
+    <span className={s("choice")}>
+      {children}
+      <Glyph name="chevronDown" />
+    </span>
+  );
+}
+
 function SimBadge({ children = "Simulated" }: { readonly children?: string }) {
   return <span className={s("simBadge")}>{children}</span>;
 }
@@ -319,10 +418,18 @@ export function CommentsRedesign() {
   const [wf, setWf] = useState<Workflow>(SEED_WORKFLOW);
   const [surface, setSurface] = useState<Surface>("comments");
   const [settingsPage, setSettingsPage] = useState<SettingsPage>("labels");
-  const [view, setView] = useState<View>("attention");
+  // UX-08B: the approved Phase 1 landing — Open, newest activity first (Needs attention stays a simulated queue).
+  const [view, setView] = useState<View>(LANDING_VIEW);
+  /** UX-08A: a label's own list (opened from the sidebar): every conversation with the label, in any status. */
+  const [labelPage, setLabelPage] = useState<string | undefined>(undefined);
+  const [period, setPeriod] = useState<Period>(defaultPeriod(LANDING_VIEW, false));
+  /** The workspace time-zone assumption (a prototype control): which day, month and year a moment belongs to. */
+  const [zone, setZone] = useState(DEFAULT_ZONE);
+  /** The conversation a new period, filter or search left out: named in the reading panel, with the way back. */
+  const [missed, setMissed] = useState<{ readonly id: string; readonly reason: MissReason } | undefined>(undefined);
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<Sort>("attention");
+  const [sort, setSort] = useState<Sort>(defaultSort(LANDING_VIEW));
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   const [pin, setPin] = useState<Pin | undefined>(undefined);
   const [limit, setLimit] = useState(PAGE_SIZE);
@@ -336,30 +443,84 @@ export function CommentsRedesign() {
   const [toast, setToast] = useState<Toast | undefined>(undefined);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
-  /** Where focus goes after the selected conversation changed (Previous / Next keep it on the same control: M-1). */
-  const [focusTarget, setFocusTarget] = useState<{ readonly id: string; readonly nav?: "previous" | "next" } | undefined>(undefined);
+  /**
+   * Where focus goes after the selected conversation changed (Previous / Next keep it on the same control: M-1), or —
+   * `row` — back to a conversation's row when the list returns on one panel (UX-07B: its place in the list with it).
+   */
+  const [focusTarget, setFocusTarget] = useState<{ readonly id: string; readonly nav?: "previous" | "next"; readonly row?: true } | undefined>(undefined);
   const shellRef = useRef<HTMLDivElement>(null);
   const rows = useRef(new Map<string, HTMLButtonElement>());
+  const listRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const urlConversation = useSearchParams().get("conversation") ?? undefined;
+  /**
+   * UX-10: the address that matches what the page shows ("" is the list) — the last one it asked the router for, or the
+   * last one it followed. Never a queue: the App Router discards a pending navigation when a newer one (or Back/Forward)
+   * starts, so a request may never come back, and an older one never arrives after a newer one.
+   */
+  const shownAddress = useRef("");
   const titleRef = useRef<HTMLHeadingElement>(null);
   const abilities = abilitiesOf(role);
 
   const ctx: WorkContext = { labels, wf, sim, allHealthy, target };
   const counts = viewCounts(ctx);
-  const base = listOf(view, filters, query, sort, ctx);
+  const when: When = { period, zone };
+  const today = todayOf(wf, zone);
+  const pageLabel = labelPage === undefined ? undefined : labels.labels.find((label) => label.id === labelPage);
+  /** The list's own name: the view, or the label whose list this is. */
+  const listName = pageLabel?.name ?? viewName(view);
+  /** The filters as applied: a label's own list always carries its label (never shown as a removable filter). */
+  const pageFilters = (next: Filters, page: string | undefined = labelPage): Filters => (page === undefined ? next : withFilter(next, "label", page));
+  const base = listOf(view, pageFilters(filters), query, sort, ctx, when);
+  // UX-08A counters: the list's count names its period (before search and filters); an operational view narrowed to a
+  // period also says how many it holds at all dates (the sidebar's number).
+  const inPeriod = listOf(view, pageFilters(NO_FILTERS), "", sort, ctx, when).length;
+  const allDated = listOf(view, pageFilters(NO_FILTERS), "", sort, ctx).length;
+  const dated = rangeOf(period, today) !== undefined;
+  const elsewhere = query.trim() !== "" && dated ? listOf(view, pageFilters(filters), query, sort, ctx).length - base.length : 0;
   const shown = withPin(base, pin, wf);
   const selected = selectedId === undefined ? undefined : shown.find((conversation) => conversation.id === selectedId);
   const selectedIndex = selected === undefined ? -1 : shown.indexOf(selected);
   const visible = shown.slice(0, Math.max(limit, selectedIndex + 1));
-  const labelTally = labelCounts(labels);
   const chips = activeFilters(filters, labels);
   const narrowed = chips.length > 0 || query.trim() !== "";
 
-  useEffect(() => {
-    if (focusTarget === undefined) return;
+  // Before paint, so a change of conversation never shows a frame at the old scroll position.
+  useLayoutEffect(() => {
+    if (focusTarget === undefined) return undefined;
+    if (focusTarget.row === true) {
+      // Back to the list on one panel: the row comes back into view where it was (centred only if it is off screen).
+      const row = rows.current.get(focusTarget.id);
+      if (row === undefined) return undefined;
+      const inView = (): void => {
+        const box = row.getBoundingClientRect();
+        if (box.y < 0 || box.bottom > row.ownerDocument.documentElement.clientHeight) row.scrollIntoView({ block: "center" });
+      };
+      inView();
+      row.focus({ preventScroll: true });
+      // UX-09 (M-1): after the browser's Back, Chrome applies the scroll it kept for the list's address only once the
+      // page has drawn the list — and the position it kept is the conversation's, because the page changed a moment
+      // before the address did. So the row is checked again on the next frame (before it is painted): still focused and
+      // pushed out of view → brought back. Nothing moves when it is in view (in-app Back, other browsers' order).
+      const view = row.ownerDocument.defaultView;
+      const frame = view?.requestAnimationFrame(() => {
+        if (row.isConnected && row.ownerDocument.activeElement === row) inView();
+      });
+      return () => {
+        if (frame !== undefined) view?.cancelAnimationFrame(frame);
+      };
+    }
     const pane = shellRef.current?.querySelector<HTMLElement>(`#focus-${focusTarget.id}`);
+    // UX-07B: a conversation starts at its header. On one panel (the list is not drawn) the page always starts there.
+    // Beside the list, the page comes back only if it was scrolled past where the conversation begins (deep in a long
+    // thread); otherwise nothing moves. The list keeps its own place: only the page moves.
+    const single = (listRef.current?.getClientRects().length ?? 1) === 0;
+    if (pane !== null && pane !== undefined && (single || pane.getBoundingClientRect().y < 0)) pane.scrollIntoView({ block: "start" });
     const nav = focusTarget.nav === undefined ? null : (pane?.querySelector<HTMLButtonElement>(`[data-nav="${focusTarget.nav}"]:not(:disabled)`) ?? null);
     const heading = pane?.querySelector<HTMLElement>(`#pane-${focusTarget.id}`) ?? null;
     (nav ?? heading)?.focus({ preventScroll: true });
+    return undefined;
   }, [focusTarget]);
 
   // Theme: the product's override attribute on <html>, set only while Light or Dark is chosen here and put back when
@@ -385,23 +546,46 @@ export function CommentsRedesign() {
   };
 
   /**
+   * UX-07B: the open conversation is in the address (?conversation=…), as the product's routes have it, so the browser's
+   * Back and Forward move between the list and the conversations opened. A change made here is pushed (a new step) or,
+   * when the page clears a selection itself, replaced. UX-10: it is compared with what the page shows (its latest
+   * request), not with the address committed so far — so a Reset or another view while a conversation's address is still
+   * on its way asks for the list, and that request replaces the pending one.
+   */
+  const address = (id: string | undefined, how: "push" | "replace"): void => {
+    if (shownAddress.current === (id ?? "")) return;
+    shownAddress.current = id ?? "";
+    const href = id === undefined ? pathname : `${pathname}?conversation=${id}`;
+    if (how === "push") router.push(href, { scroll: false });
+    else router.replace(href, { scroll: false });
+  };
+
+  /** Back to the list on one panel (the Back control, or the browser's Back): the row takes focus where it was. */
+  const backToList = (id: string, options: { readonly fromAddress?: true } = {}): void => {
+    select(undefined, options);
+    setFocusTarget({ id, row: true });
+  };
+
+  /**
    * Select a conversation (or none). The one that was selected may have left the view through what someone did to it
    * (replied, marked done, removed a label): it stayed in place while it was selected and leaves now, with a short note
    * that says where it is and a way back.
    */
-  const select = (id: string | undefined, options: { readonly nav?: "previous" | "next"; readonly index?: number } = {}): void => {
+  const select = (id: string | undefined, options: { readonly nav?: "previous" | "next"; readonly index?: number; readonly fromAddress?: true } = {}): void => {
     closePanels();
+    if (options.fromAddress !== true) address(id, "push");
     const leaving = selectedId;
     if (leaving !== undefined && leaving !== id && !listedIn(base, leaving)) {
       const gone = shown.find((conversation) => conversation.id === leaving);
       if (gone !== undefined) {
         const flow = flowFor(wf, leaving);
-        const text = `${conversationAuthor(gone)} left ${narrowed ? "this filtered list" : viewName(view)}. ${flow.status === "done" ? `It's Done · ${resolutionName(flow.resolution)}.` : "It's still Open."}`;
+        const text = `${conversationAuthor(gone)} left ${narrowed ? "this filtered list" : listName}. ${flow.status === "done" ? `It's Done · ${resolutionName(flow.resolution)}.` : "It's still Open."}`;
         setToast({ id: leaving, index: shown.indexOf(gone), text });
         announce(text);
       }
     }
     setSelectedId(id);
+    if (id !== undefined) setMissed(undefined);
     if (id === undefined) {
       setPin(undefined);
       return;
@@ -411,33 +595,104 @@ export function CommentsRedesign() {
     setFocusTarget({ id, ...(options.nav === undefined ? {} : { nav: options.nav }) });
   };
 
+  // Back, Forward or a typed address: followed without writing the address again (this page's own writes are skipped).
+  const follow = useRef<(next: string | undefined) => void>(() => undefined);
+  useEffect(() => {
+    follow.current = (next) => {
+      if (next === selectedId) return;
+      if (next !== undefined) select(next, { fromAddress: true });
+      else if (selectedId !== undefined) backToList(selectedId, { fromAddress: true });
+    };
+  });
+  // UX-10: an address that differs from what the page shows is followed, whatever brought it (Back, Forward, a typed
+  // address, a Back that overtook a pending request) — so once navigation settles, the address, the open conversation
+  // and the selected row always agree. The page's own request coming back matches and changes nothing.
+  //
+  // R-5: Back or Forward can land on an entry with the same address as the one it left (a Reset or another view replaces
+  // a conversation's entry with the list's, so two list entries sit side by side) while a conversation's request is
+  // still pending — the router discards that request, the address stays the same and nothing above would run. Each
+  // traversal (the browser's popstate) is therefore counted too, and the comparison runs again. It is a plain update,
+  // never a transition: a transition would share the App Router's restore lane and change how the router commits the
+  // traversal (measured: a resolved request written after Back, a restored entry lost). This render can come before the
+  // router's restore; if it compares with the address being left, the restore that follows is compared in turn, so
+  // the settled state is the same.
+  const [traversals, setTraversals] = useState(0);
+  useEffect(() => {
+    const view = shellRef.current?.ownerDocument.defaultView;
+    if (view === null || view === undefined) return undefined;
+    const traversed = (): void => {
+      setTraversals((count) => count + 1);
+    };
+    view.addEventListener("popstate", traversed);
+    return () => {
+      view.removeEventListener("popstate", traversed);
+    };
+  }, []);
+  useEffect(() => {
+    const next = urlConversation ?? "";
+    if (next === shownAddress.current) return;
+    shownAddress.current = next;
+    follow.current(urlConversation);
+  }, [urlConversation, traversals]);
+
   /**
    * A new view, filter, search or sort: the list is recomputed; the selected conversation stays when it is still listed,
    * otherwise the selection clears and says why (never a stale conversation in a list that no longer holds it).
    */
-  const reframe = (next: { readonly view?: View; readonly filters?: Filters; readonly query?: string; readonly sort?: Sort }, options: { readonly ctx?: WorkContext; readonly lead?: string } = {}): void => {
+  const reframe = (
+    next: { readonly view?: View; readonly labelPage?: string | null; readonly period?: Period; readonly zone?: string; readonly filters?: Filters; readonly query?: string; readonly sort?: Sort },
+    options: { readonly ctx?: WorkContext; readonly lead?: string; readonly reselect?: string } = {},
+  ): void => {
     const nextView = next.view ?? view;
-    const nextFilters = next.filters ?? filters;
-    const nextQuery = next.query ?? query;
-    const nextSort = next.sort ?? sort;
-    const list = listOf(nextView, nextFilters, nextQuery, nextSort, options.ctx ?? ctx);
+    const nextPage = next.labelPage === null ? undefined : (next.labelPage ?? labelPage);
+    // A new list (another view or label) starts at its own period (UX-08A); the same list keeps the one chosen.
+    const moved = nextView !== view || nextPage !== labelPage;
+    const nextPeriod = next.period ?? (moved ? defaultPeriod(nextView, nextPage !== undefined) : period);
+    const nextZone = next.zone ?? zone;
+    // UX-08B navigation rule: another view or label opens as itself — its own period and sort, no search and no filters
+    // from the list left behind (said aloud when something was cleared). Within one list, everything chosen stays.
+    const nextFilters = next.filters ?? (moved ? NO_FILTERS : filters);
+    const nextQuery = next.query ?? (moved ? "" : query);
+    const nextSort = next.sort ?? (moved ? defaultSort(nextView) : sort);
+    const cleared = moved && next.filters === undefined && next.query === undefined && (activeFilters(filters, labels).length > 0 || query.trim() !== "");
+    const nextCtx = options.ctx ?? ctx;
+    const nextWhen: When = { period: nextPeriod, zone: nextZone };
+    const list = listOf(nextView, pageFilters(nextFilters, nextPage), nextQuery, nextSort, nextCtx, nextWhen);
     setView(nextView);
+    setLabelPage(nextPage);
+    setPeriod(nextPeriod);
+    setZone(nextZone);
     setFilters(nextFilters);
     setQuery(nextQuery);
     setSort(nextSort);
     setLimit(PAGE_SIZE);
     setToast(undefined);
-    if (selectedId !== undefined) {
-      const at = list.findIndex((conversation) => conversation.id === selectedId);
-      if (at >= 0) setPin({ id: selectedId, index: at });
-      else {
-        closePanels();
-        setSelectedId(undefined);
-        setPin(undefined);
+    if (moved) setMissed(undefined);
+    const keep = options.reselect ?? selectedId;
+    const at = keep === undefined ? -1 : list.findIndex((conversation) => conversation.id === keep);
+    if (keep !== undefined && at >= 0) {
+      setPin({ id: keep, index: at });
+      if (options.reselect !== undefined) {
+        setSelectedId(keep);
+        setMissed(undefined);
+        address(keep, "push");
+        setFocusTarget({ id: keep });
+      }
+    } else if (selectedId !== undefined) {
+      const gone = liveConversations(nextCtx.wf).find((conversation) => conversation.id === selectedId);
+      closePanels();
+      setSelectedId(undefined);
+      setPin(undefined);
+      address(undefined, "replace");
+      // The same list, narrowed differently (a period, a filter or a search): the reading panel says where it went.
+      if (!moved && gone !== undefined) {
+        const reason = missReason(gone, nextView, pageFilters(nextFilters, nextPage), nextQuery, nextCtx, nextWhen);
+        if (reason !== "view") setMissed({ id: selectedId, reason });
       }
     }
     const left = selectedId !== undefined && !listedIn(list, selectedId);
-    announce(`${options.lead === undefined ? "" : `${options.lead} `}${viewName(nextView)}: ${String(list.length)} ${list.length === 1 ? "conversation" : "conversations"}${left ? ". The conversation you had open isn't in this list, so nothing is selected." : ""}`);
+    const name = (nextPage === undefined ? undefined : nextCtx.labels.labels.find((label) => label.id === nextPage)?.name) ?? viewName(nextView);
+    announce(`${options.lead === undefined ? "" : `${options.lead} `}${name}: ${String(list.length)} ${list.length === 1 ? "conversation" : "conversations"}${rangeOf(nextPeriod, todayOf(nextCtx.wf, nextZone)) === undefined ? "" : `, ${periodPhrase(nextPeriod, todayOf(nextCtx.wf, nextZone))}`}${left ? ". The conversation you had open isn't in this list, so nothing is selected" : ""}${cleared ? ". Search and filters from the previous list were cleared" : ""}${left || cleared ? "." : ""}`);
   };
 
   const goSettings = (page: SettingsPage): void => {
@@ -463,26 +718,27 @@ export function CommentsRedesign() {
     return true;
   };
 
-  const assign = (conversation: Conversation, commentId: string, owner: string, labelId: string, on: boolean): boolean => {
+  /** UX-07B: a label is added to or removed from the conversation (one source of truth: row, header and filter follow). */
+  const assign = (conversation: Conversation, labelId: string, on: boolean): boolean => {
     const name = labels.labels.find((label) => label.id === labelId)?.name ?? "";
-    const next = setAssigned(labels, role, commentId, labelId, on);
+    const next = setAssigned(labels, role, conversation.id, labelId, on);
     if (next === labels) {
-      announce(abilitiesOf(role).assign ? `No change: ${owner} ${on ? "already has" : "doesn't have"} the label ${name}.` : "Not changed: your role can't change labels.");
+      announce(abilitiesOf(role).assign ? `No change: this conversation ${on ? "already has" : "doesn't have"} the label ${name}.` : "Not changed: your role can't change labels.");
       return false;
     }
     setLabels(next);
-    const text = on ? `Label ${name} added to ${owner}` : `Label ${name} removed from ${owner}`;
+    const text = on ? `Label ${name} added to this conversation` : `Label ${name} removed from this conversation`;
     setWf(logActivity(wf, conversation.id, text));
     announce(text);
     return true;
   };
 
-  const create = (conversation: Conversation, raw: string, commentId: string, owner: string, addHere: boolean, marker: Marker): string | undefined => {
-    const result = createLabel(labels, role, raw, addHere ? commentId : undefined, marker);
+  const create = (conversation: Conversation, raw: string, addHere: boolean, marker: Marker): string | undefined => {
+    const result = createLabel(labels, role, raw, addHere ? conversation.id : undefined, marker);
     if (!result.ok) return manageProblemText(result.problem);
     setLabels(result.state);
     const color = markerOf(result.label) === DEFAULT_MARKER ? "" : ` (${markerName(markerOf(result.label))})`;
-    const text = addHere ? `Workspace label ${result.label.name}${color} created and added to ${owner}` : `Workspace label ${result.label.name}${color} created`;
+    const text = addHere ? `Workspace label ${result.label.name}${color} created and added to this conversation` : `Workspace label ${result.label.name}${color} created`;
     setWf(logActivity(wf, conversation.id, text));
     announce(text);
     return undefined;
@@ -552,12 +808,16 @@ export function CommentsRedesign() {
     setLabels(INITIAL_LABELS);
     setSim(SEED_SIM);
     setWf(SEED_WORKFLOW);
-    setView("attention");
+    setView(LANDING_VIEW);
+    setLabelPage(undefined);
+    setPeriod(defaultPeriod(LANDING_VIEW, false));
+    setMissed(undefined);
     setFilters(NO_FILTERS);
     setQuery("");
-    setSort("attention");
+    setSort(defaultSort(LANDING_VIEW));
     setSelectedId(undefined);
     setPin(undefined);
+    address(undefined, "replace");
     setLimit(PAGE_SIZE);
     closePanels();
     setDrafts({});
@@ -566,7 +826,7 @@ export function CommentsRedesign() {
     setToast(undefined);
     setFiltersOpen(false);
     setSurface("comments");
-    announce("Prototype data reset: labels, workflow, simulated actions, drafts, view, filters and selection. Controls unchanged.");
+    announce("Prototype data reset: labels, workflow, simulated actions, drafts, view, period, filters and selection. Controls unchanged.");
   };
 
   const bench: Bench = {
@@ -596,9 +856,10 @@ export function CommentsRedesign() {
   };
 
   const position = selected === undefined ? undefined : positionOf(shown, selected.id);
+  const missedConversation = missed === undefined ? undefined : liveConversations(wf).find((conversation) => conversation.id === missed.id);
 
   return (
-    <div ref={shellRef} className={s("shell", details !== undefined && "drawerOpen")}>
+    <div ref={shellRef} className={s("shell", details !== undefined && "drawerOpen")} data-comments-shell="">
       <a href="#comments-main" className={s("skip")}>
         Skip to comments
       </a>
@@ -630,13 +891,12 @@ export function CommentsRedesign() {
       ) : (
         <Sidebar
           view={view}
+          labelPage={labelPage}
           counts={counts}
           labels={labels}
-          labelTally={labelTally}
-          activeLabel={filters.label}
           canManageLabels={abilities.create}
-          onView={(next) => { reframe({ view: next }); }}
-          onLabel={(labelId) => { reframe({ filters: withFilter(filters, "label", filters.label === labelId ? undefined : labelId) }); }}
+          onView={(next) => { reframe({ view: next, labelPage: null }); }}
+          onLabel={(labelId) => { reframe({ view: "all", labelPage: labelId }); }}
           onManage={() => { goSettings("labels"); }}
         />
       )}
@@ -650,6 +910,7 @@ export function CommentsRedesign() {
           readModel={readModel}
           allHealthy={allHealthy}
           target={target}
+          zone={zone}
           selected={selected === undefined ? undefined : conversationAuthor(selected)}
           onRole={(next) => {
             setRole(next);
@@ -661,6 +922,14 @@ export function CommentsRedesign() {
           onReadModel={setReadModel}
           onAllHealthy={setAllHealthy}
           onTarget={setTarget}
+          onZone={(next) => { reframe({ zone: next }); }}
+          onNewComment={() => {
+            const result = newRootArrives(wf);
+            if (result.id === undefined) return;
+            setWf(result.wf);
+            const started = result.wf.created.at(-1);
+            announce(`${started === undefined ? "A new comment" : `New comment from ${conversationAuthor(started)}`}: a new Open conversation, unassigned (simulated).`);
+          }}
           onArrive={() => {
             if (selected === undefined) return;
             setWf(audienceWritesAgain(wf, selected));
@@ -716,12 +985,14 @@ export function CommentsRedesign() {
                 }
                 setLabels(result.state);
                 let next = wf;
-                for (const id of conversationsWithLabel(labels, labelId)) next = logActivity(next, id, `Label ${name} deleted in Settings · removed from this conversation's comments`);
+                for (const id of conversationsWithLabel(labels, labelId)) next = logActivity(next, id, `Label ${name} deleted in Settings · removed from this conversation`);
                 setWf(next);
-                const said = `Label ${name} deleted. It was removed from ${String(result.removedFrom?.length ?? 0)} comments; no comment was deleted.`;
+                const removed = result.removedFrom?.length ?? 0;
+                const said = `Label ${name} deleted. It was removed from ${String(removed)} ${removed === 1 ? "conversation" : "conversations"}; no conversation or comment was deleted.`;
                 // A Label filter on it ends: the list is recomputed from the new labels, so the selected conversation
                 // keeps its true place (or is cleared and said), never the position it had in the filtered list (UX-05).
-                if (filters.label === labelId) reframe({ filters: withFilter(filters, "label", undefined) }, { ctx: { ...ctx, labels: result.state, wf: next }, lead: said });
+                if (labelPage === labelId) reframe({ view: "all", labelPage: null }, { ctx: { ...ctx, labels: result.state, wf: next }, lead: said });
+                else if (filters.label === labelId) reframe({ filters: withFilter(filters, "label", undefined) }, { ctx: { ...ctx, labels: result.state, wf: next }, lead: said });
                 else announce(said);
               }}
               onCreate={(raw, marker) => {
@@ -740,14 +1011,44 @@ export function CommentsRedesign() {
             <header className={s("listHeader")}>
               <div className={s("listTitleRow")}>
                 <h1 ref={titleRef} className={s("title")} tabIndex={-1}>
-                  {viewName(view)} <span className={s("titleCount")}>{countOf(counts, view)}</span>
+                  {pageLabel === undefined ? null : (
+                    <span className={s("titleMarker")}>
+                      <LabelMarker marker={markerOf(pageLabel)} />
+                      <span className="wk-sr-only">Label: </span>
+                    </span>
+                  )}
+                  {listName}
                 </h1>
                 <Coverage allHealthy={allHealthy} />
               </div>
-              <ViewPicker view={view} counts={counts} onView={(next) => { reframe({ view: next }); }} />
+              <div className={s("periodRow")}>
+                <ViewPicker
+                  view={view}
+                  labelPage={labelPage}
+                  labels={labels}
+                  counts={counts}
+                  onView={(next) => { reframe({ view: next, labelPage: null }); }}
+                  onLabel={(labelId) => { reframe({ view: "all", labelPage: labelId }); }}
+                />
+                <PeriodControl
+                  key={`${view}|${labelPage ?? ""}`}
+                  period={period}
+                  view={view}
+                  labelPage={labelPage !== undefined}
+                  today={today}
+                  zone={zone}
+                  preview={(next) => listOf(view, pageFilters(filters), query, sort, ctx, { period: next, zone }).length}
+                  announce={announce}
+                  onApply={(next) => { reframe({ period: next }); }}
+                />
+                <p className={s("periodSummary")} id="list-count">
+                  <span className={s("periodCount")}>{`${dated && isOperational(view) && labelPage === undefined ? `${String(inPeriod)} of ${String(allDated)}` : String(inPeriod)} ${(dated && isOperational(view) && labelPage === undefined ? allDated : inPeriod) === 1 ? "conversation" : "conversations"}`}</span>
+                  <span className={s("muted")}>{` · ${periodPhrase(period, today)}`}</span>
+                </p>
+              </div>
             </header>
 
-            <section className={s("sheet")} aria-label={`${viewName(view)} conversations`} data-menu-bound="">
+            <section className={s("sheet")} aria-label={`${listName} conversations`} data-menu-bound="">
               <Toolbar
                 query={query}
                 filters={filters}
@@ -760,12 +1061,13 @@ export function CommentsRedesign() {
                 onSort={(next) => { reframe({ sort: next }); }}
                 onFiltersOpen={setFiltersOpen}
                 results={base.length}
+                labelLocked={labelPage !== undefined}
               />
               {narrowed ? (
                 <div className={s("activeRow")}>
                   <p className={s("results")}>
                     <strong>{`${String(base.length)} ${base.length === 1 ? "result" : "results"}`}</strong>
-                    <span className={s("muted")}>{` in ${viewName(view)}`}</span>
+                    <span className={s("muted")}>{` in ${listName} · ${periodName(period)}`}</span>
                   </p>
                   <ul className={s("activeChips")} aria-label="Active filters">
                     {query.trim() === "" ? null : (
@@ -791,22 +1093,57 @@ export function CommentsRedesign() {
                   <button type="button" className={s("linkButton")} onClick={() => { reframe({ filters: NO_FILTERS, query: "" }); }}>
                     Clear all
                   </button>
+                  {query.trim() !== "" && dated ? (
+                    // UX-08A: a search looks in this list's period; the rest of the dates are one press away.
+                    <button type="button" className={s("btn", "btnSmall", "searchAll")} onClick={() => { reframe({ period: { ...period, preset: "all" } }); }}>
+                      {elsewhere > 0 ? `Search all dates · ${String(elsewhere)} more` : "Search all dates"}
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
 
               <div className={s("split", selected !== undefined && "splitActive")}>
-                <div className={s("listColumn")}>
+                {selected !== undefined || missedConversation === undefined || missed === undefined ? null : (
+                  <MissedPanel
+                    conversation={missedConversation}
+                    reason={missed.reason}
+                    listName={listName}
+                    period={period}
+                    today={today}
+                    zone={zone}
+                    wf={wf}
+                    onAllDates={() => { reframe({ period: { ...period, preset: "all" } }, { reselect: missed.id }); }}
+                    onClear={() => { reframe({ filters: NO_FILTERS, query: "" }, { reselect: missed.id }); }}
+                  />
+                )}
+                <div ref={listRef} className={s("listColumn")}>
                   {shown.length === 0 ? (
                     <div className={s("empty")}>
-                      <p>{narrowed ? `No conversation in ${viewName(view)} matches.` : view === "attention" ? "Nothing needs attention right now." : `No conversations in ${viewName(view)}.`}</p>
-                      {narrowed ? (
-                        <button type="button" className={s("btn", "btnSmall")} onClick={() => { reframe({ filters: NO_FILTERS, query: "" }); }}>
-                          Clear search and filters
-                        </button>
-                      ) : null}
+                      <p>
+                        {narrowed
+                          ? `No conversation in ${listName} · ${periodName(period)} matches.`
+                          : dated
+                            ? `No conversations in ${listName} ${periodPhrase(period, today)}.`
+                            : view === "attention" && labelPage === undefined
+                              ? "Nothing needs attention right now."
+                              : `No conversations in ${listName}.`}
+                      </p>
+                      <span className={s("inlineActions")}>
+                        {narrowed ? (
+                          <button type="button" className={s("btn", "btnSmall")} onClick={() => { reframe({ filters: NO_FILTERS, query: "" }); }}>
+                            Clear search and filters
+                          </button>
+                        ) : null}
+                        {/* With a search, "Search all dates" is already in the row above; without one, the period is the cause. */}
+                        {dated && query.trim() === "" ? (
+                          <button type="button" className={s("btn", "btnSmall")} onClick={() => { reframe({ period: { ...period, preset: "all" } }); }}>
+                            Show all dates
+                          </button>
+                        ) : null}
+                      </span>
                     </div>
                   ) : (
-                    <ul className={s("list")} aria-label={viewName(view)}>
+                    <ul className={s("list")} aria-label={listName}>
                       {visible.map((conversation, index) => (
                         <Row
                           key={conversation.id}
@@ -814,6 +1151,7 @@ export function CommentsRedesign() {
                           previousLatest={index === 0 ? undefined : latestOf(visible.at(index - 1) as Conversation)}
                           selected={conversation.id === selectedId}
                           leaving={conversation.id === selectedId && !listedIn(base, conversation.id) ? leavingNote(conversation, view, ctx) : undefined}
+                          dateNote={dateNote(conversation, period, wf, zone)}
                           ctx={ctx}
                           readModel={readModel}
                           register={(element) => {
@@ -853,17 +1191,19 @@ export function CommentsRedesign() {
                   )}
                 </div>
                 {selected === undefined ? (
-                  <section className={s("pane", "paneEmpty")} aria-label="Conversation">
-                    <p className={s("muted")}>Select a conversation to read it here.</p>
-                  </section>
+                  missed !== undefined && missedConversation !== undefined ? null : (
+                    <section className={s("pane", "paneEmpty")} aria-label="Conversation">
+                      <p className={s("muted")}>Select a conversation to read it here.</p>
+                    </section>
+                  )
                 ) : (
                   // Keyed by conversation (UX4 H-2): a new conversation mounts a fresh panel (post details closed, scroll at
                   // the top, no drawer) while the prototype's state stays where it lives.
                   <ConversationPane
                     key={selected.id}
                     conversation={selected}
-                    view={view}
-                    listName={narrowed ? "this filtered list" : viewName(view)}
+                    pageName={listName}
+                    listName={narrowed ? "this filtered list" : listName}
                     position={position}
                     bench={bench}
                     ctx={ctx}
@@ -877,11 +1217,7 @@ export function CommentsRedesign() {
                       announce("Kept open.");
                     }}
                     onMove={(id, nav) => { select(id, { nav }); }}
-                    onBack={() => {
-                      const id = selected.id;
-                      select(undefined);
-                      rows.current.get(id)?.focus();
-                    }}
+                    onBack={() => { backToList(selected.id); }}
                     onEscape={() => { leavePane(selected.id); }}
                   />
                 )}
@@ -912,15 +1248,16 @@ function WorkspaceBlock() {
 }
 
 /**
- * Views (workflow) and labels (a shortcut to the Label filter). Intelligence has no place here while it is not active
- * (UX-03.1): its discovery is Settings › Intelligence.
+ * Views, then labels (UX-08A hierarchy). A view is a list of work; a label here opens that label's own list (every
+ * conversation that carries it, Open and Done) — the Label filter in the toolbar is what narrows a view instead. Only
+ * the operational views carry a count: the work they hold at all dates, whatever period a list shows. Intelligence has
+ * no place here while it is not active (UX-03.1): its discovery is Settings › Intelligence.
  */
-function Sidebar({ view, counts, labels, labelTally, activeLabel, canManageLabels, onView, onLabel, onManage }: {
+function Sidebar({ view, labelPage, counts, labels, canManageLabels, onView, onLabel, onManage }: {
   readonly view: View;
+  readonly labelPage: string | undefined;
   readonly counts: Readonly<Record<View, number>>;
   readonly labels: LabelState;
-  readonly labelTally: Readonly<Record<string, number>>;
-  readonly activeLabel: string | undefined;
   readonly canManageLabels: boolean;
   readonly onView: (view: View) => void;
   readonly onLabel: (labelId: string) => void;
@@ -931,14 +1268,22 @@ function Sidebar({ view, counts, labels, labelTally, activeLabel, canManageLabel
       <WorkspaceBlock />
       <nav className={s("sideNav")} aria-label="Comments views">
         <ul className={s("sideList")}>
-          {VIEWS.map((item) => (
+          {VIEWS.filter((item) => item.id !== "all").map((item) => (
             <li key={item.id}>
-              <button type="button" className={s("sideItem")} aria-current={view === item.id ? "page" : undefined} onClick={() => { onView(item.id); }}>
+              <button type="button" className={s("sideItem")} aria-current={labelPage === undefined && view === item.id ? "page" : undefined} onClick={() => { onView(item.id); }}>
                 <span className={s("sideItemName")}>{item.name}</span>
-                {item.id === "done" ? null : <span className={s("count", item.id === "attention" && "countStrong")}>{countOf(counts, item.id)}</span>}
+                {isOperational(item.id) ? <span className={s("count", item.id === "attention" && "countStrong")}>{countOf(counts, item.id)}</span> : null}
               </button>
             </li>
           ))}
+        </ul>
+        <p className={s("sideNote")}>Counts include all dates</p>
+        <ul className={s("sideList", "sideAll")}>
+          <li>
+            <button type="button" className={s("sideItem")} aria-current={labelPage === undefined && view === "all" ? "page" : undefined} onClick={() => { onView("all"); }}>
+              <span className={s("sideItemName")}>{viewName("all")}</span>
+            </button>
+          </li>
         </ul>
         <div className={s("sideGroup")}>
           <div className={s("sideHead")}>
@@ -955,10 +1300,9 @@ function Sidebar({ view, counts, labels, labelTally, activeLabel, canManageLabel
           <ul className={s("sideList")} aria-labelledby="side-labels">
             {sortedLabels(labels.labels).map((label) => (
               <li key={label.id}>
-                <button type="button" className={s("sideItem")} aria-pressed={activeLabel === label.id} onClick={() => { onLabel(label.id); }}>
+                <button type="button" className={s("sideItem")} aria-current={labelPage === label.id ? "page" : undefined} onClick={() => { onLabel(label.id); }}>
                   <LabelMarker marker={markerOf(label)} />
                   <span className={s("sideItemName")}>{label.name}</span>
-                  <span className={s("count")}>{countText(labelTally, label.id)}</span>
                 </button>
               </li>
             ))}
@@ -993,19 +1337,46 @@ function SettingsSidebar({ page, onPage }: { readonly page: SettingsPage; readon
   );
 }
 
-/** Below 1024 px the sidebar is gone: the same views in one native select above the list. */
-function ViewPicker({ view, counts, onView }: { readonly view: View; readonly counts: Readonly<Record<View, number>>; readonly onView: (view: View) => void }) {
+/** Below 1024 px the sidebar is gone: the same views and labels in one native select, beside the period. */
+function ViewPicker({ view, labelPage, labels, counts, onView, onLabel }: {
+  readonly view: View;
+  readonly labelPage: string | undefined;
+  readonly labels: LabelState;
+  readonly counts: Readonly<Record<View, number>>;
+  readonly onView: (view: View) => void;
+  readonly onLabel: (labelId: string) => void;
+}) {
   const id = useId();
   return (
     <div className={s("viewPicker")}>
       <label htmlFor={id} className="wk-sr-only">
         View
       </label>
-      <select id={id} className={s("select", "viewSelect")} value={view} onChange={(event) => { onView(VIEWS.find((item) => item.id === event.target.value)?.id ?? "attention"); }}>
-        {VIEWS.map((item) => (
-          <option key={item.id} value={item.id}>{item.id === "done" ? item.name : `${item.name} (${String(countOf(counts, item.id))})`}</option>
-        ))}
+      <ChoiceSelect>
+        <select
+        id={id}
+        className={s("select", "viewSelect")}
+        value={labelPage === undefined ? view : `label:${labelPage}`}
+        onChange={(event) => {
+          const value = event.target.value;
+          if (value.startsWith("label:")) onLabel(value.slice(6));
+          else onView(VIEWS.find((item) => item.id === value)?.id ?? "attention");
+        }}
+      >
+        <optgroup label="Views">
+          {VIEWS.map((item) => (
+            <option key={item.id} value={item.id}>{isOperational(item.id) ? `${item.name} (${String(countOf(counts, item.id))})` : item.name}</option>
+          ))}
+        </optgroup>
+        {labels.labels.length === 0 ? null : (
+          <optgroup label="Labels">
+            {sortedLabels(labels.labels).map((label) => (
+              <option key={label.id} value={`label:${label.id}`}>{label.name}</option>
+            ))}
+          </optgroup>
+        )}
       </select>
+      </ChoiceSelect>
     </div>
   );
 }
@@ -1041,9 +1412,423 @@ function Coverage({ allHealthy }: { readonly allHealthy: boolean }) {
   );
 }
 
+/* ───────────── UX-08A: the period (one control beside the list's title) ───────────── */
+
+/**
+ * The list's period: a preset, or a custom range typed or picked on the calendar, read by one named date. Nothing
+ * changes until Apply; Cancel, Escape or a press outside discards the choice and returns focus to the control.
+ */
+function PeriodControl({ period, view, labelPage, today, zone, preview, announce, onApply }: {
+  readonly period: Period;
+  readonly view: View;
+  readonly labelPage: boolean;
+  readonly today: string;
+  readonly zone: string;
+  /** How many conversations a period would list (search and filters included). */
+  readonly preview: (period: Period) => number;
+  readonly announce: (message: string) => void;
+  readonly onApply: (period: Period) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  /** Set by Apply, Cancel, × or Escape: focus returns to the control once the panel is gone (UX-09 L-2). */
+  const restore = useRef(false);
+  const id = useId();
+  const changed = !isDefaultPeriod(period, view, labelPage);
+  // On a phone the panel is a sheet and the page under it is hidden until it closes, so the control can only take focus
+  // after the panel is gone — not in the same moment it is asked to close.
+  useEffect(() => {
+    if (open || !restore.current) return;
+    restore.current = false;
+    trigger.current?.focus();
+  }, [open]);
+  const close = (): void => {
+    restore.current = true;
+    setOpen(false);
+  };
+  return (
+    // UX-10 (B): the control and its panel are one group. Focus moving on from the group (Tab, Shift+Tab — from the
+    // panel or from the control) closes the panel and keeps the period; Escape anywhere in the group closes it and
+    // returns focus to the control.
+    <div
+      className={s("periodControl")}
+      onBlur={(event) => { if (open && leftFor(event, event.currentTarget)) setOpen(false); }}
+      onKeyDown={(event) => {
+        if (!open || event.key !== "Escape") return;
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      }}
+    >
+      <button
+        ref={trigger}
+        type="button"
+        className={s("btn", "periodButton", changed && "periodButtonSet")}
+        aria-expanded={open}
+        aria-controls={open ? `${id}-dialog` : undefined}
+        aria-haspopup="dialog"
+        aria-describedby="list-count"
+        onClick={() => { if (open) close(); else setOpen(true); }}
+      >
+        <Icon name="util-calendar" size={16} />
+        <span className="wk-sr-only">Period: </span>
+        <span>{periodName(period)}</span>
+        <Glyph name="chevronDown" />
+      </button>
+      {open ? (
+        <PeriodDialog
+          id={`${id}-dialog`}
+          period={period}
+          view={view}
+          labelPage={labelPage}
+          today={today}
+          zone={zone}
+          preview={preview}
+          announce={announce}
+          onApply={(next) => {
+            onApply(next);
+            close();
+          }}
+          onCancel={close}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function PeriodDialog({ id, period, view, labelPage, today, zone, preview, announce, onApply, onCancel }: {
+  readonly id: string;
+  readonly period: Period;
+  readonly view: View;
+  readonly labelPage: boolean;
+  readonly today: string;
+  readonly zone: string;
+  readonly preview: (period: Period) => number;
+  readonly announce: (message: string) => void;
+  readonly onApply: (period: Period) => void;
+  readonly onCancel: () => void;
+}) {
+  const bases = basesFor(view, labelPage);
+  const [basis, setBasis] = useState<DateBasis>(bases.some((item) => item.id === period.basis) ? period.basis : "received");
+  const [preset, setPreset] = useState<PeriodPreset>(period.preset);
+  const [fromText, setFromText] = useState(period.from ?? "");
+  const [toText, setToText] = useState(period.to ?? "");
+  const [problem, setProblem] = useState<{ readonly field: "from" | "to"; readonly text: string } | undefined>(undefined);
+  const [focusDay, setFocusDay] = useState(period.from ?? today);
+  /** Set by the calendar's keyboard: focus follows to the day it moved to, once that day is drawn. */
+  const moveFocus = useRef(false);
+  const panel = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const fromField = useRef<HTMLInputElement>(null);
+  const toField = useRef<HTMLInputElement>(null);
+  const cells = useRef(new Map<string, HTMLTableCellElement>());
+  useEffect(() => heading.current?.focus(), []);
+  useKeptInside(panel);
+  // Focus follows the calendar's keyboard to the day it moved to (after the month it lands in is drawn).
+  useEffect(() => {
+    if (!moveFocus.current) return;
+    moveFocus.current = false;
+    cells.current.get(focusDay)?.focus();
+  }, [focusDay]);
+  const cancelRef = useRef(onCancel);
+  useEffect(() => {
+    cancelRef.current = onCancel;
+  });
+  useEffect(() => {
+    const element = panel.current;
+    if (element === null) return;
+    const owner = element.ownerDocument;
+    const onPress = (event: PointerEvent): void => {
+      if ((element.parentElement ?? element).contains(event.target as Node | null)) return;
+      cancelRef.current();
+    };
+    // UX-10 (B): focus can fall outside Comments (the page itself — a phone sheet's last stop before the browser): Escape
+    // still closes.
+    const onKey = (event: { readonly key: string; readonly target: EventTarget | null }): void => {
+      if (event.key === "Escape" && outsideComments(element, event.target)) cancelRef.current();
+    };
+    owner.addEventListener("pointerdown", onPress);
+    owner.addEventListener("keydown", onKey);
+    return () => {
+      owner.removeEventListener("pointerdown", onPress);
+      owner.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  const from = parseDay(fromText);
+  const to = parseDay(toText);
+  const staged: Period = preset === "custom" ? { preset, basis, ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) } : { preset, basis };
+  const ready = preset !== "custom" || rangeProblem(fromText, toText) === undefined;
+  const count = ready ? preview(staged) : undefined;
+  const month = monthKeyOf(focusDay);
+
+  const choosePreset = (next: PeriodPreset): void => {
+    setPreset(next);
+    setProblem(undefined);
+    if (next === "custom" && fromText === "" && toText === "") {
+      // A custom range starts from what was chosen before (or this month), ready to adjust.
+      const start = rangeOf(preset === "custom" || preset === "all" ? { preset: "this_month", basis } : { preset, basis }, today);
+      if (start !== undefined) {
+        setFromText(start.from);
+        setToText(start.to);
+        setFocusDay(start.from);
+      }
+    }
+  };
+  const pick = (key: string): void => {
+    const next = pickDay({ from, to }, key);
+    setFromText(next.from);
+    setToText(next.to ?? "");
+    setProblem(undefined);
+    setFocusDay(key);
+    announce(next.to === undefined ? `Start date ${longDay(next.from)}. Now choose the end date.` : `Range ${rangeText({ from: next.from, to: next.to })}.`);
+  };
+  const showMonth = (delta: number): void => {
+    const next = addMonths(focusDay, delta);
+    setFocusDay(next);
+    announce(monthTitle(next));
+  };
+  const apply = (): void => {
+    if (preset === "custom") {
+      const found = rangeProblem(fromText, toText);
+      if (found !== undefined) {
+        setProblem(found);
+        (found.field === "from" ? fromField : toField).current?.focus();
+        return;
+      }
+    }
+    onApply(staged);
+  };
+  const typed = (field: "from" | "to", value: string): void => {
+    if (field === "from") setFromText(value);
+    else setToText(value);
+    if (problem?.field === field) setProblem(undefined);
+    const key = parseDay(value);
+    if (key !== undefined) setFocusDay(key);
+  };
+  const inRangeDay = (key: string): boolean => from !== undefined && to !== undefined && key >= from && key <= to;
+
+  return (
+    <div
+      ref={panel}
+      id={id}
+      className={s("popover", "periodMenu", preset === "custom" && "periodCustom")}
+      role="dialog"
+      aria-labelledby={`${id}-title`}
+    >
+      <div className={s("menuHead")}>
+        <h2 id={`${id}-title`} ref={heading} className={s("menuTitle")} tabIndex={-1}>
+          Period
+        </h2>
+        <button type="button" className={s("iconButton")} aria-label="Cancel and close" onClick={onCancel}>
+          <Icon name="util-close" size={16} />
+        </button>
+      </div>
+      <div className={s("periodBody")}>
+        <fieldset className={s("filterSet")}>
+          <legend>Date</legend>
+          <div className={s("segmented")}>
+            {bases.map((item) => (
+              <label key={item.id} className={s("segment")}>
+                <input type="radio" name={`${id}-basis`} checked={basis === item.id} onChange={() => { setBasis(item.id); }} aria-describedby={`${id}-basis-hint`} />
+                <span>{item.name}</span>
+              </label>
+            ))}
+          </div>
+          <p id={`${id}-basis-hint`} className={s("muted", "small")}>
+            {bases.find((item) => item.id === basis)?.hint}
+          </p>
+        </fieldset>
+        <fieldset className={s("filterSet")}>
+          <legend>Period</legend>
+          <ul className={s("presetList")}>
+            {PERIOD_PRESETS.map((item) => {
+              const range = item.id === "custom" ? undefined : rangeOf({ preset: item.id, basis }, today);
+              return (
+                <li key={item.id}>
+                  <label className={s("presetOption")}>
+                    <input type="radio" name={`${id}-preset`} checked={preset === item.id} onChange={() => { choosePreset(item.id); }} />
+                    <span className={s("presetName")}>{item.name}</span>
+                    {range === undefined ? null : <span className={s("presetRange")}>{rangeText(range)}</span>}
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </fieldset>
+        {preset === "custom" ? (
+          <fieldset className={s("filterSet", "customRange")}>
+            <legend>Custom range</legend>
+            <div className={s("dateFields")}>
+              <span className={s("dateField")}>
+                <label htmlFor={`${id}-from`}>Start date</label>
+                <input
+                  ref={fromField}
+                  id={`${id}-from`}
+                  className={s("input", "mono")}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="YYYY-MM-DD"
+                  value={fromText}
+                  aria-invalid={problem?.field === "from" ? true : undefined}
+                  aria-describedby={`${id}-format${problem?.field === "from" ? ` ${id}-problem` : ""}`}
+                  onChange={(event) => { typed("from", event.target.value); }}
+                />
+              </span>
+              <span className={s("dateField")}>
+                <label htmlFor={`${id}-to`}>End date</label>
+                <input
+                  ref={toField}
+                  id={`${id}-to`}
+                  className={s("input", "mono")}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="YYYY-MM-DD"
+                  value={toText}
+                  aria-invalid={problem?.field === "to" ? true : undefined}
+                  aria-describedby={`${id}-format${problem?.field === "to" ? ` ${id}-problem` : ""}`}
+                  onChange={(event) => { typed("to", event.target.value); }}
+                />
+              </span>
+            </div>
+            <p id={`${id}-format`} className={s("muted", "small")}>
+              Type YYYY-MM-DD or pick on the calendar: first the start, then the end. Both days are included.
+            </p>
+            {problem === undefined ? null : (
+              <p id={`${id}-problem`} className={s("fieldProblem")}>
+                <Icon name="estado-alert" size={16} />
+                {problem.text}
+              </p>
+            )}
+            <div className={s("calendar")}>
+              <div className={s("calendarHead")}>
+                <button type="button" className={s("iconButton")} aria-label="Previous month" title="Previous month" onClick={() => { showMonth(-1); }}>
+                  <Glyph name="arrowLeft" />
+                </button>
+                <h3 id={`${id}-month`} className={s("calendarTitle")}>
+                  {monthTitle(month)}
+                </h3>
+                <button type="button" className={s("iconButton")} aria-label="Next month" title="Next month" onClick={() => { showMonth(1); }}>
+                  <Glyph name="arrowRight" />
+                </button>
+              </div>
+              <table className={s("calendarGrid")} role="grid" aria-labelledby={`${id}-month`}>
+                <thead>
+                  <tr>
+                    {WEEKDAY_HEADS.map((day) => (
+                      <th key={day.long} scope="col" abbr={day.long}>
+                        {day.short}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthGrid(month).map((week) => (
+                    <tr key={week.find((day) => day !== undefined) ?? "week"}>
+                      {week.map((day, index) =>
+                        day === undefined ? (
+                          <td key={`empty-${String(index)}`} />
+                        ) : (
+                          <td
+                            key={day}
+                            ref={(element) => {
+                              if (element === null) cells.current.delete(day);
+                              else cells.current.set(day, element);
+                            }}
+                            role="gridcell"
+                            tabIndex={day === focusDay ? 0 : -1}
+                            aria-selected={inRangeDay(day) || day === from}
+                            aria-current={day === today ? "date" : undefined}
+                            aria-label={`${longDay(day)}${day === from ? ", start date" : ""}${day === to ? ", end date" : ""}${day === today ? ", today" : ""}`}
+                            className={s("day", inRangeDay(day) && "dayInRange", (day === from || day === to) && "dayEdge", day === today && "dayToday")}
+                            onClick={() => { pick(day); }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                pick(day);
+                                return;
+                              }
+                              const next = calendarMove(day, { key: event.key, shift: event.shiftKey });
+                              if (next === undefined) return;
+                              event.preventDefault();
+                              if (monthKeyOf(next) !== monthKeyOf(day)) announce(monthTitle(next));
+                              moveFocus.current = true;
+                              setFocusDay(next);
+                            }}
+                          >
+                            {dayOfMonth(day)}
+                          </td>
+                        ),
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </fieldset>
+        ) : null}
+        <p className={s("periodZone", "muted", "small")}>{`Days, months and years are the workspace's: ${zoneName(zone)}. Today there is ${longDay(today)}.`}</p>
+      </div>
+      <div className={s("menuFoot")}>
+        <span className={s("muted", "small")}>{count === undefined ? "Choose both dates" : `${String(count)} ${count === 1 ? "conversation" : "conversations"}`}</span>
+        <span className={s("inlineActions")}>
+          <button type="button" className={s("btn")} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className={s("btn", "btnPrimary")} onClick={apply}>
+            Apply
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * UX-08A: the open conversation a new period, filter or search left out. The reading panel says whose it was, why it
+ * isn't listed (its date, against the period's days) and offers the one change that lists it again — never a generic
+ * "select a conversation".
+ */
+function MissedPanel({ conversation, reason, listName, period, today, zone, wf, onAllDates, onClear }: {
+  readonly conversation: Conversation;
+  readonly reason: MissReason;
+  readonly listName: string;
+  readonly period: Period;
+  readonly today: string;
+  readonly zone: string;
+  readonly wf: Workflow;
+  readonly onAllDates: () => void;
+  readonly onClear: () => void;
+}) {
+  const range = rangeOf(period, today);
+  const date = reason === "period" ? dateLine(conversation, period.basis, wf, zone) : undefined;
+  return (
+    <section className={s("pane", "paneEmpty", "paneMissed")} aria-labelledby="missed-title">
+      <div className={s("missed")}>
+        <h2 id="missed-title" className={s("missedTitle")}>{`${conversationAuthor(conversation)}'s conversation isn't in this list`}</h2>
+        <p className={s("muted")}>
+          {reason === "period" && range !== undefined ? `${date ?? "Its date"} — outside ${listName} · ${periodName(period)} (${rangeText(range)}).` : "It doesn't match the search or filters now applied."}
+        </p>
+        <p className={s("muted", "small")}>Nothing about the conversation changed; only the list did.</p>
+        <span className={s("inlineActions")}>
+          {reason === "period" ? (
+            <button type="button" className={s("btn")} onClick={onAllDates}>
+              Show all dates and open it
+            </button>
+          ) : (
+            <button type="button" className={s("btn")} onClick={onClear}>
+              Clear search and filters and open it
+            </button>
+          )}
+        </span>
+      </div>
+    </section>
+  );
+}
+
 /* ───────────── toolbar: search, two quick filters, Filters, sort ───────────── */
 
-function Toolbar({ query, filters, labels, sort, view, filtersOpen, results, onQuery, onFilters, onSort, onFiltersOpen }: {
+function Toolbar({ query, filters, labels, sort, view, filtersOpen, results, labelLocked, onQuery, onFilters, onSort, onFiltersOpen }: {
   readonly query: string;
   readonly filters: Filters;
   readonly labels: LabelState;
@@ -1051,6 +1836,8 @@ function Toolbar({ query, filters, labels, sort, view, filtersOpen, results, onQ
   readonly view: View;
   readonly filtersOpen: boolean;
   readonly results: number;
+  /** A label's own list: its label is the list, not a filter to change here. */
+  readonly labelLocked: boolean;
   readonly onQuery: (query: string) => void;
   readonly onFilters: (filters: Filters) => void;
   readonly onSort: (sort: Sort) => void;
@@ -1058,11 +1845,18 @@ function Toolbar({ query, filters, labels, sort, view, filtersOpen, results, onQ
 }) {
   const id = useId();
   const filtersButton = useRef<HTMLButtonElement>(null);
+  /** Set by × or Escape: focus returns to Filters once the panel is gone (on a phone, the page under it is hidden until then). */
+  const restore = useRef(false);
   const inMenu = menuFilterCount(filters);
   const total = inMenu + (filters.platform === undefined ? 0 : 1) + (filters.label === undefined ? 0 : 1);
-  const close = (): void => {
-    onFiltersOpen(false);
+  useEffect(() => {
+    if (filtersOpen || !restore.current) return;
+    restore.current = false;
     filtersButton.current?.focus();
+  }, [filtersOpen]);
+  const close = (): void => {
+    restore.current = true;
+    onFiltersOpen(false);
   };
   return (
     <div className={s("toolbar")} role="search">
@@ -1078,6 +1872,8 @@ function Toolbar({ query, filters, labels, sort, view, filtersOpen, results, onQ
           placeholder="Search comments and authors"
           value={query}
           autoComplete="off"
+          // UX-08A: where a search looks — this list and its period — is the list's count line.
+          aria-describedby="list-count"
           onChange={(event) => { onQuery(event.target.value); }}
         />
       </span>
@@ -1085,22 +1881,30 @@ function Toolbar({ query, filters, labels, sort, view, filtersOpen, results, onQ
         <label htmlFor={`${id}-platform`} className="wk-sr-only">
           Platform
         </label>
-        <select id={`${id}-platform`} className={s("select", "quick", filters.platform !== undefined && "quickSet")} value={filters.platform ?? ""} onChange={(event) => { onFilters(withFilter(filters, "platform", event.target.value === "facebook" ? "facebook" : event.target.value === "instagram" ? "instagram" : undefined)); }}>
+        <ChoiceSelect>
+          <select id={`${id}-platform`} className={s("select", "quick", filters.platform !== undefined && "quickSet")} value={filters.platform ?? ""} onChange={(event) => { onFilters(withFilter(filters, "platform", event.target.value === "facebook" ? "facebook" : event.target.value === "instagram" ? "instagram" : undefined)); }}>
           <option value="">All platforms</option>
           <option value="facebook">Facebook</option>
           <option value="instagram">Instagram</option>
         </select>
-        <label htmlFor={`${id}-label`} className="wk-sr-only">
-          Label
-        </label>
-        <select id={`${id}-label`} className={s("select", "quick", filters.label !== undefined && "quickSet")} value={filters.label ?? ""} onChange={(event) => { onFilters(withFilter(filters, "label", event.target.value === "" ? undefined : event.target.value)); }}>
-          <option value="">Any label</option>
-          {sortedLabels(labels.labels).map((label) => (
-            <option key={label.id} value={label.id}>
-              {label.name}
-            </option>
-          ))}
-        </select>
+        </ChoiceSelect>
+        {labelLocked ? null : (
+          <>
+            <label htmlFor={`${id}-label`} className="wk-sr-only">
+              Label
+            </label>
+            <ChoiceSelect>
+              <select id={`${id}-label`} className={s("select", "quick", filters.label !== undefined && "quickSet")} value={filters.label ?? ""} onChange={(event) => { onFilters(withFilter(filters, "label", event.target.value === "" ? undefined : event.target.value)); }}>
+              <option value="">Any label</option>
+              {sortedLabels(labels.labels).map((label) => (
+                <option key={label.id} value={label.id}>
+                  {label.name}
+                </option>
+              ))}
+            </select>
+            </ChoiceSelect>
+          </>
+        )}
       </span>
       <button ref={filtersButton} type="button" className={s("btn", "filtersButton", filtersOpen && "filtersButtonOpen")} aria-expanded={filtersOpen} aria-controls={`${id}-menu`} onClick={() => { onFiltersOpen(!filtersOpen); }}>
         <Icon name="util-filter" size={16} />
@@ -1113,15 +1917,17 @@ function Toolbar({ query, filters, labels, sort, view, filtersOpen, results, onQ
         <label htmlFor={`${id}-sort`} className={s("muted", "small")}>
           Sort
         </label>
-        <select id={`${id}-sort`} className={s("select", "sortSelect")} value={view === "done" && sort === "attention" ? "newest" : sort} onChange={(event) => { onSort(SORTS.find((item) => item.id === event.target.value)?.id ?? "attention"); }}>
+        <ChoiceSelect>
+          <select id={`${id}-sort`} className={s("select", "sortSelect")} value={view === "done" && sort === "attention" ? "newest" : sort} onChange={(event) => { onSort(SORTS.find((item) => item.id === event.target.value)?.id ?? "attention"); }}>
           {SORTS.filter((item) => view !== "done" || item.id !== "attention").map((item) => (
             <option key={item.id} value={item.id}>
               {item.name}
             </option>
           ))}
         </select>
+        </ChoiceSelect>
       </span>
-      {filtersOpen ? <FilterMenu id={`${id}-menu`} filters={filters} labels={labels} view={view} results={results} onFilters={onFilters} onClose={close} /> : null}
+      {filtersOpen ? <FilterMenu id={`${id}-menu`} filters={filters} labels={labels} view={view} results={results} labelLocked={labelLocked} trigger={filtersButton} onFilters={onFilters} onClose={close} onDismiss={() => { onFiltersOpen(false); }} /> : null}
       <span className="wk-sr-only">{`Sorted by ${sortName(view === "done" && sort === "attention" ? "newest" : sort)}`}</span>
     </div>
   );
@@ -1139,19 +1945,40 @@ const SOURCES: readonly { readonly id: SourceFilter | ""; readonly name: string 
  * The less frequent filters. Every change applies at once (the list and its count follow); the footer says how many
  * conversations match. On a phone it is a full sheet and also holds Platform and Label.
  */
-function FilterMenu({ id, filters, labels, view, results, onFilters, onClose }: {
+function FilterMenu({ id, filters, labels, view, results, labelLocked, trigger, onFilters, onClose, onDismiss }: {
   readonly id: string;
   readonly filters: Filters;
   readonly labels: LabelState;
   readonly view: View;
   readonly results: number;
+  readonly labelLocked: boolean;
+  /** The Filters control: moving focus back to it keeps the panel open. */
+  readonly trigger: { readonly current: HTMLElement | null };
   readonly onFilters: (filters: Filters) => void;
   readonly onClose: () => void;
+  /** Focus moved on to something outside (Tab): the panel closes (its changes already apply) and focus stays there. */
+  readonly onDismiss: () => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => heading.current?.focus(), []);
   useKeptInside(panel);
+  // UX-10 (B): focus can fall outside Comments (the page itself — a phone sheet's last stop before the browser): Escape
+  // still closes.
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    closeRef.current = onClose;
+  });
+  useEffect(() => {
+    const element = panel.current;
+    if (element === null) return;
+    const owner = element.ownerDocument;
+    const onKey = (event: { readonly key: string; readonly target: EventTarget | null }): void => {
+      if (event.key === "Escape" && outsideComments(element, event.target)) closeRef.current();
+    };
+    owner.addEventListener("keydown", onKey);
+    return () => { owner.removeEventListener("keydown", onKey); };
+  }, []);
   const set = <K extends Exclude<keyof Filters, "accounts">>(key: K, value: Filters[K] | undefined): void => { onFilters(withFilter(filters, key, value)); };
   const toggleAccount = (accountId: string, on: boolean): void => { onFilters({ ...filters, accounts: on ? [...filters.accounts, accountId] : filters.accounts.filter((item) => item !== accountId) }); };
   return (
@@ -1161,6 +1988,7 @@ function FilterMenu({ id, filters, labels, view, results, onFilters, onClose }: 
       className={s("popover", "filterMenu")}
       role="dialog"
       aria-labelledby={`${id}-title`}
+      onBlur={(event) => { if (leftFor(event, event.currentTarget, trigger.current)) onDismiss(); }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -1189,17 +2017,19 @@ function FilterMenu({ id, filters, labels, view, results, onFilters, onClose }: 
             ))}
           </div>
         </fieldset>
-        <fieldset className={s("filterSet", "phoneOnly")}>
-          <legend>Label</legend>
-          <select className={s("select")} aria-label="Label" value={filters.label ?? ""} onChange={(event) => { set("label", event.target.value === "" ? undefined : event.target.value); }}>
-            <option value="">Any label</option>
-            {sortedLabels(labels.labels).map((label) => (
-              <option key={label.id} value={label.id}>
-                {label.name}
-              </option>
-            ))}
-          </select>
-        </fieldset>
+        {labelLocked ? null : (
+          <fieldset className={s("filterSet", "phoneOnly")}>
+            <legend>Label</legend>
+            <select className={s("select")} aria-label="Label" value={filters.label ?? ""} onChange={(event) => { set("label", event.target.value === "" ? undefined : event.target.value); }}>
+              <option value="">Any label</option>
+              {sortedLabels(labels.labels).map((label) => (
+                <option key={label.id} value={label.id}>
+                  {label.name}
+                </option>
+              ))}
+            </select>
+          </fieldset>
+        )}
         <fieldset className={s("filterSet")}>
           <legend>Account</legend>
           {ACCOUNTS.map((account) => (
@@ -1232,17 +2062,6 @@ function FilterMenu({ id, filters, labels, view, results, onFilters, onClose }: 
               </option>
             ))}
           </select>
-        </fieldset>
-        <fieldset className={s("filterSet")}>
-          <legend>Latest activity</legend>
-          <div className={s("segmented")}>
-            {([["", "Any time"], ["day", "Last 24 hours"], ["week", "Last 7 days"]] as const).map(([value, name]) => (
-              <label key={value} className={s("segment")}>
-                <input type="radio" name={`${id}-date`} checked={(filters.date ?? "") === value} onChange={() => { set("date", value === "" ? undefined : (value)); }} />
-                <span>{name}</span>
-              </label>
-            ))}
-          </div>
         </fieldset>
         <fieldset className={s("filterSet")}>
           <legend>Post</legend>
@@ -1283,12 +2102,14 @@ function FilterMenu({ id, filters, labels, view, results, onFilters, onClose }: 
 
 /* ───────────── a row of the list ───────────── */
 
-function Row({ conversation, previousLatest, selected, leaving, ctx, readModel, register, onSelect }: {
+function Row({ conversation, previousLatest, selected, leaving, dateNote: note, ctx, readModel, register, onSelect }: {
   readonly conversation: Conversation;
   readonly previousLatest: string | undefined;
   readonly selected: boolean;
   /** Selected, but no longer in the list (it stays until the selection moves): why, in a few words. */
   readonly leaving: string | undefined;
+  /** UX-08A: the date the period reads, when it isn't the day of the time shown ("Received 28 Oct 2026"). */
+  readonly dateNote: string | undefined;
   readonly ctx: WorkContext;
   readonly readModel: ReadModel;
   readonly register: (element: HTMLButtonElement | null) => void;
@@ -1319,6 +2140,7 @@ function Row({ conversation, previousLatest, selected, leaving, ctx, readModel, 
           </span>
           <span className={s("rowExcerpt", presence !== "present" && "muted")}>{excerpt}</span>
           <span className={s("rowMeta")}>
+            {note === undefined ? null : <span className={s("rowDate")}>{note}</span>}
             {leaving !== undefined ? (
               <span className={s("quietState")}>
                 <Glyph name="check" />
@@ -1357,7 +2179,7 @@ function Row({ conversation, previousLatest, selected, leaving, ctx, readModel, 
             <span className={s("rowSpacer")} />
             {names.length === 0 ? null : (
               <span className={s("rowLabels")}>
-                <span className="wk-sr-only">{`Labels on comments in this conversation: ${names.map((label) => label.name).join(", ")}.`}</span>
+                <span className="wk-sr-only">{`Labels: ${names.map((label) => label.name).join(", ")}.`}</span>
                 {names.slice(0, 2).map((label) => (
                   <span key={label.id} className={s("rowLabel")} aria-hidden="true">
                     <LabelMarker marker={markerOf(label)} />
@@ -1388,9 +2210,10 @@ function Row({ conversation, previousLatest, selected, leaving, ctx, readModel, 
 
 const SURFACE_TEXT = { feed: "Feed", live: "Live video — comments can only be managed in the Instagram app", story_ad: "Story ad — comments can only be managed in the Instagram app", dark_post: "Ad that never ran as a Page post" } as const;
 
-function ConversationPane({ conversation, view, listName, position, bench, ctx, convPanel, nudge, leaving, onConvPanel, onManage, onKeep, onMove, onBack, onEscape }: {
+function ConversationPane({ conversation, pageName, listName, position, bench, ctx, convPanel, nudge, leaving, onConvPanel, onManage, onKeep, onMove, onBack, onEscape }: {
   readonly conversation: Conversation;
-  readonly view: View;
+  /** The list it was opened from: a view, or a label's own list (Back and Previous / Next name it). */
+  readonly pageName: string;
   /** "Needs attention", or "this filtered list" while a search or filter narrows it. */
   readonly listName: string;
   readonly position: ReturnType<typeof positionOf>;
@@ -1418,6 +2241,14 @@ function ConversationPane({ conversation, view, listName, position, bench, ctx, 
   const attention = attentionOf(conversation, ctx);
   const quiet = flow.status === "open" ? quietStateOf(conversation, ctx) : undefined;
   const abilities = abilitiesOf(role);
+  const sectionRef = useRef<HTMLElement>(null);
+  const headRef = useRef<HTMLElement>(null);
+  // The sticky header's height, measured at every render: what scrolls into view under it (a focused control, a panel)
+  // stops below it, never behind it (UX-07B; WCAG 2.4.11).
+  useLayoutEffect(() => {
+    const head = headRef.current;
+    if (head !== null) sectionRef.current?.style.setProperty("--pane-head", `${String(head.offsetHeight)}px`);
+  });
   const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     if (event.key !== "Escape" || event.defaultPrevented) return;
     const tag = (event.target as HTMLElement).tagName;
@@ -1427,26 +2258,27 @@ function ConversationPane({ conversation, view, listName, position, bench, ctx, 
   };
   const nav =
     position === undefined ? null : (
-      <nav className={s("convNav")} aria-label={`Move through ${viewName(view)}`}>
+      <nav className={s("convNav")} aria-label={`Move through ${pageName}`}>
         <span className={s("mono", "muted")}>
           {`${String(position.index)} of ${String(position.count)}`}
-          <span className={s("navView")}>{` in ${viewName(view)}`}</span>
+          <span className={s("navView")}>{` in ${pageName}`}</span>
         </span>
-        <button type="button" className={s("iconButton")} data-nav="previous" aria-label="Previous conversation" disabled={position.previous === undefined} onClick={() => { if (position.previous !== undefined) onMove(position.previous, "previous"); }}>
-          <Glyph name="chevronLeft" />
+        <button type="button" className={s("iconButton")} data-nav="previous" aria-label="Previous conversation" title="Previous conversation" disabled={position.previous === undefined} onClick={() => { if (position.previous !== undefined) onMove(position.previous, "previous"); }}>
+          <Glyph name="arrowUp" />
         </button>
-        <button type="button" className={s("iconButton")} data-nav="next" aria-label="Next conversation" disabled={position.next === undefined} onClick={() => { if (position.next !== undefined) onMove(position.next, "next"); }}>
-          <Glyph name="chevronRight" />
+        <button type="button" className={s("iconButton")} data-nav="next" aria-label="Next conversation" title="Next conversation" disabled={position.next === undefined} onClick={() => { if (position.next !== undefined) onMove(position.next, "next"); }}>
+          <Glyph name="arrowDown" />
         </button>
       </nav>
     );
   return (
-    <section id={`focus-${conversation.id}`} className={s("pane")} aria-labelledby={`pane-${conversation.id}`} onKeyDown={onKeyDown}>
-      <header className={s("paneHead")}>
+    <section ref={sectionRef} id={`focus-${conversation.id}`} className={s("pane")} aria-labelledby={`pane-${conversation.id}`} onKeyDown={onKeyDown}>
+      <header ref={headRef} className={s("paneHead")} data-pane-head="">
         <div className={s("paneTop")}>
           <button type="button" className={s("btn", "btnQuiet", "backButton")} onClick={onBack}>
-            <Glyph name="chevronLeft" />
-            <span>{viewName(view)}</span>
+            <Glyph name="arrowLeft" />
+            <span className="wk-sr-only">Back to </span>
+            <span>{pageName}</span>
           </button>
           <div className={s("paneIdentity")}>
           <h2 id={`pane-${conversation.id}`} className={s("paneTitle")} tabIndex={-1}>
@@ -1492,6 +2324,12 @@ function ConversationPane({ conversation, view, listName, position, bench, ctx, 
           </p>
           {abilities.manage ? <Management conversation={conversation} flow={flow} mode={mode} role={role} wf={wf} sim={sim} panel={convPanel} onPanel={onConvPanel} onManage={onManage} /> : null}
         </div>
+        <ConversationLabels conversation={conversation} bench={bench} panel={convPanel} onPanel={onConvPanel} />
+        {/*
+         * Details overlays the reading area from just under this header (UX-07B): the header sticks while the page
+         * scrolls, so the drawer, anchored to it, stays in view at any depth of a long thread.
+         */}
+        {details === undefined ? null : <DetailsDrawer conversation={conversation} target={details} bench={bench} onClose={() => { bench.onDetails(undefined); }} />}
       </header>
       <div className={s("bodyWrap")}>
         {/* While Details covers the reading area nothing under it takes focus or clicks (UX-05 M-1). */}
@@ -1518,7 +2356,6 @@ function ConversationPane({ conversation, view, listName, position, bench, ctx, 
           </ol>
           {nudge === undefined || !abilities.manage ? null : <Nudge resolution={nudge} leaving={leaving} listName={listName} onDone={() => onManage(markDone(wf, role, mode, conversation.id, nudge, sim))} onKeep={onKeep} />}
         </div>
-        {details === undefined ? null : <DetailsDrawer conversation={conversation} target={details} bench={bench} onClose={() => { bench.onDetails(undefined); }} />}
       </div>
     </section>
   );
@@ -1635,7 +2472,7 @@ function Management({ conversation, flow, mode, role, wf, sim, panel, onPanel, o
       ) : null}
       {open ? (
         <span className={s("anchor", "desktopOnly")}>
-          <button ref={escalateRef} type="button" className={s("mbtn", "mbtnIcon")} aria-expanded={panel === "escalate"} title={flow.escalation === undefined ? "Escalate…" : `Escalated to ${flow.escalation.to}`} onClick={() => { toggle("escalate"); }}>
+          <button ref={escalateRef} type="button" className={s("mbtn", "mbtnIcon")} aria-expanded={panel === "escalate"} title={flow.escalation === undefined ? "Escalate" : `Escalated to ${flow.escalation.to}`} onClick={() => { toggle("escalate"); }}>
             <Icon name="decision-escalate" size={16} />
             <span className="wk-sr-only">{flow.escalation === undefined ? "Escalate" : `Escalated to ${flow.escalation.to}`}</span>
           </button>
@@ -1692,6 +2529,27 @@ function Management({ conversation, flow, mode, role, wf, sim, panel, onPanel, o
  * in, and when it would pass the bottom its height is limited to the room below, scrolling inside. Measured after
  * every render (a panel changes size between steps). A phone's full-width sheet is fixed and needs none of this.
  */
+/**
+ * UX-09 (L-2): the Period and Filters panels are nonmodal popovers beside the list (≥ 640 px) — focus is never trapped
+ * there — but they cover part of the page, so focus that moves on to something outside them (Tab, Shift+Tab) closes
+ * them rather than leaving it on a control drawn under the panel. Focus leaving Comments (to the browser, or to a
+ * development tool outside it) or moving to the panel's own control keeps it open. On a phone they are sheets over a
+ * hidden page (as Details is), so nothing of Comments outside them can take focus.
+ */
+/** UX-10: a key pressed with focus outside Comments — on the page itself, or anything else that is not part of it. */
+function outsideComments(element: Element, target: EventTarget | null): boolean {
+  return element.closest("[data-comments-shell]")?.contains(target as Node | null) !== true;
+}
+
+function leftFor(event: FocusEvent<HTMLElement>, ...within: readonly (HTMLElement | null)[]): boolean {
+  const next = event.relatedTarget as Node | null;
+  const comments = event.currentTarget.closest("[data-comments-shell]");
+  // A press on text inside the panel moves focus to the nearest focusable container around it (the page's <main>):
+  // that is not moving on — only something that neither holds the panel nor sits inside it is.
+  if (next === null || comments?.contains(next) !== true || next.contains(event.currentTarget)) return false;
+  return !within.some((element) => element?.contains(next) === true);
+}
+
 function useKeptInside(ref: { readonly current: HTMLElement | null }): void {
   useLayoutEffect(() => {
     const panel = ref.current;
@@ -1728,7 +2586,9 @@ function useRevealed(ref: { readonly current: HTMLElement | null }): void {
     panel.scrollIntoView({ block: "nearest", inline: "nearest" });
     const area = panel.closest("[data-reading-area]")?.getBoundingClientRect();
     const height = panel.ownerDocument.documentElement.clientHeight;
-    const roomTop = Math.max(0, area?.y ?? 0) + 8;
+    // UX-07B: the conversation header sticks at the top while the page scrolls; the room starts under it.
+    const head = panel.closest("section")?.querySelector("[data-pane-head]")?.getBoundingClientRect().bottom ?? 0;
+    const roomTop = Math.max(0, area?.y ?? 0, head) + 8;
     const roomBottom = Math.min(height, area?.bottom ?? height) - 8;
     if (panel.getBoundingClientRect().height <= roomBottom - roomTop) return;
     panel.style.maxHeight = `${String(Math.max(200, Math.floor(roomBottom - roomTop)))}px`;
@@ -1738,13 +2598,15 @@ function useRevealed(ref: { readonly current: HTMLElement | null }): void {
 }
 
 /** A small panel under a header control. Escape closes it and returns focus to the control (the owner decides where). */
-function MenuPanel({ label, children, onClose, wide = false }: { readonly label: string; readonly children: ReactNode; readonly onClose: () => void; readonly wide?: boolean }) {
+function MenuPanel({ label, children, onClose, wide = false, focusFirst = true }: { readonly label: string; readonly children: ReactNode; readonly onClose: () => void; readonly wide?: boolean; readonly focusFirst?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
-  // The first control that is actually drawn takes focus: a phone-only item is not drawn on a desktop (UX-05).
+  // The first control that is actually drawn takes focus: a phone-only item is not drawn on a desktop (UX-05). A panel
+  // whose own field takes focus (New workspace label: its name) says so with focusFirst={false}.
   useEffect(() => {
+    if (!focusFirst) return;
     const controls = ref.current?.querySelectorAll<HTMLElement>("button, input, select, textarea") ?? [];
     [...controls].find((control) => control.getClientRects().length > 0)?.focus();
-  }, []);
+  }, [focusFirst]);
   useKeptInside(ref);
   // A press anywhere outside the panel and its control closes it (the control itself toggles it).
   const closeRef = useRef(onClose);
@@ -1829,7 +2691,7 @@ function DonePanel({ choices, blocker, onDone, onClose }: { readonly choices: re
           {reason}
         </p>
       ))}
-      <p className={s("menuNote")}>Clears Urgent and closes an open escalation. It reopens by itself if the author writes again.</p>
+      <p className={s("menuNote")}>Clears Urgent and closes an open escalation. In this prototype, a new reply from the author reopens it (simulated; pending approval).</p>
     </MenuPanel>
   );
 }
@@ -1921,7 +2783,7 @@ function ConversationMore({ flow, choices, blocker, onUrgent, onEscalate, onClos
             <>
               <button type="button" className={s("menuItem", "phoneOnly")} onClick={() => { setStep("done"); }}>
                 <Glyph name="check" />
-                <span>Mark done…</span>
+                <span>Mark done</span>
               </button>
               <button type="button" className={s("menuItem", "phoneOnly")} aria-pressed={flow.urgent !== undefined} onClick={onUrgent}>
                 <Glyph name="flag" />
@@ -1929,7 +2791,7 @@ function ConversationMore({ flow, choices, blocker, onUrgent, onEscalate, onClos
               </button>
               <button type="button" className={s("menuItem", "phoneOnly")} onClick={() => { setStep("escalate"); }}>
                 <Icon name="decision-escalate" size={16} />
-                <span>{flow.escalation === undefined ? "Escalate…" : `Escalated to ${flow.escalation.to}…`}</span>
+                <span>{flow.escalation === undefined ? "Escalate" : `Escalated to ${flow.escalation.to}`}</span>
               </button>
             </>
           ) : (
@@ -1945,7 +2807,7 @@ function ConversationMore({ flow, choices, blocker, onUrgent, onEscalate, onClos
           )}
           <button type="button" className={s("menuItem")} onClick={() => { setStep("note"); }}>
             <Icon name="decision-draft" size={16} />
-            <span>Add note…</span>
+            <span>Add note</span>
           </button>
         </>
       )}
@@ -2001,9 +2863,8 @@ function SourceCard({ conversation, identity }: { readonly conversation: Convers
 /* ───────────── one comment ───────────── */
 
 function CommentItem({ conversation, bench, entry, previous }: { readonly conversation: Conversation; readonly bench: Bench; readonly entry: Extract<ThreadEntry, { kind: "comment" }>; readonly previous: string | undefined }) {
-  const { role, mode, actions, readModel, allHealthy, labels, sim, panel, details, replyTarget, drafts, privateDrafts, onPanel, onDetails, onReply, onReplyClose, onDraft, onPrivateDraft, onAssign, onCreate, onStart, onAnswer } = bench;
+  const { role, mode, actions, readModel, allHealthy, sim, panel, details, replyTarget, drafts, privateDrafts, onPanel, onDetails, onReply, onReplyClose, onDraft, onPrivateDraft, onStart, onAnswer } = bench;
   const { comment } = entry;
-  const abilities = abilitiesOf(role);
   const account = accountOf(conversation.accountId);
   const platformId = account?.platform ?? "facebook";
   const platform = account === undefined ? "the platform" : platformName(account);
@@ -2011,17 +2872,12 @@ function CommentItem({ conversation, bench, entry, previous }: { readonly conver
   const identity = account === undefined ? undefined : ownIdentity(account, readModel);
   const author = own ? (identity?.name ?? "Your account") : commenterName(comment);
   const owner = own ? "your account's comment" : `${author}'s comment`;
-  const ids = labelsOn(labels, comment.id);
   const view = viewOf(sim, conversation.accountId, comment);
   const panelOpen = panel?.commentId === comment.id ? panel : undefined;
   const moreButton = useRef<HTMLButtonElement>(null);
   const hideButton = useRef<HTMLButtonElement>(null);
   const replyButton = useRef<HTMLButtonElement>(null);
   const privateButton = useRef<HTMLButtonElement>(null);
-  const labelButton = useRef<HTMLButtonElement>(null);
-  const articleRef = useRef<HTMLElement>(null);
-  /** After a label chip is removed: the position whose neighbour takes focus (UX4 M-2). */
-  const chipFocus = useRef<number | undefined>(undefined);
   const hideReasonId = useId();
   const health = healthOf(account, allHealthy);
   const availability = (action: ActionId): Availability => availabilityOf({ action, role, mode, actions, accountHealth: health, conversation, comment, sim });
@@ -2033,9 +2889,9 @@ function CommentItem({ conversation, bench, entry, previous }: { readonly conver
   const replyHere = replyTarget === comment.id;
   const hidden = view.presence === "hidden";
   const timeId = `time-${comment.id}`;
-  const closePanel = (focus: "more" | "hide" | "private" | "label"): void => {
+  const closePanel = (focus: "more" | "hide" | "private"): void => {
     onPanel(undefined);
-    (focus === "hide" ? hideButton : focus === "private" ? privateButton : focus === "label" ? labelButton : moreButton).current?.focus();
+    (focus === "hide" ? hideButton : focus === "private" ? privateButton : moreButton).current?.focus();
   };
   const focusAfterOp = (): void => { (hideButton.current ?? moreButton.current)?.focus(); };
   const run = (kind: OpKind, text?: string): boolean => {
@@ -2044,13 +2900,6 @@ function CommentItem({ conversation, bench, entry, previous }: { readonly conver
     (target.current ?? moreButton.current)?.focus();
     return ok;
   };
-  useEffect(() => {
-    const index = chipFocus.current;
-    if (index === undefined) return;
-    chipFocus.current = undefined;
-    const buttons = [...(articleRef.current?.querySelectorAll<HTMLButtonElement>('ul[aria-label="Labels"] button') ?? [])];
-    (buttons.at(Math.min(index, buttons.length - 1)) ?? labelButton.current ?? moreButton.current)?.focus();
-  }, [ids]);
   const ops = sim.ops.filter((op) => op.commentId === comment.id && op.kind !== "reply" && op.kind !== "private_reply");
   const lastOp = ops.at(-1);
   const privateOps = sim.ops.filter((op) => op.commentId === comment.id && op.kind === "private_reply");
@@ -2076,7 +2925,7 @@ function CommentItem({ conversation, bench, entry, previous }: { readonly conver
 
   return (
     <li className={s("entry", entry.depth === 0 ? "entryRoot" : "entryNested", own && "entryOwn", detailsOpen && "entryAnchored")}>
-      <article ref={articleRef} className={s("entryBody")} aria-labelledby={headingId}>
+      <article className={s("entryBody")} aria-labelledby={headingId}>
         <div className={s("entryHead")}>
           <p id={headingId} className={s("entryAuthor")}>
             {own ? <OwnMark /> : null}
@@ -2120,50 +2969,7 @@ function CommentItem({ conversation, bench, entry, previous }: { readonly conver
           </p>
         ) : null}
 
-        {/* Management: labels are internal to Wrenkind, separate from the platform actions below. */}
-        <div className={s("labelZone")}>
-          <Chips
-            ids={ids}
-            state={labels}
-            owner={owner}
-            onRemove={
-              abilities.assign
-                ? (labelId) => {
-                    chipFocus.current = ids.indexOf(labelId);
-                    onAssign(conversation, comment.id, owner, labelId, false);
-                  }
-                : undefined
-            }
-          />
-          {abilities.assign && view.presence !== "deleted" ? (
-            <button ref={labelButton} type="button" className={s("addLabel")} aria-expanded={panelOpen?.kind === "labels" || panelOpen?.kind === "create"} onClick={() => { onPanel(panelOpen?.kind === "labels" || panelOpen?.kind === "create" ? undefined : { commentId: comment.id, kind: "labels" }); }}>
-              <Icon name="util-plus" size={16} />
-              <span>Label</span>
-              <span className="wk-sr-only">{` ${owner}`}</span>
-            </button>
-          ) : null}
-        </div>
-
-        {panelOpen?.kind === "labels" && abilities.assign ? (
-          <LabelPicker
-            labels={labels}
-            assigned={ids}
-            canCreate={abilities.create}
-            owner={owner}
-            onToggle={(labelId, on) => { onAssign(conversation, comment.id, owner, labelId, on); }}
-            onCreateStep={() => { onPanel({ commentId: comment.id, kind: "create" }); }}
-            onClose={() => { closePanel("label"); }}
-          />
-        ) : null}
-        {panelOpen?.kind === "create" && abilities.create ? (
-          <CreateLabelPanel
-            owner={owner}
-            onCreate={(name, addHere, marker) => onCreate(conversation, name, comment.id, owner, addHere, marker)}
-            onBack={() => { onPanel({ commentId: comment.id, kind: "labels" }); }}
-            onClose={() => { closePanel("label"); }}
-          />
-        ) : null}
-
+        {/* UX-07B: no label control here — manual labels belong to the conversation and are managed in its header. */}
         <div className={s("actions")} role="group" aria-label={`Actions for ${owner}`}>
           {replyState.kind === "hidden" ? null : (
             <button ref={replyButton} type="button" className={s("action", replyState.kind === "unavailable" && "actionUnavailable")} aria-expanded={replyHere} onClick={() => { onReply(conversation, comment); }}>
@@ -2225,8 +3031,8 @@ function CommentItem({ conversation, bench, entry, previous }: { readonly conver
             simulated={actions === "simulate"}
             items={[
               { id: "like", label: view.liked ? "Unlike" : "Like", availability: availability("like"), onSelect: () => { run(view.liked ? "unlike" : "like"); } },
-              { id: "delete", label: "Delete comment…", availability: availability("delete"), danger: true, onSelect: () => { onPanel({ commentId: comment.id, kind: "confirm", confirm: "delete" }); } },
-              { id: "block", label: view.authorBlocked ? "Unblock author…" : "Block author…", availability: availability("block"), danger: !view.authorBlocked, onSelect: () => { onPanel({ commentId: comment.id, kind: "confirm", confirm: view.authorBlocked ? "unblock" : "block" }); } },
+              { id: "delete", label: "Delete comment", availability: availability("delete"), danger: true, onSelect: () => { onPanel({ commentId: comment.id, kind: "confirm", confirm: "delete" }); } },
+              { id: "block", label: view.authorBlocked ? "Unblock author" : "Block author", availability: availability("block"), danger: !view.authorBlocked, onSelect: () => { onPanel({ commentId: comment.id, kind: "confirm", confirm: view.authorBlocked ? "unblock" : "block" }); } },
             ]}
             onClose={() => { closePanel("more"); }}
           />
@@ -2306,7 +3112,8 @@ function OwnMark() {
   );
 }
 
-function Chips({ ids, state, onRemove, owner }: { readonly ids: readonly string[]; readonly state: LabelState; readonly onRemove?: ((labelId: string) => void) | undefined; readonly owner: string }) {
+/** A conversation's labels, read-only: they are added and removed through the header's one Labels control (UX-07B). */
+function Chips({ ids, state }: { readonly ids: readonly string[]; readonly state: LabelState }) {
   const found = ids.map((id) => state.labels.find((label) => label.id === id)).filter((label): label is Label => label !== undefined);
   if (found.length === 0) return null;
   return (
@@ -2315,14 +3122,60 @@ function Chips({ ids, state, onRemove, owner }: { readonly ids: readonly string[
         <li key={label.id} className={s("chip")}>
           <LabelMarker marker={markerOf(label)} />
           <span>{label.name}</span>
-          {onRemove === undefined ? null : (
-            <button type="button" className={s("chipRemove")} onClick={() => { onRemove(label.id); }} aria-label={`Remove label ${label.name} from ${owner}`}>
-              <Icon name="util-close" size={16} />
-            </button>
-          )}
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * UX-07B: the conversation's manual labels, in its header — every one of them, and the one control that adds and removes
+ * them (assigning: anyone who works on comments; creating a workspace label: managers). The list row reads the same
+ * state. Without the assign ability the labels are shown and nothing else.
+ */
+function ConversationLabels({ conversation, bench, panel, onPanel }: { readonly conversation: Conversation; readonly bench: Bench; readonly panel: ConvPanel; readonly onPanel: (panel: ConvPanel) => void }) {
+  const { labels, role, onAssign, onCreate } = bench;
+  const abilities = abilitiesOf(role);
+  const button = useRef<HTMLButtonElement>(null);
+  const ids = conversationLabels(labels, conversation);
+  if (ids.length === 0 && !abilities.assign) return null;
+  const open = panel === "labels" || panel === "createLabel";
+  const close = (): void => {
+    onPanel(undefined);
+    button.current?.focus();
+  };
+  const others = samePostCount(conversation, liveConversations(bench.wf));
+  return (
+    <div className={s("paneLabels")} role="group" aria-label="Labels on this conversation">
+      <Chips ids={ids} state={labels} />
+      {abilities.assign ? (
+        <span className={s("anchor")}>
+          <button ref={button} type="button" className={s("mbtn", "labelsButton")} aria-expanded={open} onClick={() => { onPanel(open ? undefined : "labels"); }}>
+            <Glyph name="tag" />
+            <span>Labels</span>
+            <Glyph name="chevronDown" />
+          </button>
+          {panel === "labels" ? (
+            <MenuPanel label="Labels for this conversation" onClose={close} wide>
+              <LabelPicker
+                labels={labels}
+                assigned={ids}
+                canCreate={abilities.create}
+                scope={others === 0 ? "This conversation only." : `This conversation only — not the ${String(others)} other ${others === 1 ? "conversation" : "conversations"} on the same post.`}
+                onToggle={(labelId, on) => { onAssign(conversation, labelId, on); }}
+                onCreateStep={() => { onPanel("createLabel"); }}
+                onClose={close}
+              />
+            </MenuPanel>
+          ) : null}
+          {panel === "createLabel" && abilities.create ? (
+            <MenuPanel label="New workspace label" onClose={close} wide focusFirst={false}>
+              <CreateLabelPanel onCreate={(name, addHere, marker) => onCreate(conversation, name, addHere, marker)} onBack={() => { onPanel("labels"); }} onClose={close} />
+            </MenuPanel>
+          ) : null}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -2485,48 +3338,34 @@ function PrivateRecord({ op, author, platform, onAnswer, onSettled }: { readonly
   );
 }
 
-/* ───────────── labels on one comment: assigning (anyone who works comments) ≠ creating (managers) ───────────── */
+/* ───────────── a conversation's labels: assigning (anyone who works comments) ≠ creating (managers) ───────────── */
 
-function LabelPicker({ labels, assigned, canCreate, owner, onToggle, onCreateStep, onClose }: {
+function LabelPicker({ labels, assigned, canCreate, scope, onToggle, onCreateStep, onClose }: {
   readonly labels: LabelState;
   readonly assigned: readonly string[];
   readonly canCreate: boolean;
-  readonly owner: string;
+  /** Which conversations the choice applies to (this one only — never the others on the same post). */
+  readonly scope: string;
   readonly onToggle: (labelId: string, on: boolean) => void;
   readonly onCreateStep: () => void;
   readonly onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
   const id = useId();
-  const panel = useRef<HTMLDivElement>(null);
-  useRevealed(panel);
   const typed = normalizeName(query);
   const exact = typed === "" ? undefined : findLabelByName(labels.labels, typed);
   const matching = sortedLabels(labels.labels).filter((label) => typed === "" || label.name.toLocaleLowerCase("en").includes(typed.toLocaleLowerCase("en")));
   const partial = typed !== "" && exact === undefined && matching.length > 0;
   return (
-    <div
-      ref={panel}
-      className={s("popover", "labelPanel")}
-      role="group"
-      aria-label={`Labels on ${owner}`}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          onClose();
-        }
-      }}
-    >
+    <>
       <label htmlFor={id} className={s("small", "muted")}>
-        {`Labels on ${owner}`}
+        Labels on this conversation
       </label>
       <input
         id={id}
         className={s("input")}
         value={query}
         maxLength={80}
-        autoFocus
         autoComplete="off"
         placeholder="Search labels"
         onChange={(event) => { setQuery(event.target.value); }}
@@ -2536,8 +3375,11 @@ function LabelPicker({ labels, assigned, canCreate, owner, onToggle, onCreateSte
           // Enter acts only on an exact name (UX4 M-3) and never creates: creating a workspace label is its own step.
           if (exact !== undefined) onToggle(exact.id, !assigned.includes(exact.id));
         }}
-        aria-describedby={partial || (typed !== "" && matching.length === 0) ? `${id}-hint` : undefined}
+        aria-describedby={`${id}-scope${partial || (typed !== "" && matching.length === 0) ? ` ${id}-hint` : ""}`}
       />
+      <p id={`${id}-scope`} className={s("muted", "small")}>
+        {scope}
+      </p>
       {partial ? (
         <p id={`${id}-hint`} className={s("muted", "small")}>
           Pick a label below — Enter only adds an exact name.
@@ -2565,7 +3407,7 @@ function LabelPicker({ labels, assigned, canCreate, owner, onToggle, onCreateSte
       {canCreate ? (
         <button type="button" className={s("menuItem")} onClick={onCreateStep}>
           <Icon name="util-plus" size={16} />
-          <span>Create workspace label…</span>
+          <span>Create workspace label</span>
         </button>
       ) : (
         <p className={s("menuNote")}>Only owners, admins and managers create labels. Use an existing one, or ask them.</p>
@@ -2575,41 +3417,29 @@ function LabelPicker({ labels, assigned, canCreate, owner, onToggle, onCreateSte
           Done
         </button>
       </div>
-    </div>
+    </>
   );
 }
 
-/** Creating a label is a workspace decision, separate from labelling one comment. */
-function CreateLabelPanel({ owner, onCreate, onBack, onClose }: { readonly owner: string; readonly onCreate: (name: string, addHere: boolean, marker: Marker) => string | undefined; readonly onBack: () => void; readonly onClose: () => void }) {
+/** Creating a label is a workspace decision, separate from labelling one conversation. */
+function CreateLabelPanel({ onCreate, onBack, onClose }: { readonly onCreate: (name: string, addHere: boolean, marker: Marker) => string | undefined; readonly onBack: () => void; readonly onClose: () => void }) {
   const [name, setName] = useState("");
   const [marker, setMarkerChoice] = useState<Marker>(DEFAULT_MARKER);
   const [addHere, setAddHere] = useState(true);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const id = useId();
-  const panel = useRef<HTMLDivElement>(null);
-  useRevealed(panel);
   const submit = (): void => {
     const result = onCreate(name, addHere, marker);
     setProblem(result);
     if (result === undefined) onBack();
   };
   return (
-    <div
-      ref={panel}
-      className={s("popover", "labelPanel")}
-      role="group"
-      aria-labelledby={`${id}-title`}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          onClose();
-        }
-      }}
-    >
+    <>
       <div className={s("menuHead")}>
-        <button type="button" className={s("iconButton")} aria-label="Back to labels" onClick={onBack}>
-          <Glyph name="chevronLeft" />
+        <button type="button" className={s("btn", "btnQuiet", "btnSmall")} onClick={onBack}>
+          <Glyph name="arrowLeft" />
+          <span className="wk-sr-only">Back to </span>
+          <span>Labels</span>
         </button>
         <p id={`${id}-title`} className={s("menuTitle")}>
           New workspace label
@@ -2617,7 +3447,7 @@ function CreateLabelPanel({ owner, onCreate, onBack, onClose }: { readonly owner
       </div>
       <p className={s("scope")}>
         <Glyph name="tag" />
-        <span>{`Labels belong to the ${WORKSPACE.name} workspace: everyone here can use it on any comment.`}</span>
+        <span>{`Labels belong to the ${WORKSPACE.name} workspace: everyone here can use it on any conversation.`}</span>
       </p>
       <label htmlFor={`${id}-name`} className={s("small")}>
         Name
@@ -2650,24 +3480,25 @@ function CreateLabelPanel({ owner, onCreate, onBack, onClose }: { readonly owner
       <MarkerPicker value={marker} onChange={setMarkerChoice} legend="Color" />
       <label className={s("check")}>
         <input type="checkbox" checked={addHere} onChange={(event) => { setAddHere(event.target.checked); }} />
-        <span>{`Also add it to ${owner}`}</span>
+        <span>Also add it to this conversation</span>
       </label>
       <div className={s("inlineActions")}>
         <button type="button" className={s("btn", "btnPrimary")} onClick={submit}>
           Create label
         </button>
-        <button type="button" className={s("btn")} onClick={onBack}>
+        <button type="button" className={s("btn")} onClick={onClose}>
           Cancel
         </button>
       </div>
-    </div>
+    </>
   );
 }
 
 /**
  * A workspace label's color (Manual v1.1 Amendment 2): one of the five approved palette identifiers, gray the default.
- * A native radio group — arrow keys move, the choice is announced by name — and each option shows its marker and its
- * name, so the selection never rests on color: the chosen one is checked, outlined and written in heavier type.
+ * A native radio group — arrow keys move, the choice is announced by name. PO polish (2026-11-19): a compact row of
+ * round swatches with no name written beside each — the name stays the option's accessible name (hidden text) and its
+ * tooltip — and the selection never rests on color: the chosen swatch carries a check and an ink ring.
  */
 function MarkerPicker({ value, onChange, legend, onReset }: { readonly value: Marker; readonly onChange: (marker: Marker) => void; readonly legend: string; readonly onReset?: (() => void) | undefined }) {
   const id = useId();
@@ -2675,13 +3506,21 @@ function MarkerPicker({ value, onChange, legend, onReset }: { readonly value: Ma
     <fieldset className={s("markerPicker")} aria-describedby={`${id}-meaning`}>
       <legend className={s("small")}>{legend}</legend>
       <div className={s("markerOptions")}>
-        {MARKERS.map((item) => (
-          <label key={item.id} className={s("markerOption")}>
-            <input type="radio" name={`${id}-marker`} value={item.id} checked={value === item.id} onChange={() => { onChange(item.id); }} />
-            <LabelMarker marker={item.id} />
-            <span>{item.id === DEFAULT_MARKER ? `${item.name} (default)` : item.name}</span>
-          </label>
-        ))}
+        {MARKERS.map((item) => {
+          const name = item.id === DEFAULT_MARKER ? `${item.name} (default)` : item.name;
+          return (
+            <label key={item.id} className={s("markerOption")} title={name}>
+              <input type="radio" name={`${id}-marker`} value={item.id} checked={value === item.id} onChange={() => { onChange(item.id); }} />
+              <span className={s("markerRing")} aria-hidden="true">
+                <svg className={s("marker", "swatch")} data-marker={item.id} width="20" height="20" viewBox="0 0 20 20" focusable="false">
+                  <path d="M10 0a10 10 0 1 0 0 20a10 10 0 1 0 0-20z" />
+                  {value === item.id ? <path className={s("swatchCheck")} d="M5.6 10.4l3 3l5.8-6.2" /> : null}
+                </svg>
+              </span>
+              <span className="wk-sr-only">{name}</span>
+            </label>
+          );
+        })}
       </div>
       <p id={`${id}-meaning`} className={s("muted", "small")}>
         Color only helps you recognize a label. It never means priority, urgency, sentiment or attention.
@@ -3126,11 +3965,8 @@ function DetailsDrawer({ conversation, target, bench, onClose }: { readonly conv
         }
       }}
     >
+      {/* UX-07B: one way to close — × or Esc (the former "‹ Conversation" did the same thing beside it). */}
       <div className={s("drawerHead")}>
-        <button type="button" className={s("btn", "btnQuiet", "drawerBack")} onClick={close}>
-          <Glyph name="chevronLeft" />
-          <span>Conversation</span>
-        </button>
         <h2 id={`${id}-title`} ref={heading} className={s("drawerTitle")} tabIndex={-1}>
           Details
           <span className="wk-sr-only">{` of ${who}`}</span>
@@ -3355,7 +4191,7 @@ function SettingsLabels({ labels, role, onSave, onDelete, onCreate }: {
           <h1 id={`${id}-title`} ref={heading} className={s("title")} tabIndex={-1}>
             Labels
           </h1>
-          <p className={s("muted", "settingsLead")}>Labels organize comments for your team. A label&apos;s color only helps you recognize it — it never means priority, urgency, sentiment or attention.</p>
+          <p className={s("muted", "settingsLead")}>Labels organize conversations for your team. A label&apos;s color only helps you recognize it — it never means priority, urgency, sentiment or attention.</p>
         </div>
         {canManage ? (
           <button
@@ -3376,7 +4212,7 @@ function SettingsLabels({ labels, role, onSave, onDelete, onCreate }: {
           </button>
         ) : null}
       </div>
-      {!canManage ? <p className={s("notice")}>Your role can use labels on comments but can&apos;t create, rename or delete them. Owners, admins and managers manage labels.</p> : null}
+      {!canManage ? <p className={s("notice")}>Your role can use labels on conversations but can&apos;t create, rename or delete them. Owners, admins and managers manage labels.</p> : null}
       {creating && canManage ? (
         <div className={s("settingsForm")} role="group" aria-labelledby={`${id}-new`} onKeyDown={(event) => { onEscape(event, closeCreate); }}>
           <p id={`${id}-new`} className={s("confirmTitle")}>
@@ -3415,7 +4251,7 @@ function SettingsLabels({ labels, role, onSave, onDelete, onCreate }: {
           <tr>
             <th scope="col">Color</th>
             <th scope="col">Name</th>
-            <th scope="col">Comments</th>
+            <th scope="col">Conversations</th>
             <th scope="col">
               <span className="wk-sr-only">Actions</span>
             </th>
@@ -3443,7 +4279,7 @@ function SettingsLabels({ labels, role, onSave, onDelete, onCreate }: {
                     </p>
                   )}
                   <MarkerPicker value={marker} onChange={setMarkerChoice} legend="Color" onReset={() => { setMarkerChoice(DEFAULT_MARKER); }} />
-                  <p id={`${id}-impact`} className={s("muted", "small")}>{`Changes apply wherever it appears: ${labelUsage(labels, label.id) === 1 ? "the 1 comment" : `the ${String(labelUsage(labels, label.id))} comments`} that use${labelUsage(labels, label.id) === 1 ? "s" : ""} it, the list and the sidebar.`}</p>
+                  <p id={`${id}-impact`} className={s("muted", "small")}>{`Changes apply wherever it appears: ${labelUsage(labels, label.id) === 1 ? "the 1 conversation" : `the ${String(labelUsage(labels, label.id))} conversations`} that use${labelUsage(labels, label.id) === 1 ? "s" : ""} it, the list and the sidebar.`}</p>
                 </td>
                 <td>
                   <div className={s("inlineActions")}>
@@ -3512,7 +4348,7 @@ function SettingsLabels({ labels, role, onSave, onDelete, onCreate }: {
           >
             <p id={`${id}-del`} className={s("confirmTitle")}>{`Delete “${deletingLabel.name}”?`}</p>
             <ul id={`${id}-deldesc`} className={s("confirmPoints")}>
-              <li>{`It's removed from the ${String(labelUsage(labels, deletingLabel.id))} comments that use it. No comment is deleted.`}</li>
+              <li>{`It's removed from the ${String(labelUsage(labels, deletingLabel.id))} conversations that use it. No conversation or comment is deleted.`}</li>
               <li>A Label filter using it stops matching.</li>
               <li>This can&apos;t be undone. Each affected conversation&apos;s activity keeps a record.</li>
             </ul>
@@ -3568,7 +4404,7 @@ function SettingsIntelligence() {
 
 /* ───────────── prototype controls and the capability reference (not product UI) ───────────── */
 
-function PrototypeBar({ role, mode, actions, theme, readModel, allHealthy, target, selected, onRole, onMode, onActions, onTheme, onReadModel, onAllHealthy, onTarget, onArrive, onReset }: {
+function PrototypeBar({ role, mode, actions, theme, readModel, allHealthy, target, zone, selected, onRole, onMode, onActions, onTheme, onReadModel, onAllHealthy, onTarget, onZone, onNewComment, onArrive, onReset }: {
   readonly role: Role;
   readonly mode: Mode;
   readonly actions: ActionsMode;
@@ -3576,6 +4412,7 @@ function PrototypeBar({ role, mode, actions, theme, readModel, allHealthy, targe
   readonly readModel: ReadModel;
   readonly allHealthy: boolean;
   readonly target: number;
+  readonly zone: string;
   readonly selected: string | undefined;
   readonly onRole: (role: Role) => void;
   readonly onMode: (mode: Mode) => void;
@@ -3584,6 +4421,8 @@ function PrototypeBar({ role, mode, actions, theme, readModel, allHealthy, targe
   readonly onReadModel: (readModel: ReadModel) => void;
   readonly onAllHealthy: (allHealthy: boolean) => void;
   readonly onTarget: (minutes: number) => void;
+  readonly onZone: (zone: string) => void;
+  readonly onNewComment: () => void;
   readonly onArrive: () => void;
   readonly onReset: () => void;
 }) {
@@ -3643,6 +4482,16 @@ function PrototypeBar({ role, mode, actions, theme, readModel, allHealthy, targe
               </select>
             </span>
             <span className={s("protoField")}>
+              <label htmlFor={`${id}-zone`}>Workspace time zone (assumption)</label>
+              <select id={`${id}-zone`} className={s("select")} value={zone} onChange={(event) => { onZone(ZONES.find((item) => item.id === event.target.value)?.id ?? DEFAULT_ZONE); }}>
+                {ZONES.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </span>
+            <span className={s("protoField")}>
               <label htmlFor={`${id}-data`}>Read model</label>
               <select id={`${id}-data`} className={s("select")} value={readModel} onChange={(event) => { onReadModel(event.target.value === "today" ? "today" : "planned"); }}>
                 <option value="planned">Planned (account names)</option>
@@ -3656,6 +4505,9 @@ function PrototypeBar({ role, mode, actions, theme, readModel, allHealthy, targe
                 <option value="healthy">All healthy</option>
               </select>
             </span>
+            <button type="button" className={s("btn", "btnSmall", "btnSim")} onClick={onNewComment}>
+              Simulate a new comment (new conversation)
+            </button>
             <button type="button" className={s("btn", "btnSmall", "btnSim")} disabled={selected === undefined} onClick={onArrive}>
               {selected === undefined ? "Simulate a new reply (select a conversation)" : `Simulate a new reply from ${selected}`}
             </button>

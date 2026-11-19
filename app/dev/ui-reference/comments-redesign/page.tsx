@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 
 /**
  * Comments experience redesign (Steps 7B-17V … UX-04) — DEVELOPMENT ONLY. The proposed Comments workspace as one
- * interactive prototype over synthetic fixtures: two panels, Needs attention / Open / Assigned to me / Escalated / Done,
+ * interactive prototype over synthetic fixtures: two panels, Open / Needs attention / Assigned to me / Escalated / Done,
  * search and filters, conversation management (assign, Urgent, escalate, Done with a resolution, Reopen), manual labels
  * (assigned at a comment, managed in Settings), simulated Facebook and Instagram comment actions with confirmations, and
  * Details as an overlay drawer. Every change lives in the browser tab's React state: nothing is read from or written to
