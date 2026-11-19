@@ -234,6 +234,8 @@
 .pane {
   position: sticky;
   top: var(--wk-space-16);
+  /* COMMENTS-INT-03B-FIX: a conversation opens at its start, level with the list beside it (the list sticks 16px down). */
+  scroll-margin-top: var(--wk-space-16);
   align-self: start;
   display: flex;
   flex-direction: column;
@@ -275,6 +277,75 @@
 .paneMessage > p {
   margin: 0;
   max-width: 44ch;
+}
+
+/* ───── COMMENTS-INT-03B: a conversation in the pane (model C, approved in COMMENTS-UX-07A/07B) ───── */
+
+/* The page scrolls and the conversation flows with it — never a fixed-height box with a scroll of its own. */
+.pane[data-content="conversation"] {
+  position: static;
+  height: auto;
+  min-height: 320px;
+}
+
+.paneConversation {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.conversation {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.conversationHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-8);
+  padding: var(--wk-space-20) var(--wk-space-24) var(--wk-space-16);
+  border-bottom: 1px solid var(--wk-border-default);
+  background: var(--wk-bg-content);
+}
+
+.conversationTitle {
+  margin: 0;
+  font: 600 18px / calc(24 / 18) var(--wk-font-brand);
+  overflow-wrap: anywhere;
+}
+
+.conversationContext {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.conversationNote {
+  margin: 0;
+  font-size: 12px;
+  line-height: calc(16 / 12);
+  color: var(--wk-text-secondary);
+}
+
+.conversationBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wk-space-12);
+  min-width: 0;
+  padding: var(--wk-space-16) var(--wk-space-24) var(--wk-space-24);
+}
+
+/* Beside a conversation, the list stays on screen as the page scrolls; taller than the screen, it scrolls on its own. */
+@media (min-width: 1024px) {
+  .split:has(> .pane[data-content="conversation"]) > .listColumn {
+    position: sticky;
+    top: var(--wk-space-16);
+    max-height: calc(100dvh - 2 * var(--wk-space-16));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
 }
 
 /* ───── below 1024 px: one panel at a time ───── */
@@ -327,6 +398,11 @@
 
   .title {
     font-size: 22px;
+  }
+
+  .conversationHead,
+  .conversationBody {
+    padding-inline: var(--wk-space-16);
   }
 }
 

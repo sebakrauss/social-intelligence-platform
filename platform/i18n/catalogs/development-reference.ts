@@ -336,6 +336,6 @@ export const developmentReferenceCatalog: Catalog = {
   "comments.pilot.inbox_link": "Go to the Inbox",
   "comments.pane.label": "Conversation",
   "comments.pane.empty": "Select a conversation to read it here.",
-  "comments.pane.pending": "Reading a conversation here isn't part of this preview yet.",
-  "comments.pane.open_in_inbox": "Open this conversation in the Inbox",
+  "comments.pane.open_in_inbox": "View conversation in Inbox",
+  "comments.pane.thread_empty": "No comment of this conversation has been read yet.",
 };

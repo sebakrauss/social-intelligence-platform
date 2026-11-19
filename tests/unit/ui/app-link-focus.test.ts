@@ -18,6 +18,7 @@ vi.mock("next/link", () => ({
 }));
 
 const { AppLink } = await import("@/ui/navigation/app-link");
+const { CommentsPane, CommentsRow } = await import("@/ui/inbox/comments");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const ROW = "row-1";
@@ -71,5 +72,36 @@ describe("in-app link: who takes the focus after a move", () => {
     await render(conversationPage());
     expect(active()).not.toBe(link("row"));
     expect(active()).not.toBe(link("back"));
+  });
+});
+
+/* COMMENTS-INT-03B-FIX (M-1): a link to a conversation goes to the conversation's anchor (#conversation). The real
+   Comments row and pane are drawn here: the SELECTED row and the way back stand for that anchor; every other row for its own. */
+describe("Comments: the focus after opening a conversation (the real row and pane)", () => {
+  const time = { iso: "2026-11-01T10:00:00.000Z", label: "10:00", full: "01 NOV 2026 · 10:00 UTC" };
+  const row = (current: boolean): ReactNode => h(CommentsRow, { id: ROW, href: "/c/1#conversation", current, origin: null, author: "Person 1", time, excerpt: "excerpt" });
+  // The same structure on both pages, so the row is the same element (as the original cases above do).
+  const list = (): ReactNode => h("div", null, h("ul", null, row(false)));
+  const opened = (): ReactNode => h("div", null, h("ul", null, row(true)), h(CommentsPane, { label: "Conversation", back: { href: `/c#${ROW}`, label: "back", focusKey: "conversation" }, content: "conversation", children: "thread" }));
+  const rowLink = (): HTMLAnchorElement => container.querySelector(`#${ROW} a`) as HTMLAnchorElement;
+
+  it("wide screen: the selected row takes the focus back once the conversation opens", async () => {
+    await render(list());
+    await act(async () => { rowLink().click(); await Promise.resolve(); });
+    await render(opened());
+    expect(active()).toBe(rowLink());
+  });
+
+  it("one panel: the row is not drawn — the way back takes the focus (never the page body), and going back hands it to the row", async () => {
+    await render(list());
+    const target = rowLink();
+    Object.defineProperty(target, "focus", { configurable: true, value: () => undefined });
+    await act(async () => { target.click(); await Promise.resolve(); });
+    await render(opened());
+    expect(active()).toBe(link("back"));
+    Reflect.deleteProperty(target, "focus");
+    await act(async () => { link("back").click(); await Promise.resolve(); });
+    await render(list());
+    expect(active()).toBe(rowLink());
   });
 });

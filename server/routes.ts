@@ -75,10 +75,18 @@ export function workspaceCommentsPagePath(workspaceId: unknown, cursor: string):
   return base === undefined ? undefined : `${base}?cursor=${encodeURIComponent(cursor)}`;
 }
 
-/** Comments with one conversation selected by its address (same ids, cursor and row fragment as the Inbox). */
+/**
+ * COMMENTS-INT-03B-FIX (M-1): the Comments conversation area's anchor — what a link to a conversation goes to. Opening
+ * one lands at its start (its header and the first comments; on one panel, its way back too), whatever was scrolled
+ * before. Never the row: beside a conversation the row sits in the list's own (sticky) scroll, or is not drawn at all
+ * on one panel, so bringing it into view scrolled the page to an arbitrary place (or not at all).
+ */
+export const COMMENTS_CONVERSATION_ANCHOR = "conversation";
+
+/** Comments with one conversation selected by its address (same ids and cursor as the Inbox; it opens at its start). */
 export function workspaceCommentsConversationPath(workspaceId: unknown, conversationId: unknown, cursor?: string): string | undefined {
   const base = workspaceCommentsPath(workspaceId);
   if (base === undefined || !isUuid(conversationId)) return undefined;
   const position = cursor === undefined || cursor === "" ? "" : `?cursor=${encodeURIComponent(cursor)}`;
-  return `${base}/${conversationId}${position}#${conversationRowId(conversationId)}`;
+  return `${base}/${conversationId}${position}#${COMMENTS_CONVERSATION_ANCHOR}`;
 }

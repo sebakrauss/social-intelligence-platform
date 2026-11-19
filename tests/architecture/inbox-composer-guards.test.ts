@@ -133,6 +133,8 @@ const APP_LINK = "ui/navigation/app-link.tsx";
 /** Step 7B-17R (Comments 2.1): the one other client module on the Comments surface — a time read in the browser's zone. */
 const LOCAL_TIME = "ui/time/local-time.tsx";
 const LOCAL_TIME_FORMAT = "ui/time/local-time-format.ts";
+/** COMMENTS-INT-03B-FIX: the Comments list column — keeps the selected row in view inside the list's own scroll. */
+const LIST_COLUMN = "ui/inbox/comments-list-column.tsx";
 
 const sourceOf = (file: string): ts.SourceFile => ts.createSourceFile(file, readFileSync(path.join(REPOSITORY_ROOT, file), "utf8"), ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
 const nodesOf = (root: ts.Node): ts.Node[] => {
@@ -377,6 +379,19 @@ describe("reply drafts: memory only, never publishing (syntax tree)", () => {
     expect(codeOf(LOCAL_TIME)).toMatch(/const noSubscription = \(\): \(\(\) => void\) => \(\) => undefined;/);
   });
 
+  it("COMMENTS-INT-03B-FIX: the Comments list column only moves its own scroll, once per list and selection — no page scroll, request, storage, listener or timer", () => {
+    expect(importsOfFile(LIST_COLUMN)).toEqual(["react"]);
+    const code = codeOf(LIST_COLUMN);
+    expect(code).toMatch(/^"use client";/);
+    expect(code).not.toMatch(/\bfetch\b|Storage|indexedDB|cookie|document\.|navigator|location|history|setTimeout|setInterval|requestAnimationFrame|addEventListener|scrollIntoView|scrollTo\(|scrollBy\(|\.focus\(|reply-drafts|dangerouslySetInnerHTML|useState/);
+    // One layout effect, keyed by the list and the selection; the only thing it writes on the page is its own column's
+    // scrollTop. Its one memory is the last list's position, in a module variable (this tab only: never stored or sent).
+    expect(code.match(/useLayoutEffect\(/g)).toHaveLength(1);
+    expect(code).toMatch(/\}, \[list, selected\]\);/);
+    expect([...new Set([...code.matchAll(/(\w+(?:\.\w+)*)\s*=(?!=|>)/g)].map((match) => match[1]).filter((target) => target?.includes(".")))]).toEqual(["column.scrollTop"]);
+    expect(code.match(/^let \w+/gm)).toEqual(["let lastPosition"]);
+  });
+
   it("only the composer, the signed-out boundary, the conversation boundary and the in-app link reach the drafts module — by any import, static or dynamic, anywhere in production code", () => {
     const reachers = sourceFiles([...PRODUCTION_ROOTS]).filter((file) => file !== DRAFTS && /reply-drafts(?!-(boundary|scope))/.test(codeOf(file)));
     expect(reachers.sort()).toEqual([APP_LINK, BOUNDARY, COMPOSER, SCOPE].sort());
@@ -578,8 +593,10 @@ describe("reply drafts: memory only, never publishing (syntax tree)", () => {
     expect(sourceFiles([...PRODUCTION_ROOTS]).filter((file) => file !== APP_LINK && /@\/ui\/navigation\/app-link/.test(codeOf(file))).sort()).toEqual(["ui/inbox/comments.tsx", "ui/inbox/inbox.tsx", "ui/shell/app-shell.tsx"]);
     // COMMENTS-INT-03A: the redesigned Comments list has two in-app links — its row (the same contract as the Inbox row)
     // and, since 03A-FIX, the way back to the list, which stands for the selected row's anchor so focus is never lost.
+    // COMMENTS-INT-03B-FIX (M-1): a link to a conversation goes to the conversation's anchor, so the SELECTED row (and the
+    // way back, where the row is not drawn) stands for that anchor; every other row still stands for its own.
     expect([...codeOf("ui/inbox/comments.tsx").matchAll(/<AppLink href=\{[^}]+\}[^>]*>/g)].map((m) => m[0])).toEqual([
-      '<AppLink href={href} className={styles["row"]} pendingClassName={styles["rowPending"]} current={current} focusKey={id}>',
+      '<AppLink href={href} className={styles["row"]} pendingClassName={styles["rowPending"]} current={current} focusKey={current ? "conversation" : id}>',
       '<AppLink href={back.href} className={styles["backLink"]} focusKey={back.focusKey}>',
     ]);
     expect([...codeOf("ui/inbox/comments.tsx").matchAll(/<a\b[^>]*>/g)]).toHaveLength(0);

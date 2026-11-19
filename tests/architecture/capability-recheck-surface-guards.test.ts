@@ -70,7 +70,9 @@ describe("the surface requests; it never decides", () => {
     // Step 7B-17V: + the development-only Comments redesign prototype (a 404 outside `next dev`; local state only; its
     // rules are in brand-guards, and it passes the client-module syntax rules of inbox-composer-guards like every other).
     // COMMENTS-UX-07A: + the development-only scroll comparison (same rules: a 404 outside `next dev`, local state only).
-    expect(clients).toEqual(["app/dev/ui-reference/comments-redesign/prototype.tsx", "app/dev/ui-reference/comments-scroll/comparison.tsx", "ui/connections/pending-submit-button.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/navigation/app-link.tsx", "ui/time/local-time.tsx"]);
+    // COMMENTS-INT-03B-FIX: + the Comments list column (keeps the selected row in the list's own view; its rule is in
+    // inbox-composer-guards).
+    expect(clients).toEqual(["app/dev/ui-reference/comments-redesign/prototype.tsx", "app/dev/ui-reference/comments-scroll/comparison.tsx", "ui/connections/pending-submit-button.tsx", "ui/inbox/comments-list-column.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/navigation/app-link.tsx", "ui/time/local-time.tsx"]);
   });
 
   it("the read-model offer reuses the recovery core's functions and restates none of its rules; it locks and writes nothing", () => {

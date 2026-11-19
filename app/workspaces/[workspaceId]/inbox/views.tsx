@@ -1,15 +1,10 @@
 import {
   AUTHOR_MESSAGES,
   CONVERSATION_STATE_MESSAGES,
-  FACT_FALLBACK,
-  FACT_MESSAGES,
-  PRESENCE_MESSAGES,
   SOURCE_MESSAGES,
   platformName,
-  when,
   type ConversationDetail as ConversationDetailModel,
   type OutboundReplyItem,
-  OUTBOUND_STATE_MESSAGES,
   REPLY_BLOCKED_MESSAGES,
   REPLY_REASON_MESSAGES,
   REPLY_REFUSAL_MESSAGES,
@@ -23,8 +18,8 @@ import { publishReplyAction } from "@/server/inbox/actions";
 import type { ReplyAction } from "@/server/inbox/reply-state";
 import { t } from "@/server/i18n";
 import { ReplyComposer, type ReplyComposerLabels, type ReplyOutcomeMessages } from "@/ui/inbox/reply-composer";
-import { conversationRowId, threadMemberId, workspaceConversationPath, workspaceConversationReplyPath, workspaceInboxPagePath, workspaceInboxPath } from "@/server/routes";
-import { Icon, type IconName } from "@/ui/icons/icon";
+import { conversationRowId, workspaceConversationPath, workspaceConversationReplyPath, workspaceInboxPagePath, workspaceInboxPath } from "@/server/routes";
+import { Icon } from "@/ui/icons/icon";
 import {
   ConversationActions,
   ConversationDetail,
@@ -32,35 +27,29 @@ import {
   ContextFact,
   ConversationNav,
   ConversationRow,
-  Facts,
   InboxEmpty,
   InboxHeader,
-  MemberDisclosure,
   Pagination,
-  OutboundReply,
   QuietNote,
   ReplySlot,
   ReplyUnavailable,
   Thread,
   ThreadHeading,
-  ThreadMember,
   ThreadOutbound,
-  TimedText,
   UnavailableAction,
   UnavailableActions,
-  Version,
-  VersionList,
 } from "@/ui/inbox/inbox";
 import { DataTag } from "@/ui/primitives/data-tag";
 import { Disclosure } from "@/ui/primitives/disclosure";
 import { Notice } from "@/ui/primitives/notice";
 import { OriginMark } from "@/ui/primitives/origin-mark";
-import { StatePill, type StateTone } from "@/ui/primitives/state-pill";
+import { StatePill } from "@/ui/primitives/state-pill";
 import { TextLink } from "@/ui/primitives/text-link";
-import { ClosedState, COVERAGE_TONES, CoverageSummary, kindOf, renderNow, shortTime, shown, timed } from "./read-views";
+import { authorOf, ClosedState, COVERAGE_TONES, CoverageSummary, kindOf, OutboundRow, parentLabeller, previousTimes, renderNow, shortTime, shown, threadEntries, ThreadMemberRecord, timed, type ThreadEntry, type Timing } from "./read-views";
 
 // Read-only pieces live in ./read-views (no composer, no action); re-exported so every existing import keeps working.
-export { ClosedState, COVERAGE_TONES, CoverageSummary, shortTime };
+export { ClosedState, COVERAGE_TONES, CoverageSummary, shortTime, threadEntries };
+export type { ThreadEntry };
 
 /**
  * Inbox views (UI-4; Step 7B-15B): how the Step 7A view models are drawn — the list, the coverage summary, the selected
@@ -235,18 +224,8 @@ export function ConversationView({ workspaceId, detail, cursor, replyTo, draftSc
   // Step 7B-15S/15U — short times: the year unless it is the current UTC year, the date only when it changes
   // from the time shown just above (reading order). Exact forms stay on the page (TimeStamp, the "Exact times" record).
   const now = renderNow();
-  const previousOf = new Map<string, Date | undefined>();
-  let shownAbove: Date | undefined;
-  for (const entry of entries) {
-    const at = entry.kind === "member" ? entry.item.providerCreatedAt : entry.item.createdAt;
-    previousOf.set(entry.kind === "member" ? entry.item.interactionId : entry.item.intentId, shownAbove);
-    if (at !== null) shownAbove = entry.kind === "outbound" && entry.item.confirmedAt !== null ? entry.item.confirmedAt : at;
-  }
-  // Who wrote more than one entry here: "Replying to …" then also says when the parent was written (which of theirs).
-  const written = new Map<string, number>();
-  for (const item of detail.thread) written.set(authorOf(item), (written.get(authorOf(item)) ?? 0) + 1);
-  const parentLabel = (parent: ThreadItem): string =>
-    (written.get(authorOf(parent)) ?? 0) > 1 && parent.providerCreatedAt !== null ? t("inbox.reply.to_at", { author: authorOf(parent), time: shortTime(parent.providerCreatedAt, now) }) : t("inbox.reply.to", { author: authorOf(parent) });
+  const previousOf = previousTimes(entries);
+  const parentLabel = parentLabeller(detail, now);
   return (
     <ConversationDetail
       back={back === undefined ? undefined : <TextLink href={back}>{t("inbox.back")}</TextLink>}
@@ -297,100 +276,6 @@ export function ConversationView({ workspaceId, detail, cursor, replyTo, draftSc
 }
 
 /**
- * One entry of the drawn thread. `replyingTo` is set when the entry answers a member that is NOT the comment heading
- * its block (a reply to a reply): the entry then names its real parent in words, because its place in the list no
- * longer can. `detached` marks a reply whose own parent was not read: it heads a block of its own, under no one.
- */
-export type ThreadEntry =
-  | { readonly kind: "member"; readonly item: ThreadItem; readonly replyingTo?: ThreadItem; readonly detached?: true }
-  | { readonly kind: "outbound"; readonly item: OutboundReplyItem; readonly replyingTo?: ThreadItem };
-
-/**
- * Step 7B-15O/Q — the thread in the order things happened, from the data already read (no time is invented).
- *
- * The read model lists a conversation's members FLAT, oldest first by platform time (undated last). The page draws ONE
- * level of indentation, so order and indentation alone cannot say both "when" and "under whom" once a reply answers
- * another reply. The two are therefore kept apart:
- *
- *   - WHERE (association): every entry sits in the block of the top-level comment it descends from — never under
- *     another comment — and an entry whose parent is not that comment itself carries `replyingTo` (drawn as
- *     "Replying to …"). The parent ids are the read model's own; nothing is re-parented.
- *   - WHEN (chronology): inside a block the members keep the read model's order, and a reply requested from Wrenkind
- *     is placed before the first member of the block — at ANY depth — that the platform dates later than the request
- *     (and that comes after the request's own parent); otherwise at the end of the block.
- *
- * A member without a platform date never moves anything; equal times keep the platform's reply first; several requests
- * keep their request order, then their id — so the result does not depend on the order the requests arrive in. A reply
- * whose parent was not read heads its own (detached) block; a request whose comment is not in the thread is listed
- * last. Every member and every request is drawn exactly once.
- */
-export function threadEntries(detail: ConversationDetailModel): readonly ThreadEntry[] {
-  const thread = detail.thread;
-  const byId = new Map(thread.map((item) => [item.interactionId, item]));
-  const indexOf = new Map(thread.map((item, index) => [item.interactionId, index]));
-  /**
-   * The head of an item's block: its top-most ancestor that was read (itself, when it has no parent or its parent is
-   * absent). Parent ids that loop (never expected) are not followed forever: the loop's first member in the read
-   * model's order heads the block, so every member still belongs to exactly one.
-   */
-  const rootOf = (item: ThreadItem): ThreadItem => {
-    const visited = [item];
-    let current = item;
-    for (;;) {
-      const parent = current.parentInteractionId === null ? undefined : byId.get(current.parentInteractionId);
-      if (parent === undefined) return current;
-      const loopStart = visited.indexOf(parent);
-      if (loopStart !== -1) return visited.slice(loopStart).reduce((first, member) => ((indexOf.get(member.interactionId) ?? 0) < (indexOf.get(first.interactionId) ?? 0) ? member : first));
-      visited.push(parent);
-      current = parent;
-    }
-  };
-  // Blocks in the order their heads appear; inside a block, the head first and then its members in the read model's order.
-  const blocks = new Map<string, ThreadItem[]>();
-  for (const item of thread) if (rootOf(item) === item) blocks.set(item.interactionId, [item]);
-  for (const item of thread) {
-    const root = rootOf(item);
-    if (root !== item) blocks.get(root.interactionId)?.push(item);
-  }
-  const outbound = [...detail.outbound].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.intentId.localeCompare(b.intentId));
-  /** Per block, the requests drawn just before the member at an index (index = block length: after the last one). */
-  const placed = new Map<string, Map<number, OutboundReplyItem[]>>();
-  const unplaced: OutboundReplyItem[] = [];
-  for (const request of outbound) {
-    const parent = byId.get(request.parentInteractionId);
-    const block = parent === undefined ? undefined : blocks.get(rootOf(parent).interactionId);
-    if (parent === undefined || block === undefined) {
-      unplaced.push(request);
-      continue;
-    }
-    let position = block.indexOf(parent) + 1;
-    while (position < block.length) {
-      const at = block[position]?.providerCreatedAt ?? null;
-      if (at !== null && at.getTime() > request.createdAt.getTime()) break;
-      position += 1;
-    }
-    const slots = placed.get(block[0]?.interactionId ?? "") ?? new Map<number, OutboundReplyItem[]>();
-    slots.set(position, [...(slots.get(position) ?? []), request]);
-    placed.set(block[0]?.interactionId ?? "", slots);
-  }
-  const entries: ThreadEntry[] = [];
-  for (const [rootId, block] of blocks) {
-    const slots = placed.get(rootId);
-    const naming = (parentId: string | null): { readonly replyingTo?: ThreadItem } => {
-      const parent = parentId === null || parentId === rootId ? undefined : byId.get(parentId);
-      return parent === undefined ? {} : { replyingTo: parent };
-    };
-    block.forEach((item, index) => {
-      for (const request of slots?.get(index) ?? []) entries.push({ kind: "outbound", item: request, ...naming(request.parentInteractionId) });
-      entries.push({ kind: "member", item, ...(index === 0 ? (item.parentInteractionId === null ? {} : { detached: true as const }) : naming(item.parentInteractionId)) });
-    });
-    for (const request of slots?.get(block.length) ?? []) entries.push({ kind: "outbound", item: request, ...naming(request.parentInteractionId) });
-  }
-  for (const request of unplaced) entries.push({ kind: "outbound", item: request });
-  return entries;
-}
-
-/**
  * Step 7B-3: which members may receive a public reply. The brand's own messages, placeholders never read, and
  * comments hidden or gone from the platform offer nothing; on Instagram, only top-level comments do (replies attach to
  * the top-level comment, PD/Meta documented restriction). The server re-checks every one of these at request time.
@@ -421,10 +306,6 @@ function SecondaryActions({ detail }: { readonly detail: ConversationDetailModel
     </ConversationActions>
   );
 }
-
-const OUTBOUND_TONES: { readonly [S in OutboundReplyItem["state"]]: StateTone } = { sending: "neutral", sent: "success", failed: "danger", checking: "warning", blocked: "warning" };
-/** Never color alone (manual §11): the two settled-or-moving states carry an icon; the others keep the dot and their word. */
-const OUTBOUND_ICONS: { readonly [S in OutboundReplyItem["state"]]: IconName | undefined } = { sending: "estado-sync", sent: "decision-approve", failed: undefined, checking: undefined, blocked: undefined };
 
 function composerLabels(platformText: string, author: string, maxChars: number, instagramTopLevel: boolean): ReplyComposerLabels {
   return {
@@ -468,37 +349,6 @@ export function replyFormKey(): string {
   return `rk-${randomUUID()}`;
 }
 
-/** How a member is named wherever the page refers to them (the thread's author line and "Replying to …"). */
-const authorOf = (item: Pick<ThreadItem, "author" | "authorLabel">): string => (item.author === "own_account" ? t(AUTHOR_MESSAGES.own_account) : item.author === "unknown" ? t(AUTHOR_MESSAGES.unknown) : (item.authorLabel ?? t("inbox.author.unnamed")));
-
-/** Step 7B-15S/15U: where a time is drawn in the thread — the render-time reference and the time shown just above it. */
-interface Timing {
-  readonly now: Date;
-  readonly previous: Date | undefined;
-}
-
-function OutboundRow({ item, replyingTo, timing }: { readonly item: OutboundReplyItem; readonly replyingTo?: string; readonly timing: Timing }) {
-  const times = [<TimedText key="requested" short={timed("inbox.outbound.requested_at", item.createdAt, "short", timing)} full={timed("inbox.outbound.requested_at", item.createdAt, "full")} />];
-  if (item.confirmedAt !== null) times.push(<TimedText key="confirmed" short={timed("inbox.outbound.confirmed_at", item.confirmedAt, "short", { now: timing.now, previous: item.createdAt })} full={timed("inbox.outbound.confirmed_at", item.confirmedAt, "full")} />);
-  const icon = OUTBOUND_ICONS[item.state];
-  const note = item.state === "checking" ? t("inbox.outbound.checking_note") : item.state === "failed" ? t("inbox.outbound.failed_note") : item.state === "blocked" ? t("inbox.outbound.blocked_note") : undefined;
-  return (
-    <OutboundReply
-      author={t("inbox.outbound.author")}
-      kind={t("inbox.outbound.kind")}
-      state={
-        <StatePill tone={OUTBOUND_TONES[item.state]} {...(icon === undefined ? {} : { icon })}>
-          {t(OUTBOUND_STATE_MESSAGES[item.state])}
-        </StatePill>
-      }
-      text={item.text}
-      times={times}
-      {...(note === undefined ? {} : { note })}
-      {...(replyingTo === undefined ? {} : { replyingTo })}
-    />
-  );
-}
-
 function Member({ item, platformText, detail, workspaceId, cursor, replyTarget, replyOpen, draftScope, replyPath, replyAction, outcomes, replyingTo, detached, timing }: {
   readonly item: ThreadItem;
   readonly platformText: string;
@@ -518,20 +368,6 @@ function Member({ item, platformText, detail, workspaceId, cursor, replyTarget, 
   readonly timing: Timing;
 }) {
   const author = authorOf(item);
-  const kind = t(item.kind === "reply" ? "inbox.thread.reply" : "inbox.thread.comment");
-  // Step 7B-15S: the record — every exact time, one small disclosure away (when it was written, edited, read).
-  // Comments 2.1 (Step 7B-17R): in the reader's own zone, with the zone named; UTC without JavaScript.
-  const times: React.ReactNode[] = [];
-  if (item.providerCreatedAt !== null) times.push(timed("inbox.thread.posted", item.providerCreatedAt, "full"));
-  if (item.providerEditedAt !== null) times.push(timed("inbox.thread.edited", item.providerEditedAt, "full"));
-  if (item.textObservedAt !== null) times.push(timed("inbox.thread.text_read", item.textObservedAt, "full"));
-  // Comments 2.1 (Step 7B-17T): the screen-reader name of this entry's disclosures reads its time in the same zone as
-  // every other time on the page (UTC without JavaScript).
-  const entryLabel = item.providerCreatedAt === null ? t("inbox.thread.entry_label_undated", { kind, author }) : timed("inbox.thread.entry_label", item.providerCreatedAt, "full", undefined, { kind, author });
-  const removed = item.observed && item.presence === "removed_at_source";
-  // "Written by your account" repeats what the author line already says on the brand's own messages: the fact stays in
-  // the data (nothing is removed from the view model) and is simply not drawn twice.
-  const facts = item.facts.filter((fact) => !(fact === "author_own_brand" && item.author === "own_account"));
   // Step 7B-14I2: the exceptional validation composer appears ONLY under the exact comment a live authorization naming this
   // member covers; it sends no identifier — the server resolves the authorization itself.
   const validationTarget = detail.reply.kind === "validation" ? detail.reply.targets.find((target) => target.targetInteractionId === item.interactionId) : undefined;
@@ -579,65 +415,7 @@ function Member({ item, platformText, detail, workspaceId, cursor, replyTarget, 
         {...drafts}
       />
     ) : undefined;
-  return (
-    <ThreadMember
-      id={threadMemberId(item.interactionId)}
-      nested={item.parentInteractionId !== null}
-      own={item.author === "own_account"}
-      author={author}
-      named={item.author === "audience" && item.authorLabel !== null}
-      detached={detached}
-      {...(replyingTo === undefined ? (detached ? { replyingTo: t("inbox.thread.parent_not_shown") } : {}) : { replyingTo })}
-      kind={kind}
-      {...(item.providerCreatedAt === null ? {} : { time: shown(item.providerCreatedAt, timing.now, timing.previous) })}
-      {...(item.providerEditedAt === null ? {} : { edited: t("inbox.thread.edited_short") })}
-      {...(item.observed && item.presence !== "present"
-        ? { presence: <StatePill icon="estado-lock">{t(PRESENCE_MESSAGES[item.presence], { platform: platformText })}</StatePill> }
-        : {})}
-      text={item.observed ? (item.text ?? t("inbox.thread.no_text")) : t("inbox.thread.not_read")}
-      textMuted={!item.observed || item.text === null || removed}
-      times={times}
-      timesLabel={t("inbox.thread.details")}
-      timesContext={entryLabel}
-      {...(item.earlierVersions.length === 0
-        ? {}
-        : {
-            versions: (
-              <MemberDisclosure summary={t(item.olderVersionsOmitted ? "inbox.thread.versions_recent" : "inbox.thread.versions", { count: String(item.earlierVersions.length) })} context={entryLabel}>
-                <VersionList
-                  {...(item.olderVersionsOmitted
-                    ? {
-                        notice: (
-                          <Notice tone="info" live="off">
-                            {t("inbox.thread.versions_omitted")}
-                          </Notice>
-                        ),
-                      }
-                    : {})}
-                >
-                  {item.earlierVersions.map((version, index) => (
-                    <Version key={`${version.observedAt.toISOString()}-${String(index)}`} time={{ iso: when(version.observedAt), label: timed("inbox.thread.version_read", version.observedAt, "full") }} text={version.text} />
-                  ))}
-                </VersionList>
-              </MemberDisclosure>
-            ),
-          })}
-      {...(facts.length === 0
-        ? {}
-        : {
-            facts: (
-              <Facts label={t("inbox.facts.heading")}>
-                {facts.map((fact) => (
-                  <DataTag key={fact} {...(fact === "link_present" ? { icon: "conv-link" as const } : fact === "watch_term_match" ? { icon: "util-tag" as const } : {})}>
-                    {t(FACT_MESSAGES[fact] ?? FACT_FALLBACK)}
-                  </DataTag>
-                ))}
-              </Facts>
-            ),
-          })}
-      {...(composer === undefined ? {} : { actions: composer })}
-    />
-  );
+  return <ThreadMemberRecord item={item} platformText={platformText} {...(replyingTo === undefined ? {} : { replyingTo })} detached={detached} timing={timing} {...(composer === undefined ? {} : { actions: composer })} />;
 }
 
 

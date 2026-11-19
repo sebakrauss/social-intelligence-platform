@@ -4,6 +4,9 @@
  * only AFTER the Inbox read authorized the caller, so an unauthorized caller can never learn whether a workspace is
  * listed), that the route reads nothing the Inbox does not, and that it shows the SAME conversations, order, positions
  * and states as the Inbox — with no form, button, composer, synthetic data, account name, caption or total count.
+ * COMMENTS-INT-03B: the selected conversation is drawn READ ONLY in the pane from the Inbox's own conversation answer —
+ * the same thread records, order and times as the Inbox, nothing invented, nothing writable, nothing from another
+ * workspace.
  */
 import { existsSync, readFileSync } from "node:fs";
 import nodePath from "node:path";
@@ -53,6 +56,7 @@ vi.mock("@/server/inbox/runtime", () => ({
 const { default: CommentsPage } = await import("@/app/workspaces/[workspaceId]/comments/page");
 const { default: CommentsConversationPage } = await import("@/app/workspaces/[workspaceId]/comments/[conversationId]/page");
 const { default: InboxPage } = await import("@/app/workspaces/[workspaceId]/inbox/page");
+const { default: InboxConversationPage } = await import("@/app/workspaces/[workspaceId]/inbox/[conversationId]/page");
 
 type Ready = Extract<InboxListState, { kind: "ready" }>;
 type Item = Ready["page"]["items"][number];
@@ -109,6 +113,10 @@ const listPage = async (workspaceId: string, cursor?: string): Promise<string> =
 const selectedPage = async (workspaceId: string, conversationId: string, cursor?: string): Promise<string> =>
   renderToStaticMarkup(await CommentsConversationPage({ params: Promise.resolve({ workspaceId, conversationId }), searchParams: Promise.resolve(cursor === undefined ? {} : { cursor }) }));
 const inboxPage = async (workspaceId: string, cursor?: string): Promise<string> => renderToStaticMarkup(await InboxPage({ params: Promise.resolve({ workspaceId }), searchParams: Promise.resolve(cursor === undefined ? {} : { cursor }) }));
+const rowHtmlOf = (html: string, id: string): string => {
+  const start = html.indexOf(">", html.indexOf(`id="row-${id}"`)) + 1;
+  return html.slice(start, html.indexOf("</li>", start));
+};
 const allow = (value: string | undefined): void => {
   vi.stubEnv(COMMENTS_WORKSPACES_ENV, value);
 };
@@ -227,7 +235,7 @@ describe("Workspace › Comments: who reaches it", () => {
     const html = await selectedPage(WS, FOREIGN);
     expect(html).not.toContain('aria-current="page"');
     expect(html).not.toContain(FOREIGN);
-    expect(html).not.toContain("Open this conversation in the Inbox");
+    expect(html).not.toContain("View conversation in Inbox");
     expect(html).toContain("row-" + C3); // the list itself is still the caller's own
   });
 
@@ -318,23 +326,281 @@ describe("Workspace › Comments: the same conversations as the Inbox", () => {
     expect(coverage(comments)).toBe(coverage(inbox));
   });
 
-  it("the selection lives in the address: the selected row is marked, the conversation area is a plain placeholder", async () => {
+  it("the selection lives in the address: the selected row is marked, the conversation is drawn read only beside it", async () => {
     allow(WS);
     env.list = ready();
     const none = await listPage(WS);
     expect(none).toContain('data-selected="false"');
     expect(none).not.toContain('aria-current="page"');
     expect(none).toContain("Select a conversation to read it here.");
-    expect(none).toContain(`href="/workspaces/${WS}/comments/${C2}#row-${C2}"`);
+    expect(none).toContain(`href="/workspaces/${WS}/comments/${C2}#conversation"`);
     env.detail = conversationReady(C2);
     const selected = await selectedPage(WS, C2, NEXT);
     expect(selected).toContain('data-selected="true"');
     expect([...selected.matchAll(/aria-current="page"/g)]).toHaveLength(1);
     expect(rowHtml(selected, C2)).toContain('aria-current="page"');
-    expect(selected).toContain("Reading a conversation here isn&#x27;t part of this preview yet.");
-    expect(selected).toContain(`href="/workspaces/${WS}/inbox/${C2}#row-${C2}"`); // the Inbox, where it is read
+    expect(selected).toContain("View conversation in Inbox");
+    expect(selected).toContain('data-content="conversation"');
+    expect(selected).toContain(`href="/workspaces/${WS}/inbox/${C2}#row-${C2}"`); // the Inbox, where replies are written
     expect(selected).toContain(`href="/workspaces/${WS}/comments?cursor=${encodeURIComponent(NEXT)}#row-${C2}"`); // back, same position
     expect(selected).not.toMatch(/<form|<button|<textarea/);
+  });
+});
+
+/* ───────────── COMMENTS-INT-03B: the selected conversation, read only ───────────── */
+
+describe("Workspace › Comments: the selected conversation, read only (COMMENTS-INT-03B)", () => {
+  type Detail = Extract<ConversationViewState, { kind: "ready" }>["detail"];
+  type Member = Detail["thread"][number];
+  /** Member and request ids, from hex letters: never equal to a conversation, account or workspace id of this file. */
+  const M = (n: number): string => {
+    const c = "abcdef0589"[n - 1] ?? "f";
+    return `${c.repeat(8)}-${c.repeat(4)}-4${c.repeat(3)}-8${c.repeat(3)}-${c.repeat(12)}`;
+  };
+  const at = (minute: number): Date => new Date(Date.UTC(2026, 10, 1, 10, minute));
+  const member = (n: number, over: Partial<Member> = {}): Member => ({
+    interactionId: M(n),
+    parentInteractionId: null,
+    kind: "comment",
+    observed: true,
+    author: "audience",
+    authorLabel: `Person ${String(n)}`,
+    text: `Text of ${String(n)}`,
+    presence: "present",
+    providerCreatedAt: at(n),
+    providerEditedAt: null,
+    textObservedAt: at(n + 30),
+    earlierVersions: [],
+    olderVersionsOmitted: false,
+    facts: [],
+    ...over,
+  });
+  /** A root comment (1) with a reply (2) and a reply to that reply (3); a second root comment (4); a reply whose parent
+   *  was not read (5); a request made from Wrenkind under 1, and one under a comment not in the thread. */
+  const detail = (over: Partial<Detail> = {}): Detail => ({
+    conversationId: C2,
+    workflowState: "open",
+    platform: "instagram",
+    source: "paid",
+    contentKind: "reel",
+    anchorInteractionId: M(1),
+    thread: [
+      member(1, { authorLabel: "Root Author", text: HOSTILE, earlierVersions: [{ text: "First wording", observedAt: at(0), providerEditedAt: null }], providerEditedAt: at(3), facts: ["link_present"] }),
+      member(2, { kind: "reply", parentInteractionId: M(1), author: "own_account", authorLabel: null }),
+      member(3, { kind: "reply", parentInteractionId: M(2), authorLabel: "Root Author", presence: "hidden" }),
+      member(4, { authorLabel: "Second Root" }),
+      member(5, { kind: "reply", parentInteractionId: M(8), presence: "removed_at_source", text: null }),
+    ],
+    truncated: false,
+    reply: { kind: "hidden" },
+    outbound: [
+      { intentId: M(6), parentInteractionId: M(1), text: "Our pending reply", state: "checking", outcomeCode: null, createdAt: new Date(at(1).getTime() + 30_000), confirmedAt: null },
+      { intentId: M(7), parentInteractionId: M(9), text: "Our sent reply", state: "sent", outcomeCode: null, createdAt: at(4), confirmedAt: at(5) },
+    ],
+    ...over,
+  });
+  const readyDetail = (over: Partial<Detail> = {}, workspaceId: string = WS): ConversationViewState => ({ kind: "ready", workspaceId: workspaceId as never, detail: detail(over) });
+  const words = (html: string): string => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const paneOf = (html: string): string => html.slice(html.indexOf('<section id="conversation"'), html.indexOf("</section>", html.indexOf('<section id="conversation"')));
+  /** The thread's own list, nested lists included. */
+  const threadOf = (html: string): string => {
+    const start = html.lastIndexOf("<ol", html.indexOf('aria-labelledby="thread"'));
+    if (start === -1 || !html.includes('aria-labelledby="thread"')) return "";
+    let depth = 0;
+    for (const match of html.slice(start).matchAll(/<ol\b|<\/ol>/g)) {
+      depth += match[0] === "</ol>" ? -1 : 1;
+      if (depth === 0) return html.slice(start, start + match.index + 5);
+    }
+    return "";
+  };
+  const memberOrder = (html: string): string[] => [...threadOf(html).matchAll(/id="member-([0-9a-f-]{36})"/g)].map((match) => match[1] ?? "");
+  const show = async (state: ConversationViewState, conversationId: string = C2): Promise<string> => {
+    allow(WS);
+    env.list = ready();
+    env.detail = state;
+    return selectedPage(WS, conversationId);
+  };
+
+  it("resolves the conversation the address names, in the workspace the list authorized, and only then", async () => {
+    const html = await show(readyDetail());
+    expect(env.listCalls).toEqual([[WS, undefined]]);
+    expect(env.detailCalls).toEqual([[WS, C2]]); // one Inbox conversation read, after the list
+    expect(rowHtmlOf(html, C2)).toContain('aria-current="page"');
+    expect([...html.matchAll(/aria-current="page"/g)]).toHaveLength(1);
+    const pane = paneOf(html);
+    expect(pane).toContain('id="conversation-title"');
+    expect(words(pane)).toContain("Root Author"); // who started it: the first comment's author, as the Inbox names them
+    expect(memberOrder(html)).toHaveLength(5);
+  });
+
+  it("the thread is the Inbox's own: same records, same order (root, its replies, then the next root), same times and states", async () => {
+    const comments = await show(readyDetail());
+    const inbox = renderToStaticMarkup(await InboxConversationPage({ params: Promise.resolve({ workspaceId: WS, conversationId: C2 }), searchParams: Promise.resolve({}) }));
+    expect(threadOf(comments)).not.toBe("");
+    expect(threadOf(comments)).toBe(threadOf(inbox)); // byte for byte: no composer here, and none there for this member
+    expect(memberOrder(comments)).toEqual([M(1), M(2), M(3), M(4), M(5)]);
+    const thread = words(threadOf(comments));
+    expect(thread).toMatch(/Replying to Person 1|Replying to Your account|Replying to/); // 3 answers 2, not the root
+    expect(thread).toContain("Replying to a comment that isn&#x27;t shown here"); // 5: its parent was not read
+    expect(thread.indexOf("Our pending reply")).toBeLessThan(thread.indexOf("Text of 2")); // requested before 2 was written
+    expect(thread.indexOf("Our sent reply")).toBeGreaterThan(thread.indexOf("Text of 5")); // its comment is not in the thread: last
+  });
+
+  it("replies stay inside their conversation: they are never listed as conversations of their own", async () => {
+    const html = await show(readyDetail());
+    const rows = [...html.matchAll(/id="row-([0-9a-f-]{36})"/g)].map((match) => match[1]);
+    expect(rows).toEqual([C3, C2, C1]); // the list is the Inbox list, unchanged
+    for (const reply of [M(2), M(3), M(5)]) expect(rows).not.toContain(reply);
+  });
+
+  it("states are the server's: hidden, removed, edited, earlier versions and facts as read; a Wrenkind reply shows its real state, never optimistic", async () => {
+    const thread = words(threadOf(await show(readyDetail())));
+    expect(thread).toContain("Hidden");
+    expect(thread).toContain("Edited");
+    expect(thread).toContain("First wording");
+    expect(thread).toContain("Checking"); // OUTCOME_UNKNOWN → checking: not "sent"
+    expect(thread).toContain("Sent");
+    expect(thread).not.toMatch(/Sending…|Publishing/);
+  });
+
+  it("audience text is text: escaped, never linked; the pane has no form, button, field or management control", async () => {
+    const pane = paneOf(await show(readyDetail({ reply: { kind: "available", connectedAccountId: ACCOUNT, platform: "instagram", maxChars: 2200, limitation: null } })));
+    expect(pane).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(pane).not.toContain("<script>alert(1)");
+    expect(pane).not.toMatch(/href="https:\/\/example\.test/);
+    // Even where the Inbox would offer this member a reply, the Comments pane writes nothing.
+    expect(pane).not.toMatch(/<form|<button|<textarea|<input|<select|Publish reply|Reply publicly|Review reply|Your reply|Reply to this comment/);
+    expect(pane).not.toMatch(/Mark done|Reopen|Urgent|Assign|Escalate|Hide|Delete|Block|Add label|Labels/);
+    expect(pane).toContain("View conversation in Inbox");
+    expect(pane).not.toMatch(/to reply|can reply|Reply here/i); // never implies a reply the contract does not offer here
+  });
+
+  it("missing publication metadata is said, never invented: unknown platform, kind and source; no caption, link or account name", async () => {
+    const pane = words(paneOf(await show(readyDetail({ platform: "unknown", contentKind: null, source: "unknown" }))));
+    expect(pane).toContain("Content");
+    expect(pane).toContain("Organic or paid: not known");
+    expect(pane).toContain("Post details aren&#x27;t available yet.");
+    expect(pane).not.toMatch(/Lumen|caption|permalink|instagram\.com|facebook\.com|\bon @/i);
+  });
+
+  it("a first comment that was not read, an empty thread and a longer thread each say so in the Inbox's words", async () => {
+    const unread = await show(readyDetail({ thread: [member(1, { observed: false, text: null })] }));
+    let pane = words(paneOf(unread));
+    expect(pane).toContain("Not read yet: only its place in the conversation is known.");
+    expect(unread.match(/id="conversation-title"[^>]*>([^<]*)</)?.[1]).toBe("Conversation"); // its own name, never an invented author
+    pane = words(paneOf(await show(readyDetail({ thread: [], outbound: [] }))));
+    expect(pane).toContain("No comment of this conversation has been read yet.");
+    pane = words(paneOf(await show(readyDetail({ truncated: true }))));
+    expect(pane).toContain("Showing the first 5 comments and replies; this conversation has more.");
+  });
+
+  it("a conversation that can't be read is the Inbox's own closed state — not found, not allowed, unavailable — with nothing of it drawn", async () => {
+    for (const state of [{ kind: "conversation_not_found" }, { kind: "not_allowed" }, { kind: "unavailable" }, { kind: "workspace_not_found" }] as ConversationViewState[]) {
+      const html = await show(state);
+      expect(html, state.kind).not.toContain('data-content="conversation"');
+      expect(threadOf(html), state.kind).toBe("");
+      expect(html, state.kind).not.toContain('aria-current="page"');
+    }
+    await expect(show({ kind: "signed_out" })).rejects.toThrow("redirect:/sign-in");
+  });
+
+  it("another workspace's conversation is never drawn — even an answer that named another workspace or another conversation", async () => {
+    // The query is scoped (RLS, NOT_FOUND across workspaces); the page also refuses an answer that is not for this address.
+    for (const state of [readyDetail({}, OTHER_WS), readyDetail({ conversationId: FOREIGN })]) {
+      const html = await show(state);
+      expect(threadOf(html)).toBe("");
+      expect(html).not.toContain("Root Author");
+      expect(words(html)).toContain("This conversation isn&#x27;t available.");
+    }
+    // An unlisted workspace never reaches the conversation read at all.
+    env.detailCalls = [];
+    allow(OTHER_WS);
+    env.list = ready();
+    env.detail = readyDetail();
+    await expect(selectedPage(WS, C2)).rejects.toBeInstanceOf(NotFoundSignal);
+    expect(env.detailCalls).toHaveLength(0);
+  });
+
+  it("navigation stays consistent: each address draws its own conversation and marks only its own row; back keeps the list position", async () => {
+    allow(WS);
+    env.list = ready();
+    env.detail = readyDetail({ conversationId: C3, thread: [member(4, { authorLabel: "Third Author" })], outbound: [] });
+    const third = await selectedPage(WS, C3, NEXT);
+    env.detail = readyDetail();
+    const second = await selectedPage(WS, C2, NEXT);
+    expect(rowHtmlOf(third, C3)).toContain('aria-current="page"');
+    expect(rowHtmlOf(third, C2)).not.toContain('aria-current="page"');
+    expect(words(paneOf(third))).toContain("Third Author");
+    expect(words(paneOf(third))).not.toContain("Root Author");
+    expect(rowHtmlOf(second, C2)).toContain('aria-current="page"');
+    expect(words(paneOf(second))).toContain("Root Author");
+    expect(second).toContain(`href="/workspaces/${WS}/comments?cursor=${encodeURIComponent(NEXT)}#row-${C2}"`);
+    // A row's link names its conversation: Back and Forward move between addresses, each drawn by the server from its own.
+    expect(second).toContain(`href="/workspaces/${WS}/comments/${C3}?cursor=${encodeURIComponent(NEXT)}#conversation"`);
+  });
+});
+
+/* ───────────── COMMENTS-INT-03B-FIX: where a conversation opens (M-1) and what the pane says about replies (L-2) ───────────── */
+
+describe("Workspace › Comments: a conversation opens at its start, and the pane says only what the contract says (COMMENTS-INT-03B-FIX)", () => {
+  const words = (html: string): string => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const paneOf = (html: string): string => html.slice(html.indexOf('<section id="conversation"'), html.indexOf("</section>", html.indexOf('<section id="conversation"')));
+  const withReply = (reply: Extract<ConversationViewState, { kind: "ready" }>["detail"]["reply"]): ConversationViewState => {
+    const state = conversationReady(C2);
+    return state.kind === "ready" ? { ...state, detail: { ...state.detail, reply } } : state;
+  };
+  const both = async (state: ConversationViewState): Promise<{ readonly comments: string; readonly inbox: string }> => {
+    allow(WS);
+    env.list = ready();
+    env.detail = state;
+    return { comments: await selectedPage(WS, C2), inbox: renderToStaticMarkup(await InboxConversationPage({ params: Promise.resolve({ workspaceId: WS, conversationId: C2 }), searchParams: Promise.resolve({}) })) };
+  };
+  const fragment = (html: string, cls: string): string[] => [...html.matchAll(new RegExp(`<p class="[^"]*${cls}[^"]*">.*?</p>`, "g"))].map((match) => match[0]);
+
+  it("M-1: every link to a conversation goes to the conversation's own anchor — the pane — never to a row the list scrolls or hides", async () => {
+    allow(WS);
+    env.list = ready();
+    const list = await listPage(WS, NEXT);
+    env.detail = conversationReady(C2);
+    const selected = await selectedPage(WS, C2, NEXT);
+    for (const html of [list, selected]) {
+      const links = [...html.matchAll(/href="(\/workspaces\/[^"]+\/comments\/[0-9a-f-]{36}[^"]*)"/g)].map((match) => match[1] ?? "");
+      expect(links).toHaveLength(3);
+      for (const link of links) expect(link).toMatch(/#conversation$/);
+    }
+    expect(selected).toContain('<section id="conversation"');
+    expect([...selected.matchAll(/id="conversation"/g)]).toHaveLength(1);
+    // The way back still returns to the row, at the same list position (the list is the page there; it is not sticky).
+    expect(selected).toContain(`href="/workspaces/${WS}/comments?cursor=${encodeURIComponent(NEXT)}#row-${C2}"`);
+  });
+
+  it("L-2: the Inbox's review note is the Inbox's own, on the same condition (the read model carries no assessment: every conversation)", async () => {
+    const { comments, inbox } = await both(conversationReady(C2));
+    const note = "Not automatically reviewed yet: safety and priority haven&#x27;t been assessed.";
+    expect(words(paneOf(comments))).toContain(note);
+    expect(fragment(comments, "quietNote")).toEqual(fragment(inbox, "quietNote"));
+    expect(fragment(comments, "quietNote")).toHaveLength(1);
+  });
+
+  it("L-2: a verified reason a reply is unavailable is said in the Inbox's words; an offered or hidden reply is not mentioned at all", async () => {
+    for (const reason of ["monitor_only", "account_inactive", "paused", "connection", "platform_unavailable"] as const) {
+      const { comments, inbox } = await both(withReply({ kind: "unavailable", reason, platform: "instagram" }));
+      const said = fragment(comments, "replyUnavailable");
+      expect(said, reason).toHaveLength(1);
+      expect(said, reason).toEqual(fragment(inbox, "replyUnavailable"));
+    }
+    expect(words(paneOf((await both(withReply({ kind: "unavailable", reason: "monitor_only", platform: "instagram" }))).comments))).toContain("Reply not available This workspace is Monitor-only.");
+    const offered: Extract<ConversationViewState, { kind: "ready" }>["detail"]["reply"][] = [
+      { kind: "hidden" },
+      { kind: "available", connectedAccountId: ACCOUNT, platform: "instagram", maxChars: 2200, limitation: null },
+      { kind: "validation", connectedAccountId: ACCOUNT, platform: "instagram", maxChars: 2200, targets: [] },
+    ];
+    for (const reply of offered) {
+      const pane = paneOf((await both(withReply(reply))).comments);
+      expect(fragment(pane, "replyUnavailable"), reply.kind).toEqual([]);
+      expect(pane, reply.kind).not.toMatch(/Reply not available|isn&#x27;t available yet|to reply|Reply publicly|Publish reply|<form|<button|<textarea/);
+      expect(words(pane), reply.kind).toContain("View conversation in Inbox");
+    }
   });
 });
 
@@ -345,7 +611,7 @@ describe("Workspace › Comments: addresses and what the route may import", () =
     expect(workspaceCommentsPath(WS)).toBe(`/workspaces/${WS}/comments`);
     expect(workspaceCommentsPath("nope")).toBeUndefined();
     expect(workspaceCommentsPagePath(WS, NEXT)).toBe(`/workspaces/${WS}/comments?cursor=${encodeURIComponent(NEXT)}`);
-    expect(workspaceCommentsConversationPath(WS, C1)).toBe(`/workspaces/${WS}/comments/${C1}#row-${C1}`);
+    expect(workspaceCommentsConversationPath(WS, C1)).toBe(`/workspaces/${WS}/comments/${C1}#conversation`);
     expect(workspaceCommentsConversationPath(WS, "x")).toBeUndefined();
     expect(workspaceCommentsConversationPath("x", C1)).toBeUndefined();
   });

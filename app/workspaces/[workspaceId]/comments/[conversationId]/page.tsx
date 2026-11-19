@@ -6,10 +6,11 @@ import { CommentsListView, type CommentsSelectionView } from "../views";
 export const dynamic = "force-dynamic";
 
 /**
- * COMMENTS-INT-03A — Comments with one conversation selected by its address (the selection the next step's
- * conversation panel will read). Access is decided by the LIST answer: authorized by the Inbox read, then offered by
- * the server's allowlist — otherwise the Inbox's own closed state, or 404. The conversation itself is read with the
- * Inbox's query only to tell "a conversation of this workspace" from "not found"; this step draws no part of it.
+ * COMMENTS-INT-03A — Comments with one conversation selected by its address. Access is decided by the LIST answer:
+ * authorized by the Inbox read, then offered by the server's allowlist — otherwise the Inbox's own closed state, or
+ * 404. Only then is the conversation read, with the Inbox's own query (inbox.conversation.view: the same pipeline,
+ * permission and RLS). COMMENTS-INT-03B: its answer is drawn read only in the pane; any other answer — another
+ * workspace's or an unknown conversation, not allowed, unavailable — is the Inbox's own closed state.
  */
 export default async function WorkspaceCommentsConversationPage({
   params,
@@ -27,11 +28,15 @@ export default async function WorkspaceCommentsConversationPage({
   if (list.kind !== "ready") return <main><ClosedState kind={list.kind} /></main>;
   if (conversation?.kind === "signed_out") redirect("/sign-in");
 
+  // COMMENTS-INT-03B (defence in depth; RLS and the query already scope it): an answer is drawn only for the workspace
+  // the list authorized and the conversation the address names — anything else is the Inbox's own "not found".
   const selection: CommentsSelectionView =
     conversation === undefined
       ? { kind: "closed", message: <ClosedState kind="unavailable" /> }
       : conversation.kind === "ready"
-        ? { kind: "conversation", conversationId: conversation.detail.conversationId }
+        ? conversation.workspaceId === list.workspaceId && conversation.detail.conversationId === conversationId
+          ? { kind: "conversation", detail: conversation.detail }
+          : { kind: "closed", message: <ClosedState kind="conversation_not_found" /> }
         : { kind: "closed", message: <ClosedState kind={conversation.kind} /> };
 
   return (

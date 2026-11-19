@@ -3,11 +3,13 @@
  * beside the Inbox. Server components only: every value is a prop already authorized and built on the server, and the
  * selected conversation lives in the address, so nothing here keeps state, reads or writes.
  *
- * This step draws the two-panel frame and the real conversation list. The conversation area is a plain placeholder:
- * no thread, no reply, no management control, nothing simulated.
+ * COMMENTS-INT-03A drew the two-panel frame and the real conversation list. COMMENTS-INT-03B draws the selected
+ * conversation in the pane, READ ONLY: its context and its real thread (the Inbox's own records). No reply, no
+ * management control, nothing simulated — those stay in the Inbox.
  */
 import type { ReactNode } from "react";
 import { AppLink } from "@/ui/navigation/app-link";
+import { CommentsListColumn } from "./comments-list-column";
 import { TimeStamp, type ShownTime } from "./inbox";
 import styles from "./comments.module.css";
 
@@ -39,11 +41,16 @@ export function CommentsAbove({ children }: { readonly children: ReactNode }) {
   return <div className={styles["above"]}>{children}</div>;
 }
 
-/** The two panels: the list column and the conversation area. */
-export function CommentsSplit({ list, pane }: { readonly list: ReactNode; readonly pane: ReactNode }) {
+/**
+ * The two panels: the list column and the conversation area. `listKey` names the list (its workspace and page), so the
+ * column keeps its scroll across conversations of the same list; `selected` keeps that conversation's row in view.
+ */
+export function CommentsSplit({ list, listKey, pane, selected }: { readonly list: ReactNode; readonly listKey: string; readonly pane: ReactNode; readonly selected?: string | undefined }) {
   return (
     <div className={styles["split"]}>
-      <div className={styles["listColumn"]}>{list}</div>
+      <CommentsListColumn className={styles["listColumn"]} list={listKey} selected={selected}>
+        {list}
+      </CommentsListColumn>
       {pane}
     </div>
   );
@@ -70,7 +77,9 @@ export function CommentsRow({ id, href, current, origin, author, time, excerpt, 
 }) {
   return (
     <li id={id} className={styles["item"]}>
-      <AppLink href={href} className={styles["row"]} pendingClassName={styles["rowPending"]} current={current} focusKey={id}>
+      {/* The selected row stands for the conversation's anchor (where links to a conversation go, COMMENTS-INT-03B-FIX):
+          it takes the focus back once the conversation opens; every other row stands for its own anchor (the way back). */}
+      <AppLink href={href} className={styles["row"]} pendingClassName={styles["rowPending"]} current={current} focusKey={current ? "conversation" : id}>
         <span className={styles["rowTop"]}>
           {origin}
           <span className={styles["rowAuthor"]}>{author}</span>
@@ -97,21 +106,24 @@ export function CommentsListMessage({ title, children }: { readonly title: strin
 }
 
 /**
- * The conversation area. In this step it only says what it is: nothing is selected, or the selected conversation is
- * not drawn here yet (with the way to read it in the Inbox). `back` returns to the list where only one panel fits.
+ * The conversation area: a short message (nothing selected, or a conversation that can't be read), or — COMMENTS-INT-03B,
+ * `content="conversation"` — the selected conversation itself, which flows with the page. `back` returns to the list
+ * where only one panel fits.
  */
-export function CommentsPane({ label, back, children }: {
+export function CommentsPane({ label, back, content = "message", children }: {
   readonly label: string;
+  readonly content?: "message" | "conversation";
   /**
-   * The way back to the list where only one panel fits. An in-app link standing for the same anchor as the selected
-   * row (`focusKey`): when the row is not drawn (small screens) this link takes the keyboard focus after the
-   * conversation opens, and going back hands the focus to the row again — it never falls to the top of the page.
+   * The way back to the list where only one panel fits. An in-app link standing for the conversation's anchor
+   * (`focusKey`): where the row is not drawn (small screens) this link takes the keyboard focus after the conversation
+   * opens, and going back hands the focus to the row again — it never falls to the top of the page.
    */
   readonly back?: { readonly href: string; readonly label: string; readonly focusKey?: string | undefined } | undefined;
   readonly children: ReactNode;
 }) {
+  // `conversation` is the anchor a link to a conversation goes to (server/routes COMMENTS_CONVERSATION_ANCHOR).
   return (
-    <section id="conversation" className={styles["pane"]} aria-label={label}>
+    <section id="conversation" className={styles["pane"]} aria-label={label} data-content={content}>
       {back === undefined ? null : (
         <div className={styles["paneBack"]}>
           <AppLink href={back.href} className={styles["backLink"]} focusKey={back.focusKey}>
@@ -119,7 +131,34 @@ export function CommentsPane({ label, back, children }: {
           </AppLink>
         </div>
       )}
-      <div className={styles["paneMessage"]}>{children}</div>
+      <div className={styles[content === "conversation" ? "paneConversation" : "paneMessage"]}>{children}</div>
     </section>
+  );
+}
+
+/**
+ * COMMENTS-INT-03B — the selected conversation, read only (Direction C): who started it, where it happens (the facts the
+ * read model has, and what it does not have about the post), a plain way to view it in the Inbox, then the thread.
+ * Every value is built and authorized on the server.
+ */
+export function CommentsConversation({ title, context, contextNote, note, children }: {
+  readonly title: string;
+  readonly context: ReactNode;
+  readonly contextNote: string;
+  readonly note?: ReactNode;
+  readonly children: ReactNode;
+}) {
+  return (
+    <article className={styles["conversation"]} aria-labelledby="conversation-title">
+      <header className={styles["conversationHead"]}>
+        <h2 id="conversation-title" className={styles["conversationTitle"]}>
+          {title}
+        </h2>
+        <div className={styles["conversationContext"]}>{context}</div>
+        <p className={styles["conversationNote"]}>{contextNote}</p>
+        {note === undefined ? null : <p className={styles["conversationNote"]}>{note}</p>}
+      </header>
+      <div className={styles["conversationBody"]}>{children}</div>
+    </article>
   );
 }

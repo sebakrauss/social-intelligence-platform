@@ -185,7 +185,8 @@ describe("foundations are inert", () => {
    * Step 7B-17K: + the drafts' conversation boundary (one effect; pinned there too). The in-app link lives outside these
    * folders (ui/navigation/app-link.tsx) and is pinned there as well.
    */
-  const CLIENT_COMPONENTS = ["ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx"];
+  // COMMENTS-INT-03B-FIX: + the Comments list column (one layout effect on its own scroll; pinned in inbox-composer-guards).
+  const CLIENT_COMPONENTS = ["ui/inbox/comments-list-column.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx"];
 
   it("the foundation, brand, icon and primitive components are server components", () => {
     for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell", "ui/inbox"]).filter((file) => !CLIENT_COMPONENTS.includes(file))) {

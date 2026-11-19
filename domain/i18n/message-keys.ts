@@ -332,8 +332,9 @@ export const MESSAGE_KEYS = [
   "comments.pilot.inbox_link",
   "comments.pane.label",
   "comments.pane.empty",
-  "comments.pane.pending",
   "comments.pane.open_in_inbox",
+  // COMMENTS-INT-03B: the conversation pane reads the real thread (read only).
+  "comments.pane.thread_empty",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];
