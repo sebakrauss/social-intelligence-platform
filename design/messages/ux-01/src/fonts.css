@@ -1,0 +1,8 @@
+/* MESSAGES-UX-01 — the brand's own font files from ui/foundations/fonts (read-only), declared for Vite the way
+   next/font/local declares them for the product: private file variables picked up by tokens.css. */
+@font-face { font-family: "WK Outfit"; src: url("../../../../ui/foundations/fonts/outfit/Outfit[wght].ttf") format("truetype"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "WK Inter"; src: url("../../../../ui/foundations/fonts/inter/Inter-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "WK Inter"; src: url("../../../../ui/foundations/fonts/inter/Inter-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "WK JetBrains Mono"; src: url("../../../../ui/foundations/fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "WK JetBrains Mono"; src: url("../../../../ui/foundations/fonts/jetbrains-mono/JetBrainsMono-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+:root { --wk-font-brand-file: "WK Outfit"; --wk-font-ui-file: "WK Inter"; --wk-font-mono-file: "WK JetBrains Mono"; }
