@@ -28,7 +28,10 @@ const T1 = new Date("2026-11-01T10:00:00.000Z");
 const T2 = new Date("2026-11-01T10:10:00.000Z");
 const T3 = new Date("2026-11-01T10:20:00.000Z");
 const HOSTILE = "<script>alert(1)</script> visit https://example.test/x";
-const NEXT = "2026-11-01T10:00:00.000Z~11111111-1111-4111-8111-111111111111";
+/** A position the server issued for the plain (All / Inbox) list, and the same position issued for the Open view. */
+const PLAIN_NEXT = "2026-11-01T10:00:00.000Z~11111111-1111-4111-8111-111111111111";
+// COMMENTS-INT-03C-2: Open is the default view, so the positions this list issues (and its links carry) are Open's.
+const NEXT = `open.${PLAIN_NEXT}`;
 
 class NotFoundSignal extends Error {}
 const env = vi.hoisted((): { list: unknown; detail: unknown; listCalls: unknown[][]; detailCalls: unknown[][] } => ({ list: undefined, detail: undefined, listCalls: [], detailCalls: [] }));
@@ -117,6 +120,8 @@ const rowHtmlOf = (html: string, id: string): string => {
   const start = html.indexOf(">", html.indexOf(`id="row-${id}"`)) + 1;
   return html.slice(start, html.indexOf("</li>", start));
 };
+/** COMMENTS-INT-03C-2: the conversation list alone (the views nav also marks its current view with aria-current). */
+const listOnly = (html: string): string => (html.includes("<ol") ? html.slice(html.indexOf("<ol"), html.indexOf("</ol>")) : "");
 const allow = (value: string | undefined): void => {
   vi.stubEnv(COMMENTS_WORKSPACES_ENV, value);
 };
@@ -220,11 +225,12 @@ describe("Workspace › Comments: who reaches it", () => {
     allow(WS);
     env.list = ready();
     await listPage(WS, NEXT);
-    expect(env.listCalls).toEqual([[WS, NEXT]]);
+    // COMMENTS-INT-03C-2: the default view is Open — the same list query narrowed to the persisted OPEN state.
+    expect(env.listCalls).toEqual([[WS, NEXT, "open"]]);
     expect(env.detailCalls).toHaveLength(0);
     env.detail = conversationReady(C2);
     await selectedPage(WS, C2, NEXT);
-    expect(env.listCalls.at(-1)).toEqual([WS, NEXT]);
+    expect(env.listCalls.at(-1)).toEqual([WS, NEXT, "open"]);
     expect(env.detailCalls).toEqual([[WS, C2]]);
   });
 
@@ -233,7 +239,7 @@ describe("Workspace › Comments: who reaches it", () => {
     env.list = ready();
     env.detail = { kind: "conversation_not_found" };
     const html = await selectedPage(WS, FOREIGN);
-    expect(html).not.toContain('aria-current="page"');
+    expect(listOnly(html)).not.toContain('aria-current="page"');
     expect(html).not.toContain(FOREIGN);
     expect(html).not.toContain("View conversation in Inbox");
     expect(html).toContain("row-" + C3); // the list itself is still the caller's own
@@ -315,7 +321,7 @@ describe("Workspace › Comments: the same conversations as the Inbox", () => {
   it("empty lists keep the Inbox's two honest reasons, and coverage is the Inbox's own block", async () => {
     allow(WS);
     env.list = ready(WS, { items: [], nextCursor: null, emptyReason: "nothing_read_yet" });
-    expect(await listPage(WS)).toContain("All comments");
+    expect(await listPage(WS)).toContain("Open conversations"); // the default view's list (COMMENTS-INT-03C-2)
     const nothingRead = words(await listPage(WS));
     env.list = ready(WS, { items: [], nextCursor: null, emptyReason: "no_conversations_in_coverage" });
     const nothingFound = words(await listPage(WS));
@@ -331,13 +337,13 @@ describe("Workspace › Comments: the same conversations as the Inbox", () => {
     env.list = ready();
     const none = await listPage(WS);
     expect(none).toContain('data-selected="false"');
-    expect(none).not.toContain('aria-current="page"');
+    expect(listOnly(none)).not.toContain('aria-current="page"');
     expect(none).toContain("Select a conversation to read it here.");
     expect(none).toContain(`href="/workspaces/${WS}/comments/${C2}#conversation"`);
     env.detail = conversationReady(C2);
     const selected = await selectedPage(WS, C2, NEXT);
     expect(selected).toContain('data-selected="true"');
-    expect([...selected.matchAll(/aria-current="page"/g)]).toHaveLength(1);
+    expect([...listOnly(selected).matchAll(/aria-current="page"/g)]).toHaveLength(1);
     expect(rowHtml(selected, C2)).toContain('aria-current="page"');
     expect(selected).toContain("View conversation in Inbox");
     expect(selected).toContain('data-content="conversation"');
@@ -423,10 +429,10 @@ describe("Workspace › Comments: the selected conversation, read only (COMMENTS
 
   it("resolves the conversation the address names, in the workspace the list authorized, and only then", async () => {
     const html = await show(readyDetail());
-    expect(env.listCalls).toEqual([[WS, undefined]]);
+    expect(env.listCalls).toEqual([[WS, undefined, "open"]]);
     expect(env.detailCalls).toEqual([[WS, C2]]); // one Inbox conversation read, after the list
     expect(rowHtmlOf(html, C2)).toContain('aria-current="page"');
-    expect([...html.matchAll(/aria-current="page"/g)]).toHaveLength(1);
+    expect([...listOnly(html).matchAll(/aria-current="page"/g)]).toHaveLength(1);
     const pane = paneOf(html);
     expect(pane).toContain('id="conversation-title"');
     expect(words(pane)).toContain("Root Author"); // who started it: the first comment's author, as the Inbox names them
@@ -500,7 +506,7 @@ describe("Workspace › Comments: the selected conversation, read only (COMMENTS
       const html = await show(state);
       expect(html, state.kind).not.toContain('data-content="conversation"');
       expect(threadOf(html), state.kind).toBe("");
-      expect(html, state.kind).not.toContain('aria-current="page"');
+      expect(listOnly(html), state.kind).not.toContain('aria-current="page"');
     }
     await expect(show({ kind: "signed_out" })).rejects.toThrow("redirect:/sign-in");
   });
@@ -703,6 +709,163 @@ describe("Workspace › Comments: the conversation header — identity, manageme
     const closed = await selectedPage(WS, FOREIGN);
     expect(closed).not.toContain('id="conversation-next"');
     expect(navOf(closed)).toBe("");
+  });
+});
+
+/* ───────────── COMMENTS-INT-03C-2: the real views — Open (default), Done, All conversations ───────────── */
+
+describe("Workspace › Comments: the views backed by real data (COMMENTS-INT-03C-2)", () => {
+  const words = (html: string): string => html.replace(/<[^>]+>/g, " ").replaceAll("&#x27;", "'").replaceAll("&amp;", "&").replace(/\s+/g, " ").trim();
+  type Query = Readonly<Record<string, string | string[]>>;
+  const inView = async (query: Query): Promise<string> => renderToStaticMarkup(await CommentsPage({ params: Promise.resolve({ workspaceId: WS }), searchParams: Promise.resolve(query) }));
+  const selectedIn = async (conversationId: string, query: Query): Promise<string> =>
+    renderToStaticMarkup(await CommentsConversationPage({ params: Promise.resolve({ workspaceId: WS, conversationId }), searchParams: Promise.resolve(query) }));
+  /** The list column's own heading: which view's list the page draws (the views themselves are the shell's). */
+  const listName = (html: string): string | undefined => html.match(/<ol class="[^"]*" aria-label="([^"]+)"/)?.[1] ?? html.match(/<h2 class="[^"]*listMessageTitle[^"]*">([^<]+)</)?.[1];
+  const links = (html: string): string[] => [...html.matchAll(/href="([^"]+)"/g)].map((match) => (match[1] ?? "").replaceAll("&amp;", "&"));
+  const base = `/workspaces/${WS}/comments`;
+  const DONE_NEXT = `done.${PLAIN_NEXT}`;
+  const withState = (state: "open" | "done" | "unknown"): ConversationViewState => {
+    const answer = conversationReady(C2);
+    if (answer.kind !== "ready") throw new Error("ready");
+    return { ...answer, detail: { ...answer.detail, workflowState: state } };
+  };
+
+  it("M-1: the page draws no view navigation of its own — the views are the workspace sidebar's (the shell), one system only", async () => {
+    allow(WS);
+    env.list = ready();
+    for (const html of [await inView({}), await inView({ view: "done" })]) {
+      expect(html).not.toContain("Comments views");
+      expect(html).not.toMatch(/comments-view-|<select|Needs attention|Assigned to me|Escalated/);
+      expect(links(html).filter((href) => /\?view=|#comments-view/.test(href) && !href.includes("/comments/") && !href.includes("cursor="))).toEqual([]);
+    }
+  });
+
+  it("each view is the SAME list query narrowed on the server: Open and Done by their persisted state, All not at all; anything unknown is Open", async () => {
+    allow(WS);
+    env.list = ready();
+    const cases: [Query, unknown][] = [[{}, "open"], [{ view: "open" }, "open"], [{ view: "done" }, "done"], [{ view: "all" }, undefined], [{ view: "attention" }, "open"], [{ view: ["done", "all"] }, "open"], [{ view: "DONE" }, "open"]];
+    for (const [query, state] of cases) {
+      env.listCalls = [];
+      const html = await inView(query);
+      expect(env.listCalls, JSON.stringify(query)).toEqual([[WS, undefined, state]]);
+      expect(listName(html), JSON.stringify(query)).toBe(state === undefined ? "All conversations" : state === "done" ? "Done conversations" : "Open conversations");
+    }
+    expect(env.detailCalls).toHaveLength(0);
+  });
+
+  it("a position is honoured and carried only by the view it was issued for; another view's is the first page and no link carries it", async () => {
+    allow(WS);
+    env.list = ready(WS, { nextCursor: `done.2026-11-01T09:00:00.000Z~${C1}` });
+    await inView({ view: "done", cursor: NEXT }); // Open's position, in Done
+    expect(env.listCalls.at(-1)).toEqual([WS, undefined, "done"]);
+    const stale = await inView({ view: "done", cursor: NEXT });
+    expect(links(stale).filter((href) => href.includes(encodeURIComponent(NEXT)))).toEqual([]);
+    expect(stale).not.toContain("on this page");
+    await inView({ view: "all", cursor: NEXT }); // a view's position in All (the plain list)
+    expect(env.listCalls.at(-1)).toEqual([WS, undefined, undefined]);
+    await inView({ view: "done", cursor: DONE_NEXT });
+    expect(env.listCalls.at(-1)).toEqual([WS, DONE_NEXT, "done"]);
+    const positioned = await inView({ view: "done", cursor: DONE_NEXT });
+    // Rows open in the view, at its position; the older page is the view's own next position.
+    expect(links(positioned)).toContain(`${base}/${C3}?view=done&cursor=${encodeURIComponent(DONE_NEXT)}#conversation`);
+    expect(links(positioned)).toContain(`${base}?view=done&cursor=${encodeURIComponent(`done.2026-11-01T09:00:00.000Z~${C1}`)}`);
+  });
+
+  it("Previous / Next and the way back stay in the view and at its position", async () => {
+    allow(WS);
+    env.list = ready(WS, { nextCursor: null });
+    env.detail = withState("done");
+    const html = await selectedIn(C2, { view: "done", cursor: DONE_NEXT });
+    expect(env.listCalls.at(-1)).toEqual([WS, DONE_NEXT, "done"]);
+    const all = links(html);
+    expect(all).toContain(`${base}/${C3}?view=done&cursor=${encodeURIComponent(DONE_NEXT)}#conversation-previous`);
+    expect(all).toContain(`${base}/${C1}?view=done&cursor=${encodeURIComponent(DONE_NEXT)}#conversation-next`);
+    expect(all).toContain(`${base}?view=done&cursor=${encodeURIComponent(DONE_NEXT)}#row-${C2}`);
+    expect(words(html)).toContain("Done conversations"); // the way back names the view's list
+    expect(words(html)).toContain("2 of 3 on this page");
+  });
+
+  it("an empty view says so in its own words; nothing read yet stays the Inbox's sentence", async () => {
+    allow(WS);
+    env.list = ready(WS, { items: [], nextCursor: null, emptyReason: "no_conversations_in_coverage" });
+    expect(words(await inView({}))).toContain("No open conversations were found in what has been read so far.");
+    expect(words(await inView({ view: "done" }))).toContain("No conversations marked done were found in what has been read so far.");
+    const allEmpty = words(await inView({ view: "all" }));
+    expect(allEmpty).toContain("No comments were found in what has been read so far.");
+    env.list = ready(WS, { items: [], nextCursor: null, emptyReason: "nothing_read_yet" });
+    for (const view of ["open", "done", "all"]) expect(words(await inView({ view }))).toContain("Nothing has been read from your connected accounts yet");
+  });
+
+  it("a partial page says it is partial and goes on in its view — an empty one is never presented as 'none'", async () => {
+    allow(WS);
+    const onward = `open.2026-11-01T09:00:00.000Z~${C1}`;
+    env.list = ready(WS, { nextCursor: onward, partial: true });
+    const some = await inView({});
+    expect(words(some)).toContain("This page shows what was found among the conversations checked for it. Older conversations may also belong here.");
+    expect(some).toMatch(new RegExp(`href="${base}\\?cursor=${encodeURIComponent(onward).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"[^>]*>Check older conversations<`));
+    env.list = ready(WS, { items: [], nextCursor: onward, partial: true, emptyReason: "no_conversations_in_coverage" });
+    const none = words(await inView({}));
+    expect(none).toContain("None of the conversations checked for this page belong here. Older conversations may still.");
+    expect(none).toContain("Check older conversations");
+    expect(none).not.toContain("No open conversations were found");
+    // A complete page says nothing of the kind.
+    env.list = ready();
+    expect(words(await inView({}))).not.toContain("conversations checked");
+  });
+
+  it("L-1: an empty page says only what its own answer knows — first page, a window that stopped at its bound, or the end of a continuation", async () => {
+    allow(WS);
+    const onward = `done.2026-11-01T08:00:00.000Z~${C1}`;
+    const empty = (over: Partial<Ready["page"]>): Ready => ready(WS, { items: [], nextCursor: null, emptyReason: "no_conversations_in_coverage", ...over });
+    // 1. The view's first page, complete and empty: none were found — the only page allowed to say so.
+    env.list = empty({});
+    expect(words(await inView({ view: "done" }))).toContain("No conversations marked done were found in what has been read so far.");
+    // 2. The first page, partial: nothing checked for it belongs here; older may (never "none").
+    env.list = empty({ nextCursor: onward, partial: true });
+    const firstWindow = words(await inView({ view: "done" }));
+    expect(firstWindow).toContain("None of the conversations checked for this page belong here. Older conversations may still.");
+    expect(firstWindow).not.toContain("No conversations marked done were found");
+    // 3. A later page, partial: the same truthful sentence — it claims nothing about the pages before it.
+    env.list = empty({ nextCursor: onward, partial: true });
+    const laterWindow = words(await inView({ view: "done", cursor: DONE_NEXT }));
+    expect(laterWindow).toContain("None of the conversations checked for this page belong here. Older conversations may still.");
+    expect(laterWindow).not.toMatch(/most recent|No conversations marked done were found/);
+    // 4. A later page the list ran out on (earlier pages may have shown Done ones): no older conversations — not "none".
+    env.list = empty({});
+    const exhausted = words(await inView({ view: "done", cursor: DONE_NEXT }));
+    expect(exhausted).toContain("No older conversations.");
+    expect(exhausted).not.toMatch(/No conversations marked done were found|None of the conversations checked/);
+    env.list = empty({});
+    expect(words(await inView({ view: "open", cursor: NEXT }))).not.toContain("No open conversations were found");
+  });
+
+  it("a conversation opened in a view it does not belong to is still the caller's, said plainly — no row marked, no Previous / Next", async () => {
+    allow(WS);
+    env.list = ready(WS, { items: [item(C3, { workflowState: "done" }), item(C1, { workflowState: "done" })] });
+    env.detail = withState("open");
+    const html = await selectedIn(C2, { view: "done" });
+    expect(words(html)).toContain("This conversation isn't in Done: its state is Open.");
+    expect(listOnly(html)).not.toContain('aria-current="page"');
+    expect(links(html).filter((href) => /#conversation-(previous|next)$/.test(href))).toEqual([]);
+    expect(html).toContain('data-content="conversation"');
+    env.detail = withState("unknown");
+    expect(words(await selectedIn(C2, { view: "open" }))).toContain("This conversation isn't in Open: its state is State not known.");
+    // In its own view, or in All conversations, nothing is said.
+    env.detail = withState("done");
+    expect(words(await selectedIn(C2, { view: "done" }))).not.toContain("isn't in");
+    env.detail = withState("open");
+    expect(words(await selectedIn(C2, { view: "all" }))).not.toContain("isn't in");
+  });
+
+  it("the Inbox is untouched: no state, no views, its own plain positions", async () => {
+    allow(WS);
+    env.list = ready(WS, { nextCursor: PLAIN_NEXT });
+    const html = await inboxPage(WS, PLAIN_NEXT);
+    expect(env.listCalls.at(-1)).toEqual([WS, PLAIN_NEXT]);
+    expect(html).not.toContain("Comments views");
+    expect(html).not.toContain("view=");
+    expect(html).toContain(`cursor=${encodeURIComponent(PLAIN_NEXT)}`);
   });
 });
 

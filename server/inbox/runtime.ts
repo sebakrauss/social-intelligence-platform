@@ -11,6 +11,7 @@ import { requestIdentity } from "@/server/auth/request-auth";
 import { webUnitOfWork } from "@/server/persistence/runtime";
 import { createActionPipeline, type ActionPipeline } from "@/server/pipeline";
 import { replyDraftScope } from "./draft-scope";
+import type { InboxStateFilter } from "@/server/queries/inbox";
 import { resolveConversation, resolveInboxPage, type ConversationViewState, type InboxListState } from "./inbox";
 
 const logger = createLogger({ sink: stdoutSink, base: { module: "server.inbox" } });
@@ -20,11 +21,11 @@ export function inboxPipeline(identity: IdentityPort): ActionPipeline {
 }
 
 /** The current request's Inbox page; any composition or database failure is `unavailable`, never its detail. */
-export async function currentInboxPage(workspaceId: unknown, cursor: unknown): Promise<InboxListState> {
+export async function currentInboxPage(workspaceId: unknown, cursor: unknown, state?: InboxStateFilter): Promise<InboxListState> {
   const identity = await requestIdentity();
   if (identity === undefined) return { kind: "unavailable" };
   try {
-    return await resolveInboxPage(inboxPipeline(identity), workspaceId, cursor);
+    return await resolveInboxPage(inboxPipeline(identity), workspaceId, cursor, state);
   } catch {
     logger.warn("inbox.page.unavailable", { outcome: "error" });
     return { kind: "unavailable" };

@@ -204,8 +204,9 @@ describe("Managed accounts (Step 7G-H5): local configuration only", () => {
     // COMMENTS-INT-03B-FIX: + the Comments list column (keeps the selected row in the list's own view; its rule is in
     // inbox-composer-guards).
     // COMMENTS-INT-03C-1: + the Comments conversation area (the prototype's Escape: focus back to the row; its rule is in
-    // inbox-composer-guards).
-    expect(clients).toEqual(["app/dev/ui-reference/comments-redesign/prototype.tsx", "app/dev/ui-reference/comments-scroll/comparison.tsx", PENDING_BUTTON, "ui/inbox/comments-list-column.tsx", "ui/inbox/comments-pane-section.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/navigation/app-link.tsx", "ui/time/local-time.tsx"]);
+    // inbox-composer-guards). COMMENTS-INT-03C-2: + the shell's opt-in view navigation (reads the address only; pinned in
+    // comments-views-guards).
+    expect(clients).toEqual(["app/dev/ui-reference/comments-redesign/prototype.tsx", "app/dev/ui-reference/comments-scroll/comparison.tsx", PENDING_BUTTON, "ui/inbox/comments-list-column.tsx", "ui/inbox/comments-pane-section.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/navigation/app-link.tsx", "ui/shell/shell-view-nav.tsx", "ui/time/local-time.tsx"]);
     expect(importsOf(PENDING_BUTTON)).toEqual(["react-dom"]);
     expect(codeOf(PENDING_BUTTON)).toMatch(/disabled=\{pending\}/);
   });

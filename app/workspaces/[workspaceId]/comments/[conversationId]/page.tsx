@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
-import { currentCommentsSelection } from "@/server/inbox/comments";
+import { commentsPosition, currentCommentsSelection } from "@/server/inbox/comments";
+import { COMMENTS_VIEW_PARAM, parseCommentsView } from "@/server/routes";
 import { ClosedState } from "../../inbox/read-views";
 import { CommentsListView, type CommentsSelectionView } from "../views";
 
@@ -20,9 +21,12 @@ export default async function WorkspaceCommentsConversationPage({
   readonly searchParams?: Promise<Readonly<Record<string, string | string[] | undefined>>>;
 }) {
   const { workspaceId, conversationId } = await params;
-  const raw = (searchParams === undefined ? {} : await searchParams)["cursor"];
-  const cursor = typeof raw === "string" && raw !== "" ? raw : undefined;
-  const { list, conversation } = await currentCommentsSelection(workspaceId, conversationId, cursor);
+  const query = searchParams === undefined ? {} : await searchParams;
+  // COMMENTS-INT-03C-2: the view the conversation was opened from (Open by default); the list beside it is that view's.
+  const view = parseCommentsView(query[COMMENTS_VIEW_PARAM]);
+  // Only a position issued for this view (COMMENTS-INT-03C-2); otherwise the view's first page, and no link carries it.
+  const cursor = commentsPosition(view, query["cursor"]);
+  const { list, conversation } = await currentCommentsSelection(workspaceId, conversationId, cursor, view);
   if (list.kind === "signed_out") redirect("/sign-in");
   if (list.kind === "not_offered") notFound();
   if (list.kind !== "ready") return <main><ClosedState kind={list.kind} /></main>;
@@ -41,7 +45,7 @@ export default async function WorkspaceCommentsConversationPage({
 
   return (
     <main>
-      <CommentsListView workspaceId={list.workspaceId} page={list.page} cursor={cursor} selection={selection} />
+      <CommentsListView workspaceId={list.workspaceId} view={view} page={list.page} cursor={cursor} selection={selection} />
     </main>
   );
 }

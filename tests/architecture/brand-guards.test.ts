@@ -187,7 +187,8 @@ describe("foundations are inert", () => {
    */
   // COMMENTS-INT-03B-FIX: + the Comments list column (one layout effect on its own scroll; pinned in inbox-composer-guards).
   // COMMENTS-INT-03C-1: + the Comments conversation area (Escape hands the focus back; pinned in inbox-composer-guards).
-  const CLIENT_COMPONENTS = ["ui/inbox/comments-list-column.tsx", "ui/inbox/comments-pane-section.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx"];
+  // COMMENTS-INT-03C-2: + the shell's opt-in view navigation (it reads the address; pinned in comments-views-guards).
+  const CLIENT_COMPONENTS = ["ui/inbox/comments-list-column.tsx", "ui/inbox/comments-pane-section.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/shell/shell-view-nav.tsx"];
 
   it("the foundation, brand, icon and primitive components are server components", () => {
     for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell", "ui/inbox"]).filter((file) => !CLIENT_COMPONENTS.includes(file))) {
@@ -418,7 +419,7 @@ describe("app shell (UI-3)", () => {
     const shell = codeOf("server/shell/shell.ts");
     expect([...shell.matchAll(/tenancyOnboardingCommands\.(\w+)/g)].map((match) => match[1])).toEqual(["listOwnTenancy"]);
     expect(shell).not.toMatch(/\binsert\s+into\b|\bupdate\s+\w+\s+set\b|sql`|\.insert\(|\.update\(|\.delete\(|tx\.|process\.env/i);
-    for (const file of ["server/shell/shell.ts", "server/shell/runtime.ts", "app/workspaces/[workspaceId]/workspace-shell.tsx", "ui/shell/app-shell.tsx"]) {
+    for (const file of ["server/shell/shell.ts", "server/shell/runtime.ts", "app/workspaces/[workspaceId]/workspace-shell.tsx", "ui/shell/app-shell.tsx", "ui/shell/shell-view-nav.tsx"]) {
       for (const specifier of importsOf(file)) {
         expect(specifier, `${file} → ${specifier}`).not.toMatch(/platform\/db|modules\/[^/]+\/persistence|integrations\/|server\/connections|modules\/connections|platform\/crypto|platform\/aws|platform\/jobs|jobs\/|@trigger\.dev|@aws-sdk|^pg$|drizzle/);
       }
@@ -431,9 +432,10 @@ describe("app shell (UI-3)", () => {
     expect((composition.match(/<form\b/g) ?? []).length).toBe(1);
     expect(composition).toMatch(/<form action=\{signOutAction\}>/);
     expect(composition).not.toMatch(/"use client"|"use server"|process\.env|fetch\(/);
-    for (const layout of ["app/workspaces/[workspaceId]/inbox/layout.tsx", "app/workspaces/[workspaceId]/settings/layout.tsx"]) {
+    // COMMENTS-INT-03C-2: + the Comments layout, which delegates the same way (its own section: the Comments views).
+    for (const layout of ["app/workspaces/[workspaceId]/inbox/layout.tsx", "app/workspaces/[workspaceId]/settings/layout.tsx", "app/workspaces/[workspaceId]/comments/layout.tsx"]) {
       const code = codeOf(layout);
-      expect(code).toMatch(/<WorkspaceShell workspaceId=\{workspaceId\} section="(inbox|settings)">/);
+      expect(code).toMatch(/<WorkspaceShell workspaceId=\{workspaceId\} section="(inbox|settings|comments)">/);
       expect(code).not.toMatch(/<form|action=|@\/server\/|@\/platform\/|process\.env/);
     }
   });

@@ -11,7 +11,8 @@
  */
 import { t } from "@/server/i18n";
 import { AUTHOR_MESSAGES, CONVERSATION_STATE_MESSAGES, displayTime, platformName, REPLY_REASON_MESSAGES, SOURCE_MESSAGES, when, type ConversationDetail, type InboxConversationItem, type InboxPage } from "@/server/inbox/inbox";
-import { COMMENTS_CONVERSATION_ANCHOR, COMMENTS_NEXT_ANCHOR, COMMENTS_PREVIOUS_ANCHOR, conversationRowId, workspaceCommentsConversationPath, workspaceCommentsPagePath, workspaceCommentsPath, workspaceConversationPath, workspaceInboxPath } from "@/server/routes";
+import type { MessageKey } from "@/domain/i18n/message-keys";
+import { COMMENTS_CONVERSATION_ANCHOR, COMMENTS_NEXT_ANCHOR, COMMENTS_PREVIOUS_ANCHOR, conversationRowId, workspaceCommentsConversationPath, workspaceCommentsViewPath, workspaceConversationPath, workspaceInboxPath, type CommentsView } from "@/server/routes";
 import { CommentsAbove, CommentsConversation, CommentsConversationNav, CommentsHeader, CommentsList, CommentsListEnd, CommentsListMessage, CommentsPane, CommentsRow, CommentsSplit, CommentsWorkspace } from "@/ui/inbox/comments";
 import { QuietNote, ReplyUnavailable, Thread, ThreadHeading, ThreadOutbound } from "@/ui/inbox/inbox";
 import { DataTag } from "@/ui/primitives/data-tag";
@@ -22,9 +23,18 @@ import { TextLink } from "@/ui/primitives/text-link";
 // The Inbox's read-only pieces only (audit M-1): never ../inbox/views, which carries the reply composer and its action.
 import { authorOf, CoverageSummary, kindOf, OutboundRow, parentLabeller, previousTimes, renderNow, shortTime, threadEntries, ThreadMemberRecord } from "../inbox/read-views";
 
+/**
+ * COMMENTS-INT-03C-2 — the views backed by real data, each the server's own list (inbox.conversations.list narrowed to
+ * one persisted workflow state BEFORE the page is cut, or not narrowed: All conversations). Their names, the list each
+ * one is, and what an empty one says.
+ */
+const VIEW_NAMES: { readonly [V in CommentsView]: MessageKey } = { open: "comments.views.open", done: "comments.views.done", all: "comments.views.all" };
+const LIST_NAMES: { readonly [V in CommentsView]: MessageKey } = { open: "comments.list.open", done: "comments.list.done", all: "comments.list.all" };
+const EMPTY_IN_VIEW: { readonly [V in CommentsView]: MessageKey } = { open: "comments.empty.open", done: "comments.empty.done", all: "inbox.empty.no_conversations" };
+
 /** One row: the same facts, wording and conditions as the Inbox row (app/…/inbox/views.tsx), in the Direction C shape. */
-function Row({ workspaceId, item, cursor, now, current }: { readonly workspaceId: string; readonly item: InboxConversationItem; readonly cursor: string | undefined; readonly now: Date; readonly current: boolean }) {
-  const href = workspaceCommentsConversationPath(workspaceId, item.conversationId, cursor);
+function Row({ workspaceId, view, item, cursor, now, current }: { readonly workspaceId: string; readonly view: CommentsView; readonly item: InboxConversationItem; readonly cursor: string | undefined; readonly now: Date; readonly current: boolean }) {
+  const href = workspaceCommentsConversationPath(workspaceId, item.conversationId, cursor, COMMENTS_CONVERSATION_ANCHOR, view);
   if (href === undefined) return null;
   const platformText = platformName(item.platform) ?? t("inbox.platform.unknown");
   const author = item.anchor.observed ? (item.anchor.author === "own_account" ? t(AUTHOR_MESSAGES.own_account) : item.anchor.author === "unknown" ? t(AUTHOR_MESSAGES.unknown) : (item.anchor.authorLabel ?? t("inbox.author.unnamed"))) : t("inbox.author.unknown");
@@ -53,20 +63,35 @@ function Row({ workspaceId, item, cursor, now, current }: { readonly workspaceId
   );
 }
 
-function ListColumn({ workspaceId, page, cursor, selectedId }: { readonly workspaceId: string; readonly page: InboxPage; readonly cursor: string | undefined; readonly selectedId: string | undefined }) {
+function ListColumn({ workspaceId, view, page, cursor, selectedId }: { readonly workspaceId: string; readonly view: CommentsView; readonly page: InboxPage; readonly cursor: string | undefined; readonly selectedId: string | undefined }) {
+  // The next page of THIS view, at the position the server issued for it (never another view's).
+  const older = page.nextCursor === null ? undefined : workspaceCommentsViewPath(workspaceId, view, page.nextCursor);
   if (page.items.length === 0) {
-    return <CommentsListMessage title={t("inbox.list.heading")}>{page.emptyReason === "nothing_read_yet" ? t("inbox.empty.nothing_read") : t("inbox.empty.no_conversations")}</CommentsListMessage>;
+    // COMMENTS-INT-03C-2 (L-1): an empty page says only what THIS answer knows. The check for this page stopped at its
+    // bound: nothing checked for it belongs here, and older ones may (never "none"). A later page that the list ran out
+    // on: no older conversations — earlier pages may well have had some, so "none were found" would be untrue. Only
+    // the view's first page, complete and empty, says that none were found.
+    if (page.partial === true && older !== undefined) {
+      return (
+        <CommentsListMessage title={t(LIST_NAMES[view])}>
+          {t("comments.partial.empty")} <TextLink href={older}>{t("comments.partial.continue")}</TextLink>
+        </CommentsListMessage>
+      );
+    }
+    if (cursor !== undefined) return <CommentsListMessage title={t(LIST_NAMES[view])}>{t("inbox.pagination.end")}</CommentsListMessage>;
+    return <CommentsListMessage title={t(LIST_NAMES[view])}>{page.emptyReason === "nothing_read_yet" ? t("inbox.empty.nothing_read") : t(EMPTY_IN_VIEW[view])}</CommentsListMessage>;
   }
   const now = renderNow();
-  const older = page.nextCursor === null ? undefined : workspaceCommentsPagePath(workspaceId, page.nextCursor);
   return (
     <>
-      <CommentsList label={t("inbox.list.heading")}>
+      <CommentsList label={t(LIST_NAMES[view])}>
         {page.items.map((item) => (
-          <Row key={item.conversationId} workspaceId={workspaceId} item={item} cursor={cursor} now={now} current={item.conversationId === selectedId} />
+          <Row key={item.conversationId} workspaceId={workspaceId} view={view} item={item} cursor={cursor} now={now} current={item.conversationId === selectedId} />
         ))}
       </CommentsList>
-      <CommentsListEnd>{older === undefined ? t("inbox.pagination.end") : <TextLink href={older}>{t("inbox.pagination.older")}</TextLink>}</CommentsListEnd>
+      <CommentsListEnd note={page.partial === true ? t("comments.partial.note") : undefined}>
+        {older === undefined ? t("inbox.pagination.end") : <TextLink href={older}>{t(page.partial === true ? "comments.partial.continue" : "inbox.pagination.older")}</TextLink>}
+      </CommentsListEnd>
     </>
   );
 }
@@ -93,12 +118,13 @@ export type CommentsSelectionView =
  * nothing outside the page is read to find it). "n of N on this page" whenever the list has other pages (as the Inbox
  * says it). Which control keeps the focus after a move is the navigation's own rule (ui/inbox/comments.tsx).
  */
-function navigationFor(workspaceId: string, page: InboxPage, cursor: string | undefined, conversationId: string): React.ReactNode {
+function navigationFor(workspaceId: string, view: CommentsView, page: InboxPage, cursor: string | undefined, conversationId: string): React.ReactNode {
   const index = page.items.findIndex((item) => item.conversationId === conversationId);
   if (index < 0 || page.items.length < 2) return undefined;
+  // COMMENTS-INT-03C-2: the loaded page is THIS view's page; a move stays in the view (and at its position).
   const hrefAt = (at: number, anchor: typeof COMMENTS_PREVIOUS_ANCHOR | typeof COMMENTS_NEXT_ANCHOR): string | undefined => {
     const item = page.items[at];
-    return item === undefined ? undefined : workspaceCommentsConversationPath(workspaceId, item.conversationId, cursor, anchor);
+    return item === undefined ? undefined : workspaceCommentsConversationPath(workspaceId, item.conversationId, cursor, anchor, view);
   };
   const previous = hrefAt(index - 1, COMMENTS_PREVIOUS_ANCHOR);
   const next = hrefAt(index + 1, COMMENTS_NEXT_ANCHOR);
@@ -114,7 +140,7 @@ function navigationFor(workspaceId: string, page: InboxPage, cursor: string | un
   );
 }
 
-function Conversation({ workspaceId, detail, nav }: { readonly workspaceId: string; readonly detail: ConversationDetail; readonly nav: React.ReactNode }) {
+function Conversation({ workspaceId, view, detail, nav }: { readonly workspaceId: string; readonly view: CommentsView; readonly detail: ConversationDetail; readonly nav: React.ReactNode }) {
   const platformText = platformName(detail.platform) ?? t("inbox.platform.unknown");
   const entries = threadEntries(detail);
   const now = renderNow();
@@ -138,6 +164,10 @@ function Conversation({ workspaceId, detail, nav }: { readonly workspaceId: stri
       manage={inInbox === undefined ? undefined : <TextLink href={inInbox}>{t("comments.pane.open_in_inbox")}</TextLink>}
       nav={nav}
     >
+      {/* COMMENTS-INT-03C-2: a conversation opened by its address in a view it does not belong to (its persisted state is
+          another, or not known) is still shown — it is the caller's — and the pane says so plainly, with its real state;
+          the list beside it is the view's own, so no row is marked and there is no Previous / Next. */}
+      {view !== "all" && detail.workflowState !== view ? <QuietNote>{t("comments.pane.not_in_view", { view: t(VIEW_NAMES[view]), state: t(CONVERSATION_STATE_MESSAGES[detail.workflowState]) })}</QuietNote> : null}
       {/* COMMENTS-INT-03B-FIX (L-2): the Inbox's own statements, on the same conditions. Its review note: the read model
           carries no assessment, so the Inbox says so on every conversation — and so does this pane. */}
       <QuietNote>{t("inbox.understanding_pending")}</QuietNote>
@@ -179,18 +209,21 @@ function Conversation({ workspaceId, detail, nav }: { readonly workspaceId: stri
  * The Comments page for a ready (authorized and offered) list. `selection` is what the address selects: nothing, a
  * conversation of this workspace (drawn read only in the pane), or the Inbox's own closed state for the address.
  */
-export function CommentsListView({ workspaceId, page, cursor, selection }: { readonly workspaceId: string; readonly page: InboxPage; readonly cursor: string | undefined; readonly selection: CommentsSelectionView }) {
+export function CommentsListView({ workspaceId, view, page, cursor, selection }: { readonly workspaceId: string; readonly view: CommentsView; readonly page: InboxPage; readonly cursor: string | undefined; readonly selection: CommentsSelectionView }) {
   const selectedId = selection.kind === "conversation" ? selection.detail.conversationId : undefined;
-  const listHref = cursor === undefined ? workspaceCommentsPath(workspaceId) : workspaceCommentsPagePath(workspaceId, cursor);
+  // The list as it is drawn: this view, at this position (COMMENTS-INT-03C-2: the view is part of which list it is).
+  const listHref = workspaceCommentsViewPath(workspaceId, view, cursor);
   const inbox = workspaceInboxPath(workspaceId);
+  const backLabel = t(LIST_NAMES[view]);
   const back =
     selection.kind === "none" || listHref === undefined
       ? undefined
       : selectedId === undefined
-        ? { href: listHref, label: t("inbox.back") }
+        ? { href: listHref, label: backLabel }
         : // Back to the list at the conversation's own row. It stands for the conversation's anchor (COMMENTS-INT-03B-FIX):
           // where the row is not drawn (one panel), this link takes the focus once the conversation opens.
-          { href: `${listHref}#${conversationRowId(selectedId)}`, label: t("inbox.back"), focusKey: COMMENTS_CONVERSATION_ANCHOR };
+          { href: `${listHref}#${conversationRowId(selectedId)}`, label: backLabel, focusKey: COMMENTS_CONVERSATION_ANCHOR };
+  // COMMENTS-INT-03C-2 (M-1): the views themselves are the shell's (the workspace sidebar, or its picker when narrow).
   return (
     <CommentsWorkspace selected={selection.kind !== "none"}>
       <CommentsHeader
@@ -208,10 +241,10 @@ export function CommentsListView({ workspaceId, page, cursor, selection }: { rea
       <CommentsSplit
         listKey={listHref ?? workspaceId}
         selected={selectedId}
-        list={<ListColumn workspaceId={workspaceId} page={page} cursor={cursor} selectedId={selectedId} />}
+        list={<ListColumn workspaceId={workspaceId} view={view} page={page} cursor={cursor} selectedId={selectedId} />}
         pane={
           <CommentsPane label={t("comments.pane.label")} back={back} content={selection.kind === "conversation" ? "conversation" : "message"}>
-            {selection.kind === "none" ? <p>{t("comments.pane.empty")}</p> : selection.kind === "closed" ? selection.message : <Conversation workspaceId={workspaceId} detail={selection.detail} nav={navigationFor(workspaceId, page, cursor, selection.detail.conversationId)} />}
+            {selection.kind === "none" ? <p>{t("comments.pane.empty")}</p> : selection.kind === "closed" ? selection.message : <Conversation workspaceId={workspaceId} view={view} detail={selection.detail} nav={navigationFor(workspaceId, view, page, cursor, selection.detail.conversationId)} />}
           </CommentsPane>
         }
       />

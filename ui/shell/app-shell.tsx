@@ -18,7 +18,10 @@ import { Logo } from "@/ui/brand/logo";
 import { Icon, type IconName } from "@/ui/icons/icon";
 import { AppLink } from "@/ui/navigation/app-link";
 import { StatePill } from "@/ui/primitives/state-pill";
+import { ShellViewNav, type ShellViews } from "./shell-view-nav";
 import styles from "./app-shell.module.css";
+
+export type { ShellViewChoice, ShellViewLater, ShellViews } from "./shell-view-nav";
 
 export interface ShellNavItem {
   readonly key: string;
@@ -65,6 +68,11 @@ export interface AppShellProps {
   readonly switcher: readonly ShellSwitcherItem[];
   readonly nav: readonly ShellNavItem[];
   readonly sidebar: { readonly heading: string; readonly items: readonly ShellSidebarItem[] } | undefined;
+  /**
+   * COMMENTS-INT-03C-2 (opt-in): a section whose views are one query parameter of its address. Drawn in place of
+   * `sidebar`, with the current view read from the address (ui/shell/shell-view-nav.tsx). Absent: nothing changes.
+   */
+  readonly views?: ShellViews | undefined;
   /** The account menu's content (already composed: the sign-out form). */
   readonly account: ReactNode;
   /** Reserved 360px detail panel; nothing renders it yet. */
@@ -74,7 +82,7 @@ export interface AppShellProps {
 
 const CONTENT_ID = "content";
 
-export function AppShell({ texts, workspace, switcher, nav, sidebar, account, panel, children }: AppShellProps) {
+export function AppShell({ texts, workspace, switcher, nav, sidebar, views, account, panel, children }: AppShellProps) {
   const hasPanel = panel !== undefined && panel !== null;
   return (
     <div className={hasPanel ? `${styles["shell"] ?? ""} ${styles["withPanel"] ?? ""}` : styles["shell"]}>
@@ -158,7 +166,9 @@ export function AppShell({ texts, workspace, switcher, nav, sidebar, account, pa
           )}
         </div>
 
-        {sidebar === undefined || sidebar.items.length === 0 ? null : (
+        {views !== undefined ? (
+          <ShellViewNav views={views} />
+        ) : sidebar === undefined || sidebar.items.length === 0 ? null : (
           <nav
             className={sidebar.items.length === 1 && sidebar.items[0]?.current === true ? `${styles["sideNav"] ?? ""} ${styles["sideNavCurrentOnly"] ?? ""}` : styles["sideNav"]}
             aria-label={sidebar.heading}

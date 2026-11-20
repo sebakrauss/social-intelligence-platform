@@ -69,10 +69,39 @@ export function workspaceCommentsPath(workspaceId: unknown): string | undefined 
   return id === undefined ? undefined : `/workspaces/${id}/comments`;
 }
 
-/** The Comments list at an older-conversations position; the cursor is the opaque, server-issued string. */
-export function workspaceCommentsPagePath(workspaceId: unknown, cursor: string): string | undefined {
+/**
+ * COMMENTS-INT-03C-2: the Comments views backed by real data — the conversations of one persisted workflow state (Open,
+ * Done) or all of them. Open is the default: the plain address is Open, and only another view is named in the address
+ * (`?view=done`, `?view=all`). The views not built yet (Needs attention, Assigned to me, Escalated) have no address.
+ */
+export type CommentsView = "open" | "done" | "all";
+export const COMMENTS_VIEWS: readonly CommentsView[] = ["open", "done", "all"];
+export const COMMENTS_DEFAULT_VIEW: CommentsView = "open";
+/** The address's query parameter that names the view (the shell's view navigation sets it; the pages read it). */
+export const COMMENTS_VIEW_PARAM = "view";
+
+/** The view an address names: one of COMMENTS_VIEWS exactly, else the default (like a position the server never issued). */
+export function parseCommentsView(value: unknown): CommentsView {
+  return COMMENTS_VIEWS.find((view) => view === value) ?? COMMENTS_DEFAULT_VIEW;
+}
+
+/** The address's query: the view when it isn't the default, then the position (opaque, server-issued, as issued). */
+function commentsQuery(view: CommentsView, cursor: string | undefined): string {
+  const parts: string[] = [];
+  if (view !== COMMENTS_DEFAULT_VIEW) parts.push(`${COMMENTS_VIEW_PARAM}=${view}`);
+  if (cursor !== undefined && cursor !== "") parts.push(`cursor=${encodeURIComponent(cursor)}`);
+  return parts.length === 0 ? "" : `?${parts.join("&")}`;
+}
+
+/** One Comments view's list, at its first page or at a position it issued (COMMENTS-INT-03C-2). */
+export function workspaceCommentsViewPath(workspaceId: unknown, view: CommentsView, cursor?: string): string | undefined {
   const base = workspaceCommentsPath(workspaceId);
-  return base === undefined ? undefined : `${base}?cursor=${encodeURIComponent(cursor)}`;
+  return base === undefined ? undefined : `${base}${commentsQuery(view, cursor)}`;
+}
+
+/** The Comments list at an older-conversations position; the cursor is the opaque, server-issued string. */
+export function workspaceCommentsPagePath(workspaceId: unknown, cursor: string, view: CommentsView = COMMENTS_DEFAULT_VIEW): string | undefined {
+  return workspaceCommentsViewPath(workspaceId, view, cursor);
 }
 
 /**
@@ -91,10 +120,12 @@ export const COMMENTS_PREVIOUS_ANCHOR = "conversation-previous";
 export const COMMENTS_NEXT_ANCHOR = "conversation-next";
 export type CommentsConversationAnchor = typeof COMMENTS_CONVERSATION_ANCHOR | typeof COMMENTS_PREVIOUS_ANCHOR | typeof COMMENTS_NEXT_ANCHOR;
 
-/** Comments with one conversation selected by its address (same ids and cursor as the Inbox; it opens at its start). */
-export function workspaceCommentsConversationPath(workspaceId: unknown, conversationId: unknown, cursor?: string, anchor: CommentsConversationAnchor = COMMENTS_CONVERSATION_ANCHOR): string | undefined {
+/**
+ * Comments with one conversation selected by its address (same ids as the Inbox; it opens at its start), in the view and
+ * at the list position it was opened from (COMMENTS-INT-03C-2: the view is carried, so the list beside it stays the same).
+ */
+export function workspaceCommentsConversationPath(workspaceId: unknown, conversationId: unknown, cursor?: string, anchor: CommentsConversationAnchor = COMMENTS_CONVERSATION_ANCHOR, view: CommentsView = COMMENTS_DEFAULT_VIEW): string | undefined {
   const base = workspaceCommentsPath(workspaceId);
   if (base === undefined || !isUuid(conversationId)) return undefined;
-  const position = cursor === undefined || cursor === "" ? "" : `?cursor=${encodeURIComponent(cursor)}`;
-  return `${base}/${conversationId}${position}#${anchor}`;
+  return `${base}/${conversationId}${commentsQuery(view, cursor)}#${anchor}`;
 }

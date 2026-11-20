@@ -335,6 +335,26 @@ export const MESSAGE_KEYS = [
   "comments.pane.open_in_inbox",
   // COMMENTS-INT-03B: the conversation pane reads the real thread (read only).
   "comments.pane.thread_empty",
+  // COMMENTS-INT-03C-2: the views backed by real data (Open, Done, All conversations).
+  "comments.views.label",
+  "comments.views.open",
+  "comments.views.done",
+  "comments.views.all",
+  "comments.views.attention",
+  "comments.views.assigned",
+  "comments.views.escalated",
+  "comments.views.later",
+  "comments.views.later_tag",
+  "comments.views.picker",
+  "comments.list.open",
+  "comments.list.done",
+  "comments.list.all",
+  "comments.empty.open",
+  "comments.empty.done",
+  "comments.partial.note",
+  "comments.partial.empty",
+  "comments.partial.continue",
+  "comments.pane.not_in_view",
 ] as const;
 
 export type MessageKey = (typeof MESSAGE_KEYS)[number];

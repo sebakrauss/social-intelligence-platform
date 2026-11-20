@@ -60,6 +60,12 @@
   min-width: 0;
 }
 
+/* A page of a view whose check stopped at its bound: said where the list ends, with the way on. */
+.listPartial {
+  margin: 0 0 var(--wk-space-4);
+  color: var(--wk-text-secondary);
+}
+
 /* ───── two panels ───── */
 
 .split {

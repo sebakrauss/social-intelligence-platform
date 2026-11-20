@@ -25,7 +25,7 @@ import { AppError } from "@/domain/errors";
 import { isUuid } from "@/domain/ids";
 import { parseInstant } from "@/domain/instant";
 import { isPlatformKey, type PlatformKey } from "@/domain/platforms";
-import { object, optional, parsed } from "@/domain/validation";
+import { object, oneOf, optional, parsed } from "@/domain/validation";
 import type { ContentItemRecord } from "@/modules/content";
 import type { ConversationRow } from "@/modules/conversations";
 import type { CoverageScopedRow } from "@/modules/coverage";
@@ -53,6 +53,19 @@ export const INBOX_COVERAGE_ACCOUNTS = 250;
  * proves older versions exist — so a long edit history is reported as incomplete, never presented as complete.
  */
 export const INBOX_VERSION_LIMIT = 10;
+/**
+ * COMMENTS-INT-03C-2 — a page of ONE workflow state (Open or Done) is chosen BEFORE it is cut to INBOX_PAGE_SIZE: the
+ * conversations are read in their list order (the interactions module's keyset) in batches of this many, each batch's
+ * workflow state is read from its owner (the conversations module's read port), and only the matching ones are kept —
+ * never a page of every state filtered afterwards. No table of one module is read by another.
+ */
+export const INBOX_FILTER_BATCH = 500;
+/**
+ * Batches read for one filtered page at most (INBOX_FILTER_BATCH × this many conversations checked). When the bound is
+ * reached before the page is full, the page holds EVERY matching conversation down to where the check stopped, says it
+ * is partial, and its next position continues from there: nothing is skipped, repeated or presented as the end.
+ */
+export const INBOX_FILTER_ROUNDS = 2;
 
 export type PlatformLabel = PlatformKey | "unknown";
 export type SourceLabel = "organic" | "paid" | "mixed" | "unknown";
@@ -65,6 +78,16 @@ export type ConversationStateLabel = "open" | "done" | "unknown";
 export interface InboxCursor {
   readonly latestActivityAt: Date;
   readonly conversationId: string;
+}
+
+/** COMMENTS-INT-03C-2: the persisted workflow states a list can be narrowed to. Absent: every state (the Inbox). */
+export type InboxStateFilter = "open" | "done";
+export const INBOX_STATE_FILTERS: readonly InboxStateFilter[] = ["open", "done"];
+
+/** A list position as the command receives it: the keyset position and the state filter it was issued for. */
+export interface InboxListPosition {
+  readonly state: InboxStateFilter | undefined;
+  readonly cursor: InboxCursor;
 }
 
 export interface InboxConversationItem {
@@ -112,6 +135,12 @@ export interface InboxPage {
   readonly coverageOmitted: boolean;
   /** Why the list is empty, when it is: nothing read yet vs nothing found in what was read. */
   readonly emptyReason: "nothing_read_yet" | "no_conversations_in_coverage" | null;
+  /**
+   * COMMENTS-INT-03C-2: true only for a state-filtered page whose check stopped at its bound (INBOX_FILTER_ROUNDS)
+   * before the page was full: it holds every matching conversation down to `nextCursor`, and older ones may still
+   * match. Absent (or false) for every other page — the unfiltered list never sets it.
+   */
+  readonly partial?: boolean;
 }
 
 export interface ThreadTextVersion {
@@ -205,6 +234,25 @@ export function parseCursor(value: unknown): InboxCursor | undefined {
   const conversationId = match[2];
   if (instant === undefined || conversationId === undefined || !isUuid(conversationId)) return undefined;
   return { latestActivityAt: new Date(instant), conversationId };
+}
+
+/**
+ * COMMENTS-INT-03C-2: a position issued for a state-filtered list carries its state ("open.<position>",
+ * "done.<position>"); the unfiltered list's is the plain position, exactly as before. A position is only ever honoured
+ * by the list it was issued for (see the command), so one from another view can never position this one.
+ */
+export function encodeListCursor(state: InboxStateFilter | undefined, cursor: InboxCursor): string {
+  return state === undefined ? encodeCursor(cursor) : `${state}.${encodeCursor(cursor)}`;
+}
+
+/** Strict: a plain position, or one prefixed by exactly one known state; anything else is nothing. */
+export function parseListCursor(value: unknown): InboxListPosition | undefined {
+  if (typeof value !== "string") return undefined;
+  const dot = value.indexOf(".");
+  const tag = value.slice(0, Math.max(dot, 0));
+  const state = INBOX_STATE_FILTERS.find((candidate) => candidate === tag);
+  const cursor = parseCursor(state === undefined ? value : value.slice(dot + 1));
+  return cursor === undefined ? undefined : { state, cursor };
 }
 
 // ── Pure assembly ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -302,6 +350,13 @@ export interface InboxPageInput {
   readonly accounts: readonly InboxAccountRow[];
   readonly pageSize: number;
   readonly coverageAccountLimit: number;
+  /**
+   * COMMENTS-INT-03C-2 (state-filtered pages only): the state the rows were chosen for (it tags the next position), and
+   * where the bounded check stopped when it stopped before the page was full (the next position then continues there,
+   * and the page is partial). Absent: the unfiltered list, exactly as before.
+   */
+  readonly state?: InboxStateFilter;
+  readonly continueAt?: InboxCursor;
 }
 
 /** The accounts whose coverage is summarized: a deterministic prefix of the workspace's accounts, never a sample of rows. */
@@ -347,13 +402,16 @@ export function buildInboxPage(input: InboxPageInput): InboxPage {
   const last = rows.at(-1);
   const coverage = buildCoverage(coverageRows, included);
   const asOf = coverageRows.reduce<Date | null>((latest, row) => (latest === null || row.asOf > latest ? row.asOf : latest), null);
+  // A full page continues after its last shown row; a filtered page whose check stopped early continues where it stopped.
+  const next = hasMore && last !== undefined ? { latestActivityAt: last.latestActivityAt, conversationId: last.conversationId } : hasMore ? undefined : input.continueAt;
   return {
     items,
-    nextCursor: hasMore && last !== undefined ? encodeCursor({ latestActivityAt: last.latestActivityAt, conversationId: last.conversationId }) : null,
+    nextCursor: next === undefined ? null : encodeListCursor(input.state, next),
     asOf,
     coverage,
     coverageOmitted: input.accounts.length > input.coverageAccountLimit,
     emptyReason: items.length > 0 ? null : coverageRows.length === 0 ? "nothing_read_yet" : "no_conversations_in_coverage",
+    ...(!hasMore && input.continueAt !== undefined ? { partial: true } : {}),
   };
 }
 
@@ -498,24 +556,67 @@ export function buildConversationDetail(input: ConversationDetailInput): Convers
 
 // ── Commands ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-async function readInboxPage(tx: Transaction, cursor: InboxCursor | undefined): Promise<InboxPage> {
+async function readInboxPage(tx: Transaction, cursor: InboxCursor | undefined, state: InboxStateFilter | undefined): Promise<InboxPage> {
+  if (state !== undefined) return readFilteredPage(tx, cursor, state);
   const activity = await tx.inbox.interactions.listConversationActivity({ limit: INBOX_PAGE_SIZE + 1, before: cursor ?? null });
   const page = activity.slice(0, INBOX_PAGE_SIZE);
   const conversations = await tx.inbox.conversations.findMany(page.map((row) => row.conversationId));
-  const anchors = await tx.inbox.interactions.summaries(conversations.map((row) => row.anchorInteractionId));
+  return assemblePage(tx, { activity, conversations });
+}
+
+async function assemblePage(tx: Transaction, chosen: { readonly activity: readonly ConversationActivityRow[]; readonly conversations: readonly ConversationRow[]; readonly state?: InboxStateFilter; readonly continueAt?: InboxCursor }): Promise<InboxPage> {
+  const anchors = await tx.inbox.interactions.summaries(chosen.conversations.map((row) => row.anchorInteractionId));
   const contents = await tx.inbox.content.findManyById(anchors.map((row) => row.contentItemId));
   const accounts = await tx.inbox.accounts();
   const coverage = await tx.inbox.coverage.latestPerAccountAndKind(coverageAccounts(accounts, INBOX_COVERAGE_ACCOUNTS).map((account) => account.id));
-  return buildInboxPage({ activity, conversations, anchors, contents, coverage, accounts, pageSize: INBOX_PAGE_SIZE, coverageAccountLimit: INBOX_COVERAGE_ACCOUNTS });
+  return buildInboxPage({ ...chosen, anchors, contents, coverage, accounts, pageSize: INBOX_PAGE_SIZE, coverageAccountLimit: INBOX_COVERAGE_ACCOUNTS });
 }
 
-export const inboxListCommand: WorkspaceCommand<{ readonly cursor: InboxCursor | undefined }, InboxPage, InboxPage> = {
+/**
+ * COMMENTS-INT-03C-2 — a page of one persisted workflow state, chosen before it is cut: the conversations in list order
+ * (newest activity first, then id — the same keyset as the unfiltered list), each batch's states read from their owner,
+ * kept while they match, until one more than a page matched (an older page exists), the list ended, or the bound was
+ * reached (the page is then partial and continues where the check stopped). A conversation whose state is unknown, or
+ * that is not readable, belongs to neither state: it is never taken for Open.
+ */
+async function readFilteredPage(tx: Transaction, cursor: InboxCursor | undefined, state: InboxStateFilter): Promise<InboxPage> {
+  const activity: ConversationActivityRow[] = [];
+  const conversations: ConversationRow[] = [];
+  let before = cursor ?? null;
+  for (let round = 0; round < INBOX_FILTER_ROUNDS; round += 1) {
+    const batch = await tx.inbox.interactions.listConversationActivity({ limit: INBOX_FILTER_BATCH, before });
+    const states = new Map((await tx.inbox.conversations.findMany(batch.map((row) => row.conversationId))).map((row) => [row.id, row] as const));
+    for (const row of batch) {
+      const conversation = states.get(row.conversationId);
+      if (conversation === undefined || workflowLabel(conversation.workflowState) !== state) continue;
+      activity.push(row);
+      conversations.push(conversation);
+      if (activity.length > INBOX_PAGE_SIZE) return assemblePage(tx, { activity, conversations, state });
+    }
+    const last = batch.at(-1);
+    // The list ended inside this batch: every matching conversation is here, and there is no older page.
+    if (last === undefined || batch.length < INBOX_FILTER_BATCH) return assemblePage(tx, { activity, conversations, state });
+    before = { latestActivityAt: last.latestActivityAt, conversationId: last.conversationId };
+  }
+  return assemblePage(tx, { activity, conversations, state, ...(before === null ? {} : { continueAt: before }) });
+}
+
+const listInput = object({ cursor: optional(parsed(parseListCursor)), state: optional(oneOf(INBOX_STATE_FILTERS)) });
+
+export const inboxListCommand: WorkspaceCommand<{ readonly cursor: InboxListPosition | undefined; readonly state: InboxStateFilter | undefined }, InboxPage, InboxPage> = {
   scope: "workspace",
   name: "inbox.conversations.list",
   permission: "workspace.read_operational",
   requiresStandardMode: false,
-  validate: object({ cursor: optional(parsed(parseCursor)) }),
-  execute: (_context, input, tx) => readInboxPage(tx, input.cursor),
+  // COMMENTS-INT-03C-2: `state` is optional and absent for every existing caller (the Inbox: every state, as before). A
+  // position is honoured only by the list it was issued for: one issued for another state is INVALID_INPUT, never a
+  // misleading page.
+  validate: (raw) => {
+    const input = listInput(raw);
+    if (input.cursor !== undefined && input.cursor.state !== input.state) throw new AppError("INVALID_INPUT", { field: "cursor" });
+    return input;
+  },
+  execute: (_context, input, tx) => readInboxPage(tx, input.cursor?.cursor, input.state),
   audit: () => undefined,
   respond: (output) => output,
 };

@@ -8,6 +8,8 @@
  * required, workspace not found, not allowed, unavailable — is passed through unchanged, identical for listed and
  * unlisted workspaces.
  */
+import { COMMENTS_DEFAULT_VIEW, type CommentsView } from "@/server/routes";
+import { encodeListCursor, parseListCursor, type InboxStateFilter } from "@/server/queries/inbox";
 import { commentsOfferedFor } from "./comments-access";
 import type { ConversationViewState, InboxListState } from "./inbox";
 import { currentConversation, currentInboxPage } from "./runtime";
@@ -22,9 +24,26 @@ export function offeredList(state: InboxListState, environment: Environment = pr
   return commentsOfferedFor(state.workspaceId, environment) ? state : { kind: "not_offered" };
 }
 
-/** The current request's Comments list page (the Inbox page read, then the allowlist). */
-export async function currentCommentsPage(workspaceId: unknown, cursor: unknown): Promise<CommentsListState> {
-  return offeredList(await currentInboxPage(workspaceId, cursor));
+/**
+ * COMMENTS-INT-03C-2: each view is the SAME list query narrowed on the server to one persisted workflow state, before
+ * the page is cut (Open, Done) — or not narrowed at all (All conversations: exactly the Inbox's list).
+ */
+export const COMMENTS_VIEW_STATES: { readonly [V in CommentsView]: InboxStateFilter | undefined } = { open: "open", done: "done", all: undefined };
+
+/**
+ * The list position an address gives for a view: kept only when it was issued for THAT view (its state, or none for All
+ * conversations); anything else — another view's position, or one the server never issued — is the view's first page,
+ * and is then carried by no link either (the page never claims a position it does not show).
+ */
+export function commentsPosition(view: CommentsView, cursor: unknown): string | undefined {
+  const issued = parseListCursor(cursor);
+  const state = COMMENTS_VIEW_STATES[view];
+  return issued === undefined || issued.state !== state ? undefined : encodeListCursor(state, issued.cursor);
+}
+
+/** The current request's Comments list page in one view (the Inbox page read, then the allowlist). */
+export async function currentCommentsPage(workspaceId: unknown, cursor: unknown, view: CommentsView = COMMENTS_DEFAULT_VIEW): Promise<CommentsListState> {
+  return offeredList(await currentInboxPage(workspaceId, cursor, COMMENTS_VIEW_STATES[view]));
 }
 
 export interface CommentsSelection {
@@ -38,8 +57,8 @@ export interface CommentsSelection {
  * conversation is read only once the caller is authorized for the workspace and the route is offered, so an
  * unauthorized or unlisted request never reaches the conversation query through this route.
  */
-export async function currentCommentsSelection(workspaceId: unknown, conversationId: unknown, cursor: unknown): Promise<CommentsSelection> {
-  const list = await currentCommentsPage(workspaceId, cursor);
+export async function currentCommentsSelection(workspaceId: unknown, conversationId: unknown, cursor: unknown, view: CommentsView = COMMENTS_DEFAULT_VIEW): Promise<CommentsSelection> {
+  const list = await currentCommentsPage(workspaceId, cursor, view);
   if (list.kind !== "ready") return { list, conversation: undefined };
   return { list, conversation: await currentConversation(workspaceId, conversationId) };
 }

@@ -16,11 +16,12 @@ import { PLATFORM_DISPLAY_NAMES } from "@/domain/platforms";
 import { isUuid, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
 import type { ActionPipeline } from "@/server/pipeline";
 import {
-  encodeCursor,
+  encodeListCursor,
   inboxConversationCommand,
   inboxListCommand,
-  parseCursor,
+  parseListCursor,
   type AuthorKind,
+  type InboxStateFilter,
   type ConversationDetail,
   type ConversationStateLabel,
   type CoverageStateLabel,
@@ -46,10 +47,16 @@ export type ConversationViewState =
   | { readonly kind: "conversation_not_found" }
   | { readonly kind: "ready"; readonly workspaceId: WorkspaceId; readonly detail: ConversationDetail };
 
-/** The caller's Inbox page. Read only: one inbox.conversations.list query. */
-export async function resolveInboxPage(pipeline: ActionPipeline, workspaceId: unknown, cursor: unknown): Promise<InboxListState> {
-  const position = parseCursor(cursor);
-  const result = await pipeline.run(inboxListCommand, { workspaceId, input: { cursor: position === undefined ? undefined : encodeCursor(position) } });
+/**
+ * The caller's Inbox page. Read only: one inbox.conversations.list query. COMMENTS-INT-03C-2: `state` narrows it to one
+ * persisted workflow state, chosen on the server before the page is cut (absent: every state — the Inbox, unchanged). A
+ * browser position issued for another list (another state, or none) is ignored like any position the server never
+ * issued: the list's first page, never a page positioned by another view.
+ */
+export async function resolveInboxPage(pipeline: ActionPipeline, workspaceId: unknown, cursor: unknown, state?: InboxStateFilter): Promise<InboxListState> {
+  const issued = parseListCursor(cursor);
+  const position = issued === undefined || issued.state !== state ? undefined : encodeListCursor(state, issued.cursor);
+  const result = await pipeline.run(inboxListCommand, { workspaceId, input: state === undefined ? { cursor: position } : { cursor: position, state } });
   if (result.status === "unauthenticated") return { kind: "signed_out" };
   if (result.status === "verification_required") return { kind: "verification_required" };
   if (result.status === "error") {

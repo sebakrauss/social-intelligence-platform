@@ -93,8 +93,14 @@ export function CommentsRow({ id, href, current, origin, author, time, excerpt, 
   );
 }
 
-export function CommentsListEnd({ children }: { readonly children: ReactNode }) {
-  return <div className={styles["listEnd"]}>{children}</div>;
+/** Where the list ends: the way to older conversations, or the end. COMMENTS-INT-03C-2: `note` says a page is partial. */
+export function CommentsListEnd({ note, children }: { readonly note?: string | undefined; readonly children: ReactNode }) {
+  return (
+    <div className={styles["listEnd"]}>
+      {note === undefined ? null : <p className={styles["listPartial"]}>{note}</p>}
+      {children}
+    </div>
+  );
 }
 
 export function CommentsListMessage({ title, children }: { readonly title: string; readonly children: ReactNode }) {
