@@ -4,10 +4,10 @@
 |---|---|
 | Document | Technical Architecture v1 |
 | Phase | 0E — Technical Architecture · 0E.3 — Validation alignment |
-| Version | 1.3 (security amendment R4a — **approved** by the product owner on 2026-11-16, Step 7B-17F) |
-| Date | 2026-10-03 (v1.0) · 2026-10-04 (v1.1) · 2026-10-06 (v1.2) · 2026-11-12 (v1.3 drafted) · 2026-11-16 (v1.3 approved) |
-| Status | **Approved** by the product owner on 2026-10-03 (Phase 0E.1). **v1.1** (Phase 0E.3, 2026-10-04) aligns the approved baseline with the accepted pre-implementation validation: TA-Q-29 and TA-Q-04 **passed**, Trigger.dev is **selected**, refinements R1–R8 are adopted. **v1.2** (2026-10-06) records **TA-Q-07 PASS**: AWS KMS is the locked credential key-management mechanism for Step 5, validated in a managed development run (TA-Q-07b). Approval covers the architectural baseline and boundaries. It does **not** mean that every provider capability or vendor is validated, that legal review is complete, or that implementation may start: the remaining gates are in §71 and §73. **v1.3** (Step 7B-14P1, 2026-11-12) adds the security amendment R4a (§11.1, §11.6): implemented and technically validated on local disposable PostgreSQL, and **formally approved by the product owner on 2026-11-16** (Step 7B-17F; approval record). Between 2026-11-12 and that approval, v1.2 was the formally approved document and R4a applied as an operational security rule. |
-| Sources of truth | `docs/product-definition-v1.md` v1.3 · `docs/information-architecture-v1.md` v1.1 · `docs/core-ux-flows-v1.md` v1.1 · `docs/intelligence-data-model-v1.md` v1.1 (all approved) · validation evidence: `docs/pre-implementation-validation-v1.md` (Phases 0E.2 and 0E.2b, accepted in Phase 0E.3) |
+| Version | 1.4 (MESSAGES-GOV-01: Increment M — Messages architecture direction and ADR-65 to ADR-70 — **approved** by the product owner on 2026-11-20) · 1.3 (security amendment R4a — **approved** by the product owner on 2026-11-16, Step 7B-17F) |
+| Date | 2026-10-03 (v1.0) · 2026-10-04 (v1.1) · 2026-10-06 (v1.2) · 2026-11-12 (v1.3 drafted) · 2026-11-16 (v1.3 approved) · 2026-11-20 (v1.4 drafted and approved) |
+| Status | **Approved** by the product owner on 2026-10-03 (Phase 0E.1). **v1.1** (Phase 0E.3, 2026-10-04) aligns the approved baseline with the accepted pre-implementation validation: TA-Q-29 and TA-Q-04 **passed**, Trigger.dev is **selected**, refinements R1–R8 are adopted. **v1.2** (2026-10-06) records **TA-Q-07 PASS**: AWS KMS is the locked credential key-management mechanism for Step 5, validated in a managed development run (TA-Q-07b). Approval covers the architectural baseline and boundaries. It does **not** mean that every provider capability or vendor is validated, that legal review is complete, or that implementation may start: the remaining gates are in §71 and §73. **v1.3** (Step 7B-14P1, 2026-11-12) adds the security amendment R4a (§11.1, §11.6): implemented and technically validated on local disposable PostgreSQL, and **formally approved by the product owner on 2026-11-16** (Step 7B-17F; approval record). Between 2026-11-12 and that approval, v1.2 was the formally approved document and R4a applied as an operational security rule. **v1.4** (MESSAGES-GOV-01) was **approved on 2026-11-20**: (1) **governance direction — approved**: architecture direction for Increment M — Messages (§76) and ADR-65 to ADR-70 (§72.1) with the statuses recorded there; (2) **wording — approved**; (3) **runtime gates — not authorized**: v1.4 authorizes no implementation, permission, provider configuration, data processing or deployment. The partial supersession of ADR-14 by ADR-65 changes no code and relaxes no guard: until the implementing gates are separately authorized, §15.1, §27.3, T-12 and the existing guards remain the operative rules for the codebase. |
+| Sources of truth | `docs/product-definition-v1.md` v1.3 · `docs/information-architecture-v1.md` v1.1 · `docs/core-ux-flows-v1.md` v1.1 · `docs/intelligence-data-model-v1.md` v1.1 (all approved) · validation evidence: `docs/pre-implementation-validation-v1.md` (Phases 0E.2 and 0E.2b, accepted in Phase 0E.3) · Increment M (v1.4): PD v1.4, Model v1.2, IA v1.2, UX v1.3 (all approved 2026-11-20) |
 | Scope | How the product is built: runtime boundaries, technologies, persistence patterns, async processing, security, AI, integrations, testing and operations. **Not** application code, SQL, final schemas, infrastructure configuration or provider setup. |
 
 ### Approval record
@@ -21,6 +21,8 @@
 | 2026-11-12 | Step 7B-14P1 | Version **1.3** (**pending formal product-owner approval**): security amendment **R4a** (§11.1, §11.6). Three separate statuses: (1) *authorization of the work* — the TL authorized the local security remediation and the drafting of this amendment in the Step 7B-14P1 mandate, after the independent review of Step 7B-14I3HR; (2) *technical validation* — implemented and validated locally (disposable PostgreSQL; independent review Step 7B-14P1R); (3) *formal approval of this document version* — **not yet given**; no approval of v1.3 by the TL or the product owner is recorded here. The earlier requirement that `SECURITY DEFINER` helpers use an **empty `search_path`** is corrected: PostgreSQL still searches the session's temporary schema (`pg_temp`) first for relation and type names under an empty path, so a session that may create temporary objects could make a privileged function run its own code as the function's owner (reproduced on a disposable local database; not demonstrated against a managed environment). Privileged functions, and functions that run under a privileged identity, now pin `search_path = pg_catalog, pg_temp` with schema-qualified references to everything outside `pg_catalog` (migration 0031; PostgreSQL, *Writing SECURITY DEFINER Functions Safely*, https://www.postgresql.org/docs/current/sql-createfunction.html). No other decision changed: R1–R8, TA-Q-29 PASS and every open item are unchanged. |
 | 2026-11-16 | Step 7B-17E | Final wording of v1.3 prepared for product-owner confirmation; formal approval of v1.3 is **still pending** (no approval of this text is recorded here). Supersession recorded: the Phase 0E.2 validation document (`docs/pre-implementation-validation-v1.md` §9, "PostgreSQL-generic") lists "SECURITY DEFINER helpers with `search_path = ''`" among the validated pattern's elements. That statement is historical evidence of what was built and tested in 2026-10; it is **superseded by R4a** as a convention: an empty `search_path` alone is not a sufficient security guarantee, and privileged functions pin `search_path = pg_catalog, pg_temp` with schema-qualified references (§11.6). The evidence text is kept as written and carries a dated supersession note (its §30). TA-Q-29 PASS (R1–R5) and every other result are unchanged. Changed: this record and the R4a row of §11.6. The text to be confirmed is in `design/phase-7b/governance/FOCUS-2.0-DEV-RELEASE-GOVERNANCE.md`. |
 | 2026-11-16 | Step 7B-17F | Product owner **formally approved Technical Architecture v1.3** (security amendment **R4a**) as written, with all the conditions stated. Source: an explicit product-owner decision communicated through the technical lead in the Step 7B-17F mandate (no signature, external document or approval identifier is recorded). The approval covers: an empty `search_path` alone is insufficient for privileged-function security; the approved convention is `search_path = pg_catalog, pg_temp` with schema-qualified references outside `pg_catalog`; the incompatible convention recorded in the historical Pre-Implementation Validation is superseded; the historical validation evidence and TA-Q-29 PASS are unchanged. R4a's technical content is not modified by this entry. The approval authorizes no migration, deployment, provider action or capability change, and resolves no VALIDATE or OPEN item (§71, §72). The entries of Steps 7B-14P1 and 7B-17E above are kept as written: they record the status at their dates. Changed: Version, Date and Status fields, this record and the label of the R4a row in §11.6. Record: `design/phase-7b/governance/FOCUS-2.0-DEV-RELEASE-GOVERNANCE.md`. |
+| 2026-11-20 | MESSAGES-GOV-01 | Version **1.4** (**pending formal product-owner approval of this text**). Three separate statuses: (1) *authorization of the work* — product-owner MESSAGES-GOV-01 decision: documentation-only governance amendments; (2) *decisions* — PD D-53 to D-70 approved in principle, with the product owner's corrections (no autonomous or bulk sending, AI-assisted drafting only through its own gates; work-queue read model as target direction only; manual Done authoritative for Messages; operational labels intended; no AI over private content now; provisional payload retention; no provider experiment without scoped approval); (3) *wording* — not yet formally approved. Added: §76 (Increment M architecture direction), ADR-65 to ADR-70 (§72.1; identifiers verified unused on 2026-11-20), the data class P-PRIVATE (§38.11), Increment M notes on §7.1, §15.1, §27.3, §40, §55, §64, §69 #23, §73, §75 and Appendix A. **ADR-14 is not erased**: v1.4 proposes its partial supersession by ADR-65 and ADR-14 stays fully in force until v1.4 is approved. Comments-specific prohibitions remain in force. No code, guard, test, schema, provider configuration or deployment is changed or authorized; legal and provider items stay VALIDATE. |
+| 2026-11-20 | MESSAGES-GOV-01 (formal approval) | Product owner **formally approved Technical Architecture v1.4** (direction and wording), after review of the amendment package, the amended documents and an independent governance audit (CONDITIONAL PASS), with the documentary corrections of this step: **G-2** gate levels (§76.6: product gates per PD v1.4 §21.2; M-C and M-IN are technical subdivisions); **G-3** new future test **T-32** — private-content deletion compliance (§55; Appendix A.2 S25), not implemented; **G-4** partial supersession of ADR-14 authorizes no code change and relaxes no guard (Status field, ADR-14 and ADR-65 rows, §76 preamble); **G-6** this record lists every section changed; **G-9** sources-of-truth wording. ADR statuses finalized (§72.1): ADR-65 approved boundary; ADR-66 approved direction; **ADR-67 approved architectural direction only — not a schema or performance decision**; ADR-68 approved with retention VALIDATE — legal; ADR-69 approved with Unified Login VALIDATE; ADR-70 approved principles with thresholds and retention VALIDATE. ADR-14 is kept with its original text and a supersession record. Sections changed by MESSAGES-GOV-01: Version, Date, Status and Sources fields; this approval record; §7.1 (`messaging` row, `workflow` row note); §15.1 (note); §27.3 (note); §38.11 (P-PRIVATE row); §40 (note); §55 (T-12 note; T-28 to T-32); §64 (schema-introspection note); §69 #23 (note); §72.1 (ADR-14 note; ADR-65 to ADR-70); §72.2 (Increment M items); §73 (note); §74 (safety-invariants note); §75 #19 (note); **§76 (new)**; Appendix A.1 (note) and A.2 (S9′, S22–S25). The entry above is kept as written (status at drafting). No runtime gate is authorized; LEGAL and VALIDATE items stay open (§76.8). |
 
 ---
 
@@ -509,9 +511,10 @@ Move to a multi-package monorepo (e.g., `apps/web`, `apps/jobs`, `packages/domai
 | **content** | Content Item, Content Source Classification (with history), Campaign, Ad Group, Ad | Content and paid-context normalization; effective source. |
 | **conversations** | Conversation (identity and membership), private-reply history markers (record only) | Thread assembly; anchor; needs-handling summary. |
 | **interactions** | Interaction, Source Text Version, Author, Author Block State, observed platform state | Source-fact persistence (append-only text versions); own-brand authorship detection. |
+| **messaging** *(v1.4, Increment M — direction; not built)* | Message Thread, Message, Message Text Version, Participant (platform-scoped), Attachment Reference, messaging observations, Messaging Window, Conversation Routing posture (Model §57) | Messages ingestion hand-off, thread assembly, honest history, window derivation; never imports `interactions`/`conversations`; publishes domain events (§76). Layer L1. |
 | **classification** | Classification Assessment, Accepted Interpretation, Language Assessment, Protection Evaluation, Display Translation | Precedence (M-05), protection (M-07), reassessment. |
 | **topics** | Topic (workspace instances), system topic catalog reference, Topic Assignment | Assignment, merge/split readiness (M-08), catalog (M-10). |
-| **workflow** | Workflow state, Resolution, Assignment, Priority Assessment, Escalation, Internal Note, Workflow Event | Open/Done rules, auto-done, auto-reopen, escalation, priority computation. |
+| **workflow** | Workflow state, Resolution, Assignment, Priority Assessment, Escalation, Internal Note, Workflow Event | Open/Done rules, auto-done, auto-reopen, escalation, priority computation. *(v1.4: over typed workflow subjects — public Conversation or Message Thread — and owner of the target work-queue read model; operational labels intended later; §76.)* |
 | **brand-context** | Brand Context sections and items, verification, currency | Verified grounding set for reply tasks; gap signals. |
 | **saved-replies** | Saved Reply and language versions | Library lifecycle; use recording. |
 | **moderation** | Moderation State, Moderation Event | Human hide/unhide/delete/block requests (via executor), bulk hide with protection exclusion, state history. |
@@ -1056,6 +1059,8 @@ Adapters implement two ports defined in `integrations/providers/contract`. Names
 | `block(author, accountContext)` | State-setting; reversibility per platform (UX-09 deferred). |
 
 **There is no operation to list or read private messages.** The contract deliberately has no DM read surface (S9; §27).
+
+> **v1.4 note (Increment M; ADR-65; approved 2026-11-20):** this remains the rule for the **comment** read and mutation ports above. Private messaging, when its gates are authorized, uses a **separate Messaging port** available only to the Messages bounded context (§76.2); the comment ports never gain a private-message operation.
 
 ### 15.2 Normalized types and errors
 
@@ -1731,6 +1736,8 @@ When the same brand comment later arrives through webhook or sync, deduplication
 
 The architecture contains **no**: incoming DM ingestion, DM read operations in the adapter contract, DM thread or DM Conversation objects, DM inbox views, DM workflow states, or webhook subscriptions for private messages. Tests assert that the adapter contract has no private-message read operation and that a private reply never creates an Interaction (§55).
 
+> **v1.4 note (Increment M; ADR-65; approved 2026-11-20):** the list above remains true **outside the Messages bounded context** (§76). A private reply from Comments never creates any of these objects. Inside Increment M, private-message ingestion, objects, views, workflow subjects and subscriptions may exist only through separately authorized gates (PD §21.2); until then none exists in the codebase.
+
 ### 27.4 Origins vs sender
 
 AI suggestions and saved replies are **starting points for draft text**. They have no path to the executor. The executor's reply actions require a `HumanMutationRequest` created from an authenticated, interactive command. The Outbound Reply records the starting point (suggestion ID, saved reply ID or manual) and edit extent for attribution (PD §13.4-4, §19.3).
@@ -2080,6 +2087,7 @@ Audit: §41. Service identities: §10.4. Environments: §51. **No secrets in log
 |---|---|---|
 | **S — Secrets** | Provider tokens, API keys, signing secrets | Encrypted; never logged, sent to AI, analytics or job payloads. |
 | **P — Audience personal content** | Comment text, author handles and names | Tenant-scoped; minimized in AI calls; never in logs, analytics or job payloads; retention per PD OQ-21. |
+| **P-PRIVATE — Private audience content** *(v1.4, Increment M; ADR-68)* | Private message text, attachment references, participant profile data | Class P rules plus: never in logs, metrics, analytics, job payloads, guest projections or model training; no AI processing until PD D-64 gates; real content never in evaluations without a separate legal, privacy and product-owner decision; access-audited (PD D-65); retention **VALIDATE — legal** (OQ-21). |
 | **B — Customer business data** | Brand Context, notes, saved replies, escalation notes | Tenant-scoped; never in analytics; AI only for the tasks that need it. |
 | **M — Operational metadata** | IDs, counts, statuses, timings | Allowed in logs and metrics. |
 | **A — Product analytics** | Pseudonymous event data | Identifiers only (§43). |
@@ -2120,6 +2128,7 @@ Audit: §41. Service identities: §10.4. Environments: §51. **No secrets in log
 - **Payload preservation:** raw verified payloads are kept in the inbox for a bounded period for replay and debugging (TA-Q-11).
 - **Isolation:** the receiver doesn't read tenant data; it only writes to the inbox and outbox (system-scoped insert).
 - **Separate apps per environment:** each environment has its own provider app, secrets and webhook URLs, so staging events can never reach production (§51).
+- *(v1.4 note, Increment M; ADR-70):* messaging deliveries carry private content (P-PRIVATE). Approved design principles: encryption, rapid routing into workspace-scoped storage, deletion after successful routing, minimization; any maximum retention (e.g. 24 hours) is **provisional** pending a security, recovery and legal assessment (PD D-66). Provider documentation differs on delivery failure (Messenger Platform: alert after 15 minutes, unsubscription after 1 hour; Instagram Platform: retries for 36 hours, then dropped) — which rule governs each setup is **VALIDATE**; the design must assume the stricter one (§76.5). Deliveries for assets without Messages enabled keep today's behavior (dropped, never retained).
 
 ---
 
@@ -2484,6 +2493,7 @@ Additional structural checks: dependency-boundary lint (§6.4); "every exported 
 | T-10 | **Duplicate mutation request doesn't double reply/hide** | Same request key twice → one intent; worker retry after crash → one provider call or verified OUTCOME_UNKNOWN; public reply never resent without verification. | Integration (simulator fault injection) |
 | T-11 | **Service job cannot accidentally query all workspaces** | Worker role without tenant context reads nothing; system role reading tenant tables → denied; fan-out produces per-workspace jobs. | RLS, job |
 | T-12 | **Private reply cannot create incoming DM data** | Adapter contract has no private-message read operation; a private reply creates an Outbound Reply + history marker and **no** Interaction; no DM tables, views or subscriptions exist (schema check). | Contract, integration, schema |
+| T-12 *(v1.4 note)* | *Increment M (§76.7): T-12 stays in force for Comments. At the implementing gates it is split into **T-12a** (a Comments private reply creates no Interaction, thread or message; the comment ports have no private-message operation) and **T-12b** (no messaging data is reachable from Comments/Inbox read models, guest projections or cross-workspace views).* | — | — |
 | T-13 | **Source facts cannot be replaced by AI interpretation** | Source text versions are insert-only; classification module has no write path to source tables; a human correction or reassessment leaves source facts unchanged. | DB, lint, integration |
 | T-14 | **Human corrections survive reprocessing** | Reassessment with a new model version never changes an accepted interpretation set by a human. | Unit, integration |
 | T-15 | **Automation never resumes silently** | Monitor-only → Standard sets all policies Paused; link/pattern policies can't activate without a fresh preview after the transition. | Integration |
@@ -2498,6 +2508,11 @@ Additional structural checks: dependency-boundary lint (§6.4); "every exported 
 | T-25 | **Automation is forward-only** | Enabling, resuming or re-enabling a policy never hides interactions created or imported before activation; backfill, reprocessing, model upgrades and corrections never create automation intents. | Integration, invariant |
 | T-26 | **Pooled-connection tenant context is safe (TA-Q-29)** | The 13 checks in §11.6 **and the TA-Q-29 adversarial cases** are permanent regression tests: A → B → no-context sequences on reused pooled backends; concurrent multi-tenant stress; missing, foreign, forged, replayed and rebound context; leftover session-level state neutralized by the seal (R2); role escalation from every runtime login and the token role-claim allowlist (R1, R3); forced RLS, grants and default-privilege introspection (R4); composite-FK existence oracle (R5); no service-role or migration credential in runtime environments. | RLS, security |
 | T-27 | **Crashed runs and unknown outcomes recover safely (R6, R7)** | A crashed run is re-dispatched by the run-outcome sweeper and its domain effect happens exactly once; an intent found EXECUTING without an outcome never calls the provider blindly; ambiguous replies are reconciled, never resent. | Job, integration (fault injection) |
+| T-28 *(v1.4, Increment M — required at the implementing gate; not yet implemented)* | **Messaging tenant and account isolation** | Cross-workspace and cross-account access to threads, messages and participants fails like a missing object (R5); RLS forced on every messaging table; no guest grants. | DB, integration |
+| T-29 *(v1.4, Increment M — not yet implemented)* | **Private content never leaks** | No P-PRIVATE content in logs, metrics, analytics, job or outbox payloads, or AI calls before PD D-64 gates. | Lint, integration |
+| T-30 *(v1.4, Increment M gate M-S — not yet implemented)* | **Human-authorized sending only** | A private message is sent only from a human-authorized command, inside a window verified at request and at execution; Monitor-only blocks it (T-04); an unknown outcome is never resent blindly (T-10); no bulk path exists. | Unit, integration, executor |
+| T-31 *(v1.4, work-queue gate — not yet implemented)* | **Work-queue read model is exact** | Keyset pages are exact and consistent with the owner modules; rebuild converges; no cross-workspace rows. Performance acceptance is set by its own design gate (PD D-59). | DB, integration |
+| T-32 *(v1.4, Increment M — **NOT IMPLEMENTED**; depends on future implementation gates and legal retention decisions)* | **Private-content deletion compliance** (Model S25) | Deletion at the source (an unsent or removed message) and valid deletion requests (from Meta, from the person, from the customer) remove private content within the configured retention controls, leaving at most an identity-only tombstone; retention controls apply per data class; no private content remains in prohibited surfaces — logs, metrics, analytics, job and outbox payloads, provider-payload inbox after routing, search indexes, exports, caches, guest projections or AI artifacts. **No retention period is set here**; values come from the legal decisions of PD OQ-21 (§61). | DB, integration, retention jobs |
 | T-24 | **Insight numbers match aggregates** | Narrative numbers equal structured values; drivers labeled as hypotheses; follow-ups labeled descriptive. | Unit, AI structured-output |
 
 Every invariant in Model §50 maps to at least one test (Appendix A).
@@ -2683,6 +2698,8 @@ Web and jobs are always deployed from the same commit; both read a schema versio
    → database checks: migrations apply on a fresh database; migration lint (destructive changes flagged);
      schema introspection (every table classified, RLS enabled and forced, explicit grants, no unexpected
      `anon`/`authenticated` privileges, no DM objects, append-only grants) (R4)
+     [v1.4 note: "no DM objects" stays the rule until an authorized Increment M gate adds the messaging schema;
+      from then on: no DM objects outside the messaging schema, which has forced RLS, explicit grants, no guest grants]
    → RLS / tenant isolation suite · job tests · adapter contract tests · AI structured-output tests
    → security / invariant matrix (§55)
    → integration tests (simulator + AI stub)
@@ -2785,7 +2802,7 @@ Workspace-level "Pause all automation" is a **product feature** stored with poli
 | 20 | **Personal content in job payloads, logs or analytics** | Spreads personal data to vendors | IDs only (§19.4, §42, §43) |
 | 21 | **Blind retries of replies** | Duplicate public replies | Verify before resend; private replies never auto-retried (§18.3) |
 | 22 | **AI computing numbers in insights** | Fabricated statistics | Code computes; validators compare (§31.3) |
-| 23 | **A DM model "for later" built now** | Back-door DM inbox (C-03) | No DM objects, reads or subscriptions (§27.3) |
+| 23 | **A DM model "for later" built now** | Back-door DM inbox (C-03) | No DM objects, reads or subscriptions (§27.3) *(v1.4 note: re-scoped — any private-message object, read or subscription built outside an authorized Increment M gate, or Messages objects leaking into Comments contracts, is this anti-pattern)* |
 
 ---
 
@@ -2877,7 +2894,7 @@ Locked in Phase 0E.1; updated in Phase 0E.3 (v1.1) after the accepted pre-implem
 | ADR-11 | Job runtime vendor: **Trigger.dev selected**; Graphile Worker fallback | TA-10 | SELECTED (TA-Q-04 PASS) · deployed workers VALIDATE in staging (TA-Q-31) · data location VALIDATE (TA-Q-05) |
 | ADR-12 | Deployment shape: web + job runtime + data platform (Supabase platform; Trigger.dev selected; Vercel recommended) | TA-11 | Shape LOCKED · job runtime Trigger.dev SELECTED (TA-Q-04 PASS) · web host and region VALIDATE (Vercel recommended; TA-Q-05) |
 | ADR-13 | Provider adapter contract; webhooks + polling + reconciliation | TA-12 | LOCKED |
-| ADR-14 | No DM read surface in the adapter contract or data model | §15.1, §27.3 | LOCKED |
+| ADR-14 | No DM read surface in the adapter contract or data model | §15.1, §27.3 | LOCKED — **superseded in part by ADR-65 (2026-11-20)**. *Supersession record: original decision kept as written; it stays in force for the comment adapter contract and the public Interaction/Conversation model. The supersession concerns only an authorized Increment M bounded context; it authorizes no code change and relaxes no existing guard or test — those change only in separately authorized implementing gates.* |
 | ADR-15 | Single Platform Mutation Executor with intents and re-checks | TA-13 | LOCKED |
 | ADR-16 | Monitor-only enforced at five points incl. database backstop | §26.6 | LOCKED |
 | ADR-17 | Deterministic automation evaluator (single evaluator for preview and live) | §25 | LOCKED |
@@ -2928,8 +2945,16 @@ Locked in Phase 0E.1; updated in Phase 0E.3 (v1.1) after the accepted pre-implem
 | ADR-62 | R7: outbox run-outcome sweeper (run IDs and terminal status; re-dispatch CRASHED / SYSTEM_FAILURE); required in the job foundation | §19.3 | LOCKED (validated, TA-Q-04) |
 | ADR-63 | R8 (operational lifecycle principle found during managed validation; not part of the TA-Q-29 result): long-lived runtime roles in production and shared Supavisor environments; no routine create → pool → drop of login roles in shared projects; per-run roles only in isolated disposable or non-Supavisor environments; never drop/recreate pooled role names; rotation by in-place password or new role name + drained pool | §11.7, §65 | LOCKED (principles) · rotation and drain procedure VALIDATE with Supabase before the first production rotation (TA-Q-30) |
 | ADR-64 | Credential key management on AWS KMS: customer-managed symmetric KEK outside the database; per-record data key, AES-256-GCM in the integration boundary; mandatory non-secret encryption context binding `workspace_id` + `credential_id` (no organization ID, no sensitive values); key-policy separation web seal-only / integration decrypt; controlled `ReEncrypt` re-wrap; runtime administration denied; no caching of decrypted credentials; local keyring for local and CI behind the crypto port | §39 | LOCKED for Step 5 (validated, TA-Q-07) · deployed-worker authentication VALIDATE (TA-Q-31) · production region VALIDATE (TA-Q-05) · production account/key topology and KEK runbooks open (§65) |
+| ADR-65 *(v1.4)* | **Messages bounded context** (Increment M): a private-message read surface may exist **only** in a separate Messaging port and the `messaging` module, behind validated capability, workspace enablement and authorized gates. **Supersedes ADR-14 in part**; the comment contract and public data model keep no DM surface. | §76.1–§76.2, §15.1, §27.3 | APPROVED 2026-11-20 — LOCKED as a boundary (PD D-53, D-54). Supersedes ADR-14 in part. Authorizes **no** implementation, code change or guard relaxation; implementing gates are separately authorized (§76.6) |
+| ADR-66 *(v1.4)* | **Typed workflow subjects**: the `workflow` module owns status, assignment, escalation, notes and workflow history for public Conversations and Message Threads; one CRM. Subject references must keep R5 (no existence oracle); exact storage shape decided by its design gate. | §76.3, §7.1 | APPROVED DIRECTION 2026-11-20 (PD D-57, D-60, D-62); storage shape, migration and labels decided by their own gates |
+| ADR-67 *(v1.4)* | **Indexed work-queue read model** as the target architecture (Comments first, Messages later). Table shape, indexes, event-delivery latency and performance thresholds are **not** locked; a separate design, database-security and PostgreSQL performance gate decides them. | §76.4 | APPROVED ARCHITECTURAL DIRECTION 2026-11-20 (PD D-59) — **not** a schema, index, latency or performance decision; those are VALIDATE in a separate design, database-security and PostgreSQL performance gate; Comments M-2 stays open |
+| ADR-68 *(v1.4)* | **P-PRIVATE data class** and its handling rules (§38.11); access auditing of private conversations. | §38.11, §76.5 | APPROVED 2026-11-20 (PD D-64, D-65) — class and handling rules; retention periods VALIDATE — legal |
+| ADR-69 *(v1.4)* | **Instagram API setup for Increment M**: preserve the current Facebook Login for Business setup; Instagram API with Unified Login evaluated separately (also affects Comments); Graph API version unchanged until a separately reviewed update. | §76.2 | APPROVED 2026-11-20 (PD D-58, D-68) — preserve current setup and version; Unified Login and any version update VALIDATE, separately reviewed |
+| ADR-70 *(v1.4)* | **Messaging webhook posture**: encryption, rapid routing to workspace-scoped storage, deletion after routing, minimization; stricter-rule availability and subscription-health monitoring; retention values provisional. | §40, §76.5 | APPROVED PRINCIPLES 2026-11-20 (PD D-66) — thresholds, availability targets and retention values VALIDATE (security, recovery and legal assessment) |
 
 ### 72.2 Still VALIDATE after v1.2 (not locked)
+
+*(v1.4, Increment M — also VALIDATE / LEGAL, none resolved:* Messenger message-history depth · webhook failure and recovery behavior per provider documentation set · Conversation Routing ownership with Meta Business Suite Inbox · send windows, Human Agent and permissions per channel and API setup · live Instagram/Messenger API behavior · Unified Login · retention and deletion periods · AI processing and sub-processor terms · cross-border processing. See §76.8.)*
 
 Realtime transport details (TA-Q-21) · exact AI provider/model per task and AI data-processing terms (TA-Q-06) · hosting/data-residency region (TA-Q-05) · log-store vendor (TA-Q-08) · product-analytics region and consent (TA-Q-09) · transactional email vendor (TA-Q-24) · media URL/cache behavior (TA-Q-12) · provider webhook capabilities and polling cadence (TA-Q-22) · malicious-link reputation vendor (TA-Q-13) · two-key protection implementation details (TA-Q-14) · production retention periods (PD OQ-21; TA-Q-11) · provider API capability matrix (PD OQ-18) · ad-account multi-workspace use (TA-Q-02) · Supavisor role-rotation procedure (TA-Q-30, R8) · deployed Trigger.dev workers in staging (TA-Q-31) · Trigger.dev production plan sizing and cost (TA-Q-32).
 
@@ -2966,6 +2991,8 @@ High-level build order after architecture approval (Phase 0E.1) and the pre-impl
 
 Steps 7–8 can overlap; step 9's executor can be built against the simulator while step 8 progresses. Real Meta/TikTok adapters replace the simulator per capability as API validation completes.
 
+*(v1.4 note: Increment M — Messages is **not** part of this MVP sequence. Its own gates are listed in §76.6; they may run in parallel with Comments work except where §76.6 marks a hard dependency.)*
+
 ---
 
 ## 74. CLAUDE.md handoff
@@ -2978,7 +3005,7 @@ A repository-level `CLAUDE.md` is **not** created in this phase. When implementa
 | **Allowed dependency direction** | §6.3 and §7.2 rules; pure domain; no cross-module table access; boundary lint must pass. |
 | **Security invariants** | Server authority; no service role or `postgres` in runtime; dedicated runtime login roles (R1); credentials only via the credential-access function; no secrets/personal content in logs, payloads, analytics; CSRF/XSS/SSRF rules (§38). |
 | **Tenant rules** | Every tenant table has workspace and RLS; use tenant-scoped helpers only (sealed transaction-bound context, fixed-literal role switch, R2/R3); forced RLS and explicit grants (R4); composite workspace foreign keys (R5); never drop or recreate runtime roles, and never create → pool → drop login roles in a shared Supavisor project; per-run roles only in isolated disposable or local/non-Supavisor test environments (R8); system scope only for named jobs; cross-tenant = not found; one workspace per job. |
-| **Safety invariants** | Model §50 S1–S21 and the Appendix A map; the automation chain order; uncertain = veto; hide-only automation; forward-only automation (D-51); bulk hide excludes protected and uncertain items (D-52); no bulk delete/block; delete/block human-only; Monitor-only five-point enforcement; never resume automation silently; AI never sends; no DM objects. |
+| **Safety invariants** | Model §50 S1–S21 and the Appendix A map; the automation chain order; uncertain = veto; hide-only automation; forward-only automation (D-51); bulk hide excludes protected and uncertain items (D-52); no bulk delete/block; delete/block human-only; Monitor-only five-point enforcement; never resume automation silently; AI never sends; no DM objects. *(v1.4: plus Model v1.2 S9′ and S22–S25, approved 2026-11-20; CLAUDE.md records them; they are enforced in code only through the implementing gates of §76.6.)* |
 | **Provider adapter rule** | Provider SDK/types only inside adapters; capability from the catalog, never hard-coded or inferred from data; mutation port only in the executor. |
 | **Job rules** | Outbox for async work; IDs-only payloads; idempotent steps with domain idempotency (R6); EXECUTING before provider calls; run-outcome sweeper (R7); checkpoints; lanes and concurrency keys; replies never blindly retried. |
 | **AI rules** | Use the gateway; one task = one contract and version; structured outputs validated and fail-closed; numbers by code; no tools touching data or platforms; provenance on every output; evals for any prompt/model change. |
@@ -3012,7 +3039,7 @@ A repository-level `CLAUDE.md` is **not** created in this phase. When implementa
 | 16 | Protection is structurally before automation. | §25.1–§25.5, T-05, T-06 |
 | 17 | Monitor-only structurally blocks mutations. | §26.6, T-04 |
 | 18 | Public/private reply semantics are preserved. | §27 |
-| 19 | No DM runtime was accidentally created. | §15.1, §27.3, T-12 |
+| 19 | No DM runtime was accidentally created. | §15.1, §27.3, T-12 *(v1.4: "accidentally" = outside an authorized Increment M gate, §76)* |
 | 20 | Auditability exists. | §41 |
 | 21 | Temporal truth is preserved. | §12, §13 |
 | 22 | Missing data remains distinguishable from zero. | §17.5, T-18 |
@@ -3035,9 +3062,65 @@ Criteria 30–32 describe Phase 0E. **Phase 0E.1 additions:** baseline locked an
 
 ---
 
+## 76. Increment M — Messages architecture (v1.4; approved 2026-11-20 — architecture direction only; no runtime gate authorized)
+
+Source: PD v1.4 §21 (D-53 to D-70, approved on 2026-11-20 with the product owner's corrections), Model v1.2 §57, IA v1.2, UX v1.3 §30. **This section authorizes no implementation.** The partial supersession of ADR-14 by ADR-65 is a governance boundary only: it changes no code and relaxes no guard or test. The current codebase, its guards (e.g. the provider DM-identifier guard, the comment-only webhook field allowlist, the contract test "no direct-message read surface") and T-12 stay authoritative until an implementing gate is separately authorized and updates them deliberately.
+
+### 76.1 Bounded context (ADR-65)
+
+A new module `messaging` (layer L1, §7.1) owns the Messages objects of Model §57. It depends on tenancy, connections (asset registry) and capability; it never imports `interactions` or `conversations`, and those modules never import it. It publishes domain events (e.g. thread activity, message received, deleted at source) consumed by higher layers.
+
+### 76.2 Provider contract and setup (ADR-65, ADR-69)
+
+- A **separate Messaging port** in the provider contract (read operations such as listing threads, reading a thread and a message, participant profile where consented, webhook parsing and messaging subscription), implemented in a messaging sub-module of the Meta adapter. The comment ports (§15.1) never gain a private-message operation.
+- Sending (gate M-S only) is a mutation-port operation obtainable only by the Platform Mutation Executor (§26), from a human-authorized command (S23); no bulk request type exists.
+- Instagram: the current Facebook Login for Business setup is preserved; Unified Login is evaluated separately (PD D-58). Setups are never mixed within one connected account. Capability entries are per platform **and** API setup, with validation evidence (§16; catalog contract). Graph API version unchanged until a separately reviewed update (PD D-68).
+
+### 76.3 Shared workflow over typed subjects (ADR-66)
+
+`workflow` (L3) owns status, resolution, assignment, escalation, internal notes and workflow events for **public Conversations and Message Threads** — one CRM. Subject references must preserve R5 (a reference into another workspace fails like a missing one); the exact storage shape is decided by its design gate. Messages: manual Done/Resolve is authoritative; automatic reopen/Done are separate configurable policies to be evaluated (PD D-60). Comments keep the Model §31 behavior. **Migration of the existing Conversation workflow state** into `workflow` is a separate future gate with these requirements: expand–contract with identical states, no audit gap, no notifications, preserved list addresses and cursor semantics (or a documented reset), forced RLS, explicit grants, introspection, rollback path. Operational labels (PD D-62) are a later, separately gated workflow capability.
+
+### 76.4 Work-queue read model (ADR-67 — direction only)
+
+Target: an **indexed, scalable read model** owned by `workflow`, serving Comments first and Messages later, read with keyset pagination — replacing bounded multi-batch filtering such as the Comments INT-03C-2 state filter. Principles: workflow-owned values written with the workflow change; activity values from owner-module events; the projection is recomputable derived state (§13) with a rebuild path and drift monitoring. **Not decided here:** table shape, indexes, event-delivery latency, performance thresholds — a separate design, database-security and PostgreSQL performance gate decides them (PD D-59). Comments INT-03C-2 finding M-2 remains open until measured and resolved.
+
+### 76.5 Privacy, webhooks and access (ADR-68, ADR-70)
+
+P-PRIVATE class (§38.11); access to private conversations audited (PD D-65); no guest path (S22); Analyst/Viewer excluded by default (PD D-61); target role policy (approved 2026-11-20; IA v1.2 §18): `messages.read` for Owner, Admin, Manager and Responder, future `messages.send` for the same roles only after gate M-S and denied by default until then — no runtime permission catalog change is authorized by v1.4; attachment references only in the initial read-only integration — no media storage, no server-side download (PD D-67; SSRF posture §38.7); webhook payload principles and provisional retention (§40 note; PD D-66); deliveries for assets without Messages enabled keep today's behavior. Revocation (permission removed, account-level message access disabled, token invalid) makes the capability unavailable with its reason and stops ingestion (§16, §17). Subscription health and delivery-failure monitoring must alert before provider disablement thresholds; gaps are reconciled and shown as coverage (S11).
+
+### 76.6 Gates and dependencies (each separately authorized)
+
+The product-level gates are defined in PD v1.4 §21.2 (M-0, M-E, M-UX, M-R, M-W, M-S, M-I). This table adds **technical subdivisions** — **M-C** (contracts, domain, simulator) and **M-IN** (messaging webhook intake), which precede M-R — without changing any authorization boundary; each row is separately authorized.
+
+| Gate | Hard dependencies | Parallel with Comments |
+|---|---|---|
+| M-0 Governance (MESSAGES-GOV-01) | — | Yes |
+| M-E Provider evidence (MESSAGES-EXP-01) | Explicit, scoped product-owner approval of every Meta configuration, permission request, webhook subscription and live call (PD D-70) | Yes |
+| M-UX Synthetic prototype (MESSAGES-UX-01) | These amendments (approved 2026-11-20) and its own separate authorization; synthetic data only (UX v1.3 §30.4) | Yes |
+| M-C Contracts, domain, simulator *(technical subdivision)* | Approved amendments (ADR-65) and its own authorization; evidence from M-E where contracts depend on provider behavior | Yes |
+| M-IN Messaging webhook intake *(technical subdivision)* | M-C; M-E evidence; ADR-70 | Yes |
+| M-R Read-only sync and Messages UI | M-IN; legal minimum for storing private content in a pilot | Yes |
+| M-W Shared workflow integration | **Workflow core and work-queue read model (Comments capabilities)**; M-R | After those exist |
+| M-S Human-authorized sending | M-W; provider review where required; separate security and product-owner decision; T-30 | — |
+| M-I Intelligence over private content | Qualified legal review, approved data-processing contracts, consent, security controls; AI contracts and evals (§21–§24); synthetic evaluation data only unless separately decided (PD D-64) | — |
+
+Messages does not wait for all Comments features; only M-W depends hard on the workflow core and the read model.
+
+### 76.7 Guard and test evolution (specification for implementing gates)
+
+Principle: **keep every existing prohibition for the Comments context; add narrow, explicit allowances only inside the Messages context; add prohibitions against leakage.** The comment interaction kinds stay `comment`/`reply`; the comment ports keep no private-message operation; the comment webhook parser keeps dropping messaging deliveries for assets without Messages; the Inbox/Comments layout never contains Messages; T-12 becomes T-12a/T-12b and T-28 to T-32 are added (§55). T-26 and T-27 stay green throughout. No guard or test is changed by v1.4.
+
+### 76.8 Open items (none resolved by v1.4)
+
+VALIDATE — provider: Messenger message-history depth (a recent-messages limit is documented for Instagram); webhook failure/recovery rule per documentation set and API setup; Conversation Routing ownership with Meta Business Suite Inbox; send windows, Human Agent and permissions per channel and setup; attachment-reference lifetimes; unsend/edit behavior; Unified Login migration. VALIDATE — legal: retention and deletion periods (PD OQ-21), lawful basis, AI processing and sub-processors (TA-Q-06), cross-border processing (TA-Q-05), raw payload retention (TA-Q-11), access-log retention (PD R-09). No legal review and no Meta App Review has occurred.
+
+---
+
 ## Appendix A — Invariant → enforcement map
 
 ### A.1 Product invariants (Phase 0E brief)
+
+*(v1.4 note, Increment M: the rows below about DMs describe the Comments/public model and stay in force; Increment M objects exist only in the Messages bounded context once its gates are authorized (§76; ADR-65). See A.2 for S9′ and S22–S25.)*
 
 | Invariant | Primary enforcement point(s) | Tests |
 |---|---|---|
@@ -3090,6 +3173,11 @@ Criteria 30–32 describe Phase 0E. **Phase 0E.1 additions:** baseline locked an
 | S7 | Monitor-only causes no platform mutation | Five-point enforcement | T-04 |
 | S8 | No AI auto-send | No AI→executor path; human request required | T-08 |
 | S9 | No full DM Inbox | No DM reads/objects | T-12 |
+| S9′ *(Model v1.2; approved 2026-11-20)* | No DM inbox outside Increment M | Comment ports and public model keep no DM surface; Messages only in its bounded context (ADR-65) | T-12a, T-12b |
+| S22 *(Model v1.2; approved 2026-11-20)* | Private messages never reach guests or other workspaces | RLS, no guest grants, no projection path | T-12b, T-28 |
+| S23 *(Model v1.2; approved 2026-11-20)* | No autonomous or bulk private-message sending | Human-authorized command only; window check at request and execution; no bulk request type | T-30 |
+| S24 *(Model v1.2; approved 2026-11-20)* | Private content is minimized | P-PRIVATE rules (§38.11) | T-29 |
+| S25 *(Model v1.2; approved 2026-11-20)* | Deletion is honored | Retention hooks and tombstones (§61); retention periods from legal decisions (OQ-21) | T-32 (not implemented) |
 | S10 | Automation never resumes silently | IA-16 transition + activation guard | T-15 |
 | S11 | Unsupported ≠ zero; missing ≠ zero | Capability states; coverage; Measured values | T-18 |
 | S12 | Source evidence distinguishable from inference | Persistence categories; provenance | T-13 |

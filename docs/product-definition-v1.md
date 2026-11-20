@@ -5,9 +5,9 @@
 | Document | Product Definition v1 |
 | Repository | `social-intelligence-platform` |
 | Phase | 0A — Product Definition |
-| Version | 1.3 (Phase 0E.1 alignment: three product decisions confirmed during Technical Architecture) |
-| Date | 2026-10-03 |
-| Status | **Approved** by the product owner on 2026-10-03. This is the source of truth for product intent. |
+| Version | 1.4 (MESSAGES-GOV-01: Increment M — Messages governance amendment — **approved** by the product owner on 2026-11-20) · 1.3 (Phase 0E.1 alignment: three product decisions confirmed during Technical Architecture) |
+| Date | 2026-10-03 (v1.0–v1.3) · 2026-11-20 (v1.4 drafted and approved) |
+| Status | **Approved.** v1.3 approved by the product owner on 2026-10-03; **v1.4 approved on 2026-11-20** (MESSAGES-GOV-01). This is the source of truth for product intent. Three statuses are kept apart: (1) **governance direction — approved**: Increment M — Messages (§21; D-53 to D-70) is a separately gated future increment outside the MVP; (2) **document wording — approved** (v1.4, after the corrections recorded in the approval record); (3) **runtime gates — not authorized**: no Messages implementation, provider configuration, data processing or activation is authorized by this version (§21.2). The MVP scope is unchanged. |
 | Scope | Product only. This document does not select frameworks, databases, infrastructure or vendors, and it does not define a data schema. |
 | Product name | Not decided (see OQ-01). This document says "the product". |
 
@@ -21,6 +21,8 @@
 | 2026-10-03 | Phase 0B.1 / 0B.2 (cross-document alignment): the product owner confirmed that **Monitor-only Workspace ships in the MVP** (**D-49**). The decision came out of the Information Architecture review (IA-11 in `docs/information-architecture-v1.md`). Product Definition v1.2 records it as product intent. No other decision changed, and no [VALIDATE] item changed status. |
 | 2026-10-03 | Phase 0E.1 (cross-document alignment): during the Technical Architecture review the product owner confirmed three product behaviors, recorded as **D-50** (content-bearing Social Asset uniqueness within an Organization), **D-51** (forward-only automatic moderation) and **D-52** (uncertain interactions excluded from human bulk Hide). They are recorded in Appendix A only; detailed behavior lives in `docs/intelligence-data-model-v1.md` v1.1, `docs/core-ux-flows-v1.md` v1.1 and `docs/technical-architecture-v1.md` v1.0. No other decision changed, and no [VALIDATE] item changed status. |
 | 2026-10-03 | Phase 0E.1a (clarification): the product owner clarified **D-51** so that initial Enable, Resume after Pause and explicit re-enable after Monitor-only each establish a **new forward-only cutover point**, with no catch-up automation for interactions that arrived while a policy was Off, Paused or Suspended. This clarifies D-51; it adds no capability. IA-16, D-50, D-52 and all other decisions are unchanged. Version 1.3 kept. |
+| 2026-11-20 | MESSAGES-GOV-01 | Version **1.4** (**pending formal product-owner approval of this text**). Three separate statuses: (1) *authorization of the work* — the product owner authorized documentation-only governance amendments in the MESSAGES-GOV-01 decision (2026-11-20); (2) *decisions* — the product owner approved in principle **D-53 to D-70** (Appendix A), with the corrections stated in that decision (D-56, D-59, D-60, D-62, D-64, D-66, D-70); (3) *wording* — this text is **not yet formally approved**. Scope: **Increment M — Messages** (§21) is added as a separately gated future product increment for Instagram Direct and Facebook Messenger. The **MVP scope is unchanged**: §10.1 keeps excluding a DM inbox from the MVP, and C-03 / D-07 / D-36 keep their text and rationale (scope notes added, nothing removed). No implementation, provider configuration, legal approval or Meta App Review is implied by this version. Identifier note: a never-applied Comments 2.1 proposal (`design/phase-7b/comments-2.1/COMMENTS-2.1-CONTRACT.md` §B, status PROPOSED) had provisionally numbered its proposed rows D-53 to D-55 and a "v1.4"; those numbers were never part of this register and are assigned here to Increment M — if that proposal is ever approved it must be renumbered. Source: an explicit product-owner decision communicated in the MESSAGES-GOV-01 mandate (no signature, external document or approval identifier is recorded). |
+| 2026-11-20 | MESSAGES-GOV-01 (formal approval) | Product owner **formally approved Product Definition v1.4** — the Increment M governance direction and wording — after review of the amendment package, the amended documents and an independent governance audit (CONDITIONAL PASS), conditional on the documentary corrections applied in this step: **G-1** §20.1 principle 2 interpretation; **G-2** gate levels (§21.2 product gates vs technical subdivisions in TA v1.4 §76.6); **G-5** Appendix A references for D-58, D-59, D-68, D-69 (new §21.7, §21.4 sentence); **G-7** "governed as" wording (§18.3, §20.2); **G-9** §10.1 list formatting (scope note moved below the list). Product-owner confirmations recorded in the same decision: Increment M may progress **independently of full MVP completion**, subject to its own approved gates, technical dependencies, security checks and provider prerequisites — not a bypass of readiness requirements (§20.2, §21.2); the **Messages role matrix** is approved as target policy (§21.3; IA v1.2 §18). Sections changed by MESSAGES-GOV-01 overall: Version, Date and Status fields; this approval record; §8.1 (Interaction row note); §8.2 (interpretation note); §9.2-D (C-03 scope note); §10.1 (scope note); §17.2 (R-14); §18.3; §20.1 (principle 2 note); §20.2 (DM inbox row); **§21 (new)**; Appendix A (source key, D-53 to D-70). C-03, D-07 and D-36 keep their original text and rationale. The entry above (first MESSAGES-GOV-01 row) is kept as written: it records the status at drafting. This approval authorizes no runtime gate (§21.2), no provider configuration, no data processing, no deployment and no push; LEGAL and VALIDATE items stay open (§21.6). Source: an explicit product-owner decision communicated in the MESSAGES-GOV-01 final mandate (no signature, external document or approval identifier is recorded). |
 
 ---
 
@@ -258,7 +260,7 @@ These principles decide trade-offs. When a feature conflicts with them, the prin
 | **Content** | The object being conversed around. | Post, reel, video, carousel, story (if supported), ad. |
 | **Source** | How the content reached its audience. | `organic`, `paid`, `mixed` (boosted / reused), `unknown`. Determined at the content level **[CONFIRMED — C-05]** (see 8.3). |
 | **Paid context** | The advertising structure associated with paid content. | Campaign → ad group (ad set) → ad → creative. Platform names vary. |
-| **Interaction** | One unit of audience or brand communication. | MVP: `comment`, `reply`. Future: `direct_message`, `mention`, `review`, etc. |
+| **Interaction** | One unit of audience or brand communication. | MVP: `comment`, `reply`. Future: `direct_message`, `mention`, `review`, etc. *(v1.4, D-54: private messages of Increment M are modeled as **Messages** in their own bounded context, not as public-comment Interactions; see §21.)* |
 | **Conversation** | A thread of related interactions. | A top-level comment and its replies, including brand replies. |
 | **Actor** | The author of an interaction. | Audience member, the brand's own account, another brand, likely bot, unknown. |
 | **Classification** | The multi-dimensional understanding of an interaction (§12). | Intent = purchase question; topic = delivery; sentiment = neutral; risk = low; needs response = yes. |
@@ -295,6 +297,7 @@ interaction
 - **Capability-aware product [CONFIRMED — C-07].** Each platform and source combination has a capability profile (for example, "can hide", "can reply privately", "history available"). The product shows or disables actions based on that profile and explains why when something isn't available, instead of failing silently.
 - **Brand replies are interactions too [PROPOSED].** Replies from the brand's own account, whether made in the product or natively on the platform, are part of the conversation. This is needed to know what has been answered, measure response time, and evaluate reply quality.
 - **Extensible to DMs and other interaction types [CONFIRMED].** The model must accept `direct_message` (and later others) without restructuring. DM *workflows* are out of the MVP.
+  > **Interpretation (v1.4, D-54; approved 2026-11-20):** "without restructuring" is satisfied **by addition**. Private messages (Increment M, §21) live in a dedicated Messages bounded context and share the workflow layer (D-57); the public-comment Interaction and Conversation model is not widened to hold them. DM workflows remain out of the **MVP**; they belong to Increment M.
 
 ### 8.3 Organic vs paid: content-level source model [CONFIRMED — C-05; per-platform reliability VALIDATE]
 
@@ -347,6 +350,7 @@ The brief describes `source_type = paid` as an attribute of the interaction. In 
 #### D. Moderation and human actions
 - **[CONFIRMED]** Human-performed: reply publicly, hide/unhide, delete, block, and reply privately where officially supported **[VALIDATE]**.
 - **[CONFIRMED — C-03]** Private reply is human-triggered, one-shot and outbound, recorded in the interaction history, and never sent by AI. If the audience member answers privately, the follow-up continues in the platform's native inbox until full DM support exists, and the UI states this clearly. This adds **no** DM inbox, DM thread view or DM workflow to the MVP.
+  > **Scope note (v1.4, D-53; approved 2026-11-20):** unchanged for Comments: the private reply stays one-shot and never creates a public Interaction or a thread in Comments. Where Increment M (§21) is later enabled for that connected account, follow-up *may* be read in Messages; until then — and wherever it is not enabled — it continues in the platform's native inbox, as stated above.
 - **[CONFIRMED]** Delete and block are human-only in the MVP.
 - **[PROPOSED]** Internal workflow actions: assign, change status, escalate, add internal note, mark as "no response needed".
 
@@ -426,6 +430,8 @@ Added by the Phase 0A.1 decision lock **[CONFIRMED]**:
 - Automatic hiding of legitimate complaints, product or service problems, fraud accusations against the brand, or commercial objections, by any policy or keyword rule (C-02, C-09).
 - Causal attribution of action outcomes (C-10).
 - A macro or workflow system built on Saved Replies (D-46).
+
+> **Scope note (v1.4, D-53; approved 2026-11-20):** the DM exclusions in this list ("Full Direct Message inbox management"; "A DM inbox, DM threads or DM follow-up workflows, including after a private reply") apply to the **MVP** and remain in force for it. Private messaging is governed separately as **Increment M — Messages** (§21), a future increment with its own gates. Nothing in the MVP implies, exposes or depends on Messages.
 
 ### 10.2 Additional proposed non-goals for the MVP [PROPOSED]
 
@@ -820,7 +826,7 @@ Aim for WCAG 2.2 AA-level accessibility (contrast, keyboard operability, screen-
 | R-11 | **AI reply suggestions fabricate facts** (prices, policies), which leads to customer harm. | High | No-fabrication rule. Verified Brand Context (D-47). Human review before sending. |
 | R-12 | **Perceived as "just another moderation tool"**, competing on price with CommentGuard-like tools. | Medium–High | Lead with intelligence and premium UX. First-session insight. |
 | R-13 | **Agency–client access complexity** (who authorizes, what clients see, what happens at offboarding) slows onboarding. | Medium | Workspace-owned connections (D-48). Simple default roles. Client guest role. OQ-13. |
-| R-14 | **The private reply flow creates DM conversations** the MVP can't manage. | Medium | One-shot outbound action recorded in history. The UI states that follow-up continues in the native inbox (C-03). |
+| R-14 | **The private reply flow creates DM conversations** the MVP can't manage. | Medium | One-shot outbound action recorded in history. The UI states that follow-up continues in the native inbox (C-03). *(v1.4:)* Private threads may appear only in Messages (Increment M, §21), never in Comments; a private reply never opens one. |
 | R-15 | **Scope creep** turns Saved Replies into a macro/workflow system or Brand Context into a knowledge-base product. | Medium | Keep both lightweight (D-46, D-47). Explicit non-goal in §10.1. |
 
 ---
@@ -871,7 +877,7 @@ These are not product decisions. They must be validated before the related capab
 - Full aggregated cross-client / cross-workspace intelligence and reporting (C-04).
 - Stronger causal inference for action follow-up (C-10).
 - Workspace and connection ownership-transfer workflows (D-48).
-- Full DM inbox management (§10.1).
+- Full DM inbox management (§10.1). *(v1.4: governed as **Increment M — Messages**, §21 and D-53; still not MVP.)*
 
 ### 18.4 Resolved in Phase 0A.1
 
@@ -932,6 +938,7 @@ Targets marked **[PROPOSED]** are starting points to calibrate during later phas
 
 1. **Extend the loop, don't fork the product.** New capabilities must fit LISTEN → UNDERSTAND → PRIORITIZE → ACT → MEASURE → LEARN and the core concepts (Interaction, Content, Conversation, Actor, Source, Platform).
 2. **New platforms and interaction types are additions to the model, not rewrites.** Adding DMs, a new network or reviews should mean adding a new `interaction_type` or `platform` with a capability profile.
+   > **Interpretation for Increment M (v1.4, D-54; approved 2026-11-20):** this principle is kept as written. For private messages it is satisfied by **adding a dedicated Messages bounded context** (§21, §8.2 note) — still an addition, not a rewrite — and **not** by introducing a new public-comment `interaction_type`. The public-comment Interaction kinds stay comment and reply.
 3. **Autonomy is earned, per category, with measurement and opt-in** (§13.5).
 4. **One product for every segment.** Agency and enterprise features are expressed through structure, roles, views and configuration depth, never as a separate product.
 5. **Depth before breadth.** Improve intelligence quality and the action-follow-up loop before adding adjacent product categories.
@@ -942,7 +949,7 @@ Targets marked **[PROPOSED]** are starting points to calibrate during later phas
 
 | Expansion | Rationale | Precondition |
 |---|---|---|
-| DM inbox management | Natural extension of conversation handling; closes the private-reply loop | MVP stable; DM API validation |
+| DM inbox management | Natural extension of conversation handling; closes the private-reply loop | MVP stable; DM API validation *(v1.4: governed as **Increment M — Messages**, §21 (D-53). Product-owner confirmation (2026-11-20): Increment M may progress independently of full MVP completion, subject to its own approved gates (§21.2), technical dependencies, security checks and provider prerequisites; this is not a bypass of readiness requirements)* |
 | Longer historical windows by plan | Deeper trend and seasonality analysis | Commercial packaging |
 | Full aggregated cross-client intelligence and reporting | Cross-client protection and value beyond the MVP attention overview | Multi-workspace MVP proven (C-04) |
 | Multi-step approval workflows | Structured enterprise teams | Demand from P4 without bloating P1 (C-12) |
@@ -956,9 +963,63 @@ Targets marked **[PROPOSED]** are starting points to calibrate during later phas
 
 ---
 
+## 21. Increment M — Messages (v1.4; approved 2026-11-20 — governance only; no runtime gate authorized)
+
+### 21.1 What Increment M is
+
+**Messages** is a separate operational surface for **private conversations** — **Instagram Direct** and **Facebook Messenger** — of connected accounts for which Messages is enabled. It is a **future product increment outside the MVP** (D-53). **Comments** remains the surface for public interactions and keeps exactly the MVP scope of this document. Messages and Comments share the workflow (CRM) layer where appropriate (D-57) without forcing private-message semantics into public-comment contracts (D-54).
+
+### 21.2 Gates (each separately authorized)
+
+These are the **product-level gates**. The Technical Architecture subdivides some of them into technical gates (TA v1.4 §76.6 — e.g. provider and domain contracts **M-C** and messaging webhook intake **M-IN**, which precede M-R); each technical gate is also separately authorized, and none widens the authorization boundaries below.
+
+| Gate | Content | Authorization |
+|---|---|---|
+| **M-0** Governance | This amendment and its cross-document counterparts; decisions D-53 to D-70 | MESSAGES-GOV-01 — direction and wording approved 2026-11-20 (governance only) |
+| **M-E** Provider evidence (MESSAGES-EXP-01) | Development-app experiments with test accounts, recorded as validation evidence | **Explicit, scoped product-owner approval required** (D-70); not authorized by M-0 |
+| **M-UX** Synthetic design (MESSAGES-UX-01) | Interactive prototype with synthetic data only (§21.5) | Separate authorization after this amendment is approved |
+| **M-R** Read-only Messages | Ingest and display private threads of Messages-enabled, connected accounts; honest history and coverage; no sending (D-55) | Separate implementation authorization, then a separate pilot authorization |
+| **M-W** Shared workflow on threads | Open/Done, assignment, notes, escalation through the shared workflow layer (D-57, D-60) | Separate authorization |
+| **M-S** Human sending | Human-authorized sending inside the platform's messaging window (D-56) | Separate product-owner **and** security decision; provider review where required |
+| **M-I** Intelligence over private content | Classification, prioritization, summaries, translation, response suggestions (D-64) | Only after qualified legal review, approved data-processing contracts, appropriate consent and security controls; separate decision |
+
+Production activation of any gate is a further, separate product-owner and security decision. Increment M may progress **independently of full MVP completion**, subject to these gates, technical dependencies, security checks and provider prerequisites; this is not permission to bypass readiness requirements (product-owner confirmation, 2026-11-20).
+
+### 21.3 Principles [CONFIRMED — D-53 to D-70; approved 2026-11-20]
+
+1. **Read-only first** (D-55).
+2. **No autonomous and no bulk private-message sending** (D-56). In M-S only a human explicitly authorizes the final send. AI-assisted writing, translation and draft suggestions are **not prohibited** as future capabilities, but each needs its own product, privacy, technical and legal gate; none is authorized by this version. No promotional content in message tags; no broadcast or marketing messaging.
+3. **Availability is never implied** by Comments, by a private reply, by a granted permission or by a design prototype. It comes from validated platform capability (C-07) **and** the workspace's Messages enablement.
+4. **Private messages are never visible to Client guests** and never aggregated across workspaces (C-04 unchanged). Analyst/Viewer is excluded by default (D-61). **Target role policy** (approved 2026-11-20; IA v1.2 §18): Owner, Admin, Manager and Responder may read private messages (`messages.read`) and, only after gate M-S, send (`messages.send`); Analyst/Viewer has no access by default; Client guest never. Future sending stays denied by default until the independently authorized M-S gate and all required security and provider conditions. No permission exists in the runtime today.
+5. **Honest history** (S11 in the Model): only what the platform provides and what arrived since connection; platform history limits are stated, never hidden.
+6. **Access to private conversations is audited** (D-65).
+7. **Manual Done/Resolve is authoritative** for Messages; automatic reopen/Done are separate, configurable policies to be evaluated (D-60). Sending a message does not mean the request was resolved. The Comments lifecycle (IA-04) is unchanged.
+8. **Privacy first:** data minimization, encryption and prompt routing of provider payloads into workspace-scoped storage (D-66); attachment references only in the initial read-only integration (D-67). Retention periods, AI processing, processors and cross-border processing remain **[VALIDATE — legal]** (OQ-21, R-09).
+
+### 21.4 Shared CRM capabilities
+
+The shared workflow layer (D-57) is intended to own, for public-comment conversations and private-message threads alike: Open/Done and status transitions, assignment, escalation, internal notes, workflow history and auditability, and — as a later, separately gated capability — user-managed **operational Labels** (D-62), which are distinct from intelligence classification labels and from workspace labels (Brand, Market). There is one CRM, not one per channel. Its list views are served by an **indexed, scalable work-queue read model** as the target architecture — Comments first, Messages later (D-59); its table shape, indexes, event-delivery latency and performance thresholds are decided by a separate design, database-security and PostgreSQL performance gate (TA v1.4 §76.4), and Comments finding M-2 stays open until measured and resolved.
+
+### 21.5 Design gate MESSAGES-UX-01 (permitted to be proposed; not authorized by this version)
+
+After this amendment is approved, a separately authorized **synthetic interactive prototype** may design: the Messages list and private-conversation UI; desktop and responsive mobile experience; Open/Done/All navigation; emoji picker; Saved Replies library; translation of messages and draft replies; internal notes and collaboration indicators; attachments and delivery-state presentation; a human-controlled reply composer; and future intelligence assistance shown as clearly labeled prototype behavior. It uses **synthetic data only**; it must not read real private messages, call Meta, send messages, modify live accounts, or imply that unverified provider capabilities are verified. These are **design candidates, not authorizations to ship functionality**.
+
+### 21.6 Open items specific to Increment M
+
+[VALIDATE — provider] Messenger message-history depth (the 20-most-recent-messages limit is documented for Instagram); webhook failure/recovery differences between the Messenger Platform and Instagram Platform documentation; conversation ownership with Meta Business Suite Inbox (Conversation Routing); send windows, Human Agent and permissions per channel and API setup; live API behavior in general. [VALIDATE — legal] retention and deletion obligations; AI processing and sub-processor terms; cross-border processing; access-log retention. None of these is resolved by this version, and no legal review or Meta App Review is implied.
+
+
+### 21.7 Provider setup and governance order
+
+- **Instagram API setup (D-58):** Increment M initially preserves the current Facebook Login for Business setup; the Instagram API with Unified Login is evaluated separately (it would also affect Comments). No implicit migration (TA v1.4 §76.2, ADR-69).
+- **Graph API version (D-68):** the currently pinned version is kept for now; any update is a separately reviewed change (TA v1.4 §76.2).
+- **Governance order (D-69):** governing documents first (PD → Model → IA → UX → TA), the implementation constitution (CLAUDE.md) last and only after consistency is verified; CLAUDE.md follows the source documents, never the reverse.
+
+---
+
 ## Appendix A — Decision register
 
-Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 product-owner decision lock (2026-10-03); **0B.1 / 0B.2** = product-owner decision confirmed during Information Architecture review and aligned into this document (2026-10-03); **0E.1** = product-owner decision confirmed during Technical Architecture review (2026-10-03).
+Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 product-owner decision lock (2026-10-03); **0B.1 / 0B.2** = product-owner decision confirmed during Information Architecture review and aligned into this document (2026-10-03); **0E.1** = product-owner decision confirmed during Technical Architecture review (2026-10-03); **GOV-01** = MESSAGES-GOV-01 product-owner decisions (2026-11-20): Increment M decisions and the v1.4 wording formally approved after the recorded corrections.
 
 | ID | Decision | Source | Where captured |
 |---|---|---|---|
@@ -1014,6 +1075,24 @@ Source key: **0A §n** = section of the Phase 0A brief; **0A.1** = Phase 0A.1 pr
 | D-50 | **Content-bearing Social Asset uniqueness (M-01).** Within one Organization, a content-bearing social asset (Facebook Page, Instagram professional/business account, TikTok account, or equivalent) can be actively connected to **at most one workspace**. Across Organizations it may be connected independently: each Organization owns its own connection, credentials are never shared, data, workflow and intelligence are isolated, and no Organization learns that another connected the same asset. Moving an asset between workspaces of one Organization is an explicit, audited Move by an Owner/Admin: history stays in the source workspace, its coverage ends at the move, the target starts its own import, and history isn't copied. Inactive connections don't block later use. Ad accounts may serve as a paid-context source for several workspaces of one Organization only if platforms allow it safely **[VALIDATE]**; they never define the workspace boundary. | 0E.1 | Appendix A (detail: data model v1.1 §5; technical architecture §8) |
 | D-51 | **Forward-only automatic moderation.** Forward-only applies at **every activation boundary**: (1) initial Enable, (2) Resume after Paused, (3) explicit re-enable after Monitor-only (Suspended). Each of these establishes a **new forward-only cutover point**: only interactions arriving after that activation, resumption or re-enablement are eligible for automatic moderation. Interactions that arrived while the policy was Off, Paused or Suspended are **never** processed as catch-up when it becomes active again; there is no retrospective auto-hide burst. They stay available for human review, and historical obvious spam can be handled with a human-initiated bulk Hide, with all bulk safety exclusions. History is used only for preview, safety validation and impact estimates. Reprocessing, model upgrades and classification corrections never trigger retrospective automatic platform actions. Example: policy On → Pause → 50 interactions arrive → Resume → those 50 are not auto-hidden; only interactions arriving after Resume are eligible. The same applies to Monitor-only → Standard → explicit re-enable. IA-16 is unchanged: rules still return Paused after Monitor-only and need explicit re-enable. *(Clarified in Phase 0E.1a.)* | 0E.1, 0E.1a | Appendix A (detail: core UX flows v1.1 §14; technical architecture §25.7) |
 | D-52 | **Uncertain interactions are excluded from human bulk Hide.** Bulk Hide is only for clearly homogeneous sets: interactions whose protection or classification state is uncertain are excluded, counted and flagged for individual review, like protected categories. A permitted person can still review and moderate them individually. | 0E.1 | Appendix A (detail: core UX flows v1.1 §8.6; technical architecture §26.5) |
+| D-53 | **Increment M — Messages.** Messages (Instagram Direct, Facebook Messenger) is a separately gated future product increment, **outside the MVP**. Gates M-0, M-E, M-UX, M-R, M-W, M-S, M-I are each separately authorized; production activation is a further separate decision. The MVP exclusions (§10.1, C-03, D-07, D-36) remain in force for the MVP. | GOV-01 | §21; §10.1 note |
+| D-54 | **Dedicated Messages bounded context.** Private threads, messages, participants, message identity, attachments, provider state and sending restrictions are not forced into the public-comment Interaction model; §8.2 extensibility is satisfied by addition. | GOV-01 | §8.1, §8.2 note, §21.1 |
+| D-55 | **Read-only first.** The first Messages experience (M-R) reads and displays only; sending is a separate, later authorization. | GOV-01 | §21.2 |
+| D-56 | **No autonomous and no bulk private-message sending.** Only a human explicitly authorizes the final send (M-S). AI-assisted writing, translation, draft suggestions and human-approved replies are not prohibited as future capabilities but each requires its own product, privacy, technical and legal gate. No promotional message tags; no broadcast or marketing messaging. | GOV-01 (corrected) | §21.3 |
+| D-57 | **One shared workflow layer over typed subjects** (public-comment conversation, private-message thread): one CRM, not one per channel. | GOV-01 | §21.4 |
+| D-58 | **Instagram API setup:** Increment M initially preserves the current Facebook Login for Business setup; Instagram API with Unified Login is evaluated separately (it would also affect Comments). No implicit migration. | GOV-01 | §21.7; TA v1.4 §76.2 (ADR-69) |
+| D-59 | **Indexed work queue (target architecture).** An indexed, scalable read model serving Comments first and Messages later is the target. Table shape, exact indexes, event-delivery latency and performance thresholds are **not** decided here; they require a separate design, database-security and PostgreSQL performance gate. Comments INT-03C-2 finding M-2 stays open until measured and resolved. | GOV-01 (corrected) | §21.4; TA v1.4 §76.4 (ADR-67) |
+| D-60 | **Messages workflow automation.** For the initial Messages workflow, manual Done/Resolve is the authoritative human action. Auto-reopen on an inbound message and auto-Done after a response are separate, configurable policies to be evaluated; sending a message is never assumed to resolve the request. The Comments lifecycle (IA-04) is unchanged. | GOV-01 (corrected) | §21.3 |
+| D-61 | **Analyst/Viewer excluded from private Messages by default;** Client guests never have access. | GOV-01 | §21.3 (target role policy); IA v1.2 §18 |
+| D-62 | **Operational Labels** (user-managed) are an intended shared CRM capability, separate from intelligence classification labels and workspace labels. Access, ownership, permissions and data contracts require a subsequent gate; not implemented in M-R or in this governance gate. | GOV-01 (corrected) | §21.4 |
+| D-63 | **Conversation Routing posture** (which connected app owns or may answer conversations, including Meta Business Suite Inbox) is recorded per connected account; required before any sending gate. | GOV-01 | §21.6 |
+| D-64 | **Intelligence over private content** is a future product pillar (classification, prioritization, summaries, translation, response suggestions) — only after qualified legal review, approved data-processing contracts, appropriate consent and security controls. **Not authorized now.** Raw private messages are never used for model training or unrestricted evaluation; synthetic evaluation data is permissible; any use of real private-message content in controlled evaluation needs a separate legal, privacy and product-owner decision. Autonomous sending stays prohibited (D-56). | GOV-01 (corrected) | §21.2, §21.3 |
+| D-65 | **Access to private conversations is audited.** | GOV-01 | §21.3 |
+| D-66 | **Provider payloads with private content:** encryption, rapid routing to workspace-scoped storage, deletion after successful routing and minimization are approved design principles. Any maximum retention (e.g. a 24-hour TTL) is **provisional**; final periods require a dedicated security, recovery and legal assessment. | GOV-01 (corrected) | §21.3 |
+| D-67 | **Attachment references only** during the initial read-only integration: no storage of provider media and no server-side download. | GOV-01 | §21.3 |
+| D-68 | **Graph API version** stays at the currently pinned version for now; any update is a separately reviewed change. | GOV-01 | §21.7; TA v1.4 §76.2 (ADR-69) |
+| D-69 | **Governance order:** governing documents first (PD → Model → IA → UX → TA), the implementation constitution (CLAUDE.md) last and only after consistency is verified. | GOV-01 | §21.7; approval records of PD v1.4, Model v1.2, IA v1.2, UX v1.3, TA v1.4; CLAUDE.md §2 |
+| D-70 | **Provider experiments.** MESSAGES-EXP-01 may be proposed independently of runtime implementation, but no Meta configuration change, permission request, webhook subscription or live API experiment is authorized by GOV-01; every experiment needs an explicit, scoped product-owner approval, even with a development app and test accounts. | GOV-01 (corrected) | §21.2 |
 
 ---
 

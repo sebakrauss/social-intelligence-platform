@@ -4,10 +4,10 @@
 |---|---|
 | Document | Intelligence & Conceptual Data Model v1 |
 | Phase | 0D — Intelligence & Conceptual Data Model |
-| Version | 1.1 (Phase 0E.1 alignment) |
-| Date | 2026-10-03 |
-| Status | **Approved** by the product owner on 2026-10-03 (Phase 0D.1); v1.1 aligned in Phase 0E.1 |
-| Sources of truth | `docs/product-definition-v1.md` v1.3 · `docs/information-architecture-v1.md` v1.1 · `docs/core-ux-flows-v1.md` v1.1 (all approved) |
+| Version | 1.2 (MESSAGES-GOV-01: Increment M — Messages model — **approved** by the product owner on 2026-11-20) · 1.1 (Phase 0E.1 alignment) |
+| Date | 2026-10-03 (v1.0, v1.1) · 2026-11-20 (v1.2 drafted and approved) |
+| Status | **Approved** by the product owner on 2026-10-03 (Phase 0D.1); v1.1 aligned in Phase 0E.1; **v1.2 approved on 2026-11-20** (MESSAGES-GOV-01). Statuses kept apart: (1) **governance direction — approved** (Increment M concepts §57, typed workflow subject §31 note, invariants S9′ and S22–S25 §50); (2) **wording — approved**; (3) **runtime — not authorized**: none of these concepts exists in the product until its gate is separately authorized (PD v1.4 §21.2). Nothing in the MVP model changes. |
+| Sources of truth | `docs/product-definition-v1.md` v1.4 (approved 2026-11-20; v1.3 approved 2026-10-03) · `docs/information-architecture-v1.md` v1.2 (approved 2026-11-20) · `docs/core-ux-flows-v1.md` v1.3 (approved 2026-11-20) — v1.1 of IA and UX were the sources of Model v1.1 |
 | Scope | The conceptual objects of the product, what they mean, how they relate, where each comes from, and what history, provenance and confidence they must keep. **Not** a database schema, data types, keys, storage, APIs, infrastructure or technology choices. |
 
 ### Approval record
@@ -17,6 +17,8 @@
 | 2026-10-03 | 0D | Intelligence & Conceptual Data Model v1.0 drafted. |
 | 2026-10-03 | 0D.1 | Product owner approved the model (v1.0 kept) and confirmed **M-05** (interpretive precedence, interpretations only; source facts are never overridden; deterministic rules stay narrow), **M-07** (uncertain protection vetoes automation) and **M-12** (at most one active Tracked Action per Recommendation in the MVP). Public vs private Outbound Reply semantics were clarified (§36). M-01, M-02, M-03, M-04, M-06, M-08, M-09, M-10 and M-11 remain open. All PD, IA and UX open dependencies remain open. The source documents are unchanged. |
 | 2026-10-03 | 0E.1 | During the Technical Architecture decision lock the product owner **confirmed M-01** (content-bearing Social Asset active in at most one workspace per organization; PD D-50; §5, §54). Two related product behaviors are reflected where the model describes them: forward-only automatic moderation (PD D-51; §20, S21) and exclusion of uncertain interactions from human bulk hide (PD D-52; §17.3, §19, S3). Version bumped to **1.1**. M-02, M-03, M-04, M-06, M-08, M-09, M-10 and M-11 remain open; M-05, M-07 and M-12 unchanged. No database or schema detail added. |
+| 2026-11-20 | MESSAGES-GOV-01 | Version **1.2** (**pending formal product-owner approval of this text**). Authorization of the work: product-owner MESSAGES-GOV-01 decision (documentation-only governance amendments). Decisions: PD **D-53 to D-70** approved in principle, with the product owner's corrections. Added: §57 Messages model (Increment M), the typed workflow subject (§31 note), the Comments-scope note on §36, and invariants **S9′** (amends S9; the original S9 text is kept) and **S22–S25** (§50). Every MVP concept, the Conversation/Interaction model and the Comments lifecycle are unchanged. No legal review or provider validation is implied. |
+| 2026-11-20 | MESSAGES-GOV-01 (formal approval) | Product owner **formally approved Model v1.2** (direction and wording), after review of the amendment package, the amended documents and an independent governance audit (CONDITIONAL PASS), with the documentary corrections of this step (cross-document: PD G-1, G-2, G-5, G-7, G-9; TA G-3 adds T-32 for S25). Sections changed by MESSAGES-GOV-01: Version, Date, Status and Sources fields; this approval record; §11 (note); §31 (typed workflow subject note); §36 (Comments-scope note); §50 (S9 marker; S9′, S22–S25); **§57 (new)**. The original S9 text is kept; S9′ amends it for Increment M only. The entry above is kept as written (status at drafting). No runtime gate, provider configuration or data processing is authorized; LEGAL and VALIDATE items stay open (§57.4). |
 
 ---
 
@@ -400,6 +402,8 @@ Conversation workflow state ≠ moderation state of its interactions ≠ escalat
 ## 11. Interaction model
 
 **Interaction**: one unit of communication. In the MVP it is a **Comment** (top-level) or a **Reply** (PD D-07). The concept is extensible to direct messages, mentions and reviews later without restructuring (PD §8.2). No DM object exists in the MVP.
+
+> **v1.2 note (Increment M; PD D-54; approved 2026-11-20):** private messages are **not** Interactions. They are modeled as **Messages** in their own bounded context (§57) — extensibility by addition, not by widening this model. Comment and Reply remain the only Interaction kinds.
 
 | Must preserve | Notes |
 |---|---|
@@ -923,6 +927,8 @@ The concept stays distinct so that follow-ups attach to *what was done and when*
 | **Moderation state** | Interaction | §18 |
 | **Recommendation state** | Recommendation | §27 |
 
+> **v1.2 note — typed workflow subject (PD D-57, D-60, D-62; approved 2026-11-20):** in Increment M, Workflow state, Resolution, Assignee, Escalation, Internal Note and Workflow Events belong to a **workflow subject**: a public **Conversation** (§10) or a private **Message Thread** (§57). One shared workflow model serves both — there is no second CRM. The automatic behaviors in the table below are those of **Conversations** and are unchanged. For Message Threads, manual Done/Resolve is the authoritative human action; auto-reopen on a new inbound message and auto-Done after a response are separate, configurable policies still to be evaluated, and sending a message is never assumed to resolve the request (D-60). User-managed **Operational Labels** are an intended shared workflow capability, distinct from classification labels (§14–§15) and workspace labels (Brand, Market; §4); they are not modeled yet and need a separate gate (D-62).
+
 Confirmed automatic behaviors (IA-04; UX-04), each recorded as an attributable **Workflow Event**:
 
 | Trigger | Effect | Initiator recorded as |
@@ -1029,7 +1035,7 @@ Brand Context **is not**: unrestricted document knowledge, a CMS, a full knowled
 | Audit | Audit Event | Audit Event |
 | Never creates | — | A public Conversation Interaction · an incoming private Interaction · a DM Conversation · a private thread · a DM Inbox · DM workflow state |
 
-If the audience member answers privately, the product doesn't model or ingest that private thread in the MVP. Follow-up stays in the platform's native inbox (PD D-36). Native brand replies (made outside the product) are public brand Interactions without an Outbound Reply.
+If the audience member answers privately, the product doesn't model or ingest that private thread in the MVP. Follow-up stays in the platform's native inbox (PD D-36). *(v1.2 note, Increment M: this remains true for the Comments private reply. A Message Thread (§57) exists only in Increment M, only for Messages-enabled connected accounts, and is created only by Messages ingestion — never by a private reply.)* Native brand replies (made outside the product) are public brand Interactions without an Outbound Reply.
 
 ---
 
@@ -1389,7 +1395,7 @@ Later architecture **must** preserve these. Each maps to a structural mechanism 
 | S6 | No bulk delete or block | No bulk delete/block Moderation Events exist. Bulk is hide-only and human (§18). |
 | S7 | Monitor-only causes no platform mutation | Operating mode vetoes every product-initiated platform action and automation (§4, §19). |
 | S8 | No AI auto-send | Outbound Replies always have a human sender. Suggestions never produce replies (§35, §36). |
-| S9 | No full DM Inbox | No incoming DM object. A private reply is one outbound record plus a history marker. It never becomes a Conversation Interaction (§36). |
+| S9 | No full DM Inbox | No incoming DM object. A private reply is one outbound record plus a history marker. It never becomes a Conversation Interaction (§36). *(v1.2, approved 2026-11-20: amended for Increment M by **S9′** below — supersession record; this original text is kept and remains true for the MVP and for Comments.)* |
 | S10 | Automation never resumes silently | Leaving Monitor-only returns policies Paused (IA-16) (§20). |
 | S11 | Unsupported ≠ zero; missing ≠ zero | Capability states and Coverage Records; "not available" value state (§6, §7, §49). |
 | S12 | Source evidence is distinguishable from inference | Source text versions vs assessments vs derived objects, with origin types (§13, §15, §41). |
@@ -1402,6 +1408,11 @@ Later architecture **must** preserve these. Each maps to a structural mechanism 
 | S19 | Keywords are never meaning | Pattern matches are only candidates. Hiding also requires confident understanding (not protected, not ambiguous) plus every veto (§17, §19). |
 | S20 | Platform limits are never presented as role limits | Capability states are separate from roles and mode (§6; IA §18). |
 | S21 | Automation never acts retroactively | Policies consider only interactions arriving after activation; reprocessing, model upgrades and corrections never produce automatic Moderation Events (PD D-51; §20). |
+| S9′ *(v1.2, amends S9 for Increment M; approved 2026-11-20)* | No DM inbox outside Increment M | In Comments, a private reply is one outbound record plus a history marker; it never becomes an Interaction or a thread. Private messages exist only in the Messages bounded context (§57), for Messages-enabled connected accounts with validated capability, through separately authorized gates (PD §21). |
+| S22 *(v1.2; approved 2026-11-20)* | Private messages never reach guests or other workspaces | Never visible to Client guests; never in guest projections, guest evidence, reports for guests, cross-workspace views, or search outside Messages (§57). |
+| S23 *(v1.2; approved 2026-11-20)* | No autonomous or bulk private-message sending | A private message is sent only when a human explicitly authorizes the final send (gate M-S), inside the platform's messaging window. No autonomous, AI-originated, bulk, broadcast or promotional sending. AI-assisted writing, translation and draft suggestions may exist only through their own approved gates and never send by themselves (PD D-56). |
+| S24 *(v1.2; approved 2026-11-20)* | Private content is minimized | Private message content is never written to logs, metrics, product analytics, job payloads or model training; real private content is never used in evaluations without a separate legal, privacy and product-owner decision (PD D-64). |
+| S25 *(v1.2; approved 2026-11-20)* | Deletion is honored | Deletion at the source and valid deletion requests remove private content (an identity-only tombstone may remain), within the retention rules that legal review sets (PD D-66; OQ-21). No retention period is decided here. Future test: TA T-32 (not implemented). |
 
 ---
 
@@ -1653,3 +1664,39 @@ The next phase must be able to support all of the following. It chooses *how*.
 28. Private replies never become Conversation Interactions. They leave an auditable history marker (§36).
 29. M-01 is confirmed: a content-bearing Social Asset is active in at most one workspace per organization, with isolated connections across organizations (§5, §54) (v1.1).
 30. Automation is forward-only, and uncertain interactions are excluded from human bulk hide (§17.3, §19, §20, S21) (v1.1).
+
+---
+
+## 57. Messages model (Increment M) — v1.2, approved 2026-11-20 (concepts only; no runtime authorized)
+
+Scope: the conceptual objects of **Increment M — Messages** (PD §21; D-53 to D-70). They exist only for connected accounts with Messages enabled and validated capability, and only through the separately authorized gates of PD §21.2. Nothing here is a schema; nothing here changes the MVP objects of §1–§56.
+
+### 57.1 Objects
+
+| Object | Meaning | Origin | Notes |
+|---|---|---|---|
+| **Message Thread** | One private conversation between one Connected Account and one platform-scoped Participant on one platform (Instagram Direct or Messenger). | Source fact, written only by Messages ingestion | Workspace-scoped (S16); belongs to exactly one Connected Account; a **workflow subject** (§31 note). Never created by a private reply (§36). |
+| **Message** | One private message in a thread: inbound (audience), outbound sent from the product (gate M-S only), or a native brand message sent by another app or the platform's own inbox. | Source fact (ingestion) | Provider identity unique per Connected Account; provider time kept; ordering by provider time with a stable tie-breaker; delivery may be late or out of order. |
+| **Message Text Version** | The text of a message as observed; append-only. | Source fact | Edits add versions (as for comments, §13). |
+| **Deleted-at-source marker** | The audience member removed (unsent) the message. | Source fact | Content is removed; an identity-only tombstone may remain (S25). |
+| **Participant** | The audience member, by **platform-scoped identity** (scoped to the Page or the Instagram account). | Source fact | Never merged across Connected Accounts, platforms or workspaces (no people directory). Profile details only where the platform provides them with the person's consent; they expire. |
+| **Attachment Reference** | Type and provider reference of an attachment. | Source fact | References only during the initial read-only integration (PD D-67): no stored media. References may expire and are then shown as unavailable. |
+| **Messaging observations** | Reactions, read/seen, delivery (where the platform provides them). | Source facts | Platform-dependent; absence means "not provided", never "not read" (S11). |
+| **Messaging Window** | Whether and until when a human may reply under the platform's rules (standard window; Human Agent extension where approved). | Derived | Relevant only from gate M-S; verified again at sending time. |
+| **Messaging Coverage** | What history and which periods were actually obtained for a Connected Account. | Coverage Record (§7) | Platform history limits are stated (e.g. only recent messages per thread); gaps after outages are visible; no data ≠ zero (S11). |
+| **Private Content Access Event** | A person viewed a private thread. | Audit Event (§40) | Required by PD D-65. |
+| **Conversation Routing posture** | Which connected app (e.g. the product or the platform's business inbox) owns or may answer threads of a Connected Account. | Configuration fact | Recorded per Connected Account (PD D-63); required before sending. |
+
+### 57.2 Relationships
+
+Connected Account 1—n Message Thread 1—n Message 1—n Message Text Version · Message Thread n—1 Participant · Message 0—n Attachment Reference · Message Thread 1—1 workflow subject (§31 note) · Message Thread is **never** linked to a Content Item, a public Conversation or an Interaction (a private reply's history marker stays in its public Conversation, §36).
+
+### 57.3 Interpretation, intelligence and safety
+
+- Messages are **source facts** (S12). Interpretations over private content (classification, priority, summaries, translation, suggestions) are a future pillar requiring legal review and their own gates (PD D-64); none is modeled for use yet.
+- S8, S9′ and S22–S25 apply. Client guests never reach Messages (S18, S22).
+- Monitor-only (S7) vetoes any future private-message send exactly like any other platform action.
+
+### 57.4 Open items (Increment M)
+
+[VALIDATE — provider] history depth per platform (Instagram documents a recent-messages limit; Messenger not confirmed), webhook failure and recovery behavior per documentation set, Conversation Routing ownership with the platform's business inbox, send windows and permissions per channel and API setup, attachment-reference lifetimes, unsend/edit behavior. [VALIDATE — legal] retention and deletion periods (PD OQ-21), lawful basis, AI processing and processors, cross-border processing, access-log retention (PD R-09). Operational Labels (PD D-62) and the work-queue read model (PD D-59; TA) are decided only as direction.

@@ -4,10 +4,10 @@
 |---|---|
 | Document | Information Architecture v1 |
 | Phase | 0B — Information Architecture |
-| Version | 1.1 (Phase 0C.1 decision lock) |
-| Date | 2026-10-03 |
-| Status | **Approved.** v1.0 approved on 2026-10-03 (Phase 0B.1). v1.1 records the IA decisions locked in Phase 0C.1. |
-| Source of truth | `docs/product-definition-v1.md` v1.3 (Phase 0A, 0A.1, 0B.2 and 0E.1 alignment; approved) |
+| Version | 1.2 (MESSAGES-GOV-01: Increment M — Messages placement — **approved** by the product owner on 2026-11-20) · 1.1 (Phase 0C.1 decision lock) |
+| Date | 2026-10-03 (v1.0, v1.1) · 2026-11-20 (v1.2 drafted and approved) |
+| Status | **Approved.** v1.0 approved on 2026-10-03 (Phase 0B.1). v1.1 records the IA decisions locked in Phase 0C.1. **v1.2 approved on 2026-11-20** (MESSAGES-GOV-01): (1) **governance direction — approved**: Increment M — Messages (PD §21) is its own destination, shown only where enabled and permitted; (2) **wording — approved**; (3) **runtime — not authorized** (no Messages destination, permission or view exists until its gate is separately authorized). The MVP IA is unchanged. |
+| Source of truth | `docs/product-definition-v1.md` v1.4 (approved 2026-11-20; v1.3 — Phase 0A, 0A.1, 0B.2 and 0E.1 alignment — approved 2026-10-03) |
 | Scope | How the product is organized from the user's perspective. **Not** visual design, wireframes, components, data schema, technical architecture or implementation. |
 
 ### Approval record
@@ -19,6 +19,8 @@
 | 2026-10-03 | 0B.2 | Cross-document alignment: the source of truth is now Product Definition v1.2, which records Monitor-only as confirmed product decision **D-49**. IA-11 is the IA expression of D-49. No IA behavior changed. Version 1.0 kept. |
 | 2026-10-03 | 0C.1 | Product owner locked **IA-01, IA-02, IA-03, IA-04, IA-09, IA-10, IA-13, IA-15 and IA-16**, plus the related UX decisions on application entry, workspace creation mode, native-reply auto-Done, human bulk hide and the default escalation contact (recorded in `docs/core-ux-flows-v1.md` §28). Version bumped to **1.1**. Platform-capability limits are now consistently *visible but unavailable* (never hidden). IA-05 and IA-11 are unchanged. IA-06, IA-07, IA-08, IA-12 and IA-14 remain open. |
 | 2026-10-03 | 0E.1 | Cross-document alignment: the source of truth is now Product Definition v1.3 (D-50 to D-52, confirmed during Technical Architecture). Metadata only: no IA behavior changed, no IA decision reopened, version 1.1 kept. Flow-level detail for D-51 and D-52 lives in `docs/core-ux-flows-v1.md` v1.1. |
+| 2026-11-20 | MESSAGES-GOV-01 | Version **1.2** (**pending formal product-owner approval of this text**). Authorization of the work: product-owner MESSAGES-GOV-01 decision (documentation-only governance amendments; PD D-53 to D-70 approved in principle with corrections). Added: Messages as a separate destination for Increment M, visible only where enabled and permitted (§5 note); Comments-scope notes on §8.3, §22 #13 and §24; Messages rows in the role matrix (§18). Every MVP destination, the Comments/Inbox architecture and the private-reply bounds for Comments are unchanged. |
+| 2026-11-20 | MESSAGES-GOV-01 (formal approval) | Product owner **formally approved IA v1.2** (direction and wording), after review of the amendment package, the amended documents and an independent governance audit (CONDITIONAL PASS), with the documentary corrections of this step and the product-owner confirmation of the **Messages role matrix as target policy** (§18: Owner, Admin, Manager, Responder — `messages.read` and, only after gate M-S, `messages.send`; Analyst/Viewer — no access by default; Client guest — never; no runtime permission is changed). Sections changed by MESSAGES-GOV-01: Version, Date, Status and Source fields; this approval record; §5.1 (Increment M note after "Five destinations"); §8.3 (Comments-scope note); §18 (three Messages rows and note); §22 #13 (note); §24 #1, #3, #8 (notes). The entry above is kept as written (status at drafting). |
 
 ---
 
@@ -290,6 +292,8 @@ Shell (always): Search & commands · Alerts · Settings · Account
 ```
 
 **Five destinations.** That is the smallest set where each answers a distinct question (§2.1).
+
+> **v1.2 note — Increment M (PD §21, D-53; approved 2026-11-20):** when Increment M is enabled for a workspace and the person may read private messages (§18), a separate destination **Messages** appears — *"Which private conversations need me?"* It holds only private conversations (Instagram Direct, Messenger) of Messages-enabled connected accounts and is a distinct experience from the Inbox/Comments (UX §8.10.C). It shares the workflow layer (status, assignment, notes, escalation) with the Inbox but never mixes private threads into the Inbox list or a public conversation. Where Increment M is not enabled, the five MVP destinations above are the whole navigation.
 
 ### 5.2 Top-level destinations
 
@@ -629,6 +633,7 @@ In Monitor-only workspaces every platform action in these tiers (public reply, p
 - **Before sending**, the user sees the limitation in plain language: "This sends one private message. If they answer, the conversation continues in [Platform]'s own inbox, not here."
 - **After sending**, the record appears in the thread and the activity history, and the conversation can be marked done with resolution "Replied privately".
 - **There is no private thread view, no DM list, no DM status.** The product never shows incoming private messages (PD: CONFIRMED — C-03).
+- *(v1.2 note, Increment M; approved 2026-11-20):* this remains true for **the Inbox/Comments and the conversation detail**. Private conversations can appear only in the separate **Messages** destination (§5 note), only where Increment M is enabled for that connected account; a private reply never opens a private thread here.
 
 ### 8.4 Conversation detail in Monitor-only workspaces (IA: CONFIRMED — IA-11)
 
@@ -1125,6 +1130,11 @@ The rules stay distinct: a permission never shows up as a platform limitation, a
 | Alerts | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Change workspace operating mode | ✓ | ✓ | — | — | — | — |
 | Default escalation contact | ✓ | ✓ | ✓ | — | — | — |
+| *(v1.2, Increment M)* Messages: view private conversations (`messages.read`, target) | ✓ | ✓ | ✓ | ✓ | — (no access by default; PD D-61) | — (never; Model S22) |
+| *(v1.2, Increment M)* Messages: internal actions (status, assign, notes, escalate) | ✓ | ✓ | ✓ | ✓ | — | — |
+| *(v1.2, Increment M; gate M-S only)* Messages: send a human-authorized private message (`messages.send`, future) | ✓ | ✓ | ✓ | ✓ | — | — |
+
+*(v1.2 note — Messages role matrix, approved as **target policy** on 2026-11-20: the Messages rows apply only where Increment M is enabled and only once their gates are authorized; no runtime permission exists today. Future sending (`messages.send`) stays **denied by default** until the independently authorized M-S gate and all required security and provider conditions. Every view of a private conversation is access-audited (PD D-65); sending is subject to the same Monitor-only rule as other platform actions.)*
 
 **Monitor-only applies on top of roles** (IA: CONFIRMED — IA-11). In a Monitor-only workspace, the platform-action rows (platform actions; delete, block; undo automatic hides) become *visible but unavailable* for every role that would otherwise have them. All other rows are unchanged. Roles without those permissions still don't see them at all (rule 1).
 
@@ -1285,7 +1295,7 @@ The UI ships multilingual (PD §16). Each canonical term above needs one fixed t
 10. **Sentiment as the primary organizing mechanism.** Positive/negative tabs or sentiment-first dashboards. Organize by what people need and what it means (type, topic, risk) (PD §12.1).
 11. **Silent automation.** Auto-hides that can't be seen, explained or undone from one place.
 12. **A people/CRM directory.** Author context stays inside conversations (PD §10.1).
-13. **A DM inbox through the back door.** No list of private messages, no threads after a private reply (PD: CONFIRMED — C-03).
+13. **A DM inbox through the back door.** No list of private messages, no threads after a private reply (PD: CONFIRMED — C-03). *(v1.2 note: still an anti-pattern for the Inbox/Comments and every MVP destination; private conversations may appear only in the separate Messages destination of Increment M, PD §21.)*
 14. **Portfolio intelligence through the back door.** No aggregated cross-workspace charts, topics or reports in the All workspaces page (PD: CONFIRMED — C-04).
 15. **Parallel evidence lists.** Intelligence surfaces link to the Inbox for full lists rather than building their own conversation tables.
 16. **Disabled-but-visible actions for permission reasons.** They clutter the UI and confuse users. Permissions hide; the workspace mode and platform limits explain.
@@ -1326,14 +1336,14 @@ Product-level open questions that affect the IA but aren't IA decisions (PD OQ-1
 
 Before moving to Core UX Flows (Phase 0C), all of the following must be true:
 
-1. **Navigation size:** primary navigation has at most five workspace-level destinations, each with one stated user question (§5).
+1. **Navigation size:** primary navigation has at most five workspace-level destinations, each with one stated user question (§5). *(v1.2 note: Increment M adds **Messages** as a sixth destination only where it is enabled and permitted; the MVP navigation stays at five.)*
 2. **Every confirmed MVP capability has exactly one canonical home** and documented contextual entry points (Appendix B shows no gaps).
-3. **No out-of-MVP capability has a home:** no DM inbox, no cross-workspace intelligence or reporting, no approval chains, no rules engine, no macro system, no people directory, no ad management.
+3. **No out-of-MVP capability has a home:** no DM inbox, no cross-workspace intelligence or reporting, no approval chains, no rules engine, no macro system, no people directory, no ad management. *(v1.2 note: private messaging has a home only as Increment M — Messages, PD §21 — never inside an MVP destination; participants never form a people directory.)*
 4. **Workspace boundary:** every operational and intelligence surface is workspace-scoped. Cross-workspace elements are limited to the switcher, the All workspaces attention overview and alerts.
 5. **Platforms and source:** Facebook, Instagram and TikTok, and Organic / Paid / Mixed / Unknown, appear as labels and filters on Home, Inbox, Content & Ads and Insights, with no per-platform or per-source sections.
 6. **Safety visible:** the Always protected boundary is visible in Moderation settings, in rule previews and in conversation reasons. No configuration exists that could auto-hide protected categories or abuse.
 7. **Automation reviewable:** every automatic hide is visible, explained and undoable from one canonical place (Inbox › Hidden automatically), and pausing is one action. In Monitor-only workspaces past hides stay visible as history, and undo is unavailable while the mode is on (IA-11).
-8. **Private reply bounded:** private reply is a one-shot action with its limitation stated before and after sending, and no DM view exists.
+8. **Private reply bounded:** private reply is a one-shot action with its limitation stated before and after sending, and no DM view exists. *(v1.2 note: no DM view exists in the Inbox/Comments; Messages is separate, Increment M.)*
 9. **No duplication:** Insights, Voice of Customer and Reports each have a distinct question, and VoC is a lens, not a separate destination.
 10. **Evidence reachable:** every aggregate (insight, topic, VoC item, content metric) reaches representative examples in one step and, for roles with Inbox access, the full conversation list in two. Client guests stop at representative examples (IA-05).
 11. **Capability honesty:** every action or data type that depends on platform capability has a defined unavailable state in outcome language.

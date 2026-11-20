@@ -4,10 +4,10 @@
 |---|---|
 | Document | Core UX Flows v1 |
 | Phase | 0C — Core UX Flows |
-| Version | 1.2 (Phase 1 Comments Inbox amendment, Step 7B-15V — **approved** by the product owner on 2026-11-16, Step 7B-17F) |
-| Date | 2026-10-03 (v1.0, v1.1) · 2026-11-15 (v1.2 drafted) · 2026-11-16 (v1.2 approved) |
-| Status | **Approved** by the product owner on 2026-10-03 (Phase 0C.1); v1.1 aligned in Phase 0E.1. v1.2 records the product owner's Phase 1 direction for the Comments Inbox (UX-19, UX-20; §8.10) and was **approved** by the product owner on 2026-11-16 (Step 7B-17F), with the limits in the approval record. UX-20 remains a temporary exception |
-| Sources of truth | `docs/product-definition-v1.md` v1.3 (approved) · `docs/information-architecture-v1.md` v1.1 (approved) |
+| Version | 1.3 (MESSAGES-GOV-01: Increment M — Messages flows — **approved** by the product owner on 2026-11-20) · 1.2 (Phase 1 Comments Inbox amendment, Step 7B-15V — **approved** by the product owner on 2026-11-16, Step 7B-17F) |
+| Date | 2026-10-03 (v1.0, v1.1) · 2026-11-15 (v1.2 drafted) · 2026-11-16 (v1.2 approved) · 2026-11-20 (v1.3 drafted and approved) |
+| Status | **Approved** by the product owner on 2026-10-03 (Phase 0C.1); v1.1 aligned in Phase 0E.1. v1.2 records the product owner's Phase 1 direction for the Comments Inbox (UX-19, UX-20; §8.10) and was **approved** by the product owner on 2026-11-16 (Step 7B-17F), with the limits in the approval record. UX-20 remains a temporary exception. **v1.3 approved on 2026-11-20** (MESSAGES-GOV-01): (1) **governance direction — approved** (Increment M flows, §30); (2) **wording — approved**; (3) **runtime — not authorized** (no Messages flow exists in the product; the synthetic design gate MESSAGES-UX-01, §30.4, may be proposed and needs its own authorization). Every v1.2 flow is unchanged. |
+| Sources of truth | `docs/product-definition-v1.md` v1.4 (approved 2026-11-20; v1.3 approved 2026-10-03) · `docs/information-architecture-v1.md` v1.2 (approved 2026-11-20; v1.1 approved 2026-10-03) |
 | Scope | How users move through the product: intent, decision points, system responses, branches, unavailable states and successful outcomes. **Not** visual design, wireframes, components, data schema, technical architecture or implementation. |
 
 ### Approval record
@@ -20,6 +20,8 @@
 | 2026-11-15 | Step 7B-15V | Version **1.2** (**pending formal product-owner approval of this text**): Phase 1 amendment for the Comments Inbox, recorded as **UX-19** (Focus: the selected conversation opens inline) and **UX-20** (Phase 1 reply drafts kept in memory only — a temporary exception), plus a reaffirmation of future scope (§8.10). Three separate statuses: (1) *product direction* — the product owner delegated the Inbox 2.0 product direction and, through the Step 7B-15V mandate relayed by the technical lead, approved Focus (Direction A) as the default Comments Inbox presentation and the Phase 1 draft contract as a temporary exception; (2) *implementation evidence* — built and independently reviewed in Steps 7B-15B to 7B-15U, not yet committed or deployed; (3) *formal approval of the amended wording* — **pending**. Changed: §2 (note on P3), §3.1 (note on drafts), §8.4 step 3, new §8.10, §28.2 (UX-19, UX-20), §29 (item 21). The v1.1 wording of §8.4 step 3 is kept, struck through, for traceability. No PD, IA, Model or TA decision changes; PD C-03/D-36 (no DM inbox) and every safety invariant hold. |
 | 2026-11-16 | Step 7B-17E | Final wording of v1.2 prepared for product-owner confirmation; formal approval of v1.2 is **still pending** (no approval of this text is recorded here). One clarification of §8.10.C: the backend gate that refuses a second public reply while an earlier one is in flight (`REPLY_IN_FLIGHT`) is **necessary but not sufficient** — ordinary public replies stay unavailable until capability validation, explicit provider-action authorization, unknown-outcome operational readiness and a separate product-owner and security decision are all complete. UX-19 and UX-20 are unchanged in substance; UX-20 remains a temporary exception that must be resolved before commercial readiness. Changed: §8.10.C (last item), §28.2 (UX-19 reference), §29 (item 21). The text to be confirmed is in `design/phase-7b/governance/FOCUS-2.0-DEV-RELEASE-GOVERNANCE.md`. |
 | 2026-11-16 | Step 7B-17F | Product owner **formally approved Core UX Flows v1.2** as written, with all the conditions stated. Source: an explicit product-owner decision communicated through the technical lead in the Step 7B-17F mandate (no signature, external document or approval identifier is recorded). The approval covers: **UX-19** — Focus opens the selected conversation inline within its row; no permanent side panel or third column; Triage remains future, optional scope. **UX-20** — Phase 1 reply drafts exist only in the browser tab's memory and are lost on reload, tab close, leaving the conversation or sign-out; this is a **temporary exception**, and durable drafts must be addressed before commercial readiness. **§8.10.C** — the in-flight reply gate (`REPLY_IN_FLIGHT`) is necessary but not sufficient; ordinary public replies remain denied by default until capability validation, explicit provider-action authorization, unknown-outcome operational readiness and a separate product-owner and security decision are complete; no DM or future AI capability is activated. The approval authorizes no migration, deployment, provider action or activation. The entries of Steps 7B-15V and 7B-17E above are kept as written: they record the status at their dates. Changed: Version, Date and Status fields, this record, the §8.10 status line, §28.2 (UX-19, UX-20 status) and §29 (item 21). No flow, scope or wording of UX-19, UX-20 or §8.10.C changed. Record: `design/phase-7b/governance/FOCUS-2.0-DEV-RELEASE-GOVERNANCE.md`. |
+| 2026-11-20 | MESSAGES-GOV-01 | Version **1.3** (**pending formal product-owner approval of this text**). Authorization of the work: product-owner MESSAGES-GOV-01 decision (documentation-only governance amendments). The "formal PD scope amendment" required by §8.10.C is PD v1.4 §21 (Increment M; decisions D-53 to D-70 approved in principle, wording pending); the "independent validation of the platform capability" is **still outstanding** (gate M-E, MESSAGES-EXP-01, not authorized). Added: §30 Messages flows (direction only), the synthetic design gate MESSAGES-UX-01 (§30.4; may be proposed, not authorized), and Comments-scope notes on §8.10.C, §12 and §29 #11. UX-19, UX-20, every MVP flow and the Comments private-reply flow are unchanged. No new UX decision identifiers are assigned (a never-applied Comments 2.1 proposal provisionally used UX-21/UX-22). |
+| 2026-11-20 | MESSAGES-GOV-01 (formal approval) | Product owner **formally approved Core UX Flows v1.3** (direction and wording), after review of the amendment package, the amended documents and an independent governance audit (CONDITIONAL PASS), with the documentary corrections of this step. Sections changed by MESSAGES-GOV-01: Version, Date, Status and Sources fields; this approval record; §8.10.C (note); §12.3 (Comments-scope note); §29 #11 (note); **§30 (new)**, including **§30.4 MESSAGES-UX-01** — now a future, separately authorized, synthetic-only design gate. The capability validation required by §8.10.C is still outstanding (gate M-E, not authorized). The entry above is kept as written (status at drafting). UX-19, UX-20 and every MVP flow are unchanged. |
 
 ---
 
@@ -499,6 +501,7 @@ The same views, ordering and reasons. The persistent Inbox notice explains the m
 
 #### C. Future scope (reaffirmed — nothing here is implemented)
 
+- *(v1.3 note, MESSAGES-GOV-01; approved 2026-11-20):* the formal PD scope amendment named below now exists and is approved as PD v1.4 §21 (**Increment M — Messages**); the independent validation of the platform capability has **not** happened (gate M-E). Until each gate of PD §21.2 is separately authorized, the statements of this bullet about today's product still hold. Messages flows: §30.
 - **Private Messages**, if ever offered, is a **separate experience** from Comments. Today no DM surface exists anywhere: PD C-03 and D-36, PD §10 and Model S9 are unchanged. Any DM functionality first requires a **formal PD scope amendment** and **independent validation of the platform capability**.
 - **Replying privately** (F-09, one-shot) is a contract distinct from public comment replies. In Phase 1 it is listed as unavailable, with its reason.
 - **Classification, prioritization, "Why it's here", suggested replies and recommended actions** remain the target behavior of §8–§10, but the product does not produce them yet. The Phase 1 Inbox says so ("No automated review has run…"), shows no label, priority, sentiment or risk, and orders conversations by newest activity.
@@ -722,6 +725,7 @@ One private message is sent and recorded, and the user clearly understands that 
 - **User sends a public reply too:** allowed. Both are recorded.
 - **Private reply already sent in this conversation:** the action shows "A private reply was already sent on [date]. Further private messages continue in [Platform]'s inbox." Whether a second one-shot reply to a *different* comment is allowed depends on platform rules (VALIDATE).
 - **The audience member answers privately:** the product shows nothing of it. No incoming DM, no DM list, no DM status (PD D-36). The record in the thread already states where follow-up continues.
+- *(v1.3 note, Increment M; approved 2026-11-20):* the branches and copy above stay exactly as written for Comments. Only once Increment M is enabled for that connected account may the handoff copy point to **Messages** instead of the platform's inbox; that change belongs to a later, separately authorized gate (PD §21.2), and the private reply itself stays one-shot and never opens a thread in Comments.
 
 ### 12.4 Unavailable states
 
@@ -1555,7 +1559,7 @@ Before moving to wireframes and visual design, all of the following must be true
 8. **AI never sends:** every reply path ends with a human pressing Send (§10).
 9. **AI never fabricates:** missing Brand Context is named, never filled in. A gap → Brand Context path exists (§10.4).
 10. **Negative ≠ harmful is protected:** no flow recommends hiding legitimate negative content. Protected categories can't be auto-hidden by rules or keyword matches, and are excluded from human bulk hide. Deliberate single-item human moderation remains possible with an informational caution (§8.6, §13, §14.7).
-11. **Private reply never creates a DM Inbox:** the private-reply flow ends in a record and a handoff message, and no incoming private message is shown anywhere (§12).
+11. **Private reply never creates a DM Inbox:** the private-reply flow ends in a record and a handoff message, and no incoming private message is shown anywhere (§12). *(v1.3 note: "anywhere" means anywhere in Comments and the MVP destinations; private conversations may be shown only in Messages under Increment M, §30.)*
 12. **Recommendations have evidence and follow-up:** every recommendation links to its insight, ends Accepted→Done with a descriptive before/after or Dismissed with a reason, and never claims causality (§21).
 13. **No cross-workspace scope creep:** cross-workspace behavior is limited to attention signals and switching (§23).
 14. **Reports don't duplicate Insights:** reports assemble and link. They never recompute (§22).
@@ -1566,6 +1570,33 @@ Before moving to wireframes and visual design, all of the following must be true
 19. **Availability rules consistent with the IA:** role limits hide; Monitor-only and platform limits are visible but unavailable with an explanation; connection problems offer recovery (§25).
 20. **Phase 0E.1 behaviors hold (v1.1):** auto-hide activation is forward-only and previews never imply retrospective hiding (UX-17); uncertain comments are excluded from human bulk Hide while individual moderation remains available (UX-18).
 21. **Phase 1 amendment holds (v1.2, approved 2026-11-16):** the selected conversation opens inline and list position is kept (UX-19); unsent reply drafts are never stored outside the tab's memory, are never described as persistent, and never return as a new publishable reply after an unknown outcome (UX-20); no DM surface, AI output or private reply is presented as available, and ordinary public replies are not made available by the in-flight reply gate alone (§8.10.C).
+
+---
+
+## 30. Messages flows (Increment M) — v1.3, approved 2026-11-20 (direction only; no runtime authorized)
+
+Source: PD v1.4 §21 (D-53 to D-70, approved on 2026-11-20); IA v1.2 §5 note and §18. This section records **direction for later gates**; it authorizes no implementation, no provider access and no pilot. Every flow below is subject to PD §21.2 gate authorizations and to validated platform capability.
+
+### 30.1 Separate experience, shared patterns
+
+Messages is its own destination (IA v1.2 §5 note), distinct from Comments (§8.10.C). It reuses the approved interaction patterns where they fit: the workspace shell and its sidebar views, Open / Done / All navigation, the list-and-conversation layout with responsive single-panel behavior, the conversation header, Previous / Next among loaded items and the focus rules of UX-19. It differs where private conversations differ: participant identity instead of a post, chronological message bubbles, unread state, attachments, delivery/read states where the platform provides them, and the platform's messaging window.
+
+### 30.2 Flows (direction)
+
+| Flow | Gate | Direction |
+|---|---|---|
+| **F-M1 Browse private conversations** | M-R | Views Open / Done / All of Messages-enabled connected accounts; newest activity first; honest history ("earlier messages may not be available") and coverage; never a guest; Analyst/Viewer excluded by default (PD D-61). |
+| **F-M2 Read a private conversation** | M-R | Participant shown as the platform provides it; messages in chronological order; edits and unsends shown honestly; attachments as references (PD D-67); every view access-audited (PD D-65). Read-only: no composer. |
+| **F-M3 Manage** | M-W | Shared workflow actions (status, assignment, notes, escalation). **Manual Done/Resolve is the authoritative human action**; any automatic reopen or Done is a separate, configurable policy (PD D-60). Comments behavior (§8.3) is unchanged. |
+| **F-M4 Reply** | M-S | Human-controlled composer; the person explicitly authorizes every send (PD D-56); the messaging window is shown and enforced; Monitor-only makes it visible but unavailable; Sending… → Sent / Failed / Checking, never optimistic. AI-assisted drafting or translation appears only through its own approved gate (PD D-56, D-64). |
+
+### 30.3 Never
+
+Private conversations never appear in the Inbox/Comments, in a public conversation, in Insights or Reports for guests, or across workspaces. No bulk, broadcast or autonomous sending. Availability is never implied by a design or a prototype.
+
+### 30.4 Design gate MESSAGES-UX-01 — synthetic interactive prototype (may be proposed; requires separate authorization)
+
+PD v1.4, Model v1.2, IA v1.2, this version and TA v1.4 were approved on 2026-11-20, so the gate MESSAGES-UX-01 **may now be proposed**; it starts only after its own **separate authorization**. It may design, with **synthetic data only**: the Messages list and private-conversation UI; desktop and responsive mobile experience; Open / Done / All navigation; an emoji picker; the Saved Replies library; translation of messages and draft replies; internal notes and collaboration indicators; attachments and delivery-state presentation; a human-controlled reply composer; and future intelligence assistance shown as **clearly labeled prototype behavior**. The prototype must not read real private messages, call Meta or any provider, send messages, modify live accounts, or imply that unverified provider capabilities are verified. Its contents are **design candidates, not authorizations to ship functionality**; anything it shows that needs a gate (sending, AI assistance, translation, labels) still needs that gate.
 
 ---
 

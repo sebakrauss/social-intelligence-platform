@@ -31,11 +31,11 @@ Non-negotiable product stances (PD §1, §7):
 
 | Document | Version | Controls |
 |---|---|---|
-| `docs/product-definition-v1.md` (PD) | 1.3, approved | Product intent and confirmed product behavior (decisions D-01…D-52) |
-| `docs/information-architecture-v1.md` (IA) | 1.1, approved | Where concepts live; navigation; role visibility (IA §18) |
-| `docs/core-ux-flows-v1.md` (UX) | 1.2, approved (2026-11-16, Step 7B-17F): Phase 1 Comments Inbox amendment — UX-19 Focus, UX-20 in-memory reply drafts (a temporary exception to resolve before commercial readiness); ordinary public replies stay default-deny (§8.10.C) | User journeys, interaction behavior, unavailable states |
-| `docs/intelligence-data-model-v1.md` (Model) | 1.1, approved | Conceptual meaning, provenance, relationships, invariants S1–S21 (Model §50) |
-| `docs/technical-architecture-v1.md` (TA) | 1.3, approved (2026-11-16, Step 7B-17F): security amendment R4a | Implementation boundaries, stack, runtime patterns, security, operations |
+| `docs/product-definition-v1.md` (PD) | **1.4, approved (2026-11-20, MESSAGES-GOV-01): Increment M — Messages (§21), decisions D-53…D-70; MVP scope unchanged; no runtime gate authorized** | Product intent and confirmed product behavior (decisions D-01…D-52; Increment M: D-53…D-70) |
+| `docs/information-architecture-v1.md` (IA) | 1.2, approved (2026-11-20, MESSAGES-GOV-01): Messages destination and target role matrix for Increment M (§5 note, §18); MVP IA unchanged | Where concepts live; navigation; role visibility (IA §18) |
+| `docs/core-ux-flows-v1.md` (UX) | 1.2, approved (2026-11-16, Step 7B-17F): Phase 1 Comments Inbox amendment — UX-19 Focus, UX-20 in-memory reply drafts (a temporary exception to resolve before commercial readiness); ordinary public replies stay default-deny (§8.10.C) · **1.3, approved (2026-11-20, MESSAGES-GOV-01)**: Increment M direction §30; synthetic design gate MESSAGES-UX-01 §30.4 (may be proposed; separately authorized) | User journeys, interaction behavior, unavailable states |
+| `docs/intelligence-data-model-v1.md` (Model) | 1.2, approved (2026-11-20, MESSAGES-GOV-01): Messages model §57; S9′, S22–S25 | Conceptual meaning, provenance, relationships, invariants S1–S21 plus S9′ and S22–S25 (Model §50) |
+| `docs/technical-architecture-v1.md` (TA) | 1.3, approved (2026-11-16, Step 7B-17F): security amendment R4a · **1.4, approved (2026-11-20, MESSAGES-GOV-01)**: Increment M architecture direction §76; ADR-65…ADR-70; ADR-14 superseded in part (no code or guard change) | Implementation boundaries, stack, runtime patterns, security, operations |
 | `docs/pre-implementation-validation-v1.md` | 1.0, accepted (0E.3) | Evidence for validated technical patterns (TA-Q-29, TA-Q-04, R1–R8). Evidence, not a decision document |
 
 Rules:
@@ -206,6 +206,8 @@ Source: Model §50 (S1–S21), TA §25–§27, TA Appendix A. **If a request con
 - **Human bulk Hide** is for clearly homogeneous sets only. It **excludes protected and uncertain items** (UX-06, UX-18; PD D-52), shows the counts, and is attributed to the person, never to automation.
 - **Individual human moderation stays available**, including on protected content (with an informational caution).
 - **Private reply never creates a DM inbox, thread or conversation model (S9).** No incoming DM objects, reads or subscriptions exist anywhere.
+  - **Increment M — Messages** (PD v1.4 §21; Model v1.2 S9′, S22–S25; TA v1.4 §76 — approved 2026-11-20) is a separately gated **future** increment. S9 is amended by S9′ only for an authorized Increment M bounded context. It changes **nothing** for current work: no Messages runtime, DM object, read, webhook subscription, provider experiment, guard change or test change is authorized until a specific gate is explicitly authorized (PD §21.2). Comments-specific prohibitions stay in force permanently: a Comments private reply never creates a thread, and private messages never appear in Comments. A synthetic-only design gate (**MESSAGES-UX-01**, UX v1.3 §30.4) may be *proposed*; it needs its own authorization and never touches real data or providers.
+  - When any Messages gate is authorized: **no autonomous or bulk private-message sending** — only a human explicitly authorizes the final send (S23); no AI processing of private content without the legal and product gates of PD D-64; private content never in logs, payloads, analytics or training (S24); never visible to Client guests (S22); deletion honored (S25; future test T-32). Target role policy (IA v1.2 §18): `messages.read` for Owner, Admin, Manager, Responder; future `messages.send` for the same roles only after gate M-S, denied by default until then; Analyst/Viewer no access by default; Client guest never. No runtime permission exists today.
 - **Capability unavailable stays visible-but-unavailable with its reason, never fabricated** (S20; §8).
 - **No data ≠ zero (S11).** Recommendations and before/after follow-ups never claim causality (S14, S15).
 
@@ -382,7 +384,7 @@ MUST NOT:
 - Resolve unrelated open decisions.
 - Add libraries merely for convenience, or introduce infrastructure not in the architecture.
 - Bypass the architecture for a quick demo, or weaken safety because a provider is difficult.
-- Commit any of the TA §69 anti-patterns (e.g. one giant prompt, AI calling moderation APIs, provider SDK types in the domain, an unscoped query layer, frontend-only authorization, cron as a workflow engine, sentiment or keywords as moderation logic, blind reply retries, AI computing numbers, a DM model "for later").
+- Commit any of the TA §69 anti-patterns (e.g. one giant prompt, AI calling moderation APIs, provider SDK types in the domain, an unscoped query layer, frontend-only authorization, cron as a workflow engine, sentiment or keywords as moderation logic, blind reply retries, AI computing numbers, a DM model "for later" — i.e. any private-message object, read or subscription outside an authorized Increment M gate).
 - Disable tests, RLS or guards "temporarily" in committed code, or bypass the executor "for testing" in non-test code.
 - Duplicate a concept that already has an owner module.
 - Import spike code from `spikes/` into application code. Spikes are disposable references.
@@ -424,6 +426,8 @@ Parallel work is allowed only where TA §73 allows it:
 - The step-9 executor may be built against the simulator while step 8 progresses.
 - Real adapters replace the simulator per capability only after validation.
 
+**Increment M — Messages** is **not** part of this sequence, and it may progress independently of full MVP completion, subject to its own gates, technical dependencies, security checks and provider prerequisites. Its **product-level gates** are defined in PD v1.4 §21.2: M-0 governance → M-E provider evidence → M-UX synthetic prototype → M-R read-only → M-W shared workflow → M-S human sending → M-I intelligence. TA v1.4 §76.6 adds **technical subdivisions** before M-R — M-C (contracts, domain, simulator) and M-IN (messaging webhook intake) — each also separately authorized. Only M-0 (governance) has been authorized and approved (2026-11-20); every other gate, and every Meta configuration, permission request, webhook subscription or live API experiment, needs an explicit, scoped product-owner approval (PD D-70).
+
 ---
 
 ## 18. Current validation status
@@ -445,6 +449,7 @@ Verified against TA §71 (v1.2).
 - PD: OQ-01, 03, 10, 11, 13–17, 20, 23–25 (product); OQ-18, 19, 26, 27, 28 (VALIDATE); OQ-21, 22 (legal). All platform capabilities remain VALIDATE.
 - IA: IA-06, IA-07, IA-08, IA-12, IA-14.
 - UX (deferred): UX-03, UX-07, UX-08, UX-09, UX-13, UX-16. UX-11 is out of the MVP.
+- Increment M (PD v1.4 §21.6; TA v1.4 §76.8), none resolved: VALIDATE — Messenger message-history depth, webhook failure/recovery rule per documentation set, Conversation Routing ownership with Meta Business Suite Inbox, send windows/Human Agent/permissions per channel and API setup, attachment-reference lifetimes, Unified Login; LEGAL — retention and deletion, AI processing and sub-processors, cross-border processing, access-log retention. No legal review or Meta App Review has occurred.
 
 ---
 
