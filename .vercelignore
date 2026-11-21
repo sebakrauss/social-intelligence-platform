@@ -20,6 +20,10 @@
 # Local-only harnesses, evidence and tooling (git-excluded via .git/info/exclude, which the CLI does not read).
 /.wrenkind-local/
 
+# Local benchmark and browser-validation evidence (WF-1 … WF-2E, DEV preflights; RELEASE-TOOLING-01). Never committed and
+# never uploaded; the rest of tools/ stays included (the build type-checks it).
+/tools/perf/
+
 # Tests, test-only configuration, disposable spikes, documentation and design artifacts.
 /tests
 /vitest.config.ts

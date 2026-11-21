@@ -3,6 +3,15 @@
  * under a transaction-scoped advisory lock, and records name + SHA-256 in app_migrations.applied.
  * Applied migrations are immutable: a changed checksum stops the run. Runs only from tooling/CI with the
  * migration credential — never from application runtime.
+ *
+ * RELEASE-TOOLING-01 — bounded lock WAIT. Inside each migration's transaction, right after the advisory lock (whose
+ * wait is unchanged: concurrent runners still serialize) and BEFORE any migration statement, the runner sets a
+ * transaction-local `lock_timeout`. A statement that cannot obtain a table lock within it fails with 55P03; the
+ * transaction rolls back (nothing of that migration is applied, its ledger row is not written) and the run stops with
+ * MigrationLockTimeoutError. Migrations committed earlier in the same run stay applied; a re-run resumes at the
+ * migration that timed out. `lock_timeout` bounds only the WAIT for a lock: once a lock is acquired (e.g. 0034's ACCESS
+ * EXCLUSIVE on audit.audit_events), it is held until the migration's transaction ends, however long that takes.
+ * The migration files are untouched (their checksums are unchanged).
  */
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
@@ -41,6 +50,50 @@ const LEDGER_SQL = `
 
 const LOCK = "select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('app_migrations', 0))";
 
+/** The default bound on waiting for any one table lock inside a migration (milliseconds). */
+export const DEFAULT_MIGRATION_LOCK_TIMEOUT_MS = 5_000;
+/** Accepted range: a bounded, non-zero wait (0 would mean "wait forever" in PostgreSQL). */
+export const MIGRATION_LOCK_TIMEOUT_RANGE_MS = { min: 100, max: 600_000 } as const;
+/** SQLSTATE lock_not_available — raised when lock_timeout expires. */
+const LOCK_NOT_AVAILABLE = "55P03";
+
+export function isValidMigrationLockTimeout(value: number): boolean {
+  return Number.isInteger(value) && value >= MIGRATION_LOCK_TIMEOUT_RANGE_MS.min && value <= MIGRATION_LOCK_TIMEOUT_RANGE_MS.max;
+}
+
+/** `--lock-timeout-ms <n>` at most once among the arguments (absent → the default); anything else → an error. */
+export function parseLockTimeoutArgument(args: readonly string[]): { readonly lockTimeoutMs: number } | { readonly error: string } {
+  const positions = args.flatMap((arg, index) => (arg === "--lock-timeout-ms" ? [index] : []));
+  if (positions.length === 0) return { lockTimeoutMs: DEFAULT_MIGRATION_LOCK_TIMEOUT_MS };
+  if (positions.length > 1) return { error: "--lock-timeout-ms was given more than once" };
+  const raw = args[(positions[0] ?? 0) + 1];
+  const value = raw === undefined || !/^\d+$/.test(raw) ? Number.NaN : Number(raw);
+  if (!isValidMigrationLockTimeout(value)) {
+    return { error: `--lock-timeout-ms must be an integer from ${String(MIGRATION_LOCK_TIMEOUT_RANGE_MS.min)} to ${String(MIGRATION_LOCK_TIMEOUT_RANGE_MS.max)}` };
+  }
+  return { lockTimeoutMs: value };
+}
+
+/** A migration could not obtain a lock within the bound; its transaction was rolled back. Non-sensitive message. */
+export class MigrationLockTimeoutError extends Error {
+  readonly code = LOCK_NOT_AVAILABLE;
+  readonly migration: string;
+  readonly lockTimeoutMs: number;
+  readonly appliedBefore: readonly string[];
+  constructor(migration: string, lockTimeoutMs: number, appliedBefore: readonly string[]) {
+    super(
+      `${migration} waited more than ${String(lockTimeoutMs)} ms for a lock (lock_timeout, SQLSTATE 55P03) and was rolled back: nothing of it was applied and no ledger row was written. ` +
+        `${appliedBefore.length === 0 ? "No migration was applied by this run." : `Applied earlier in this run (committed): ${appliedBefore.join(", ")}.`} ` +
+        "Find the sessions holding or awaiting locks on the tables it alters (pg_stat_activity, pg_locks), wait for them to finish or for a quiet window, then re-run: it resumes at this migration. " +
+        "lock_timeout bounds only the wait; an acquired lock is held until the migration's transaction ends.",
+    );
+    this.name = "MigrationLockTimeoutError";
+    this.migration = migration;
+    this.lockTimeoutMs = lockTimeoutMs;
+    this.appliedBefore = appliedBefore;
+  }
+}
+
 export interface MigrationStatus {
   readonly applied: readonly string[];
   readonly pending: readonly Migration[];
@@ -62,8 +115,17 @@ export async function migrationStatus(client: pg.Client, migrations: readonly Mi
   return { applied: [...appliedNames], pending: migrations.filter((migration) => !appliedNames.has(migration.name)) };
 }
 
+export interface ApplyOptions {
+  /** Bound on waiting for any one lock inside a migration (ms); DEFAULT_MIGRATION_LOCK_TIMEOUT_MS when absent. */
+  readonly lockTimeoutMs?: number;
+}
+
 /** Applies every pending migration in order. Returns the names applied by this call. */
-export async function applyMigrations(client: pg.Client, migrations: readonly Migration[]): Promise<readonly string[]> {
+export async function applyMigrations(client: pg.Client, migrations: readonly Migration[], options: ApplyOptions = {}): Promise<readonly string[]> {
+  const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_MIGRATION_LOCK_TIMEOUT_MS;
+  if (!isValidMigrationLockTimeout(lockTimeoutMs)) {
+    throw new Error(`lock timeout must be an integer from ${String(MIGRATION_LOCK_TIMEOUT_RANGE_MS.min)} to ${String(MIGRATION_LOCK_TIMEOUT_RANGE_MS.max)} ms`);
+  }
   await client.query("begin");
   try {
     await client.query(LOCK);
@@ -79,6 +141,9 @@ export async function applyMigrations(client: pg.Client, migrations: readonly Mi
     await client.query("begin");
     try {
       await client.query(LOCK);
+      // Transaction-local (is_local = true): it ends with this transaction, and every statement after it — the migration
+      // and its ledger row — waits at most this long for a lock.
+      await client.query("select pg_catalog.set_config('lock_timeout', $1, true)", [`${String(lockTimeoutMs)}ms`]);
       const status = await migrationStatus(client, migrations);
       if (status.pending.some((pending) => pending.name === migration.name)) {
         await client.query(migration.sql);
@@ -88,6 +153,7 @@ export async function applyMigrations(client: pg.Client, migrations: readonly Mi
       await client.query("commit");
     } catch (error) {
       await client.query("rollback");
+      if ((error as { code?: string }).code === LOCK_NOT_AVAILABLE) throw new MigrationLockTimeoutError(migration.name, lockTimeoutMs, [...applied]);
       throw error;
     }
   }

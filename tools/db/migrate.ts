@@ -8,20 +8,28 @@
  * configured URL is on that project and region, the migration URL uses the migration role, and the CA bundle passes
  * the runtime's strict parser; TLS is then verified by the connection itself. Never the frozen validation project.
  * Migrations create or validate NOLOGIN foundation roles only; they never drop or recreate a role (R8).
+ *
+ * RELEASE-TOOLING-01: `--lock-timeout-ms <n>` (default 5000, range 100–600000) bounds how long any statement of a
+ * migration WAITS for a lock; on expiry that migration rolls back and the run stops with an actionable message. It does
+ * not bound how long an acquired lock is held (see tools/db/migrations.ts).
  */
 import { privilegedClient, prepareTarget } from "./environment.ts";
-import { applyMigrations, migrationStatus, readMigrations } from "./migrations.ts";
+import { applyMigrations, MigrationLockTimeoutError, migrationStatus, parseLockTimeoutArgument, readMigrations } from "./migrations.ts";
 
 const args = process.argv.slice(2);
 const apply = args.includes("--apply");
-const unknown = args.filter((arg, index) => arg !== "--apply" && !arg.startsWith("--target") && args[index - 1] !== "--target");
+const valued = new Set(["--target", "--lock-timeout-ms"]);
+const unknown = args.filter((arg, index) => arg !== "--apply" && !arg.startsWith("--target") && !valued.has(arg) && !valued.has(args[index - 1] ?? ""));
+const lockTimeout = parseLockTimeoutArgument(args);
 const fence = prepareTarget(args, { migration: true, runtime: "configured" });
 const migrations = readMigrations();
 
 console.log("Migration plan (no secrets)");
 for (const line of fence.lines) console.log(line);
 if (unknown.length > 0) console.log(`  PROBLEM: unknown argument(s): ${unknown.join(" ")}`);
-if (!fence.ok || unknown.length > 0 || fence.report?.migration === undefined) {
+if ("error" in lockTimeout) console.log(`  PROBLEM: ${lockTimeout.error}`);
+else console.log(`  lock wait bound          ${String(lockTimeout.lockTimeoutMs)} ms per lock (bounds the wait only, not how long an acquired lock is held)`);
+if (!fence.ok || unknown.length > 0 || "error" in lockTimeout || fence.report?.migration === undefined) {
   console.log("REFUSED: configuration incomplete or unsafe. Nothing was contacted.");
   process.exit(1);
 }
@@ -39,11 +47,12 @@ try {
   if (!apply) {
     console.log("DRY RUN: re-run with --apply to apply the pending migrations.");
   } else {
-    const applied = await applyMigrations(client, migrations);
+    const applied = await applyMigrations(client, migrations, { lockTimeoutMs: lockTimeout.lockTimeoutMs });
     console.log(`APPLIED: ${applied.join(", ") || "nothing (already up to date)"}`);
   }
 } catch (error) {
-  console.log(`FAILED: ${(error as { code?: string }).code ?? (error instanceof Error ? error.message : "error")}`);
+  if (error instanceof MigrationLockTimeoutError) console.log(`FAILED (lock_timeout): ${error.message}`);
+  else console.log(`FAILED: ${(error as { code?: string }).code ?? (error instanceof Error ? error.message : "error")}`);
   process.exitCode = 1;
 } finally {
   await client.end().catch(() => undefined);

@@ -4,7 +4,7 @@
  * only. Exit status: failure when any item failed (the report says which).
  */
 import { expect, it } from "vitest";
-import { createRuntimeDatabase } from "@/platform/db/pool";
+import { createRuntimeDatabase, resolveSslRootCert } from "@/platform/db/pool";
 import { reconcileWorkspaceWorkItems } from "@/server/persistence/workflow-reconciliation";
 import { parseReconcileCommand, RECONCILE_PARAMETERS_VARIABLE, reconcileTargetProblems } from "./workflow-reconcile-command";
 
@@ -13,9 +13,13 @@ it("workflow reconciliation (operator run)", async () => {
   const parsed = parseReconcileCommand(raw === undefined ? [] : (JSON.parse(raw) as string[]));
   if (!parsed.ok) throw new Error(`refused: ${parsed.problem}`);
   const url = process.env[parsed.command.databaseUrlEnv];
-  const problems = reconcileTargetProblems(url);
+  const problems = reconcileTargetProblems(url, parsed.command.target, process.env);
   if (problems.length > 0 || url === undefined) throw new Error(`refused: ${problems.join("; ")}`);
-  const worker = createRuntimeDatabase("worker", url, { max: 1 });
+  // RELEASE-TOOLING-01: the development target connects only with the configured CA (TLS verified, rejectUnauthorized,
+  // by the runtime's own pool); a loopback cluster has no TLS. Nothing else about the run differs between the two.
+  const sslRootCert = parsed.command.target === "development" ? resolveSslRootCert(process.env) : undefined;
+  if (parsed.command.target === "development" && sslRootCert === undefined) throw new Error("refused: the development target needs the project's CA certificate");
+  const worker = createRuntimeDatabase("worker", url, { max: 1, ...(sslRootCert === undefined ? {} : { sslRootCert }) });
   try {
     const report = await reconcileWorkspaceWorkItems(
       worker,

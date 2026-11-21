@@ -24,6 +24,12 @@ describe("Vercel CLI upload boundary (.vercelignore)", () => {
     expect(wrenkind[0]).not.toMatch(/[*?[\]!]/);
   });
 
+  it("RELEASE-TOOLING-01: excludes the local benchmark evidence (tools/perf) with one exact root-anchored rule — and nothing else of tools/", () => {
+    const tools = rules().filter((rule) => rule.replace(/^\//, "").startsWith("tools"));
+    expect(tools).toEqual(["/tools/perf/"]);
+    expect(tools[0]).not.toMatch(/[*?[\]!]/);
+  });
+
   it("no rule excludes application source or the build's own configuration", () => {
     for (const rule of rules()) {
       const anchored = rule.replace(/^\//, "").replace(/\/$/, "");

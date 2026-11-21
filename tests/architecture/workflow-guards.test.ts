@@ -146,4 +146,32 @@ describe("WF-2C: reconciliation repairs, reports, and never transitions", () => 
     expect(strip(codeOf("tools/ops/workflow-reconcile.operator.ts"))).toMatch(/dryRun: !parsed\.command\.apply,/);
     expect(strip(codeOf("tools/ops/workflow-reconcile-command.ts"))).toMatch(/const LOOPBACK: readonly string\[\] = \["127\.0\.0\.1", "localhost", "::1", "\[::1\]"\];/);
   });
+
+  it("RELEASE-TOOLING-01: exactly two targets (loopback by default, development by choice) — no production, no generic remote mode; the development identity is the committed pin, proven before anything connects", () => {
+    const command = strip(codeOf("tools/ops/workflow-reconcile-command.ts"));
+    expect(command).toMatch(/export const RECONCILE_TARGETS = \["loopback", "development"\] as const;/);
+    expect(command).toMatch(/const rawTarget = values\["--target"\] \?\? "loopback";/);
+    expect(command).not.toMatch(/allow-?remote|"production"|"staging"|"preview"/i);
+    // The pin and region come from platform/db/identity.ts (one source); no digest or project reference is written here.
+    expect(command).toMatch(/import \{ databaseIdentityProblems, DEVELOPMENT_PROJECT_REF_SHA256, DEVELOPMENT_REGION, projectRefSha256, resolveDatabaseAuthority \} from "\.\.\/\.\.\/platform\/db\/identity\.ts";/);
+    expect(command).not.toMatch(/[0-9a-f]{64}|[a-z0-9]{20}\.supabase|pooler\.supabase\.com/);
+    for (const rule of [
+      /if \(parsed\.endpoint !== "transaction_pooler"\)/,
+      /if \(parsed\.role !== RUNTIME_LOGIN_ROLES\.worker\)/,
+      /if \(parsed\.database !== "postgres"\)/,
+      /if \(parsed\.projectRef === undefined \|\| projectRefSha256\(parsed\.projectRef\) !== developmentPin\)/,
+      /if \(parsed\.region !== DEVELOPMENT_REGION\)/,
+      /if \(authority\.environmentClass !== "development"\)/,
+    ]) expect(command, String(rule)).toMatch(rule);
+    // Writing to the development target needs --apply AND the exact phrase; the phrase is refused anywhere else.
+    expect(command).toMatch(/if \(target === "development" && apply && confirmation !== DEV_RECONCILE_CONFIRMATION\)/);
+    expect(command).toMatch(/if \(confirmation !== undefined && target !== "development"\)/);
+    expect(command).toMatch(/if \(confirmation !== undefined && !apply\)/);
+    // The operator run re-fences with the same target and connects to the development project only with a verified CA.
+    const operator = strip(codeOf("tools/ops/workflow-reconcile.operator.ts"));
+    expect(operator).toMatch(/const problems = reconcileTargetProblems\(url, parsed\.command\.target, process\.env\);/);
+    expect(operator.indexOf("reconcileTargetProblems(")).toBeLessThan(operator.indexOf("createRuntimeDatabase("));
+    expect(operator).toMatch(/if \(parsed\.command\.target === "development" && sslRootCert === undefined\) throw new Error/);
+    expect(operator).toMatch(/createRuntimeDatabase\("worker", url, \{ max: 1, /);
+  });
 });

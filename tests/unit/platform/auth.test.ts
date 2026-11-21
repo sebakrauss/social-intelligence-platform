@@ -142,6 +142,8 @@ describe("auth configuration", () => {
       // Step 5K: explicit deployment tier and job-runtime provider mode (staging_stub only for preview/staging).
       "APP_DEPLOYMENT_ENV=",
       "CAPABILITY_PROVIDER_MODE=",
+      // RELEASE-TOOLING-01: the Comments pilot allowlist (non-secret; empty = offered to nobody), name only.
+      "COMMENTS_REDESIGN_WORKSPACES=",
     ]);
     expect(lines.join("\n")).not.toMatch(/SERVICE_ROLE|SUPABASE_SECRET|POSTGRES|DATABASE_URL=/);
   });
