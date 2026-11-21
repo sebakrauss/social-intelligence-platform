@@ -100,11 +100,16 @@ describe("H6-C4: the web holds no other reconciliation primitive", () => {
     expect(WEB.filter((file) => /createPostgresReconciliationStore/.test(codeOf(file)))).toEqual([UOW]);
   });
 
-  it("exactly one command is audited by a database boundary — this one — and its actions are command-bound elsewhere", () => {
+  it("exactly two command files are audited by a database boundary — this one and WORKFLOW-WF-2B's workflow commands — and their actions are command-bound elsewhere", () => {
     const declarations = sourceFiles(["server"]).filter((file) => /auditedBy:/.test(codeOf(file)));
-    expect(declarations).toEqual([COMMAND]);
+    expect(declarations).toEqual([COMMAND, "server/commands/workflow.ts"]);
     expect(codeOf(COMMAND)).toMatch(/auditedBy: RECONCILIATION_REQUEST_AUDIT,/);
     expect(COMMAND_BOUND_ELSEWHERE as readonly string[]).toContain("connected_account.reconciliation_requested");
+    // WORKFLOW-WF-2B: Mark Done and Reopen — workflow.change_state (0034) writes their one action, nothing else declares it.
+    const workflow = codeOf("server/commands/workflow.ts");
+    expect([...workflow.matchAll(/auditedBy: ([A-Z_]+),/g)].map((match) => match[1])).toEqual(["WORKFLOW_CHANGE_AUDIT", "WORKFLOW_CHANGE_AUDIT"]);
+    expect(workflow).toMatch(/export const WORKFLOW_CHANGE_AUDIT: DatabaseBoundaryAudit = \{ kind: "database_boundary", function: "workflow\.change_state", actions: \["work_item\.state_changed"\] \};/);
+    expect(COMMAND_BOUND_ELSEWHERE as readonly string[]).toContain("work_item.state_changed");
     // The pipeline appends nothing for it, and refuses (fails closed) if it ever drafts one.
     const pipeline = codeOf(PIPELINE);
     expect(pipeline).toMatch(/if \(command\.auditedBy !== undefined && audited !== undefined\) throw new Error\("boundary_audited_command_returned_a_draft"\);/);

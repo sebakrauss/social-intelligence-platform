@@ -1,0 +1,53 @@
+/* WORKFLOW-WF-2B — the conversation's workflow control (Mark done / Reopen / Undo), in the pane header's manage slot. */
+.control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.form,
+.undo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  margin: 0;
+}
+
+.resolution {
+  display: flex;
+  align-items: center;
+  gap: var(--wk-space-8);
+}
+
+.resolutionLabel {
+  color: var(--wk-text-secondary);
+}
+
+.select {
+  min-height: 32px;
+  padding: 0 var(--wk-space-8);
+  border: 1px solid var(--wk-border-input);
+  border-radius: var(--wk-radius-sm);
+  background: var(--wk-bg-content);
+  color: var(--wk-text-primary);
+  font: inherit;
+}
+
+.select:focus-visible {
+  outline: var(--wk-focus-width) solid var(--wk-interactive-focus);
+  outline-offset: var(--wk-focus-offset);
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wk-space-8);
+  min-width: 0;
+}
+
+.outcome {
+  color: var(--wk-text-secondary);
+}

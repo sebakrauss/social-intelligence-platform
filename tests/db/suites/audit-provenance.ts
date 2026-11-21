@@ -46,7 +46,7 @@ export const PIPELINE_ORGANIZATION_ACTIONS = [
   "workspace_membership.removed",
 ] as const;
 export const PIPELINE_USER_ACTIONS = ["organization.created", "invitation.accepted"] as const;
-/** Emitted only by a reviewed SECURITY DEFINER (0010, 0019) or by the job runtime (actor `system`). */
+/** Emitted only by a reviewed SECURITY DEFINER (0010, 0019, 0029, 0034) or by the job runtime (actor `system`). */
 export const COMMAND_BOUND_ELSEWHERE = [
   "connected_account.reconciliation_requested",
   "connected_account.moved_out",
@@ -64,6 +64,9 @@ export const COMMAND_BOUND_ELSEWHERE = [
   // Step 7B-14I2 (0029): the validation operator's two events — the 0029 definers only (actor `system`).
   "validation_authorization.issued",
   "validation_authorization.revoked",
+  // WORKFLOW-WF-2B (0034): a work item's state change — workflow.change_state only for a person (actor `user`), the job
+  // runtime only for the objective auto-reopen (actor `system`). Never the pipeline's append_own.
+  "work_item.state_changed",
 ] as const;
 
 interface Tenant {

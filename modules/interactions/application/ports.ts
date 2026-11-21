@@ -115,7 +115,8 @@ export interface NewStateObservation {
 }
 
 export interface SubtreeSnapshot {
-  readonly members: readonly { readonly id: string; readonly conversationId: string | null; readonly depth: number }[];
+  /** WORKFLOW-WF-2B: each member's author role and observed flag too (which members are audience when they join). */
+  readonly members: readonly { readonly id: string; readonly conversationId: string | null; readonly depth: number; readonly authorRole: string | null; readonly observed: boolean }[];
   readonly depthExceeded: boolean;
 }
 
@@ -183,6 +184,18 @@ export interface InteractionStore {
    * the snapshot first (decideSubtreeAttachment, depth).
    */
   attachSubtree(rootId: string, conversationId: string, now: Date): Promise<number>;
+  /**
+   * WORKFLOW-WF-2B: the conversation's latest activity by the list's own definition — the ms-truncated maximum over its
+   * members of coalesce(provider_created_at, first_observed_at, created_at) — or null when it has no member. Read by the
+   * workflow projection AFTER it locked the work item (composed in server/persistence; never read by another module).
+   */
+  latestConversationActivity(conversationId: string): Promise<Date | null>;
+  /**
+   * WORKFLOW-WF-2C: whether an OBSERVED audience member (author user or unknown) of the conversation was first observed
+   * by Wrenkind after `since` — Wrenkind's own observation time, never the platform's. Read-only; used by reconciliation
+   * to REPORT a Done conversation that may have missed its reopen (it never changes a state).
+   */
+  audienceObservedSince(conversationId: string, since: Date): Promise<boolean>;
   textVersion(id: string): Promise<TextVersionPointerRow | undefined>;
   textVersionByHash(interactionId: string, textHash: string): Promise<TextVersionPointerRow | undefined>;
   appendTextVersion(version: NewTextVersion): Promise<void>;
@@ -266,4 +279,9 @@ export interface InteractionReadStore {
    * asks for one more than it shows can tell that older versions exist without ever reading them all.
    */
   textVersions(interactionIds: readonly string[], newestPerInteraction: number): Promise<readonly TextVersionRow[]>;
+  /**
+   * WORKFLOW-WF-2B: the member counts and flags (and the activity) of the GIVEN conversations only — the shown rows of a
+   * queue page. Bounded by the ids (at most 500), served by the conversation index; never a scan of the workspace.
+   */
+  conversationActivity(conversationIds: readonly string[]): Promise<readonly ConversationActivityRow[]>;
 }

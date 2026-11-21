@@ -797,45 +797,26 @@ describe("Workspace › Comments: the views backed by real data (COMMENTS-INT-03
     for (const view of ["open", "done", "all"]) expect(words(await inView({ view }))).toContain("Nothing has been read from your connected accounts yet");
   });
 
-  it("a partial page says it is partial and goes on in its view — an empty one is never presented as 'none'", async () => {
+  it("WORKFLOW-WF-2B: no page is partial — a page with an older one links to it plainly, and no 'conversations checked' sentence exists any more", async () => {
     allow(WS);
     const onward = `open.2026-11-01T09:00:00.000Z~${C1}`;
-    env.list = ready(WS, { nextCursor: onward, partial: true });
+    env.list = ready(WS, { nextCursor: onward });
     const some = await inView({});
-    expect(words(some)).toContain("This page shows what was found among the conversations checked for it. Older conversations may also belong here.");
-    expect(some).toMatch(new RegExp(`href="${base}\\?cursor=${encodeURIComponent(onward).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"[^>]*>Check older conversations<`));
-    env.list = ready(WS, { items: [], nextCursor: onward, partial: true, emptyReason: "no_conversations_in_coverage" });
-    const none = words(await inView({}));
-    expect(none).toContain("None of the conversations checked for this page belong here. Older conversations may still.");
-    expect(none).toContain("Check older conversations");
-    expect(none).not.toContain("No open conversations were found");
-    // A complete page says nothing of the kind.
-    env.list = ready();
-    expect(words(await inView({}))).not.toContain("conversations checked");
+    expect(words(some)).not.toMatch(/conversations checked|Check older conversations/);
+    expect(some).toMatch(new RegExp(`href="${base}\\?cursor=${encodeURIComponent(onward).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"[^>]*>`));
   });
 
-  it("L-1: an empty page says only what its own answer knows — first page, a window that stopped at its bound, or the end of a continuation", async () => {
+  it("L-1: an empty page says only what its own answer knows — the view's first page, or the end of a continuation", async () => {
     allow(WS);
-    const onward = `done.2026-11-01T08:00:00.000Z~${C1}`;
     const empty = (over: Partial<Ready["page"]>): Ready => ready(WS, { items: [], nextCursor: null, emptyReason: "no_conversations_in_coverage", ...over });
-    // 1. The view's first page, complete and empty: none were found — the only page allowed to say so.
+    // 1. The view's first page, empty: none were found — the only page allowed to say so.
     env.list = empty({});
     expect(words(await inView({ view: "done" }))).toContain("No conversations marked done were found in what has been read so far.");
-    // 2. The first page, partial: nothing checked for it belongs here; older may (never "none").
-    env.list = empty({ nextCursor: onward, partial: true });
-    const firstWindow = words(await inView({ view: "done" }));
-    expect(firstWindow).toContain("None of the conversations checked for this page belong here. Older conversations may still.");
-    expect(firstWindow).not.toContain("No conversations marked done were found");
-    // 3. A later page, partial: the same truthful sentence — it claims nothing about the pages before it.
-    env.list = empty({ nextCursor: onward, partial: true });
-    const laterWindow = words(await inView({ view: "done", cursor: DONE_NEXT }));
-    expect(laterWindow).toContain("None of the conversations checked for this page belong here. Older conversations may still.");
-    expect(laterWindow).not.toMatch(/most recent|No conversations marked done were found/);
-    // 4. A later page the list ran out on (earlier pages may have shown Done ones): no older conversations — not "none".
+    // 2. A later page the list ran out on (earlier pages may have shown Done ones): no older conversations — not "none".
     env.list = empty({});
     const exhausted = words(await inView({ view: "done", cursor: DONE_NEXT }));
     expect(exhausted).toContain("No older conversations.");
-    expect(exhausted).not.toMatch(/No conversations marked done were found|None of the conversations checked/);
+    expect(exhausted).not.toMatch(/No conversations marked done were found|conversations checked/);
     env.list = empty({});
     expect(words(await inView({ view: "open", cursor: NEXT }))).not.toContain("No open conversations were found");
   });
@@ -881,11 +862,15 @@ describe("Workspace › Comments: addresses and what the route may import", () =
     expect(workspaceCommentsConversationPath("x", C1)).toBeUndefined();
   });
 
-  it("the route reaches no action, composer, mutation, persistence, provider or prototype code, and the list reads configuration only on the server", () => {
+  it("the route reaches no action (but WF-2B's workflow action), composer, mutation, persistence, provider or prototype code, and the list reads configuration only on the server", () => {
     const files = ["app/workspaces/[workspaceId]/comments/page.tsx", "app/workspaces/[workspaceId]/comments/[conversationId]/page.tsx", "app/workspaces/[workspaceId]/comments/views.tsx", "app/workspaces/[workspaceId]/comments/layout.tsx", "ui/inbox/comments.tsx", "server/inbox/comments.ts", "server/inbox/comments-access.ts"];
+    // WORKFLOW-WF-2B: the pane's Mark done / Reopen — exactly one Server Action and its client control, from views.tsx only.
+    const WORKFLOW = ["@/ui/inbox/workflow-control", "@/server/inbox/workflow-actions"];
+    const views = [...readFileSync("app/workspaces/[workspaceId]/comments/views.tsx", "utf8").matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "");
+    expect(views.filter((specifier) => WORKFLOW.includes(specifier))).toEqual(WORKFLOW);
     for (const file of files) {
       const code = readFileSync(file, "utf8");
-      const imports = [...code.matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "");
+      const imports = [...code.matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "").filter((specifier) => !(file.endsWith("comments/views.tsx") && WORKFLOW.includes(specifier)));
       for (const specifier of imports) expect(specifier, `${file} → ${specifier}`).not.toMatch(/actions|reply-composer|reply-drafts|mutations|persistence|platform\/db|integrations|modules\/|jobs|dev\/ui-reference|fixtures/);
       expect(code, file).not.toMatch(/"use client"|"use server"|<form|fetch\(|NEXT_PUBLIC/);
       if (file !== "server/inbox/comments-access.ts" && file !== "server/inbox/comments.ts") expect(code, file).not.toMatch(/process\.env/);
@@ -942,8 +927,10 @@ describe("Workspace › Comments: nothing it imports, directly or through other 
     expect(graph.has("server/queries/inbox.ts")).toBe(true);
     expect(graph.has("app/workspaces/[workspaceId]/inbox/read-views.tsx")).toBe(true);
     for (const file of COMPOSER) expect(graph.has(file), `${file} is reachable from the Comments route`).toBe(false);
-    // The only Server Actions in the graph are the shell's account actions (sign out), as on every workspace page.
-    expect([...graph].filter(isAction).sort()).toEqual(["server/auth/actions.ts"]);
+    // The only Server Actions in the graph are the shell's account actions (sign out), as on every workspace page, and
+    // WORKFLOW-WF-2B's Mark done / Reopen (which reaches the workflow commands only — never the mutation commands).
+    expect([...graph].filter(isAction).sort()).toEqual(["server/auth/actions.ts", "server/inbox/workflow-actions.ts"]);
+    expect([...reachableFrom(["server/inbox/workflow-actions.ts"])].filter((file) => file.startsWith("server/commands/"))).toEqual(["server/commands/workflow.ts"]);
   });
 
   it("the shared read-only module itself carries no action, composer, drafts or command", () => {
@@ -952,5 +939,46 @@ describe("Workspace › Comments: nothing it imports, directly or through other 
     // (ui/inbox/reply-drafts.ts is reachable: the in-app link reads whether the tab keeps a draft. It is a memory-only
     // store with no action; the composer, its boundary and its scope are not.)
     for (const file of graph) expect(file).not.toMatch(/reply-composer|reply-drafts-(boundary|scope)|server\/inbox\/actions|server\/commands\//);
+  });
+});
+
+/* ───────────── WORKFLOW-WF-2B: the pane's workflow control ───────────── */
+
+describe("Workspace › Comments: the conversation's workflow control (WORKFLOW-WF-2B)", () => {
+  const words = (html: string): string => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const render = async (workflow: { state: "open" | "done"; resolution: "no_reply_needed" | null; version: number; canChange: boolean } | null): Promise<string> => {
+    allow(WS);
+    env.list = ready();
+    const state = conversationReady(C2);
+    if (state.kind !== "ready") throw new Error("ready");
+    env.detail = { ...state, detail: { ...state.detail, workflowState: workflow?.state ?? "unknown", workflow } };
+    return selectedPage(WS, C2);
+  };
+  const hidden = (html: string): Record<string, string> => Object.fromEntries([...html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)"\/?>/g)].map((match) => [match[1] ?? "", match[2] ?? ""]));
+
+  it("Open, for a member who may change it: Mark done with an optional resolution — only the ones of features that exist — posting the page's identifiers and the version it shows", async () => {
+    const html = await render({ state: "open", resolution: null, version: 4, canChange: true });
+    expect(words(html)).toContain("Mark done");
+    expect(hidden(html)).toEqual({ workspaceId: WS, conversationId: C2, expectedVersion: "4", to: "done" });
+    const options = [...html.matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)].map((match) => [match[1], match[2]]);
+    expect(options).toEqual([["", "No resolution"], ["no_reply_needed", "No reply needed"], ["replied_publicly", "Replied publicly"], ["replied_on_platform", "Replied on platform"], ["moderated", "Moderated"], ["reviewed", "Reviewed"]]);
+    expect(words(html)).not.toMatch(/Escalation closed|Replied privately|Reopen/);
+  });
+
+  it("Done: the resolution beside the state, and Reopen against the version shown — no resolution field", async () => {
+    const html = await render({ state: "done", resolution: "no_reply_needed", version: 5, canChange: true });
+    expect(words(html)).toContain("Reopen");
+    expect(words(html)).toContain("No reply needed");
+    expect(hidden(html)).toEqual({ workspaceId: WS, conversationId: C2, expectedVersion: "5", to: "open" });
+    expect(html).not.toContain('name="resolution"');
+    expect(words(html)).not.toContain("Mark done");
+  });
+
+  it("a member without workflow.internal, or a conversation without a readable work item, gets no control at all", async () => {
+    for (const workflow of [{ state: "open" as const, resolution: null, version: 1, canChange: false }, null]) {
+      const html = await render(workflow);
+      expect(words(html)).not.toMatch(/Mark done|Reopen/);
+      expect(html).not.toContain('name="expectedVersion"');
+    }
   });
 });

@@ -10,7 +10,7 @@
  */
 import type { MessageKey } from "@/domain/i18n/message-keys";
 import type { PublicReplyRefusal } from "@/mutations/request";
-import type { OutboundReplyState, ReplyUnavailableReason } from "@/server/queries/inbox";
+import type { OutboundReplyState, ReplyUnavailableReason, WorkItemResolution } from "@/server/queries/inbox";
 import type { ReplyBlockedCode } from "./reply-state";
 import { PLATFORM_DISPLAY_NAMES } from "@/domain/platforms";
 import { isUuid, parseWorkspaceId, type WorkspaceId } from "@/domain/ids";
@@ -153,6 +153,21 @@ export const OUTBOUND_STATE_MESSAGES: { readonly [S in OutboundReplyState]: Mess
   checking: "inbox.outbound.state.checking",
   blocked: "inbox.outbound.state.blocked",
 };
+
+/**
+ * WORKFLOW-WF-2B — the resolution vocabulary (UX §8.3 / Model §10), and the ones a person may pick when marking Done in
+ * Comments: not those of features that do not exist yet (a private reply; the escalation flow).
+ */
+export const RESOLUTION_MESSAGES: { readonly [R in WorkItemResolution]: MessageKey } = {
+  replied_publicly: "workflow.resolution.replied_publicly",
+  replied_privately: "workflow.resolution.replied_privately",
+  replied_on_platform: "workflow.resolution.replied_on_platform",
+  no_reply_needed: "workflow.resolution.no_reply_needed",
+  moderated: "workflow.resolution.moderated",
+  reviewed: "workflow.resolution.reviewed",
+  escalation_closed: "workflow.resolution.escalation_closed",
+};
+export const OFFERED_RESOLUTIONS: readonly WorkItemResolution[] = ["no_reply_needed", "replied_publicly", "replied_on_platform", "moderated", "reviewed"];
 
 export const CONVERSATION_STATE_MESSAGES: { readonly [S in ConversationStateLabel]: MessageKey } = {
   open: "inbox.state.open",

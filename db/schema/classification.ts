@@ -48,6 +48,8 @@ export const APPLICATION_SCHEMAS = [
   "classification",
   // Step 7B-1 (0027): the Platform Mutation Executor's intents, history and outbound replies (TA §26; owner: mutations/).
   "mutations",
+  // WORKFLOW-WF-2B (0034): the shared Workflow core (TA §7.1 owner: modules/workflow).
+  "workflow",
 ] as const;
 
 /** Schema USAGE per runtime role (no other role may hold USAGE or CREATE). */
@@ -72,6 +74,7 @@ export const SCHEMA_USAGE: Readonly<Record<(typeof APPLICATION_SCHEMAS)[number],
   classification: ["authenticated", "app_worker"],
   // Step 7B-14I2 (0029): the operator role holds USAGE only to reach its three definer functions (no table privilege).
   mutations: ["authenticated", "app_worker", "app_validation_operator"],
+  workflow: ["authenticated", "app_worker"],
 };
 
 export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>> = {
@@ -142,7 +145,8 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     // owner_reconciliation_audit (0019): only ingestion.request_reconciliation (its run's initiator, its one action).
     // append_own (narrowed by 0020): only the action pipeline's own actions, bound to the transaction's tenant context.
     // owner_validation_audit (0029): only the validation operator definers, each event alongside its own log row.
-    policies: ["append_bound_workspace INSERT app_worker", "append_own INSERT authenticated", "owner_move_audit INSERT app_owner", "owner_reconciliation_audit INSERT app_owner", "owner_validation_audit INSERT app_owner"],
+    // owner_workflow_audit (0034): only workflow.change_state, each event alongside its own workflow event (same id).
+    policies: ["append_bound_workspace INSERT app_worker", "append_own INSERT authenticated", "owner_move_audit INSERT app_owner", "owner_reconciliation_audit INSERT app_owner", "owner_validation_audit INSERT app_owner", "owner_workflow_audit INSERT app_owner"],
     privileges: { authenticated: ["INSERT"], app_worker: ["INSERT"] },
   },
   "system.outbox": {
@@ -555,6 +559,19 @@ export const TABLE_CLASSIFICATION: Readonly<Record<string, TableClassification>>
     policies: ["owner_append INSERT app_owner", "owner_read SELECT app_owner"],
     privileges: {},
   },
+  // WORKFLOW-WF-2B (0034): the shared Workflow core. Members (non-guest) READ only; Mark Done / Reopen go through the
+  // reviewed definer workflow.change_state (owner policies). The bound worker creates a work item OPEN, projects activity
+  // and performs only the objective auto-reopen (trigger guard). No runtime DELETE anywhere.
+  "workflow.work_items": {
+    class: "workspace_tenant",
+    policies: ["member_read SELECT authenticated", "owner_read SELECT app_owner", "owner_update UPDATE app_owner", "worker_insert INSERT app_worker", "worker_read SELECT app_worker", "worker_update UPDATE app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT", "UPDATE(latest_activity_at)", "UPDATE(resolution)", "UPDATE(state)", "UPDATE(state_changed_at)", "UPDATE(state_changed_by_kind)", "UPDATE(state_changed_by_user)", "UPDATE(updated_at)", "UPDATE(version)"] },
+  },
+  "workflow.workflow_events": {
+    class: "append_only_history",
+    policies: ["member_read SELECT authenticated", "owner_append INSERT app_owner", "owner_read SELECT app_owner", "worker_append INSERT app_worker", "worker_read SELECT app_worker"],
+    privileges: { authenticated: ["SELECT"], app_worker: ["INSERT", "SELECT"] },
+  },
   "t26_fixture.conversations": {
     class: "test_fixture",
     policies: ["user_content ALL authenticated", "worker_bound ALL app_worker"],
@@ -702,4 +719,9 @@ export const FUNCTION_EXECUTE: Readonly<Record<string, readonly RuntimeGrantee[]
   "mutations.validation_operator_bind(uuid)": [],
   // Step 7B-16E (0033): the intent model's status transitions for every intent (trigger only; invoker, OLD/NEW only).
   "mutations.intent_transition_guard()": [],
+  // WORKFLOW-WF-2B (0034): the web's Mark Done / Reopen definer, the work item transition guard (trigger only) and the
+  // workflow change summary validator (a CHECK predicate: it runs as the inserting role).
+  "workflow.change_state(uuid,text,text,integer,text,text)": ["authenticated"],
+  "workflow.work_item_guard()": [],
+  "audit.is_workflow_state(jsonb)": ["app_worker", "authenticated"],
 };

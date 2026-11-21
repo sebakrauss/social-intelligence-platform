@@ -23,7 +23,7 @@ import type {
   WorkspaceMembership,
 } from "@/modules/tenancy";
 import type { AuthUser, IdentityPort } from "@/platform/auth/port";
-import type { InboxReadSources, Transaction, TransactionScope, UnitOfWork } from "@/server/pipeline";
+import type { InboxReadSources, Transaction, TransactionScope, UnitOfWork, WorkflowSources } from "@/server/pipeline";
 
 export interface InMemoryState {
   organizations: Map<string, Organization>;
@@ -131,12 +131,15 @@ const NO_MUTATIONS: MutationRequestSources = {
 /** The Inbox read side is proven on the real database; a test that needs it injects its own sources. */
 const NO_INBOX: InboxReadSources = {
   conversations: { findMany: unavailable, get: unavailable },
-  interactions: { listConversationActivity: unavailable, summaries: unavailable, thread: unavailable, textVersions: unavailable },
+  interactions: { listConversationActivity: unavailable, summaries: unavailable, thread: unavailable, textVersions: unavailable, conversationActivity: unavailable },
   content: { findManyById: unavailable },
   coverage: { latestPerAccountAndKind: unavailable },
   signals: { forInteractions: unavailable },
   accounts: unavailable,
 };
+
+/** WORKFLOW-WF-2B: the workflow sources are proven on the real database; a command test injects its own. */
+const NO_WORKFLOW: WorkflowSources = { reads: { queue: unavailable, findMany: unavailable }, changes: { changeState: unavailable } };
 
 export class InMemoryUnitOfWork implements UnitOfWork {
   state: InMemoryState;
@@ -150,6 +153,8 @@ export class InMemoryUnitOfWork implements UnitOfWork {
   inbox: InboxReadSources | undefined;
   /** Step 7B-1: the mutation request sources a test injects (unset = unavailable). */
   mutations: MutationRequestSources | undefined;
+  /** WORKFLOW-WF-2B: the workflow sources a test injects (unset = every workflow read and change is unavailable). */
+  workflow: WorkflowSources | undefined;
 
   constructor(state: InMemoryState = emptyState()) {
     this.state = state;
@@ -189,7 +194,8 @@ export class InMemoryUnitOfWork implements UnitOfWork {
       };
       const inbox: InboxReadSources = this.inbox ?? NO_INBOX;
       const mutations: MutationRequestSources = this.mutations ?? NO_MUTATIONS;
-      const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS, capability: { header: unavailable, entries: unavailable }, reconciliation, inbox, mutations });
+      const workflow: WorkflowSources = this.workflow ?? NO_WORKFLOW;
+      const result = await work({ tenancy, audit, outbox, connections: NO_CONNECTIONS, capability: { header: unavailable, entries: unavailable }, reconciliation, inbox, mutations, workflow });
       this.state = draft;
       this.commits += 1;
       return result;

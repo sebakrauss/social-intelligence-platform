@@ -16,6 +16,7 @@ import type { CoverageReadStore } from "@/modules/coverage";
 import type { ReconciliationRequestPort } from "@/modules/ingestion";
 import type { InteractionReadStore } from "@/modules/interactions";
 import type { TenancyStore } from "@/modules/tenancy";
+import type { WorkflowReadStore, WorkflowStateChanger } from "@/modules/workflow";
 import type { MutationRequestSources } from "@/mutations/request";
 import type { OutboxWriter } from "@/platform/outbox";
 
@@ -40,6 +41,16 @@ export interface InboxReadSources {
   readonly accounts: () => Promise<readonly InboxAccountRow[]>;
 }
 
+/**
+ * WORKFLOW-WF-2B: the workflow module's web side — the queue and work-item reads (member_read, explicit bound-workspace
+ * predicate) and Mark Done / Reopen through the reviewed definer workflow.change_state. The web has no other workflow
+ * write: no table grant exists.
+ */
+export interface WorkflowSources {
+  readonly reads: WorkflowReadStore;
+  readonly changes: WorkflowStateChanger;
+}
+
 export interface Transaction {
   readonly tenancy: TenancyStore;
   readonly audit: AuditLog;
@@ -59,6 +70,7 @@ export interface Transaction {
    * and the request-time guards. The web holds no execution path, no transition and no provider mutation port.
    */
   readonly mutations: MutationRequestSources;
+  readonly workflow: WorkflowSources;
 }
 
 /**

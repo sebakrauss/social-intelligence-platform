@@ -454,6 +454,8 @@ describe("vocabulary alignment with migration 0014", () => {
       "mutation_intent.created", "mutation_intent.executing", "mutation_intent.confirmed", "mutation_intent.failed", "mutation_intent.blocked", "mutation_intent.outcome_unknown", "mutation_intent.reconciled",
       // Step 7B-14I2 (0029): the validation operator's issuance and revocation.
       "validation_authorization.issued", "validation_authorization.revoked",
+      // WORKFLOW-WF-2B (0034): a work item's state change.
+      "work_item.state_changed",
     ];
     expect(listed("audit_events_action_check")).toEqual([...AUDIT_ACTIONS].filter((action) => !addedLater.includes(action)).sort());
   });

@@ -14,12 +14,14 @@
  */
 import { describe, expect, it } from "vitest";
 import { COMMENTS_VIEW_PARAM, COMMENTS_VIEWS } from "@/server/routes";
-import { INBOX_FILTER_BATCH, INBOX_FILTER_ROUNDS, INBOX_PAGE_SIZE, inboxListCommand } from "@/server/queries/inbox";
+import { QUEUE_MAX_LIMIT } from "@/modules/workflow/persistence";
+import { INBOX_PAGE_SIZE, inboxListCommand } from "@/server/queries/inbox";
 import { codeOf } from "../support/source-scan";
 
 const QUERY = "server/queries/inbox.ts";
 const INTERACTIONS_READ = "modules/interactions/persistence/read-store.ts";
 const CONVERSATIONS_STORE = "modules/conversations/persistence/store.ts";
+const WORKFLOW_PERSISTENCE = ["modules/workflow/persistence/read-store.ts", "modules/workflow/persistence/state-changer.ts", "modules/workflow/persistence/projection-store.ts", "modules/workflow/persistence/tables.ts"];
 const SHELL_NAV = "ui/shell/shell-view-nav.tsx";
 const ROUTE_FILES = [
   "app/workspaces/[workspaceId]/comments/page.tsx",
@@ -39,31 +41,37 @@ function functionBody(file: string, name: string): string {
 }
 
 describe("COMMENTS-INT-03C-2: the views are the Inbox's own list, narrowed on the server through the owners' ports", () => {
-  it("no module reads another module's tables: the activity store never names the conversations schema, and the reverse", () => {
+  it("no module reads another module's tables: the activity store never names the conversations schema, and the reverse; the workflow persistence names neither", () => {
     expect(codeOf(INTERACTIONS_READ)).not.toMatch(/conversations\.conversations|conversationRows|pgSchema\("conversations"\)|workflow_state|modules\/conversations/);
     expect(codeOf(CONVERSATIONS_STORE)).not.toMatch(/interactions\.|interactionRows|pgSchema\("interactions"\)|modules\/interactions/);
+    // WORKFLOW-WF-2B: the queue's activity is recomputed from the interactions OWNER's port (composed in), never read here.
+    for (const file of WORKFLOW_PERSISTENCE) expect(codeOf(file), file).not.toMatch(/interactions\.interactions|conversations\.conversations|interactionRows|conversationRows|pgSchema\("(interactions|conversations)"\)|modules\/(interactions|conversations)/);
   });
 
-  it("the query layer holds no SQL: it composes the read ports only", () => {
+  it("the query layer holds no SQL: it composes the owners' read ports only — the workflow queue chooses the page, then only the shown rows are completed", () => {
     const code = codeOf(QUERY);
     expect(code).not.toMatch(/from "drizzle-orm|from "@\/platform\/db|\bsql`|tx\.execute|tx\.select/);
-    const filtered = functionBody(QUERY, "readFilteredPage");
-    expect(filtered).not.toBe("");
-    // Exactly the two owner reads choose the rows: the activity keyset, then the states of that batch.
-    expect([...filtered.matchAll(/tx\.inbox\.([a-zA-Z.]+)\(/g)].map((match) => match[1])).toEqual(["interactions.listConversationActivity", "conversations.findMany"]);
+    const page = functionBody(QUERY, "readInboxPage");
+    expect(page).not.toBe("");
+    // WORKFLOW-WF-2B: exactly three owner reads, in this order: the queue (workflow), the shown conversations' anchors
+    // (conversations), the shown conversations' member counts and flags (interactions).
+    expect([...page.matchAll(/tx\.(workflow\.reads|inbox)\.([a-zA-Z.]+)\(/g)].map((match) => `${match[1] ?? ""}.${match[2] ?? ""}`)).toEqual(["workflow.reads.queue", "inbox.conversations.findMany", "inbox.interactions.conversationActivity"]);
+    expect(code).not.toMatch(/readFilteredPage|INBOX_FILTER_BATCH|INBOX_FILTER_ROUNDS|listConversationActivity|continueAt|partial: true/);
   });
 
-  it("the narrowing is bounded and happens before the page is cut", () => {
-    const filtered = functionBody(QUERY, "readFilteredPage");
-    expect(filtered).toMatch(/for \(let round = 0; round < INBOX_FILTER_ROUNDS; round \+= 1\)/);
-    expect(filtered).toMatch(/listConversationActivity\(\{ limit: INBOX_FILTER_BATCH, before \}\)/);
-    // A match is kept only for the requested state; nothing of unknown state is ever counted as Open.
-    expect(filtered).toMatch(/workflowLabel\(conversation\.workflowState\) !== state\) continue;/);
-    expect(filtered).toMatch(/if \(activity\.length > INBOX_PAGE_SIZE\) return/);
-    expect(INBOX_FILTER_BATCH).toBeGreaterThan(INBOX_PAGE_SIZE);
-    // At most this many conversations are checked per request (the read store's own bound is 500 per read).
-    expect(INBOX_FILTER_BATCH).toBeLessThanOrEqual(500);
-    expect(INBOX_FILTER_BATCH * INBOX_FILTER_ROUNDS).toBeLessThanOrEqual(1000);
+  it("WORKFLOW-WF-2B: one bounded queue read per page, chosen before it is cut, always with the explicit bound-workspace predicate", () => {
+    const page = functionBody(QUERY, "readInboxPage");
+    // No batch loop and no second queue read: the page plus one row (that only proves an older page exists).
+    expect(page).not.toMatch(/\bfor \(|\bwhile \(/);
+    expect([...page.matchAll(/tx\.workflow\.reads\.queue\(/g)]).toHaveLength(1);
+    expect(page).toMatch(/tx\.workflow\.reads\.queue\(\{ workspaceId, view: state \?\? "all", before: .+?, limit: INBOX_PAGE_SIZE \+ 1 \}\)/);
+    // The workspace is the command's resolved, bound workspace (never input).
+    expect(codeOf(QUERY)).toMatch(/execute: \(context, input, tx\) => readInboxPage\(tx, context\.workspaceId, input\.cursor\?\.cursor, input\.state\),/);
+    expect(INBOX_PAGE_SIZE + 1).toBeLessThanOrEqual(QUEUE_MAX_LIMIT);
+    // The queue store's every statement opens its WHERE with the explicit predicate (WF-2A Candidate 2).
+    const store = codeOf("modules/workflow/persistence/read-store.ts");
+    const wheres = [...store.matchAll(/from workflow\.work_items\s+where ([^\n]+)/g)].map((match) => (match[1] ?? "").trim());
+    expect(wheres).toEqual(["workspace_id = ${input.workspaceId}::uuid", "workspace_id = ${input.workspaceId}::uuid"]);
   });
 
   it("the list command stays a read: same name and permission, no Standard-mode requirement, nothing audited", () => {

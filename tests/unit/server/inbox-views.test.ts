@@ -1,23 +1,21 @@
 /**
- * COMMENTS-INT-03C-2 — the list query narrowed to one persisted workflow state (Open, Done), offline, through the real
- * action pipeline over the in-memory unit of work. The read sources answer like the PostgreSQL stores: the activity is a
- * real keyset (newest activity first, then id, strictly before a position, at most `limit` rows) and the conversations'
- * states come from their owner's port. Proves that filtering happens BEFORE the page is cut (a first unfiltered page of
- * Done conversations never empties Open), that walking a view page by page yields exactly that state's conversations once
- * each in list order, that ties and page boundaries are stable, that a position is honoured only by the view it was issued
- * for, that the check is bounded and an incomplete page says so and continues where it stopped, that a conversation
- * whose state is unknown or unreadable belongs to neither state, that authorization is unchanged, and that the unfiltered
- * list (the Inbox) reads exactly as before. Synthetic identities only.
+ * COMMENTS-INT-03C-2, reworked by WORKFLOW-WF-2B — the list query in one workflow state (Open, Done) or all of them,
+ * offline, through the real action pipeline over the in-memory unit of work. Since WF-2B the page is chosen by the
+ * WORKFLOW QUEUE: the fake below answers like workflow/persistence/read-store.ts — a real keyset over the work items
+ * (newest activity first, then id, strictly before a position, at most `limit` rows) in the requested state, and NOTHING
+ * for any workspace but the bound one (it is an explicit predicate there). Proves that a view is chosen before the page
+ * is cut, that walking a view yields exactly that state's conversations once each in list order, that ties and page
+ * boundaries are stable, that every page is one bounded read and is never partial, that a position is honoured only by
+ * the view it was issued for, that an unreadable conversation is never shown half-built, and that authorization is
+ * unchanged. Synthetic identities only.
  */
 import { describe, expect, it } from "vitest";
 import type { WorkspaceRole } from "@/domain/access";
-import type { InboxReadSources } from "@/server/pipeline";
+import type { InboxReadSources, WorkflowSources } from "@/server/pipeline";
 import { resolveInboxPage } from "@/server/inbox/inbox";
 import { commentsPosition, COMMENTS_VIEW_STATES } from "@/server/inbox/comments";
 import { COMMENTS_DEFAULT_VIEW, parseCommentsView, workspaceCommentsConversationPath, workspaceCommentsViewPath } from "@/server/routes";
 import {
-  INBOX_FILTER_BATCH,
-  INBOX_FILTER_ROUNDS,
   INBOX_PAGE_SIZE,
   encodeCursor,
   encodeListCursor,
@@ -38,7 +36,8 @@ const ACCOUNT = "66666666-6666-4666-8666-666666666666";
 const CONTENT = "55555555-5555-4555-8555-555555555555";
 const START = Date.parse("2026-11-01T12:00:00.000Z");
 
-type State = "OPEN" | "DONE" | "WAITING" | "UNREADABLE";
+/** A work item is OPEN or DONE (0034 admits nothing else); UNREADABLE: an OPEN work item whose conversation row is not readable. */
+type State = "OPEN" | "DONE" | "UNREADABLE";
 
 /** Conversation n: a canonical id whose order matches n (later n = smaller id), its anchor, and its activity. */
 const idOf = (n: number): string => `${n.toString(16).padStart(8, "0")}-0000-4000-8000-000000000001`;
@@ -56,27 +55,39 @@ function dataset(states: readonly State[], tie = 1): Row[] {
   return states.map((state, i) => ({ n: i + 1, state, minutes: Math.floor(i / tie) }));
 }
 
-/** Read sources that behave like the stores: a real keyset over the activity, states from the owner's port. */
-function sources(rows: readonly Row[]) {
+/** Read sources that behave like the stores: the workflow queue (a real keyset per state, explicit workspace), then owners. */
+function sources(rows: readonly Row[], boundWorkspace: () => string) {
   const calls: string[] = [];
   const at = (row: Row): Date => new Date(START - row.minutes * 60_000);
-  // Newest activity first, then id descending — the store's `order by 2 desc, 1 desc`.
+  // Newest activity first, then id descending — the queue's `order by latest_activity_at desc, id desc`.
   const ordered = [...rows].sort((a, b) => at(b).getTime() - at(a).getTime() || (idOf(a.n) < idOf(b.n) ? 1 : -1));
+  const itemState = (row: Row): "OPEN" | "DONE" => (row.state === "DONE" ? "DONE" : "OPEN");
   const note = <T>(name: string, value: T): Promise<T> => {
     calls.push(name);
     return Promise.resolve(value);
   };
+  const workflow: WorkflowSources = {
+    reads: {
+      queue: ({ workspaceId, view, before, limit }) => {
+        // The explicit predicate: another workspace's id reads nothing (RLS would refuse it too).
+        const visible = workspaceId === boundWorkspace() ? ordered : [];
+        const inView = visible.filter((row) => view === "all" || itemState(row) === (view === "open" ? "OPEN" : "DONE"));
+        const after = before === null ? inView : inView.filter((row) => at(row).getTime() < before.latestActivityAt.getTime() || (at(row).getTime() === before.latestActivityAt.getTime() && idOf(row.n) < before.id));
+        return note(`workflow.queue:${view}:${String(limit)}:${before === null ? "-" : before.id}`, after.slice(0, limit).map((row) => ({ id: idOf(row.n), latestActivityAt: at(row), state: itemState(row), version: 1 })));
+      },
+      findMany: () => note("workflow.findMany", []),
+    },
+    changes: { changeState: () => Promise.reject(new Error("not used here")) },
+  };
   const inbox: InboxReadSources = {
     conversations: {
-      // Unreadable conversations are absent (RLS hides them); the others carry their persisted state.
-      findMany: (ids) => note(`conversations.findMany:${String(ids.length)}`, rows.filter((row) => row.state !== "UNREADABLE" && ids.includes(idOf(row.n))).map((row) => ({ id: idOf(row.n), anchorInteractionId: anchorOf(row.n), workflowState: row.state, createdAt: at(row) }))),
+      // Unreadable conversations are absent (RLS hides them). Their legacy column is OPEN: the work item is the authority.
+      findMany: (ids) => note(`conversations.findMany:${String(ids.length)}`, rows.filter((row) => row.state !== "UNREADABLE" && ids.includes(idOf(row.n))).map((row) => ({ id: idOf(row.n), anchorInteractionId: anchorOf(row.n), workflowState: "OPEN", createdAt: at(row) }))),
       get: () => note("conversations.get", undefined),
     },
     interactions: {
-      listConversationActivity: ({ limit, before }) => {
-        const after = before === null ? ordered : ordered.filter((row) => at(row).getTime() < before.latestActivityAt.getTime() || (at(row).getTime() === before.latestActivityAt.getTime() && idOf(row.n) < before.conversationId));
-        return note(`interactions.listConversationActivity:${String(limit)}:${before === null ? "-" : before.conversationId}`, after.slice(0, limit).map((row) => ({ conversationId: idOf(row.n), latestActivityAt: at(row), observedCount: 1, placeholderCount: 0, anyHidden: false, anyRemovedAtSource: false })));
-      },
+      listConversationActivity: () => note("interactions.listConversationActivity", []),
+      conversationActivity: (ids) => note(`interactions.conversationActivity:${String(ids.length)}`, rows.filter((row) => ids.includes(idOf(row.n))).map((row) => ({ conversationId: idOf(row.n), latestActivityAt: at(row), observedCount: 1, placeholderCount: 0, anyHidden: false, anyRemovedAtSource: false }))),
       summaries: (ids) => note("interactions.summaries", ids.map((id) => ({ id, providerInteractionId: `sim_${id}`, conversationId: null, contentItemId: CONTENT, connectedAccountId: ACCOUNT, platform: "instagram", observed: true, kind: "comment", parentInteractionId: null, authorRole: "user", authorLabel: "Synthetic Person", currentSourceTextVersionId: null, currentText: "synthetic", currentVisibility: "visible", currentAvailability: "available", providerCreatedAt: null, providerEditedAt: null, textObservedAt: null, firstObservedAt: null, latestObservedAt: null }))),
       thread: () => note("interactions.thread", []),
       textVersions: () => note("interactions.textVersions", []),
@@ -86,7 +97,7 @@ function sources(rows: readonly Row[]) {
     signals: { forInteractions: () => note("signals.forInteractions", []) },
     accounts: () => note("accounts", [{ id: ACCOUNT, platform: "instagram", status: "ACTIVE" }]),
   };
-  return { inbox, calls, ordered: ordered.map((row) => ({ id: idOf(row.n), state: row.state })) };
+  return { inbox, workflow, calls, ordered: ordered.map((row) => ({ id: idOf(row.n), state: row.state })) };
 }
 
 const ROLES: readonly WorkspaceRole[] = ["OWNER", "ADMIN", "MANAGER", "RESPONDER", "ANALYST_VIEWER", "CLIENT_GUEST"];
@@ -103,8 +114,9 @@ async function setup(rows: readonly Row[]) {
     await h.addMember(OWNER, workspaceId, member, role);
     members[role] = member;
   }
-  const source = sources(rows);
+  const source = sources(rows, () => workspaceId);
   h.unitOfWork.inbox = source.inbox;
+  h.unitOfWork.workflow = source.workflow;
   const audit = h.unitOfWork.state.audit.length;
   const outbox = h.unitOfWork.state.outbox.length;
   const as = (role: WorkspaceRole): void => {
@@ -133,11 +145,12 @@ async function setup(rows: readonly Row[]) {
 }
 
 const of = (ordered: readonly { readonly id: string; readonly state: State }[], ...states: State[]): string[] => ordered.filter((row) => states.includes(row.state)).map((row) => row.id);
-const mixed = (count: number): State[] => Array.from({ length: count }, (_, i): State => (i % 7 === 3 ? "WAITING" : i % 11 === 5 ? "UNREADABLE" : i % 3 === 0 ? "DONE" : "OPEN"));
+const mixed = (count: number): State[] => Array.from({ length: count }, (_, i): State => (i % 11 === 5 ? "UNREADABLE" : i % 3 === 0 ? "DONE" : "OPEN"));
+const queueCalls = (calls: readonly string[]): string[] => calls.filter((call) => call.startsWith("workflow.queue:"));
 
 /* ───────────── each view is exactly its state ───────────── */
 
-describe("Open, Done and All: each view is exactly its persisted state", () => {
+describe("Open, Done and All: each view is exactly its work items' state", () => {
   it("Open holds only OPEN, Done only DONE, All every readable conversation — walked page by page, in list order, once each", async () => {
     const h = await setup(dataset(mixed(160)));
     const open = await h.walk("open");
@@ -145,21 +158,20 @@ describe("Open, Done and All: each view is exactly its persisted state", () => {
     const all = await h.walk(undefined);
     expect(open.ids).toEqual(of(h.ordered, "OPEN"));
     expect(done.ids).toEqual(of(h.ordered, "DONE"));
-    // All = the unfiltered list: every readable conversation, including one whose state is not known (shown as such).
-    expect(all.ids).toEqual(of(h.ordered, "OPEN", "DONE", "WAITING"));
+    expect(all.ids).toEqual(of(h.ordered, "OPEN", "DONE"));
     for (const view of [open, done, all]) expect(new Set(view.ids).size).toBe(view.ids.length);
     expect(open.pages.flatMap((page) => page.items).every((item) => item.workflowState === "open")).toBe(true);
     expect(done.pages.flatMap((page) => page.items).every((item) => item.workflowState === "done")).toBe(true);
-    expect(all.pages.flatMap((page) => page.items).filter((item) => item.workflowState === "unknown")).not.toHaveLength(0);
-    // Every page of a view but the last is full: filtering never hands back a shortened page as if it were complete.
-    // (All is the unfiltered Inbox list, unchanged: an unreadable conversation still drops out of its page there.)
-    for (const view of [open, done]) {
-      for (const page of view.pages.slice(0, -1)) expect(page.items).toHaveLength(INBOX_PAGE_SIZE);
-    }
-    for (const view of [open, done, all]) expect(view.pages.every((page) => page.partial !== true)).toBe(true);
+    // Never partial: a page is chosen in one bounded read (the field no longer exists).
+    for (const view of [open, done, all]) expect(view.pages.every((page) => !("partial" in page))).toBe(true);
   });
 
-  it("filtering precedes pagination: a first unfiltered page of Done conversations never empties Open", async () => {
+  it("the state shown is the WORK ITEM's, never the conversation's legacy column (which says OPEN for every one here)", async () => {
+    const h = await setup(dataset(["DONE", "OPEN", "DONE"]));
+    expect((await h.list({})).items.map((item) => item.workflowState)).toEqual(["done", "open", "done"]);
+  });
+
+  it("the view precedes pagination: a first page of Done conversations never empties Open", async () => {
     // The 60 most recent are Done, then 40 Open: the unfiltered first page holds no Open conversation at all.
     const h = await setup(dataset([...Array.from({ length: 60 }, (): State => "DONE"), ...Array.from({ length: 40 }, (): State => "OPEN")]));
     const firstUnfiltered = await h.list({});
@@ -173,14 +185,6 @@ describe("Open, Done and All: each view is exactly its persisted state", () => {
     expect(second.nextCursor).toBeNull();
   });
 
-  it("stops as soon as one more than a page matched: no further batch is read", async () => {
-    const h = await setup(dataset(Array.from({ length: 3 * INBOX_FILTER_BATCH }, (): State => "OPEN")));
-    h.calls.length = 0;
-    const page = await h.list({ state: "open" });
-    expect(page.items).toHaveLength(INBOX_PAGE_SIZE);
-    expect(h.calls.filter((call) => call.startsWith("interactions.listConversationActivity"))).toEqual([`interactions.listConversationActivity:${String(INBOX_FILTER_BATCH)}:-`]);
-  });
-
   it("ties: conversations on the same instant are ordered by id and never skipped or repeated across page boundaries", async () => {
     // Groups of 7 on the same instant, so ties straddle every page boundary.
     const h = await setup(dataset(mixed(140), 7));
@@ -188,7 +192,7 @@ describe("Open, Done and All: each view is exactly its persisted state", () => {
       const walked = await h.walk(state);
       expect(walked.ids).toEqual(of(h.ordered, state === "open" ? "OPEN" : "DONE"));
     }
-    expect((await h.walk(undefined)).ids).toEqual(of(h.ordered, "OPEN", "DONE", "WAITING"));
+    expect((await h.walk(undefined)).ids).toEqual(of(h.ordered, "OPEN", "DONE"));
   });
 
   it("page boundaries: exactly a page of matches has no older page; one more has one, positioned at the last shown row", async () => {
@@ -204,84 +208,46 @@ describe("Open, Done and All: each view is exactly its persisted state", () => {
     expect(second.items.map((item) => item.conversationId)).toEqual(of(more.ordered, "OPEN").slice(INBOX_PAGE_SIZE));
   });
 
-  it("empty views: no conversation of that state says nothing was found — no older page, nothing partial", async () => {
+  it("empty views: no conversation of that state says nothing was found — no older page", async () => {
     const h = await setup(dataset(Array.from({ length: 40 }, (): State => "OPEN")));
     const done = await h.list({ state: "done" });
     expect(done.items).toEqual([]);
     expect(done.nextCursor).toBeNull();
     expect(done.emptyReason).toBe("no_conversations_in_coverage");
-    expect(done.partial).toBeUndefined();
     const nothing = await setup([]);
     expect((await nothing.list({ state: "open" })).emptyReason).toBe("no_conversations_in_coverage");
   });
 
-  it("a conversation whose state is not known, or that cannot be read, belongs to neither Open nor Done — never taken for Open", async () => {
-    const h = await setup(dataset(["WAITING", "UNREADABLE", "OPEN", "DONE", "WAITING"]));
+  it("a conversation that cannot be read is never shown half-built (left out of its page), in any view", async () => {
+    const h = await setup(dataset(["UNREADABLE", "OPEN", "DONE", "UNREADABLE"]));
     expect((await h.list({ state: "open" })).items.map((item) => item.conversationId)).toEqual(of(h.ordered, "OPEN"));
     expect((await h.list({ state: "done" })).items.map((item) => item.conversationId)).toEqual(of(h.ordered, "DONE"));
-    const all = await h.list({});
-    expect(all.items.map((item) => item.workflowState)).toEqual(["unknown", "open", "done", "unknown"]);
+    expect((await h.list({})).items.map((item) => item.workflowState)).toEqual(["open", "done"]);
   });
 });
 
-/* ───────────── the bound ───────────── */
+/* ───────────── one bounded read per page ───────────── */
 
-describe("the check is bounded, and an incomplete page says so", () => {
-  const checked = INBOX_FILTER_BATCH * INBOX_FILTER_ROUNDS;
+describe("WORKFLOW-WF-2B: every page is ONE bounded queue read, with the bound workspace as an explicit predicate, and is never partial", () => {
+  it("whatever the size: one queue read of a page plus one, then only the shown rows are completed (no batch scan)", async () => {
+    const h = await setup(dataset(Array.from({ length: 1500 }, (_, i): State => (i % 2 === 0 ? "OPEN" : "DONE"))));
+    for (const state of ["open", "done", undefined] as const) {
+      h.calls.length = 0;
+      const page = await h.list(state === undefined ? {} : { state });
+      expect(page.items).toHaveLength(INBOX_PAGE_SIZE);
+      expect(queueCalls(h.calls)).toEqual([`workflow.queue:${state ?? "all"}:${String(INBOX_PAGE_SIZE + 1)}:-`]);
+      expect(h.calls.filter((call) => call.startsWith("conversations.findMany") || call.startsWith("interactions.conversationActivity"))).toEqual([`conversations.findMany:${String(INBOX_PAGE_SIZE)}`, `interactions.conversationActivity:${String(INBOX_PAGE_SIZE)}`]);
+      expect(h.calls.filter((call) => call.startsWith("interactions.listConversationActivity"))).toEqual([]);
+    }
+  });
 
-  it(`after ${String(checked)} conversations without a page of matches: the page is partial, holds every match so far, and continues where the check stopped`, async () => {
-    // 3 Open among the first `checked`, then 40 more Open beyond the bound.
-    const states: State[] = Array.from({ length: checked + 40 }, (_, i): State => (i === 10 || i === 600 || i === checked - 1 ? "OPEN" : i >= checked ? "OPEN" : "DONE"));
-    const h = await setup(dataset(states));
+  it("matches far apart (1 Open among 1,200 Done) are a COMPLETE page in one read — what the 500 × 2 check showed as partial", async () => {
+    const h = await setup(dataset(Array.from({ length: 1200 }, (_, i): State => (i === 1100 ? "OPEN" : "DONE"))));
     h.calls.length = 0;
-    const first = await h.list({ state: "open" });
-    expect(h.calls.filter((call) => call.startsWith("interactions.listConversationActivity"))).toHaveLength(INBOX_FILTER_ROUNDS);
-    expect(first.items.map((item) => item.conversationId)).toEqual(of(h.ordered, "OPEN").slice(0, 3));
-    expect(first.partial).toBe(true);
-    // It continues after the LAST CHECKED conversation (not the last shown one): nothing before it is checked twice.
-    const lastChecked = h.ordered[checked - 1];
-    expect(parseListCursor(first.nextCursor)?.cursor.conversationId).toBe(lastChecked?.id);
-    const walked = await h.walk("open");
-    expect(walked.ids).toEqual(of(h.ordered, "OPEN"));
-  });
-
-  it("nothing matched within the bound: an empty page that is partial and goes on — never presented as the end", async () => {
-    const h = await setup(dataset([...Array.from({ length: checked + 5 }, (): State => "DONE"), "OPEN"]));
-    const first = await h.list({ state: "open" });
-    expect(first.items).toEqual([]);
-    expect(first.partial).toBe(true);
-    expect(first.nextCursor).not.toBeNull();
-    const second = await h.list({ state: "open", cursor: first.nextCursor ?? "" });
-    expect(second.items.map((item) => item.conversationId)).toEqual(of(h.ordered, "OPEN"));
-    expect(second.nextCursor).toBeNull();
-    expect(second.partial).toBeUndefined();
-  });
-
-  it(`a list of ${String(checked - 1)} conversations (one short of the bound) ends inside the last batch: complete, not partial`, async () => {
-    const h = await setup(dataset(Array.from({ length: checked - 1 }, (_, i): State => (i === 0 ? "OPEN" : "DONE"))));
     const page = await h.list({ state: "open" });
-    expect(page.items).toHaveLength(1);
+    expect(page.items.map((item) => item.conversationId)).toEqual(of(h.ordered, "OPEN"));
     expect(page.nextCursor).toBeNull();
-    expect(page.partial).toBeUndefined();
-  });
-
-  it(`L-2: a list of EXACTLY ${String(checked)} conversations fills the bound: the page is partial (the check cannot know the list ended), then one empty, complete continuation`, async () => {
-    // One Open conversation among exactly `checked`: both batches come back full, so the check stops at the bound
-    // without having seen the end. Documented behaviour (not changed here): partial, then an empty last page.
-    const h = await setup(dataset(Array.from({ length: checked }, (_, i): State => (i === 0 ? "OPEN" : "DONE"))));
-    h.calls.length = 0;
-    const first = await h.list({ state: "open" });
-    expect(h.calls.filter((call) => call.startsWith("interactions.listConversationActivity"))).toHaveLength(INBOX_FILTER_ROUNDS);
-    expect(first.items.map((item) => item.conversationId)).toEqual(of(h.ordered, "OPEN"));
-    expect(first.partial).toBe(true);
-    expect(parseListCursor(first.nextCursor)?.cursor.conversationId).toBe(h.ordered[checked - 1]?.id);
-    h.calls.length = 0;
-    const last = await h.list({ state: "open", cursor: first.nextCursor ?? "" });
-    expect(h.calls.filter((call) => call.startsWith("interactions.listConversationActivity"))).toHaveLength(1);
-    expect(last.items).toEqual([]);
-    expect(last.nextCursor).toBeNull();
-    expect(last.partial).toBeUndefined();
-    expect(last.emptyReason).toBe("no_conversations_in_coverage");
+    expect(queueCalls(h.calls)).toHaveLength(1);
   });
 });
 
@@ -317,14 +283,14 @@ describe("a position is honoured only by the view it was issued for", () => {
     h.calls.length = 0;
     const done = await resolveInboxPage(h.pipeline, h.workspaceId, openCursor, "done");
     expect(done.kind).toBe("ready");
-    expect(h.calls[0]).toBe(`interactions.listConversationActivity:${String(INBOX_FILTER_BATCH)}:-`);
+    expect(h.calls[0]).toBe(`workflow.queue:done:${String(INBOX_PAGE_SIZE + 1)}:-`);
     h.calls.length = 0;
     await resolveInboxPage(h.pipeline, h.workspaceId, openCursor, "open");
-    expect(h.calls[0]).toBe(`interactions.listConversationActivity:${String(INBOX_FILTER_BATCH)}:${parseListCursor(openCursor)?.cursor.conversationId ?? "?"}`);
+    expect(h.calls[0]).toBe(`workflow.queue:open:${String(INBOX_PAGE_SIZE + 1)}:${parseListCursor(openCursor)?.cursor.conversationId ?? "?"}`);
     // The Inbox (no state) ignores a view's position too.
     h.calls.length = 0;
     await resolveInboxPage(h.pipeline, h.workspaceId, openCursor);
-    expect(h.calls[0]).toBe(`interactions.listConversationActivity:${String(INBOX_PAGE_SIZE + 1)}:-`);
+    expect(h.calls[0]).toBe(`workflow.queue:all:${String(INBOX_PAGE_SIZE + 1)}:-`);
   });
 
   it("the route keeps a position only for its own view; the view comes from the address, anything unknown is Open", () => {
@@ -370,13 +336,14 @@ describe("authorization and the Inbox are unchanged", () => {
     expect(h.unitOfWork.state.outbox).toHaveLength(h.outbox);
   });
 
-  it("without a state the list reads exactly as before: one page-and-one activity read, the same reads in the same order, plain positions, no partial flag", async () => {
+  it("without a state the list is All conversations: the same reads in the same order as every view, plain positions", async () => {
     const h = await setup(dataset(mixed(60)));
     h.calls.length = 0;
     const page = await h.list({});
     expect(h.calls).toEqual([
-      `interactions.listConversationActivity:${String(INBOX_PAGE_SIZE + 1)}:-`,
+      `workflow.queue:all:${String(INBOX_PAGE_SIZE + 1)}:-`,
       `conversations.findMany:${String(INBOX_PAGE_SIZE)}`,
+      `interactions.conversationActivity:${String(INBOX_PAGE_SIZE)}`,
       "interactions.summaries",
       "content.findManyById",
       "accounts",
@@ -387,6 +354,6 @@ describe("authorization and the Inbox are unchanged", () => {
     // The Inbox's surface passes no state at all.
     h.calls.length = 0;
     await resolveInboxPage(h.pipeline, h.workspaceId, page.nextCursor);
-    expect(h.calls[0]).toBe(`interactions.listConversationActivity:${String(INBOX_PAGE_SIZE + 1)}:${parseCursor(page.nextCursor)?.conversationId ?? "?"}`);
+    expect(h.calls[0]).toBe(`workflow.queue:all:${String(INBOX_PAGE_SIZE + 1)}:${parseCursor(page.nextCursor)?.conversationId ?? "?"}`);
   });
 });

@@ -4,7 +4,7 @@
  * `anchor_observed` is always written true (the 0017 column stays; no provisional anchor exists any more). Workflow
  * transitions belong to the workflow layer and have no grant here.
  */
-import { eq, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import { boolean, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { DatabaseTransaction } from "@/platform/db";
 import type { ConversationReadStore, ConversationStore } from "../application/ports";
@@ -54,6 +54,16 @@ export function createPostgresConversationStore(tx: DatabaseTransaction): Conver
       return { id: existing.id, created: false };
     },
     findByAnchor,
+    async pageIds(input) {
+      if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 500) throw new RangeError("conversations page: limit out of bounds");
+      const rows = await tx
+        .select({ id: conversationRows.id })
+        .from(conversationRows)
+        .where(input.after === null ? undefined : and(gt(conversationRows.id, input.after)))
+        .orderBy(asc(conversationRows.id))
+        .limit(input.limit);
+      return rows.map((row) => row.id);
+    },
   };
 }
 

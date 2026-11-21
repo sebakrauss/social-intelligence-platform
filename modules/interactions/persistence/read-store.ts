@@ -85,6 +85,28 @@ export function createPostgresInteractionReadStore(tx: DatabaseTransaction): Int
         anyRemovedAtSource: row.any_removed,
       }));
     },
+    async conversationActivity(conversationIds) {
+      const ids = [...new Set(conversationIds)].filter((id) => UUID.test(id)).slice(0, MAX_LIMIT);
+      if (ids.length === 0) return [];
+      const result = await tx.execute<{ conversation_id: string; latest: Date; observed_count: number; placeholder_count: number; any_hidden: boolean; any_removed: boolean }>(sql`
+        select ${interactionRows.conversationId} as conversation_id,
+               date_trunc('milliseconds', max(coalesce(${interactionRows.providerCreatedAt}, ${interactionRows.firstObservedAt}, ${interactionRows.createdAt}))) as latest,
+               count(*) filter (where ${interactionRows.observed})::int as observed_count,
+               count(*) filter (where not ${interactionRows.observed})::int as placeholder_count,
+               bool_or(${interactionRows.currentVisibility} = 'hidden') as any_hidden,
+               bool_or(${interactionRows.currentAvailability} = 'removed_at_source') as any_removed
+          from ${interactionRows}
+         where ${interactionRows.conversationId} in (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+         group by ${interactionRows.conversationId}`);
+      return result.rows.map((row): ConversationActivityRow => ({
+        conversationId: row.conversation_id,
+        latestActivityAt: new Date(row.latest),
+        observedCount: row.observed_count,
+        placeholderCount: row.placeholder_count,
+        anyHidden: row.any_hidden,
+        anyRemovedAtSource: row.any_removed,
+      }));
+    },
     async summaries(interactionIds) {
       if (interactionIds.length === 0) return [];
       return summaryQuery().where(inArray(interactionRows.id, [...new Set(interactionIds)].slice(0, MAX_LIMIT)));

@@ -44,7 +44,7 @@ import {
 import { parseInstant, type Instant } from "@/domain/instant";
 import type { ObservedArrival, ObservedChange } from "../domain/events";
 import type { IngestionConflictClass } from "../domain/reconciliation-state";
-import type { IngestionClock, IngestionStores } from "./ports";
+import type { ConversationMember, IngestionClock, IngestionStores } from "./ports";
 
 export interface IngestInteractionInput {
   readonly fact: InteractionSourceFact;
@@ -130,8 +130,11 @@ export async function ingestInteractionFact(stores: IngestionStores, clock: Inge
     }
   }
   // Completing a placeholder resolves the ancestry of everything that arrived beneath it: check it all now.
+  let descendants: readonly ConversationMember[] = [];
   if (existing !== undefined && !existing.observed) {
     const subtree = await stores.interactions.subtree(existing.id);
+    // WORKFLOW-WF-2B: what joins the conversation with the node (no conversation yet; the node itself is the fact).
+    descendants = subtree.members.filter((member) => member.id !== existing.id && member.conversationId === null).map((member) => ({ interactionId: member.id, authorRole: member.authorRole, observed: member.observed }));
     if (subtree.depthExceeded) throw new IngestionAuthorityConflict(["ANCESTRY_DEPTH_EXCEEDED"]);
     if (parent !== undefined && subtree.members.some((member) => member.id === parent?.id)) throw new IngestionAuthorityConflict(["ANCESTRY_CYCLE"]);
     // The subtree's resolved conversation: the parent's for a reply, none yet for a root (a new one, or none for a brand
@@ -202,7 +205,11 @@ export async function ingestInteractionFact(stores: IngestionStores, clock: Inge
       conversationId = plan.conversationId;
     }
     // The node and its already-known descendants (a completed placeholder's subtree) take the conversation together.
-    if (conversationId !== null) await stores.interactions.attachSubtree(interactionId, conversationId, now);
+    if (conversationId !== null) {
+      await stores.interactions.attachSubtree(interactionId, conversationId, now);
+      // WORKFLOW-WF-2B: the conversation's work item learns, in this transaction, who joined (activity, D1 auto-reopen).
+      await stores.workflow.membersJoined({ conversationId, organizationId, workspaceId, joined: [{ interactionId, authorRole: fact.author.role, observed: true }, ...descendants], correlationId: input.correlationId });
+    }
     if (fact.text.sourceText !== null && fact.text.textHash !== null) {
       textVersionId = clock.newId();
       await stores.interactions.appendTextVersion({ id: textVersionId, organizationId, workspaceId, interactionId, textHash: fact.text.textHash, sourceText: fact.text.sourceText,

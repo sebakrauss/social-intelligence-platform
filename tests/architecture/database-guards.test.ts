@@ -754,16 +754,107 @@ describe("F-S6 / R8 guard: pooled login roles are never torn down", () => {
   });
 });
 
+// embedded-postgres installs an exit hook that calls process.exit(0) on `beforeExit`, which masks a failing Vitest
+// run's exit code. It may only be loaded inside a CHILD PROCESS that plain Node spawns, never by a test process or
+// by application code. Exact paths only: no directory exemptions.
+//
+//   child-process entries — spawned with `spawn(process.execPath, [...])` by exactly one spawner, never imported;
+//   approved loaders      — the only files that import embedded-postgres, each imported (if at all) only by entries.
+//
+// tools/perf/workflow-wf1/cluster-process.ts: PO-approved exception (WORKFLOW-WF-2A, option A) for the WF-1
+// benchmark's disposable cluster. It is its own child-process entry and is optional (the benchmark area may be absent).
+const CHILD_PROCESS_ENTRIES: Readonly<Record<string, string>> = {
+  "tests/db/support/cluster-process.ts": "tests/db/support/spawn-cluster.ts",
+  "tools/perf/workflow-wf1/cluster-process.ts": "tools/perf/workflow-wf1/lib.ts",
+};
+const EMBEDDED_POSTGRES_LOADERS: Readonly<Record<string, readonly string[]>> = {
+  "tests/db/support/local-cluster.ts": ["tests/db/support/cluster-process.ts"],
+  "tools/perf/workflow-wf1/cluster-process.ts": [],
+};
+const REQUIRED_LOADER = "tests/db/support/local-cluster.ts";
+
+const SOURCE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+// Static, side-effect, dynamic and require forms, including subpaths of the package.
+const LOADS_EMBEDDED_POSTGRES = /\b(?:from\s*|import\s*\(?\s*|require\s*\(\s*)["']embedded-postgres(?:\/[^"']*)?["']/;
+const SPECIFIERS = /\b(?:from\s*|import\s*\(?\s*|require\s*\(\s*)["']([^"']+)["']/g;
+const withoutExtension = (file: string): string => file.replace(SOURCE_FILE, "");
+
+/** Repository paths (extension stripped) a source file imports through relative or `@/` specifiers. */
+function importedModules(file: string, source: string): string[] {
+  return [...source.matchAll(SPECIFIERS)].flatMap((match) => {
+    const specifier = match[1] ?? "";
+    if (specifier.startsWith("@/")) return [withoutExtension(specifier.slice(2))];
+    if (specifier.startsWith(".")) return [withoutExtension(path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)))];
+    return [];
+  });
+}
+
+/** Every violation of the embedded-postgres containment rule in a set of repository files (path → source). */
+function embeddedPostgresProblems(files: ReadonlyMap<string, string>): string[] {
+  const problems: string[] = [];
+  const entries = new Map(Object.keys(CHILD_PROCESS_ENTRIES).map((entry) => [withoutExtension(entry), entry]));
+  const loaders = new Map(Object.keys(EMBEDDED_POSTGRES_LOADERS).map((loader) => [withoutExtension(loader), loader]));
+  for (const [file, source] of files) {
+    if (!SOURCE_FILE.test(file)) continue;
+    if (LOADS_EMBEDDED_POSTGRES.test(source) && EMBEDDED_POSTGRES_LOADERS[file] === undefined) problems.push(`${file}: loads embedded-postgres but is not an approved child-process loader`);
+    for (const module of importedModules(file, source)) {
+      const entry = entries.get(module);
+      if (entry !== undefined) problems.push(`${file}: imports child-process entry ${entry} (it must only be spawned)`);
+      const loader = loaders.get(module);
+      if (loader !== undefined && !(EMBEDDED_POSTGRES_LOADERS[loader] ?? []).includes(file)) problems.push(`${file}: imports embedded-postgres loader ${loader}`);
+    }
+  }
+  for (const [entry, spawner] of Object.entries(CHILD_PROCESS_ENTRIES)) {
+    if (!files.has(entry)) continue;
+    const spawned = new RegExp(`spawn\\(\\s*process\\.execPath\\s*,\\s*\\[[^\\]]*["']${escapeRegExp(path.posix.basename(entry))}["']`);
+    if (!spawned.test(files.get(spawner) ?? "")) problems.push(`${entry}: not spawned with plain Node by ${spawner}`);
+  }
+  return problems;
+}
+
 describe("database test runs report failures", () => {
-  // embedded-postgres installs an exit hook that calls process.exit(0) on `beforeExit`, which masks a failing
-  // Vitest run's exit code. It may only be loaded by the cluster child process, never by a test process.
-  it("only the local cluster child process loads embedded-postgres", () => {
+  it("only approved child-process loaders load embedded-postgres", () => {
     const self = path.relative(root, import.meta.filename);
-    const sources = repositoryFiles().filter((file) => file !== self);
-    const loaders = sources.filter((file) => /\.(ts|tsx|js|mjs|cjs)$/.test(file) && /from\s+["']embedded-postgres["']/.test(read(file)));
-    expect(loaders).toEqual(["tests/db/support/local-cluster.ts"]);
-    const clusterImporters = sources.filter((file) => /\.(ts|tsx)$/.test(file) && /from\s+["']\.\/local-cluster(\.ts)?["']|support\/local-cluster/.test(read(file)));
-    expect(clusterImporters).toEqual(["tests/db/support/cluster-process.ts"]);
+    const files = new Map(repositoryFiles().filter((file) => file !== self).map((file) => [file, read(file)]));
+    expect(embeddedPostgresProblems(files)).toEqual([]);
+    expect(LOADS_EMBEDDED_POSTGRES.test(files.get(REQUIRED_LOADER) ?? "")).toBe(true);
+  });
+
+  describe("the exception is narrow (adversarial)", () => {
+    const sanctioned = new Map<string, string>([
+      ["tests/db/support/local-cluster.ts", `import EmbeddedPostgres from "embedded-postgres";`],
+      ["tests/db/support/cluster-process.ts", `import { startLocalCluster } from "./local-cluster.ts";`],
+      ["tests/db/support/spawn-cluster.ts", `spawn(process.execPath, [path.join(import.meta.dirname, "cluster-process.ts")], {});`],
+      ["tools/perf/workflow-wf1/cluster-process.ts", `import EmbeddedPostgres from "embedded-postgres";`],
+      ["tools/perf/workflow-wf1/lib.ts", `spawn(process.execPath, [path.join(HERE, "cluster-process.ts")], {});`],
+    ]);
+    const plus = (file: string, source: string): Map<string, string> => new Map([...sanctioned, [file, source]]);
+
+    it("accepts the sanctioned layout, with or without the benchmark area", () => {
+      expect(embeddedPostgresProblems(sanctioned)).toEqual([]);
+      const withoutBenchmark = new Map([...sanctioned].filter(([file]) => !file.startsWith("tools/perf/")));
+      expect(embeddedPostgresProblems(withoutBenchmark)).toEqual([]);
+    });
+
+    it.each([
+      ["an application module (static import)", "modules/conversations/infra/db.ts", `import EmbeddedPostgres from "embedded-postgres";`],
+      ["a server module (dynamic import)", "server/queries/x.ts", `const { default: P } = await import("embedded-postgres");`],
+      ["a script (require)", "tools/db/x.cjs", `const P = require("embedded-postgres");`],
+      ["a side-effect import of a subpath", "platform/db/x.ts", `import "embedded-postgres/dist/index.js";`],
+      ["a test file (main Vitest process)", "tests/db/x.test.ts", `import EmbeddedPostgres from 'embedded-postgres';`],
+      ["another file in the benchmark directory", "tools/perf/workflow-wf1/run.perf.ts", `import EmbeddedPostgres from "embedded-postgres";`],
+      ["a look-alike benchmark path", "tools/perf/workflow-wf1b/cluster-process.ts", `import EmbeddedPostgres from "embedded-postgres";`],
+      ["a test importing the test loader", "tests/db/x.test.ts", `import { startLocalCluster } from "./support/local-cluster";`],
+      ["a test importing the benchmark entry", "tools/perf/workflow-wf1/run.perf.ts", `import "./cluster-process.ts";`],
+      ["an alias import of the benchmark entry", "server/x.ts", `const m = await import("@/tools/perf/workflow-wf1/cluster-process");`],
+      ["a test importing the test entry", "tests/db/x.test.ts", `import "./support/cluster-process";`],
+    ])("rejects %s", (_label, file, source) => {
+      expect(embeddedPostgresProblems(plus(file, source))).not.toEqual([]);
+    });
+
+    it("rejects a benchmark entry that is not spawned with plain Node", () => {
+      expect(embeddedPostgresProblems(plus("tools/perf/workflow-wf1/lib.ts", `await import("./cluster-process.ts");`))).not.toEqual([]);
+    });
   });
 });
 

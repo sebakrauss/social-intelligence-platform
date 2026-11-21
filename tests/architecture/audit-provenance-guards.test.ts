@@ -156,9 +156,24 @@ describe("H6-C3d: 0020's scope", () => {
     expect(sql.toLowerCase()).not.toMatch(/\b(insert into|update|delete from|truncate|alter table|create table|drop|audit_events_action_check)\b/);
   });
 
-  it("no later migration changes audit policy or vocabulary — except 0027 (Step 7B-1), which widens the vocabulary and extends append_own by the request's event only, and 0029 (Step 7B-14I2), which widens it by the operator's two events and adds ONE owner insert policy for them; 0028 and 0030 name no audit object; 0031 (Step 7B-14P1) only re-pins the audit functions' search_path (R4a); 0032 (Step 7B-16B) and 0033 (Step 7B-16E) name no audit object", () => {
+  it("no later migration changes audit policy or vocabulary — except 0027 (Step 7B-1), which widens the vocabulary and extends append_own by the request's event only, and 0029 (Step 7B-14I2), which widens it by the operator's two events and adds ONE owner insert policy for them; 0028 and 0030 name no audit object; 0031 (Step 7B-14P1) only re-pins the audit functions' search_path (R4a); 0032 (Step 7B-16B) and 0033 (Step 7B-16E) name no audit object; 0034 (WORKFLOW-WF-2B) widens it by the workflow change, adds its change-summary validator and ONE owner insert policy for workflow.change_state's own event", () => {
     const later = migrationNames().filter((name) => name > M0020);
-    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", M0027, "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql", "0030_validation_operator_hardening.sql", "0031_privileged_name_resolution_hardening.sql", "0032_reply_in_flight_admission.sql", "0033_mutation_intent_state_transition_guard.sql"]);
+    expect(later).toEqual(["0021_outbox_internal_topics.sql", "0022_provider_webhook_signals.sql", "0023_resumable_signal_progress.sql", "0024_classification_persistence.sql", "0025_intelligence_persistence.sql", "0026_ai_call_intents.sql", M0027, "0028_mutation_validation_authorizations.sql", "0029_validation_operator_path.sql", "0030_validation_operator_hardening.sql", "0031_privileged_name_resolution_hardening.sql", "0032_reply_in_flight_admission.sql", "0033_mutation_intent_state_transition_guard.sql", "0034_workflow_core.sql"]);
+    // 0034 (WORKFLOW-WF-2B): its audit statements are exactly the change-summary validator (created, revoked, granted to
+    // the two runtimes that insert audit rows, as the CHECK runs with the inserter's rights), 0007's dispatcher re-created
+    // with one more kind, the two exact widenings, the definer's one insert of its own action (inside its body) and ONE
+    // owner insert policy — no append_own change, no other audit grant, no audit update or delete.
+    const m34 = code("0034_workflow_core.sql").toLowerCase();
+    const audit34 = m34.split(";").map((s) => s.trim()).filter((s) => /audit\.|audit_events/.test(s));
+    expect(audit34.map((s) => s.split(/\s+/).slice(0, 4).join(" ").replace(/ \(.*$/, ""))).toEqual([
+      "create function audit.is_workflow_state(p_state jsonb)", "revoke all on function", "grant execute on function", "create or replace function",
+      "alter table audit.audit_events drop", "alter table audit.audit_events add", "alter table audit.audit_events validate",
+      "alter table audit.audit_events drop", "alter table audit.audit_events add", "alter table audit.audit_events validate",
+      "insert into audit.audit_events", "create policy owner_workflow_audit on",
+    ]);
+    expect(audit34.filter((s) => s.startsWith("grant "))).toEqual(["grant execute on function audit.is_workflow_state(jsonb) to authenticated, app_worker"]);
+    expect(audit34.find((s) => s.startsWith("insert into audit"))).toMatch(/'work_item\.state_changed', 'user', v_user/);
+    expect(m34).not.toMatch(/update audit|delete from audit|grant [^;]* on audit\.audit_events|policy append_own|alter policy/);
     // 0033 (Step 7B-16E) is one trigger on mutations.mutation_intents: no audit object.
     expect(code("0033_mutation_intent_state_transition_guard.sql").toLowerCase().replace(/--[^\n]*/g, " ")).not.toMatch(/audit_events|audit\.|on audit|policy append_own/);
     // 0032 (Step 7B-16B) is one index on mutations.mutation_intents: no audit object.

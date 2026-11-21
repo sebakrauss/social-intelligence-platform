@@ -11,15 +11,19 @@
  * Step H6-E: the authority reads also issue a canonical interaction's STORED provenance (the interactions persistence
  * layer's issuer) for the stored-interaction confirmation.
  */
+import { randomUUID } from "node:crypto";
+import { createPostgresAuditLog } from "@/modules/audit/persistence";
 import { createPostgresContentItemStore } from "@/modules/content/persistence";
 import { createPostgresConversationStore } from "@/modules/conversations/persistence";
 import { createPostgresCoverageStore } from "@/modules/coverage/persistence";
 import { createPostgresCapabilityStore } from "@/modules/capability/persistence";
 import { createPostgresConnectionWorkerStore } from "@/modules/connections/persistence";
-import type { IngestionStores, ProviderEventStore, ReconciliationAuthorityStore, ReconciliationScope } from "@/modules/ingestion";
+import type { ConversationMembershipSink, IngestionStores, ProviderEventStore, ReconciliationAuthorityStore, ReconciliationScope } from "@/modules/ingestion";
 import { createPostgresIngestionEventStore, createPostgresProviderEventStore, createPostgresReconciliationStore, createPostgresSignalMarkStore } from "@/modules/ingestion/persistence";
 import { createPostgresInteractionStore, loadStoredInteractionAuthority } from "@/modules/interactions/persistence";
 import { boundWorkspaceOrganization } from "@/modules/tenancy/persistence";
+import { projectMembersJoined } from "@/modules/workflow";
+import { createPostgresWorkflowProjectionStore } from "@/modules/workflow/persistence";
 import { readSwitchRows, type DatabaseTransaction } from "@/platform/db";
 import type { TenantJobScope } from "@/platform/jobs";
 
@@ -40,6 +44,22 @@ export function ingestionStores(scope: Pick<TenantJobScope, "tx" | "noteOutbox">
     conversations: createPostgresConversationStore(tx),
     events: createPostgresIngestionEventStore(tx, scope.noteOutbox),
     coverage: createPostgresCoverageStore(tx),
+    workflow: workflowMembershipSink(tx),
+  };
+}
+
+/**
+ * WORKFLOW-WF-2B (PD decision D2): the workflow layer's projection of a conversation's new members, in THIS transaction.
+ * Composed here so neither module imports the other: ingestion owns the port, workflow the algorithm, interactions the
+ * activity it is recomputed from (read after the work item is locked).
+ */
+function workflowMembershipSink(tx: DatabaseTransaction): ConversationMembershipSink {
+  const store = createPostgresWorkflowProjectionStore(tx, createPostgresAuditLog(tx));
+  const activity = { latestActivity: (conversationId: string) => createPostgresInteractionStore(tx).latestConversationActivity(conversationId) };
+  return {
+    async membersJoined(input) {
+      await projectMembersJoined(store, activity, { newId: randomUUID, now: () => new Date() }, input);
+    },
   };
 }
 

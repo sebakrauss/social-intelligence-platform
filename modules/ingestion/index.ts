@@ -54,7 +54,7 @@ export { IngestionAuthorityConflict, ingestInteractionFact, type IngestInteracti
 export { orderParentsFirst } from "./application/ordering";
 export { recordIngestionCoverage, type RecordCoverageInput } from "./application/record-coverage";
 export { SourceFactRejectedError, interactionSourceFactFromDto, textHashOf, type SourceFactContext } from "./application/source-fact-mapping";
-export type { IngestionClock, IngestionEventStore, IngestionStores } from "./application/ports";
+export type { ConversationMember, ConversationMembershipSink, IngestionClock, IngestionEventStore, IngestionStores } from "./application/ports";
 export {
   acceptObservedInteraction,
   planReconciliation,

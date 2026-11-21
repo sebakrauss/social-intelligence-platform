@@ -33,7 +33,11 @@ import type { ConversationActivityRow, InteractionSummaryRow, TextVersionRow } f
 import type { PersistedSignalRow } from "@/modules/classification";
 import type { PermissionKey } from "@/domain/access";
 import type { WorkspaceMode } from "@/modules/tenancy";
+import type { WorkItemResolution } from "@/modules/workflow";
+
+export type { WorkItemResolution };
 import { REPLY_TEXT_MAX_CHARS, type OutboundReplyView, type RequestGuards, type ValidationAuthorityReads } from "@/mutations/request";
+import type { WorkspaceId } from "@/domain/ids";
 import type { InboxAccountRow, Transaction, WorkspaceCommand, WorkspaceContext } from "@/server/pipeline";
 
 export const INBOX_PAGE_SIZE = 25;
@@ -53,20 +57,6 @@ export const INBOX_COVERAGE_ACCOUNTS = 250;
  * proves older versions exist — so a long edit history is reported as incomplete, never presented as complete.
  */
 export const INBOX_VERSION_LIMIT = 10;
-/**
- * COMMENTS-INT-03C-2 — a page of ONE workflow state (Open or Done) is chosen BEFORE it is cut to INBOX_PAGE_SIZE: the
- * conversations are read in their list order (the interactions module's keyset) in batches of this many, each batch's
- * workflow state is read from its owner (the conversations module's read port), and only the matching ones are kept —
- * never a page of every state filtered afterwards. No table of one module is read by another.
- */
-export const INBOX_FILTER_BATCH = 500;
-/**
- * Batches read for one filtered page at most (INBOX_FILTER_BATCH × this many conversations checked). When the bound is
- * reached before the page is full, the page holds EVERY matching conversation down to where the check stopped, says it
- * is partial, and its next position continues from there: nothing is skipped, repeated or presented as the end.
- */
-export const INBOX_FILTER_ROUNDS = 2;
-
 export type PlatformLabel = PlatformKey | "unknown";
 export type SourceLabel = "organic" | "paid" | "mixed" | "unknown";
 export type AuthorKind = "audience" | "own_account" | "unknown";
@@ -135,12 +125,6 @@ export interface InboxPage {
   readonly coverageOmitted: boolean;
   /** Why the list is empty, when it is: nothing read yet vs nothing found in what was read. */
   readonly emptyReason: "nothing_read_yet" | "no_conversations_in_coverage" | null;
-  /**
-   * COMMENTS-INT-03C-2: true only for a state-filtered page whose check stopped at its bound (INBOX_FILTER_ROUNDS)
-   * before the page was full: it holds every matching conversation down to `nextCursor`, and older ones may still
-   * match. Absent (or false) for every other page — the unfiltered list never sets it.
-   */
-  readonly partial?: boolean;
 }
 
 export interface ThreadTextVersion {
@@ -215,6 +199,19 @@ export interface ConversationDetail {
   readonly reply: ReplyModel;
   /** Step 7B-3: outbound replies requested here, with their real states; a reply already read back as a canonical thread member is not repeated. */
   readonly outbound: readonly OutboundReplyItem[];
+  /**
+   * WORKFLOW-WF-2B: the conversation's work item — its state, optional resolution and the version the page shows (a Mark
+   * Done or Reopen is sent against exactly this version) — and whether THIS member may change it (`workflow.internal`).
+   * Null when no work item is readable (never presented as a state); absent in reference fixtures that predate it.
+   */
+  readonly workflow?: WorkflowModel | null;
+}
+
+export interface WorkflowModel {
+  readonly state: "open" | "done";
+  readonly resolution: WorkItemResolution | null;
+  readonly version: number;
+  readonly canChange: boolean;
 }
 
 // ── Cursor ───────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -350,13 +347,8 @@ export interface InboxPageInput {
   readonly accounts: readonly InboxAccountRow[];
   readonly pageSize: number;
   readonly coverageAccountLimit: number;
-  /**
-   * COMMENTS-INT-03C-2 (state-filtered pages only): the state the rows were chosen for (it tags the next position), and
-   * where the bounded check stopped when it stopped before the page was full (the next position then continues there,
-   * and the page is partial). Absent: the unfiltered list, exactly as before.
-   */
+  /** COMMENTS-INT-03C-2: the state the rows were chosen for (it tags the next position). Absent: every state. */
   readonly state?: InboxStateFilter;
-  readonly continueAt?: InboxCursor;
 }
 
 /** The accounts whose coverage is summarized: a deterministic prefix of the workspace's accounts, never a sample of rows. */
@@ -402,8 +394,8 @@ export function buildInboxPage(input: InboxPageInput): InboxPage {
   const last = rows.at(-1);
   const coverage = buildCoverage(coverageRows, included);
   const asOf = coverageRows.reduce<Date | null>((latest, row) => (latest === null || row.asOf > latest ? row.asOf : latest), null);
-  // A full page continues after its last shown row; a filtered page whose check stopped early continues where it stopped.
-  const next = hasMore && last !== undefined ? { latestActivityAt: last.latestActivityAt, conversationId: last.conversationId } : hasMore ? undefined : input.continueAt;
+  // A full page continues after its last shown row (the queue reads one more only to prove an older page exists).
+  const next = hasMore && last !== undefined ? { latestActivityAt: last.latestActivityAt, conversationId: last.conversationId } : undefined;
   return {
     items,
     nextCursor: next === undefined ? null : encodeListCursor(input.state, next),
@@ -411,7 +403,6 @@ export function buildInboxPage(input: InboxPageInput): InboxPage {
     coverage,
     coverageOmitted: input.accounts.length > input.coverageAccountLimit,
     emptyReason: items.length > 0 ? null : coverageRows.length === 0 ? "nothing_read_yet" : "no_conversations_in_coverage",
-    ...(!hasMore && input.continueAt !== undefined ? { partial: true } : {}),
   };
 }
 
@@ -428,6 +419,8 @@ export interface ConversationDetailInput {
   /** Step 7B-3 (optional for callers that only draw the thread): the reply affordance and the outbound replies. */
   readonly reply?: ReplyModel;
   readonly outbound?: readonly OutboundReplyItem[];
+  /** WORKFLOW-WF-2B (optional for callers that only draw the thread): the work item, when readable. */
+  readonly workflow?: WorkflowModel | null;
 }
 
 export const OUTBOUND_STATE_OF: { readonly [S in OutboundReplyView["status"]]: OutboundReplyState } = {
@@ -542,7 +535,8 @@ export function buildConversationDetail(input: ConversationDetailInput): Convers
   });
   return {
     conversationId: input.conversation.id,
-    workflowState: workflowLabel(input.conversation.workflowState),
+    // WORKFLOW-WF-2B: the work item is the authority; without one the state is unknown (never the legacy column's OPEN).
+    workflowState: input.workflow === undefined ? workflowLabel(input.conversation.workflowState) : input.workflow === null ? "unknown" : input.workflow.state,
     platform: platformLabel(anchor?.platform ?? input.content?.platform),
     source: sourceLabel(input.content?.reportedSource),
     contentKind: input.content?.contentKind ?? null,
@@ -551,54 +545,41 @@ export function buildConversationDetail(input: ConversationDetailInput): Convers
     truncated: input.thread.length > input.threadLimit,
     reply: input.reply ?? { kind: "hidden" },
     outbound: input.outbound ?? [],
+    workflow: input.workflow ?? null,
   };
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-async function readInboxPage(tx: Transaction, cursor: InboxCursor | undefined, state: InboxStateFilter | undefined): Promise<InboxPage> {
-  if (state !== undefined) return readFilteredPage(tx, cursor, state);
-  const activity = await tx.inbox.interactions.listConversationActivity({ limit: INBOX_PAGE_SIZE + 1, before: cursor ?? null });
-  const page = activity.slice(0, INBOX_PAGE_SIZE);
-  const conversations = await tx.inbox.conversations.findMany(page.map((row) => row.conversationId));
-  return assemblePage(tx, { activity, conversations });
+/**
+ * WORKFLOW-WF-2B — one list page, chosen by the WORKFLOW QUEUE: the workflow module's indexed work items of the bound
+ * workspace, newest activity first, keyset-paginated, in one state (Open, Done) or every state (All). The queue read
+ * carries the bound workspace as an explicit predicate (measured in WF-2A) and forced RLS stays authoritative. Then only
+ * the SHOWN rows are completed from their owners: the conversations' anchors, the members' counts and flags. The page
+ * is chosen before it is cut, in one bounded read — there is no batch scan and no partial page any more.
+ */
+async function readInboxPage(tx: Transaction, workspaceId: WorkspaceId, cursor: InboxCursor | undefined, state: InboxStateFilter | undefined): Promise<InboxPage> {
+  const queue = await tx.workflow.reads.queue({ workspaceId, view: state ?? "all", before: cursor === undefined ? null : { latestActivityAt: cursor.latestActivityAt, id: cursor.conversationId }, limit: INBOX_PAGE_SIZE + 1 });
+  const shown = queue.slice(0, INBOX_PAGE_SIZE).map((row) => row.id);
+  const conversations = await tx.inbox.conversations.findMany(shown);
+  const members = new Map((await tx.inbox.interactions.conversationActivity(shown)).map((row) => [row.conversationId, row] as const));
+  const states = new Map(queue.map((row) => [row.id, row.state] as const));
+  // The queue decides order and position (its projected activity); the members' own counts and flags complete each row.
+  const activity = queue.map((row): ConversationActivityRow => {
+    const counted = members.get(row.id);
+    return { conversationId: row.id, latestActivityAt: row.latestActivityAt, observedCount: counted?.observedCount ?? 0, placeholderCount: counted?.placeholderCount ?? 0, anyHidden: counted?.anyHidden ?? false, anyRemovedAtSource: counted?.anyRemovedAtSource ?? false };
+  });
+  // The workflow state is the work item's (its authority since 0034), never the conversation's legacy column.
+  const withState = conversations.map((row): ConversationRow => ({ ...row, workflowState: states.get(row.id) ?? "UNKNOWN" }));
+  return assemblePage(tx, { activity, conversations: withState, ...(state === undefined ? {} : { state }) });
 }
 
-async function assemblePage(tx: Transaction, chosen: { readonly activity: readonly ConversationActivityRow[]; readonly conversations: readonly ConversationRow[]; readonly state?: InboxStateFilter; readonly continueAt?: InboxCursor }): Promise<InboxPage> {
+async function assemblePage(tx: Transaction, chosen: { readonly activity: readonly ConversationActivityRow[]; readonly conversations: readonly ConversationRow[]; readonly state?: InboxStateFilter }): Promise<InboxPage> {
   const anchors = await tx.inbox.interactions.summaries(chosen.conversations.map((row) => row.anchorInteractionId));
   const contents = await tx.inbox.content.findManyById(anchors.map((row) => row.contentItemId));
   const accounts = await tx.inbox.accounts();
   const coverage = await tx.inbox.coverage.latestPerAccountAndKind(coverageAccounts(accounts, INBOX_COVERAGE_ACCOUNTS).map((account) => account.id));
   return buildInboxPage({ ...chosen, anchors, contents, coverage, accounts, pageSize: INBOX_PAGE_SIZE, coverageAccountLimit: INBOX_COVERAGE_ACCOUNTS });
-}
-
-/**
- * COMMENTS-INT-03C-2 — a page of one persisted workflow state, chosen before it is cut: the conversations in list order
- * (newest activity first, then id — the same keyset as the unfiltered list), each batch's states read from their owner,
- * kept while they match, until one more than a page matched (an older page exists), the list ended, or the bound was
- * reached (the page is then partial and continues where the check stopped). A conversation whose state is unknown, or
- * that is not readable, belongs to neither state: it is never taken for Open.
- */
-async function readFilteredPage(tx: Transaction, cursor: InboxCursor | undefined, state: InboxStateFilter): Promise<InboxPage> {
-  const activity: ConversationActivityRow[] = [];
-  const conversations: ConversationRow[] = [];
-  let before = cursor ?? null;
-  for (let round = 0; round < INBOX_FILTER_ROUNDS; round += 1) {
-    const batch = await tx.inbox.interactions.listConversationActivity({ limit: INBOX_FILTER_BATCH, before });
-    const states = new Map((await tx.inbox.conversations.findMany(batch.map((row) => row.conversationId))).map((row) => [row.id, row] as const));
-    for (const row of batch) {
-      const conversation = states.get(row.conversationId);
-      if (conversation === undefined || workflowLabel(conversation.workflowState) !== state) continue;
-      activity.push(row);
-      conversations.push(conversation);
-      if (activity.length > INBOX_PAGE_SIZE) return assemblePage(tx, { activity, conversations, state });
-    }
-    const last = batch.at(-1);
-    // The list ended inside this batch: every matching conversation is here, and there is no older page.
-    if (last === undefined || batch.length < INBOX_FILTER_BATCH) return assemblePage(tx, { activity, conversations, state });
-    before = { latestActivityAt: last.latestActivityAt, conversationId: last.conversationId };
-  }
-  return assemblePage(tx, { activity, conversations, state, ...(before === null ? {} : { continueAt: before }) });
 }
 
 const listInput = object({ cursor: optional(parsed(parseListCursor)), state: optional(oneOf(INBOX_STATE_FILTERS)) });
@@ -616,7 +597,7 @@ export const inboxListCommand: WorkspaceCommand<{ readonly cursor: InboxListPosi
     if (input.cursor !== undefined && input.cursor.state !== input.state) throw new AppError("INVALID_INPUT", { field: "cursor" });
     return input;
   },
-  execute: (_context, input, tx) => readInboxPage(tx, input.cursor?.cursor, input.state),
+  execute: (context, input, tx) => readInboxPage(tx, context.workspaceId, input.cursor?.cursor, input.state),
   audit: () => undefined,
   respond: (output) => output,
 };
@@ -644,7 +625,9 @@ async function readConversation(tx: Transaction, context: WorkspaceContext, conv
     ...(validation === undefined ? {} : { validation: { reads: validation, workspaceId: context.workspaceId, userId: context.userId, targets: ids } }),
   });
   const outbound = buildOutbound(await tx.mutations.replies.listForParents(context.workspaceId, ids), shown);
-  return buildConversationDetail({ conversation, thread, versions, signals, content, threadLimit: INBOX_THREAD_LIMIT, versionLimit: INBOX_VERSION_LIMIT, reply, outbound });
+  const item = (await tx.workflow.reads.findMany({ workspaceId: context.workspaceId, ids: [conversation.id] }))[0];
+  const workflow: WorkflowModel | null = item === undefined ? null : { state: item.state === "DONE" ? "done" : "open", resolution: item.resolution, version: item.version, canChange: context.permissions.has("workflow.internal") };
+  return buildConversationDetail({ conversation, thread, versions, signals, content, threadLimit: INBOX_THREAD_LIMIT, versionLimit: INBOX_VERSION_LIMIT, reply, outbound, workflow });
 }
 
 export const inboxConversationCommand: WorkspaceCommand<{ readonly conversationId: string }, ConversationDetail, ConversationDetail> = {

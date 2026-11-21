@@ -22,6 +22,7 @@ const M0031 = "0031_privileged_name_resolution_hardening.sql";
 // Step 7B-16B: REPLY_IN_FLIGHT (expand-only index), pending after 0031.
 const M0032 = "0032_reply_in_flight_admission.sql";
 const M0033 = "0033_mutation_intent_state_transition_guard.sql";
+const M0034 = "0034_workflow_core.sql";
 const throughM0030 = () => readMigrations().filter((migration) => migration.name <= M0030);
 const OLD = { organizationId: randomUUID(), workspaceId: randomUUID(), user: randomUUID(), connection: randomUUID(), credential: randomUUID(), account: randomUUID(), comment: randomUUID(), other: randomUUID(), used: randomUUID(), unused: randomUUID(), authorization: randomUUID() };
 
@@ -50,7 +51,7 @@ describe("0029 → 0030 upgrade with 0029-era operator-path rows", () => {
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied.at(-1)).toBe(THROUGH);
     expect(status.applied).toHaveLength(29);
-    expect(status.pending.map((m) => m.name)).toEqual([M0030, M0031, M0032, M0033]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0030, M0031, M0032, M0033, M0034]);
     const definers = (await configs()).filter((row) => row.signature !== "mutations.validation_operator_login()");
     expect(definers.every((row) => (row.config ?? []).includes('search_path=""'))).toBe(true);
     expect(await rows("select has_table_privilege('app_worker', 'mutations.validation_preflights', 'SELECT') as worker")).toEqual([{ worker: false }]);
@@ -102,7 +103,7 @@ describe("0029 → 0030 upgrade with 0029-era operator-path rows", () => {
     await client.query("create role validation_operator_window login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls");
     await client.query("grant app_validation_operator to validation_operator_window with inherit false, set true");
     await expect(applyMigrations(client, readMigrations())).rejects.toThrow(/validation operator logins are provisioned only after 0030/);
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0030, M0031, M0032, M0033]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0030, M0031, M0032, M0033, M0034]);
     expect(await snapshot()).toEqual(before);
     // R8: roles are never dropped; the membership is revoked (the role stays, NOLOGIN membership-free, in this disposable cluster).
     await client.query("revoke app_validation_operator from validation_operator_window");
@@ -112,7 +113,7 @@ describe("0029 → 0030 upgrade with 0029-era operator-path rows", () => {
     const before = await snapshot();
     expect(await applyMigrations(client, throughM0030())).toEqual([M0030]);
     expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(30);
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032, M0033]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032, M0033, M0034]);
     expect(await snapshot()).toEqual(before);
     expect(await applyMigrations(client, throughM0030())).toEqual([]);
   });

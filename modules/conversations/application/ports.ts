@@ -12,6 +12,11 @@ export interface ConversationStore {
    */
   ensureForAnchor(input: { readonly id: string; readonly organizationId: string; readonly workspaceId: string; readonly anchorInteractionId: string; readonly initialization: ConversationInitialization; readonly now: Date }): Promise<{ readonly id: string; readonly created: boolean }>;
   findByAnchor(anchorInteractionId: string): Promise<{ readonly id: string } | undefined>;
+  /**
+   * WORKFLOW-WF-2C: the bound workspace's conversation ids in ascending id order, strictly after `after`, at most `limit`
+   * (a resumable keyset for reconciliation; identifiers only).
+   */
+  pageIds(input: { readonly after: string | null; readonly limit: number }): Promise<readonly string[]>;
 }
 
 /** One conversation as the Inbox reads it (Step 7A): identity, anchor and workflow state. */

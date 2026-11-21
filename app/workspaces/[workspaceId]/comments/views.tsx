@@ -10,7 +10,7 @@
  * from Wrenkind show their real state. No composer, no action, no management control: those stay in the Inbox.
  */
 import { t } from "@/server/i18n";
-import { AUTHOR_MESSAGES, CONVERSATION_STATE_MESSAGES, displayTime, platformName, REPLY_REASON_MESSAGES, SOURCE_MESSAGES, when, type ConversationDetail, type InboxConversationItem, type InboxPage } from "@/server/inbox/inbox";
+import { AUTHOR_MESSAGES, CONVERSATION_STATE_MESSAGES, displayTime, OFFERED_RESOLUTIONS, platformName, REPLY_REASON_MESSAGES, RESOLUTION_MESSAGES, SOURCE_MESSAGES, when, type ConversationDetail, type InboxConversationItem, type InboxPage } from "@/server/inbox/inbox";
 import type { MessageKey } from "@/domain/i18n/message-keys";
 import { COMMENTS_CONVERSATION_ANCHOR, COMMENTS_NEXT_ANCHOR, COMMENTS_PREVIOUS_ANCHOR, conversationRowId, workspaceCommentsConversationPath, workspaceCommentsViewPath, workspaceConversationPath, workspaceInboxPath, type CommentsView } from "@/server/routes";
 import { CommentsAbove, CommentsConversation, CommentsConversationNav, CommentsHeader, CommentsList, CommentsListEnd, CommentsListMessage, CommentsPane, CommentsRow, CommentsSplit, CommentsWorkspace } from "@/ui/inbox/comments";
@@ -20,6 +20,8 @@ import { Notice } from "@/ui/primitives/notice";
 import { OriginMark } from "@/ui/primitives/origin-mark";
 import { StatePill } from "@/ui/primitives/state-pill";
 import { TextLink } from "@/ui/primitives/text-link";
+import { WorkflowControl, type WorkflowControlLabels } from "@/ui/inbox/workflow-control";
+import { changeWorkflowStateAction } from "@/server/inbox/workflow-actions";
 // The Inbox's read-only pieces only (audit M-1): never ../inbox/views, which carries the reply composer and its action.
 import { authorOf, CoverageSummary, kindOf, OutboundRow, parentLabeller, previousTimes, renderNow, shortTime, threadEntries, ThreadMemberRecord } from "../inbox/read-views";
 
@@ -31,6 +33,30 @@ import { authorOf, CoverageSummary, kindOf, OutboundRow, parentLabeller, previou
 const VIEW_NAMES: { readonly [V in CommentsView]: MessageKey } = { open: "comments.views.open", done: "comments.views.done", all: "comments.views.all" };
 const LIST_NAMES: { readonly [V in CommentsView]: MessageKey } = { open: "comments.list.open", done: "comments.list.done", all: "comments.list.all" };
 const EMPTY_IN_VIEW: { readonly [V in CommentsView]: MessageKey } = { open: "comments.empty.open", done: "comments.empty.done", all: "inbox.empty.no_conversations" };
+
+function workflowLabels(): WorkflowControlLabels {
+  return {
+    markDone: t("comments.workflow.mark_done"),
+    marking: t("comments.workflow.marking"),
+    reopen: t("comments.workflow.reopen"),
+    reopening: t("comments.workflow.reopening"),
+    resolution: t("comments.workflow.resolution"),
+    noResolution: t("comments.workflow.no_resolution"),
+    undo: t("comments.workflow.undo"),
+    undoing: t("comments.workflow.undoing"),
+    outcomes: {
+      savedDone: t("comments.workflow.saved_done"),
+      savedReopened: t("comments.workflow.saved_reopened"),
+      unchanged: t("comments.workflow.unchanged"),
+      conflict: t("comments.workflow.conflict"),
+      notPermitted: t("comments.workflow.not_permitted"),
+      notFound: t("comments.workflow.not_found"),
+      invalid: t("comments.workflow.invalid"),
+      unavailable: t("comments.workflow.unavailable"),
+      signedOut: t("comments.workflow.signed_out"),
+    },
+  };
+}
 
 /** One row: the same facts, wording and conditions as the Inbox row (app/…/inbox/views.tsx), in the Direction C shape. */
 function Row({ workspaceId, view, item, cursor, now, current }: { readonly workspaceId: string; readonly view: CommentsView; readonly item: InboxConversationItem; readonly cursor: string | undefined; readonly now: Date; readonly current: boolean }) {
@@ -67,17 +93,9 @@ function ListColumn({ workspaceId, view, page, cursor, selectedId }: { readonly 
   // The next page of THIS view, at the position the server issued for it (never another view's).
   const older = page.nextCursor === null ? undefined : workspaceCommentsViewPath(workspaceId, view, page.nextCursor);
   if (page.items.length === 0) {
-    // COMMENTS-INT-03C-2 (L-1): an empty page says only what THIS answer knows. The check for this page stopped at its
-    // bound: nothing checked for it belongs here, and older ones may (never "none"). A later page that the list ran out
-    // on: no older conversations — earlier pages may well have had some, so "none were found" would be untrue. Only
-    // the view's first page, complete and empty, says that none were found.
-    if (page.partial === true && older !== undefined) {
-      return (
-        <CommentsListMessage title={t(LIST_NAMES[view])}>
-          {t("comments.partial.empty")} <TextLink href={older}>{t("comments.partial.continue")}</TextLink>
-        </CommentsListMessage>
-      );
-    }
+    // An empty page says only what THIS answer knows: a later page that the list ran out on means no OLDER conversations
+    // (earlier pages may well have had some); only the view's first page, empty, says that none were found. WF-2B: the
+    // queue chooses a page in one bounded read, so a page is never partial.
     if (cursor !== undefined) return <CommentsListMessage title={t(LIST_NAMES[view])}>{t("inbox.pagination.end")}</CommentsListMessage>;
     return <CommentsListMessage title={t(LIST_NAMES[view])}>{page.emptyReason === "nothing_read_yet" ? t("inbox.empty.nothing_read") : t(EMPTY_IN_VIEW[view])}</CommentsListMessage>;
   }
@@ -89,8 +107,8 @@ function ListColumn({ workspaceId, view, page, cursor, selectedId }: { readonly 
           <Row key={item.conversationId} workspaceId={workspaceId} view={view} item={item} cursor={cursor} now={now} current={item.conversationId === selectedId} />
         ))}
       </CommentsList>
-      <CommentsListEnd note={page.partial === true ? t("comments.partial.note") : undefined}>
-        {older === undefined ? t("inbox.pagination.end") : <TextLink href={older}>{t(page.partial === true ? "comments.partial.continue" : "inbox.pagination.older")}</TextLink>}
+      <CommentsListEnd>
+        {older === undefined ? t("inbox.pagination.end") : <TextLink href={older}>{t("inbox.pagination.older")}</TextLink>}
       </CommentsListEnd>
     </>
   );
@@ -152,7 +170,12 @@ function Conversation({ workspaceId, view, detail, nav }: { readonly workspaceId
     <CommentsConversation
       title={anchor !== undefined && anchor.observed ? authorOf(anchor) : t("inbox.conversation.heading")}
       origin={<OriginMark platform={detail.platform} name={platformText} paid={detail.source === "paid"} paidLabel={t("inbox.source.paid")} />}
-      state={<StatePill>{t(CONVERSATION_STATE_MESSAGES[detail.workflowState])}</StatePill>}
+      state={
+        <>
+          <StatePill>{t(CONVERSATION_STATE_MESSAGES[detail.workflowState])}</StatePill>
+          {detail.workflow?.resolution === undefined || detail.workflow.resolution === null ? null : <DataTag>{t(RESOLUTION_MESSAGES[detail.workflow.resolution])}</DataTag>}
+        </>
+      }
       context={
         <>
           <DataTag>{platformText}</DataTag>
@@ -161,7 +184,21 @@ function Conversation({ workspaceId, view, detail, nav }: { readonly workspaceId
         </>
       }
       contextNote={t("inbox.context.post_unavailable")}
-      manage={inInbox === undefined ? undefined : <TextLink href={inInbox}>{t("comments.pane.open_in_inbox")}</TextLink>}
+      manage={
+        <>
+          {/* WORKFLOW-WF-2B: Mark done / Reopen for a member with workflow.internal; nothing at all for anyone else. */}
+          {detail.workflow === undefined || detail.workflow === null || !detail.workflow.canChange ? null : (
+            <WorkflowControl
+              action={changeWorkflowStateAction}
+              fields={{ workspaceId, conversationId: detail.conversationId }}
+              current={{ state: detail.workflow.state, version: detail.workflow.version }}
+              resolutions={OFFERED_RESOLUTIONS.map((value) => ({ value, label: t(RESOLUTION_MESSAGES[value]) }))}
+              labels={workflowLabels()}
+            />
+          )}
+          {inInbox === undefined ? null : <TextLink href={inInbox}>{t("comments.pane.open_in_inbox")}</TextLink>}
+        </>
+      }
       nav={nav}
     >
       {/* COMMENTS-INT-03C-2: a conversation opened by its address in a view it does not belong to (its persisted state is

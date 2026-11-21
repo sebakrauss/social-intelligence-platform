@@ -29,6 +29,7 @@ const M0031 = "0031_privileged_name_resolution_hardening.sql";
 const M0032 = "0032_reply_in_flight_admission.sql";
 // Step 7B-16E: the intent state-transition guard (one trigger; no intent exists in this era).
 const M0033 = "0033_mutation_intent_state_transition_guard.sql";
+const M0034 = "0034_workflow_core.sql";
 const OLD = { organizationId: randomUUID(), workspaceId: randomUUID(), user: randomUUID(), interaction: randomUUID(), version: randomUUID(), request: randomUUID() };
 const OUTBOX = { main: randomUUID(), integration: randomUUID(), unbound: randomUUID() };
 const ASSESSMENTS = { rule: randomUUID(), human: randomUUID() };
@@ -60,7 +61,7 @@ describe("0024 → 0025 upgrade with 0024-era data", () => {
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied.at(-1)).toBe(THROUGH);
     expect(status.applied).toHaveLength(24);
-    expect(status.pending.map((m) => m.name)).toEqual([M0025, M0026, M0027, M0028, M0029, M0030, M0031, M0032, M0033]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0025, M0026, M0027, M0028, M0029, M0030, M0031, M0032, M0033, M0034]);
   });
 
   it("seeds the 0024-era shapes (as dev-v2 holds them)", async () => {
@@ -122,13 +123,13 @@ describe("0024 → 0025 upgrade with 0024-era data", () => {
     } finally {
       await client.query("rollback");
     }
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0025, M0026, M0027, M0028, M0029, M0030, M0031, M0032, M0033]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0025, M0026, M0027, M0028, M0029, M0030, M0031, M0032, M0033, M0034]);
   });
 
   it("2 · 26. the real runner applies exactly 0025 (then 0026, 0027, 0028); every 0024-era row keeps its values and takes the safe defaults", async () => {
     const before = await snapshot();
-    expect(await applyMigrations(client, readMigrations())).toEqual([M0025, M0026, M0027, M0028, M0029, M0030, M0031, M0032, M0033]);
-    expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(33);
+    expect(await applyMigrations(client, readMigrations())).toEqual([M0025, M0026, M0027, M0028, M0029, M0030, M0031, M0032, M0033, M0034]);
+    expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(34);
     expect(await snapshot()).toEqual(before);
     expect(await rows("select ai_generation, ai_failure_class, state from classification.understanding_requests where id = $1", [OLD.request]))
       .toEqual([{ ai_generation: null, ai_failure_class: null, state: "DETERMINISTIC_DONE" }]);

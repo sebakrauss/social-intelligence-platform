@@ -29,6 +29,7 @@ export {
   withProviderSignalScope,
   withUserScope,
   withWorkspaceJobScope,
+  makeTransactionReadOnly,
   type DatabaseClaims,
   type DatabaseTransaction,
 } from "./scopes";

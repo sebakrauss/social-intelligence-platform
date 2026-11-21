@@ -18,6 +18,7 @@ import type { ReconciliationRequestPort, ReconciliationStore } from "@/modules/i
 import { createPostgresTenancyStore } from "@/modules/tenancy/persistence";
 import { classifyDatabaseError, createPostgresOutbox, withUserScope, type RuntimeDatabase } from "@/platform/db";
 import type { Transaction, TransactionScope, UnitOfWork } from "@/server/pipeline";
+import { createPostgresWorkflowReadStore, createPostgresWorkflowStateChanger } from "@/modules/workflow/persistence";
 import { inboxReadSources } from "./inbox";
 import { mutationRequestSources } from "./mutations";
 
@@ -55,6 +56,7 @@ export function createPostgresUnitOfWork(database: RuntimeDatabase<"web">): Unit
             reconciliation: requestOnly(createPostgresReconciliationStore(tx, () => undefined)),
             inbox: inboxReadSources(tx),
             mutations: mutationRequestSources(tx),
+            workflow: { reads: createPostgresWorkflowReadStore(tx), changes: createPostgresWorkflowStateChanger(tx) },
           }),
         );
       } catch (error) {

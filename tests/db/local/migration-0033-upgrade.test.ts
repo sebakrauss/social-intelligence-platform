@@ -18,6 +18,7 @@ import { spawnLocalCluster, type SpawnedCluster } from "../support/spawn-cluster
 
 const THROUGH = "0032_reply_in_flight_admission.sql";
 const M0033 = "0033_mutation_intent_state_transition_guard.sql";
+const M0034 = "0034_workflow_core.sql";
 const STATUSES = ["PENDING", "EXECUTING", "OUTCOME_UNKNOWN", "CONFIRMED", "FAILED", "BLOCKED"] as const;
 type Status = (typeof STATUSES)[number];
 const SHAPE: Readonly<Record<Status, readonly [number, string | null, string | null]>> = {
@@ -58,7 +59,8 @@ describe("0032 → 0033 upgrade: the intent state-transition guard over legacy i
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied.at(-1)).toBe(THROUGH);
     expect(status.applied).toHaveLength(32);
-    expect(status.pending.map((m) => m.name)).toEqual([M0033]);
+    // WORKFLOW-WF-2B: 0034 follows; this test applies exactly 0033 (the runner bounded to it, as the 0030 test does).
+    expect(status.pending.map((m) => m.name)).toEqual([M0033, M0034]);
     expect(await triggers()).toEqual([{ n: 0 }]);
   });
 
@@ -110,11 +112,12 @@ describe("0032 → 0033 upgrade: the intent state-transition guard over legacy i
 
   it("applies exactly 0033: every row keeps its values; one trigger; a re-run is a no-op", async () => {
     const before = await snapshot();
-    expect(await applyMigrations(client, readMigrations())).toEqual([M0033]);
+    const throughM0033 = () => readMigrations().filter((migration) => migration.name <= M0033);
+    expect(await applyMigrations(client, throughM0033())).toEqual([M0033]);
     expect((await migrationStatus(client, readMigrations())).applied).toHaveLength(33);
     expect(await snapshot()).toEqual(before);
     expect(await triggers()).toEqual([{ n: 1 }]);
-    expect(await applyMigrations(client, readMigrations())).toEqual([]);
+    expect(await applyMigrations(client, throughM0033())).toEqual([]);
     expect(await triggers()).toEqual([{ n: 1 }]);
   });
 

@@ -92,6 +92,14 @@ export async function withProviderSignalScope<T>(database: RuntimeDatabase<"web"
   });
 }
 
+/**
+ * WORKFLOW-WF-2C: makes the CURRENT transaction read only (a dry run inside an already bound scope). PostgreSQL allows
+ * switching to read only at any point; every later write in the transaction is then refused by the database itself.
+ */
+export async function makeTransactionReadOnly(tx: DatabaseTransaction): Promise<void> {
+  await tx.execute(sql`set transaction read only`);
+}
+
 /** Workspace job: exactly one workspace, from the job payload. */
 export async function withWorkspaceJobScope<T>(
   database: RuntimeDatabase<"worker">,

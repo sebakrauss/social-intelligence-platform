@@ -80,7 +80,7 @@ export function createPostgresInteractionStore(tx: DatabaseTransaction): Interac
       await tx.update(interactionRows).set(set).where(eq(interactionRows.id, id));
     },
     async subtree(rootId) {
-      const result = await tx.execute<{ id: string; conversation_id: string | null; depth: number; deepest: number }>(sql`
+      const result = await tx.execute<{ id: string; conversation_id: string | null; author_role: string | null; observed: boolean; depth: number; deepest: number }>(sql`
         with recursive descendants (id, workspace_id, depth) as (
           select i.id, i.workspace_id, 0 from interactions.interactions i where i.id = ${rootId}
           union all
@@ -89,15 +89,15 @@ export function createPostgresInteractionStore(tx: DatabaseTransaction): Interac
             join descendants d on c.workspace_id = d.workspace_id and c.parent_interaction_id = d.id
            where d.depth <= ${ANCESTRY_MAX_DEPTH}
         )
-        select i.id, i.conversation_id, min(d.depth)::int as depth, max(d.depth)::int as deepest
+        select i.id, i.conversation_id, i.author_role, i.observed, min(d.depth)::int as depth, max(d.depth)::int as deepest
           from descendants d join interactions.interactions i on i.workspace_id = d.workspace_id and i.id = d.id
-         group by i.id, i.conversation_id
-         order by 3, 1`);
+         group by i.id, i.conversation_id, i.author_role, i.observed
+         order by 5, 1`);
       // Lock what was found (a recursive CTE cannot carry FOR UPDATE itself); serial per account, but never assumed.
       const ids = result.rows.map((row) => row.id);
       if (ids.length > 0) await tx.select({ id: interactionRows.id }).from(interactionRows).where(inArray(interactionRows.id, ids)).for("update");
       return {
-        members: result.rows.filter((row) => row.depth <= ANCESTRY_MAX_DEPTH).map((row) => ({ id: row.id, conversationId: row.conversation_id, depth: row.depth })),
+        members: result.rows.filter((row) => row.depth <= ANCESTRY_MAX_DEPTH).map((row) => ({ id: row.id, conversationId: row.conversation_id, depth: row.depth, authorRole: row.author_role, observed: row.observed })),
         // A member reached again below the cap (a cycle) or a chain deeper than the cap: never assumed resolved.
         depthExceeded: result.rows.some((row) => row.deepest > ANCESTRY_MAX_DEPTH),
       };
@@ -119,6 +119,22 @@ export function createPostgresInteractionStore(tx: DatabaseTransaction): Interac
           from (select distinct id, workspace_id from descendants) d
          where i.workspace_id = d.workspace_id and i.id = d.id and i.conversation_id is null`);
       return result.rowCount ?? 0;
+    },
+    async latestConversationActivity(conversationId) {
+      const result = await tx.execute<{ latest: Date | null }>(sql`
+        select pg_catalog.date_trunc('milliseconds', max(coalesce(provider_created_at, first_observed_at, created_at))) as latest
+          from interactions.interactions
+         where conversation_id = ${conversationId}::uuid`);
+      const latest = result.rows[0]?.latest ?? null;
+      return latest === null ? null : new Date(latest);
+    },
+    async audienceObservedSince(conversationId, since) {
+      const result = await tx.execute<{ found: boolean }>(sql`
+        select exists (
+          select 1 from interactions.interactions
+           where conversation_id = ${conversationId}::uuid and observed and author_role in ('user', 'unknown') and first_observed_at > ${since}
+        ) as found`);
+      return result.rows[0]?.found === true;
     },
     async textVersion(id) {
       return (await tx.select(pointerColumns).from(sourceTextVersions).where(eq(sourceTextVersions.id, id)).limit(1))[0];

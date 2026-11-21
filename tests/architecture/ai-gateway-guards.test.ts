@@ -146,9 +146,10 @@ describe("H7-C: nothing is wired to a runtime", () => {
     expect(strip(codeOf("modules/classification/application/understand-deterministic.ts"))).not.toMatch(/understandInteraction|gateway|AI_PENDING|intelligence/i);
   });
 
-  it("no AI migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents); 0027 is Step 7B-1's mutation intents, 0028 Step 7B-14F1's validation authorizations and 0029 Step 7B-14I2's operator path and 0030 Step 7B-14I3H's operator hardening (none names an AI object); 0031 Step 7B-14P1's search_path re-pins (R4a) touch no AI object but its functions' path; 0032 Step 7B-16B's one-open-reply index names none; nor does 0033 Step 7B-16E's intent transition guard", () => {
+  it("no AI migration after 0026 (H7-D1c: intelligence persistence; H7-D1e2b: provider-call intents); 0027 is Step 7B-1's mutation intents, 0028 Step 7B-14F1's validation authorizations and 0029 Step 7B-14I2's operator path and 0030 Step 7B-14I3H's operator hardening (none names an AI object); 0031 Step 7B-14P1's search_path re-pins (R4a) touch no AI object but its functions' path; 0032 Step 7B-16B's one-open-reply index names none; nor does 0033 Step 7B-16E's intent transition guard, nor 0034 WORKFLOW-WF-2B's workflow core", () => {
     const migrations = readdirSync(path.join(REPOSITORY_ROOT, "db/migrations")).filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
-    expect(migrations.at(-1)).toBe("0033_mutation_intent_state_transition_guard.sql");
+    expect(migrations.at(-1)).toBe("0034_workflow_core.sql");
+    expect(strip(codeOf("db/migrations/0034_workflow_core.sql"))).not.toMatch(/classification\.|ai_|understand/);
     expect(strip(codeOf("db/migrations/0033_mutation_intent_state_transition_guard.sql"))).not.toMatch(/classification\.|ai_|understand/);
     expect(strip(codeOf("db/migrations/0032_reply_in_flight_admission.sql"))).not.toMatch(/classification\.|ai_|understand/);
     expect(strip(codeOf("db/migrations/0030_validation_operator_hardening.sql"))).not.toMatch(/classification\.|ai_|understand/);

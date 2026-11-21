@@ -28,6 +28,7 @@ const M0031 = "0031_privileged_name_resolution_hardening.sql";
 // Step 7B-16B: 0032 adds an index (a catalog change), so this test applies through 0031 only; 0032 stays pending.
 const M0032 = "0032_reply_in_flight_admission.sql";
 const M0033 = "0033_mutation_intent_state_transition_guard.sql";
+const M0034 = "0034_workflow_core.sql";
 const upTo = (name: string) => readMigrations().filter((migration) => migration.name <= name);
 
 interface Tenant {
@@ -124,7 +125,7 @@ describe("0028 → 0031 upgrade: privileged name resolution (R4a)", () => {
   it("starts at 28 applied migrations with 0029, 0030 and 0031 pending, no operator login, and every pre-0030 function pinned to the empty search_path", async () => {
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied).toHaveLength(28);
-    expect(status.pending.map((m) => m.name)).toEqual([M0029, M0030, M0031, M0032, M0033]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0029, M0030, M0031, M0032, M0033, M0034]);
     expect(await operatorHolders()).toEqual([]);
     expect((await configs()).every((row) => JSON.stringify(row.config) === JSON.stringify(['search_path=""']))).toBe(true);
   });
@@ -167,7 +168,7 @@ describe("0028 → 0031 upgrade: privileged name resolution (R4a)", () => {
     expect(await operatorHolders()).toEqual([]);
     expect(await applyMigrations(client, upTo(M0030))).toEqual([M0030]);
     expect(await operatorHolders()).toEqual([]);
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032, M0033]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032, M0033, M0034]);
   });
 
   it("0031 refuses (changing nothing) when an application function carries an unexpected configuration", async () => {
@@ -175,7 +176,7 @@ describe("0028 → 0031 upgrade: privileged name resolution (R4a)", () => {
     await client.query("begin; set local role app_owner; alter function app.my_workspace_role(uuid) set work_mem = '64kB'; commit");
     await expect(applyMigrations(client, upTo(M0031))).rejects.toThrow(/unexpected configuration \(refusing\): app\.my_workspace_role/);
     await client.query("begin; set local role app_owner; alter function app.my_workspace_role(uuid) reset work_mem; commit");
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032, M0033]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032, M0033, M0034]);
     expect(await configs()).toEqual(before.configs);
     expect(await catalog()).toEqual(before.catalog);
   });
@@ -185,7 +186,7 @@ describe("0028 → 0031 upgrade: privileged name resolution (R4a)", () => {
     await client.query("begin; set local role app_owner; create function app.r4a_unlisted() returns integer language sql stable security definer set search_path = '' as 'select 1'; commit");
     await expect(applyMigrations(client, upTo(M0031))).rejects.toThrow(/left without the safe search_path \(refusing\): app\.r4a_unlisted\(\)/);
     await client.query("begin; set local role app_owner; drop function app.r4a_unlisted(); commit");
-    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032, M0033]);
+    expect((await migrationStatus(client, readMigrations())).pending.map((m) => m.name)).toEqual([M0031, M0032, M0033, M0034]);
     expect(await configs()).toEqual(before);
   });
 

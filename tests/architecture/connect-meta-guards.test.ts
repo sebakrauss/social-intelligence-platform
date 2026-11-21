@@ -205,8 +205,9 @@ describe("Managed accounts (Step 7G-H5): local configuration only", () => {
     // inbox-composer-guards).
     // COMMENTS-INT-03C-1: + the Comments conversation area (the prototype's Escape: focus back to the row; its rule is in
     // inbox-composer-guards). COMMENTS-INT-03C-2: + the shell's opt-in view navigation (reads the address only; pinned in
-    // comments-views-guards).
-    expect(clients).toEqual(["app/dev/ui-reference/comments-redesign/prototype.tsx", "app/dev/ui-reference/comments-scroll/comparison.tsx", PENDING_BUTTON, "ui/inbox/comments-list-column.tsx", "ui/inbox/comments-pane-section.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/navigation/app-link.tsx", "ui/shell/shell-view-nav.tsx", "ui/time/local-time.tsx"]);
+    // comments-views-guards). WORKFLOW-WF-2B: + the conversation's workflow control (Mark done / Reopen / Undo; pinned in
+    // brand-guards, and the client-module syntax rules of inbox-composer-guards apply to it).
+    expect(clients).toEqual(["app/dev/ui-reference/comments-redesign/prototype.tsx", "app/dev/ui-reference/comments-scroll/comparison.tsx", PENDING_BUTTON, "ui/inbox/comments-list-column.tsx", "ui/inbox/comments-pane-section.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/inbox/workflow-control.tsx", "ui/navigation/app-link.tsx", "ui/shell/shell-view-nav.tsx", "ui/time/local-time.tsx"]);
     expect(importsOf(PENDING_BUTTON)).toEqual(["react-dom"]);
     expect(codeOf(PENDING_BUTTON)).toMatch(/disabled=\{pending\}/);
   });

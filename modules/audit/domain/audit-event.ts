@@ -32,6 +32,7 @@ import {
   type WorkspaceId,
 } from "@/domain/ids";
 import { looksLikeSecret } from "@/domain/secret-patterns";
+import { isWorkItemResolution, isWorkItemState, type WorkflowStateSummary } from "@/domain/workflow";
 
 /** Stable action codes for the changes Step 1 makes. Later modules extend this list. */
 export const AUDIT_ACTIONS = [
@@ -76,6 +77,9 @@ export const AUDIT_ACTIONS = [
   // actor `system`; no TypeScript producer)
   "validation_authorization.issued",
   "validation_authorization.revoked",
+  // WORKFLOW-WF-2B (migration 0034): a work item's state change — written by workflow.change_state for a person (actor
+  // `user`) and by the job runtime for the objective auto-reopen (actor `system`)
+  "work_item.state_changed",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -91,6 +95,8 @@ export const AUDIT_TARGET_TYPES = [
   "mutation_intent",
   // Step 7B-14I2 (migration 0029)
   "validation_authorization",
+  // WORKFLOW-WF-2B (migration 0034)
+  "work_item",
 ] as const;
 export type AuditTargetType = (typeof AUDIT_TARGET_TYPES)[number];
 
@@ -118,7 +124,8 @@ export type AuditChange =
   | { readonly kind: "workspace_mode"; readonly previous: WorkspaceMode; readonly current: WorkspaceMode }
   | { readonly kind: "workspace_membership"; readonly previous: WorkspaceMembershipState; readonly current: WorkspaceMembershipState | null }
   | { readonly kind: "organization_membership"; readonly previous: OrganizationMembershipState; readonly current: OrganizationMembershipState | null }
-  | { readonly kind: "connection_status"; readonly previous: ConnectionStatus; readonly current: ConnectionStatus };
+  | { readonly kind: "connection_status"; readonly previous: ConnectionStatus; readonly current: ConnectionStatus }
+  | { readonly kind: "workflow_state"; readonly previous: WorkflowStateSummary; readonly current: WorkflowStateSummary };
 
 /** Actions that must carry a change summary, its kind, and whether the change is a removal. Others carry none. */
 const CHANGE_RULES: Partial<Record<AuditAction, { readonly kind: AuditChange["kind"]; readonly removal: boolean }>> = {
@@ -129,6 +136,7 @@ const CHANGE_RULES: Partial<Record<AuditAction, { readonly kind: AuditChange["ki
   "organization_membership.role_changed": { kind: "organization_membership", removal: false },
   "organization_membership.removed": { kind: "organization_membership", removal: true },
   "connection.status_changed": { kind: "connection_status", removal: false },
+  "work_item.state_changed": { kind: "workflow_state", removal: false },
 };
 
 export interface AuditEvent {
@@ -200,6 +208,14 @@ function parseOrganizationMembershipState(value: unknown): OrganizationMembershi
   return Object.freeze({ role: value["role"] });
 }
 
+/** Mirrors 0034's audit.is_workflow_state: the state, and a resolution only with DONE. */
+function parseWorkflowState(value: unknown): WorkflowStateSummary | undefined {
+  if (!hasExactKeys(value, ["state", "resolution"]) || !isWorkItemState(value["state"])) return undefined;
+  const resolution = value["resolution"];
+  if (resolution === null) return Object.freeze({ state: value["state"], resolution: null });
+  return value["state"] === "DONE" && isWorkItemResolution(resolution) ? Object.freeze({ state: value["state"], resolution }) : undefined;
+}
+
 function parseChange(value: unknown, rule: { readonly kind: AuditChange["kind"]; readonly removal: boolean }): AuditChange | undefined {
   if (!hasExactKeys(value, ["kind", "previous", "current"]) || value["kind"] !== rule.kind) return undefined;
   const { previous, current } = value;
@@ -218,6 +234,12 @@ function parseChange(value: unknown, rule: { readonly kind: AuditChange["kind"];
     }
     case "connection_status":
       return isConnectionStatus(previous) && isConnectionStatus(current) ? Object.freeze({ kind: rule.kind, previous, current }) : undefined;
+    case "workflow_state": {
+      const before = parseWorkflowState(previous);
+      const after = parseWorkflowState(current);
+      if (before === undefined || after === undefined || (before.state === after.state && before.resolution === after.resolution)) return undefined;
+      return Object.freeze({ kind: rule.kind, previous: before, current: after });
+    }
   }
 }
 

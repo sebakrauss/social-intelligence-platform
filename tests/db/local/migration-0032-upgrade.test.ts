@@ -24,6 +24,7 @@ const THROUGH = "0031_privileged_name_resolution_hardening.sql";
 const M0032 = "0032_reply_in_flight_admission.sql";
 // Step 7B-16E: 0033 follows; this test applies through 0032 only (tests/db/local/migration-0033-upgrade.test.ts covers 0033).
 const M0033 = "0033_mutation_intent_state_transition_guard.sql";
+const M0034 = "0034_workflow_core.sql";
 const upTo = (name: string) => readMigrations().filter((migration) => migration.name <= name);
 const INDEX = "mutation_intents_one_open_reply_per_target";
 /** The read-only preflight recorded in the migration's header, verbatim in substance. */
@@ -104,7 +105,7 @@ describe("0031 → 0032 upgrade: one open public reply per target", () => {
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied.at(-1)).toBe(THROUGH);
     expect(status.applied).toHaveLength(31);
-    expect(status.pending.map((m) => m.name)).toEqual([M0032, M0033]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0032, M0033, M0034]);
     expect(await indexRow()).toEqual([]);
   });
 
@@ -126,7 +127,7 @@ describe("0031 → 0032 upgrade: one open public reply per target", () => {
     expect(postgresError(failure)).toEqual({ code: "23505", constraint: INDEX });
     const status = await migrationStatus(client, readMigrations());
     expect(status.applied).toHaveLength(31);
-    expect(status.pending.map((m) => m.name)).toEqual([M0032, M0033]);
+    expect(status.pending.map((m) => m.name)).toEqual([M0032, M0033, M0034]);
     expect(await indexRow()).toEqual([]);
     expect(await snapshot()).toEqual(before);
   });

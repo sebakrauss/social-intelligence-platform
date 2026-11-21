@@ -188,7 +188,7 @@ describe("foundations are inert", () => {
   // COMMENTS-INT-03B-FIX: + the Comments list column (one layout effect on its own scroll; pinned in inbox-composer-guards).
   // COMMENTS-INT-03C-1: + the Comments conversation area (Escape hands the focus back; pinned in inbox-composer-guards).
   // COMMENTS-INT-03C-2: + the shell's opt-in view navigation (it reads the address; pinned in comments-views-guards).
-  const CLIENT_COMPONENTS = ["ui/inbox/comments-list-column.tsx", "ui/inbox/comments-pane-section.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/shell/shell-view-nav.tsx"];
+  const CLIENT_COMPONENTS = ["ui/inbox/comments-list-column.tsx", "ui/inbox/comments-pane-section.tsx", "ui/inbox/reply-composer.tsx", "ui/inbox/reply-drafts-boundary.tsx", "ui/inbox/reply-drafts-scope.tsx", "ui/inbox/workflow-control.tsx", "ui/shell/shell-view-nav.tsx"];
 
   it("the foundation, brand, icon and primitive components are server components", () => {
     for (const file of sourceFiles(["ui/foundations", "ui/brand", "ui/icons", "ui/primitives", "ui/shell", "ui/inbox"]).filter((file) => !CLIENT_COMPONENTS.includes(file))) {
@@ -219,12 +219,26 @@ describe("foundations are inert", () => {
     expect(composer).not.toMatch(/validationAuthorization|authorizationId/);
   });
 
+  it("WORKFLOW-WF-2B: the workflow control is a client component like the composer — labels from props, a type-only import of its action's state, no fetch, raw HTML, catalog or persistence — posting exactly its fields", () => {
+    const control = codeOf("ui/inbox/workflow-control.tsx");
+    expect(control).toMatch(/^"use client";/);
+    const imports = [...control.matchAll(/^import (type )?\{[^}]*\} from "([^"]+)";/gm)].map((m) => [m[1] === undefined ? "value" : "type", m[2] ?? ""] as const);
+    expect(imports.filter(([, from]) => from.startsWith("@/server/"))).toEqual([["type", "@/server/inbox/workflow-state"]]);
+    expect(imports.filter(([, from]) => /^@\/(tools|platform|modules|db|integrations|ai|mutations|jobs)\//.test(from))).toEqual([]);
+    expect(control).not.toMatch(/dangerouslySetInnerHTML|<script|javascript:|fetch\(|\bt\(|@\/server\/i18n|process\.env|localStorage|sessionStorage|indexedDB|cookie|history\.|location\.|globalThis|useEffect|setTimeout/);
+    // Three forms (Mark done, Reopen, Undo), each posting only the page's identifiers, the shown version and the target state.
+    expect([...control.matchAll(/<form action=\{(formAction|undoAction)\}/g)].map((m) => m[1])).toEqual(["formAction", "formAction", "undoAction"]);
+    const names = new Set([...control.matchAll(/name="([^"]+)"/g)].map((m) => m[1]));
+    expect([...names].sort()).toEqual(["conversationId", "expectedVersion", "resolution", "to", "undo", "workspaceId"]);
+  });
+
   it("primitives render native elements and never raw HTML, scripts or inline handlers", () => {
     for (const file of sourceFiles(["ui/primitives"])) expect(codeOf(file), file).not.toMatch(/dangerouslySetInnerHTML|<script|javascript:|on[A-Z][a-z]+=\{/);
   });
 
   it("nothing in ui/ reaches tools/, server/, platform/ or the database (the composer's type-only import of the action state is pinned above)", () => {
-    for (const file of sourceFiles(["ui"])) expect(codeOf(file).replace(/^import type \{[^}]*\} from "@\/server\/inbox\/reply-state";$/m, ""), file).not.toMatch(/from "@\/(tools|server|platform|modules|db|integrations|ai|mutations|jobs)\//);
+    // WORKFLOW-WF-2B: the workflow control's type-only import of ITS action state is the one other exception.
+    for (const file of sourceFiles(["ui"])) expect(codeOf(file).replace(/^import type \{[^}]*\} from "@\/server\/inbox\/reply-state";$/m, "").replace(/^import type \{ WorkflowAction, WorkflowActionState \} from "@\/server\/inbox\/workflow-state";$/m, ""), file).not.toMatch(/from "@\/(tools|server|platform|modules|db|integrations|ai|mutations|jobs)\//);
   });
 });
 

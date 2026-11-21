@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { WorkspaceRole } from "@/domain/access";
-import type { InboxReadSources } from "@/server/pipeline";
+import type { InboxReadSources, WorkflowSources } from "@/server/pipeline";
 import { resolveConversation, resolveInboxPage } from "@/server/inbox/inbox";
 import {
   INBOX_COVERAGE_ACCOUNTS,
@@ -221,6 +221,7 @@ describe("pure assembly", () => {
       const h = await setup();
       const s = sources({ input });
       h.unitOfWork.inbox = s.inbox;
+      h.unitOfWork.workflow = s.workflow;
       h.as("ANALYST_VIEWER");
       const page = expectOk(await h.pipeline.run(inboxListCommand, { workspaceId: h.workspaceId, input: {} }));
       expect(s.coverageRequests).toEqual([accounts.slice(0, INBOX_COVERAGE_ACCOUNTS).map((account) => account.id)]);
@@ -300,7 +301,7 @@ function sources(options: { readonly conversation?: boolean; readonly input?: In
     calls.push(name);
     return Promise.resolve(value);
   };
-  const inbox: InboxReadSources = {
+  const inbox: { -readonly [K in keyof InboxReadSources]: InboxReadSources[K] } & { interactions: { -readonly [K in keyof InboxReadSources["interactions"]]: InboxReadSources["interactions"][K] } } = {
     conversations: {
       findMany: (ids) => note("conversations.findMany", input.conversations.filter((c) => ids.includes(c.id))),
       get: (id) => note("conversations.get", options.conversation === false ? undefined : input.conversations.find((c) => c.id === id)),
@@ -310,6 +311,7 @@ function sources(options: { readonly conversation?: boolean; readonly input?: In
       summaries: (ids) => note("interactions.summaries", input.anchors.filter((a) => ids.includes(a.id))),
       thread: (conversationId, limit) => note(`interactions.thread:${String(limit)}`, input.anchors.filter((a) => a.conversationId === conversationId)),
       textVersions: (_ids, newestPerInteraction) => note(`interactions.textVersions:${String(newestPerInteraction)}`, []),
+      conversationActivity: () => note("interactions.conversationActivity", []),
     },
     content: { findManyById: () => note("content.findManyById", input.contents) },
     coverage: {
@@ -321,7 +323,19 @@ function sources(options: { readonly conversation?: boolean; readonly input?: In
     signals: { forInteractions: () => note("signals.forInteractions", []) },
     accounts: () => note("accounts", input.accounts),
   };
-  return { inbox, calls, coverageRequests };
+  // WORKFLOW-WF-2B: the queue answers from the same rows (their order is the activity's), and names what it was asked —
+  // the limit, the position, the view and the EXPLICIT workspace.
+  const stateOf = (id: string) => (input.conversations.find((c) => c.id === id)?.workflowState === "DONE" ? "DONE" as const : "OPEN" as const);
+  const workflow: WorkflowSources = {
+    reads: {
+      queue: ({ workspaceId, view, before, limit }) =>
+        note(`workflow.queue:${String(limit)}:${before === null ? "-" : before.id}:${view}:${workspaceId}`, input.activity.slice(0, limit).map((row) => ({ id: row.conversationId, latestActivityAt: row.latestActivityAt, state: stateOf(row.conversationId), version: 1 }))),
+      findMany: ({ ids }) => note("workflow.findMany", ids.filter((id) => input.conversations.some((c) => c.id === id)).map((id) => ({ id, state: stateOf(id), resolution: null, version: 1, latestActivityAt: T0, stateChangedAt: T0, stateChangedBy: "system_ingestion" as const }))),
+    },
+    changes: { changeState: () => Promise.reject(new Error("not used here")) },
+  };
+  inbox.interactions.conversationActivity = (ids) => note("interactions.conversationActivity", input.activity.filter((row) => ids.includes(row.conversationId)));
+  return { inbox, workflow, calls, coverageRequests };
 }
 
 async function setup() {
@@ -337,8 +351,9 @@ async function setup() {
     await h.addMember(OWNER, workspaceId, member, role);
     members[role] = member;
   }
-  const { inbox, calls } = sources();
+  const { inbox, workflow, calls } = sources();
   h.unitOfWork.inbox = inbox;
+  h.unitOfWork.workflow = workflow;
   const audit = h.unitOfWork.state.audit.length;
   const outbox = h.unitOfWork.state.outbox.length;
   const as = (role: WorkspaceRole): void => {
@@ -357,7 +372,9 @@ describe("inbox.conversations.list through the pipeline", () => {
       h.calls.length = 0;
       const page = expectOk(await h.pipeline.run(inboxListCommand, { workspaceId: h.workspaceId, input: {} }));
       expect(page.items.map((i) => i.conversationId), role).toEqual([CONVERSATION]);
-      expect(h.calls[0]).toBe(`interactions.listConversationActivity:${String(INBOX_PAGE_SIZE + 1)}:-`);
+      // WORKFLOW-WF-2B: the queue chooses the page, with the bound workspace as an explicit predicate.
+      expect(h.calls.slice(0, 3)).toEqual([`workflow.queue:${String(INBOX_PAGE_SIZE + 1)}:-:all:${h.workspaceId}`, "conversations.findMany", "interactions.conversationActivity"]);
+      expect(h.calls.filter((call) => call.startsWith("interactions.listConversationActivity"))).toEqual([]);
       // Coverage is read for the managed accounts (one here), per account and kind — never as a global sample of rows.
       expect(h.calls).toContain("coverage.latestPerAccountAndKind:1");
     }
@@ -386,7 +403,7 @@ describe("inbox.conversations.list through the pipeline", () => {
     const cursor = encodeCursor({ latestActivityAt: T1, conversationId: CONVERSATION_2 });
     h.calls.length = 0;
     expectOk(await h.pipeline.run(inboxListCommand, { workspaceId: h.workspaceId, input: { cursor } }));
-    expect(h.calls[0]).toBe(`interactions.listConversationActivity:${String(INBOX_PAGE_SIZE + 1)}:${CONVERSATION_2}`);
+    expect(h.calls[0]).toBe(`workflow.queue:${String(INBOX_PAGE_SIZE + 1)}:${CONVERSATION_2}:all:${h.workspaceId}`);
     expect(errorCode(await h.pipeline.run(inboxListCommand, { workspaceId: h.workspaceId, input: { cursor: "garbage" } }))).toBe("INVALID_INPUT");
     expect(errorCode(await h.pipeline.run(inboxListCommand, { workspaceId: h.workspaceId, input: { cursor, limit: 1000 } }))).toBe("INVALID_INPUT");
     expect(errorCode(await h.pipeline.run(inboxListCommand, { workspaceId: h.workspaceId, input: { workspaceId: WS_OTHER } }))).toBe("INVALID_INPUT");
@@ -408,6 +425,7 @@ describe("inbox.conversation.view through the pipeline", () => {
     expect(errorCode(await h.pipeline.run(inboxConversationCommand, { workspaceId: h.workspaceId, input: { conversationId: CONVERSATION } }))).toBe("PERMISSION_DENIED");
     const missing = sources({ conversation: false });
     h.unitOfWork.inbox = missing.inbox;
+    h.unitOfWork.workflow = missing.workflow;
     h.as("OWNER");
     expect(errorCode(await h.pipeline.run(inboxConversationCommand, { workspaceId: h.workspaceId, input: { conversationId: CONVERSATION } }))).toBe("NOT_FOUND");
     expect(missing.calls).toEqual(["conversations.get"]);
@@ -430,11 +448,11 @@ describe("surface states", () => {
     h.calls.length = 0;
     const ready = await resolveInboxPage(h.pipeline, h.workspaceId, ["array", "value"]);
     expect(ready.kind).toBe("ready");
-    expect(h.calls[0]).toBe(`interactions.listConversationActivity:${String(INBOX_PAGE_SIZE + 1)}:-`);
+    expect(h.calls[0]).toBe(`workflow.queue:${String(INBOX_PAGE_SIZE + 1)}:-:all:${h.workspaceId}`);
     h.calls.length = 0;
     const positioned = await resolveInboxPage(h.pipeline, h.workspaceId, encodeCursor({ latestActivityAt: T0, conversationId: CONVERSATION_2 }));
     expect(positioned.kind).toBe("ready");
-    expect(h.calls[0]).toBe(`interactions.listConversationActivity:${String(INBOX_PAGE_SIZE + 1)}:${CONVERSATION_2}`);
+    expect(h.calls[0]).toBe(`workflow.queue:${String(INBOX_PAGE_SIZE + 1)}:${CONVERSATION_2}:all:${h.workspaceId}`);
   });
 
   it("conversation: a non-UUID id never reaches the pipeline; foreign workspace vs missing conversation are told apart only by the routed id's shape", async () => {
