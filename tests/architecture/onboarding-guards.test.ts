@@ -62,6 +62,10 @@ describe("onboarding surface (Step 7G-F3)", () => {
       "app/dev/ui-reference/comments-scroll/comparison.tsx",
       "app/dev/ui-reference/comments-scroll/data.ts",
       "app/dev/ui-reference/comments-scroll/page.tsx",
+      // WORKFLOW-WF-2D: the Comments Workflow harness (a 404 outside next dev; synthetic, in-memory; brand-guards pins it).
+      "app/dev/ui-reference/comments-workflow/actions.ts",
+      "app/dev/ui-reference/comments-workflow/page.tsx",
+      "app/dev/ui-reference/comments-workflow/store.ts",
       // Step 7B-15N: the Inbox › Comments product prototype (synthetic fixtures; its only action is the reply harness's
       // development-only simulation), also a 404 outside `next dev` (brand-guards proves it).
       "app/dev/ui-reference/comments/fixtures.ts",

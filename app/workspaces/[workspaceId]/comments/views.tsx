@@ -22,6 +22,7 @@ import { StatePill } from "@/ui/primitives/state-pill";
 import { TextLink } from "@/ui/primitives/text-link";
 import { WorkflowControl, type WorkflowControlLabels } from "@/ui/inbox/workflow-control";
 import { changeWorkflowStateAction } from "@/server/inbox/workflow-actions";
+import type { WorkflowAction } from "@/server/inbox/workflow-state";
 // The Inbox's read-only pieces only (audit M-1): never ../inbox/views, which carries the reply composer and its action.
 import { authorOf, CoverageSummary, kindOf, OutboundRow, parentLabeller, previousTimes, renderNow, shortTime, threadEntries, ThreadMemberRecord } from "../inbox/read-views";
 
@@ -158,7 +159,7 @@ function navigationFor(workspaceId: string, view: CommentsView, page: InboxPage,
   );
 }
 
-function Conversation({ workspaceId, view, detail, nav }: { readonly workspaceId: string; readonly view: CommentsView; readonly detail: ConversationDetail; readonly nav: React.ReactNode }) {
+function Conversation({ workspaceId, view, detail, nav, workflowAction }: { readonly workspaceId: string; readonly view: CommentsView; readonly detail: ConversationDetail; readonly nav: React.ReactNode; readonly workflowAction: WorkflowAction }) {
   const platformText = platformName(detail.platform) ?? t("inbox.platform.unknown");
   const entries = threadEntries(detail);
   const now = renderNow();
@@ -189,7 +190,7 @@ function Conversation({ workspaceId, view, detail, nav }: { readonly workspaceId
           {/* WORKFLOW-WF-2B: Mark done / Reopen for a member with workflow.internal; nothing at all for anyone else. */}
           {detail.workflow === undefined || detail.workflow === null || !detail.workflow.canChange ? null : (
             <WorkflowControl
-              action={changeWorkflowStateAction}
+              action={workflowAction}
               fields={{ workspaceId, conversationId: detail.conversationId }}
               current={{ state: detail.workflow.state, version: detail.workflow.version }}
               resolutions={OFFERED_RESOLUTIONS.map((value) => ({ value, label: t(RESOLUTION_MESSAGES[value]) }))}
@@ -245,8 +246,12 @@ function Conversation({ workspaceId, view, detail, nav }: { readonly workspaceId
 /**
  * The Comments page for a ready (authorized and offered) list. `selection` is what the address selects: nothing, a
  * conversation of this workspace (drawn read only in the pane), or the Inbox's own closed state for the address.
+ *
+ * `workflowAction` (WORKFLOW-WF-2D): the Server Action behind Mark done / Reopen. The real pages never pass it — it is
+ * the real changeWorkflowStateAction. Only the development-only harness (/dev/ui-reference/comments-workflow, a 404
+ * outside `next dev`) passes its local simulation, exactly as the reply harness does for ConversationView's replyAction.
  */
-export function CommentsListView({ workspaceId, view, page, cursor, selection }: { readonly workspaceId: string; readonly view: CommentsView; readonly page: InboxPage; readonly cursor: string | undefined; readonly selection: CommentsSelectionView }) {
+export function CommentsListView({ workspaceId, view, page, cursor, selection, workflowAction = changeWorkflowStateAction }: { readonly workspaceId: string; readonly view: CommentsView; readonly page: InboxPage; readonly cursor: string | undefined; readonly selection: CommentsSelectionView; readonly workflowAction?: WorkflowAction }) {
   const selectedId = selection.kind === "conversation" ? selection.detail.conversationId : undefined;
   // The list as it is drawn: this view, at this position (COMMENTS-INT-03C-2: the view is part of which list it is).
   const listHref = workspaceCommentsViewPath(workspaceId, view, cursor);
@@ -281,7 +286,7 @@ export function CommentsListView({ workspaceId, view, page, cursor, selection }:
         list={<ListColumn workspaceId={workspaceId} view={view} page={page} cursor={cursor} selectedId={selectedId} />}
         pane={
           <CommentsPane label={t("comments.pane.label")} back={back} content={selection.kind === "conversation" ? "conversation" : "message"}>
-            {selection.kind === "none" ? <p>{t("comments.pane.empty")}</p> : selection.kind === "closed" ? selection.message : <Conversation workspaceId={workspaceId} view={view} detail={selection.detail} nav={navigationFor(workspaceId, view, page, cursor, selection.detail.conversationId)} />}
+            {selection.kind === "none" ? <p>{t("comments.pane.empty")}</p> : selection.kind === "closed" ? selection.message : <Conversation workspaceId={workspaceId} view={view} detail={selection.detail} nav={navigationFor(workspaceId, view, page, cursor, selection.detail.conversationId)} workflowAction={workflowAction} />}
           </CommentsPane>
         }
       />

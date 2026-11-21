@@ -227,7 +227,16 @@ describe("foundations are inert", () => {
     expect(imports.filter(([, from]) => /^@\/(tools|platform|modules|db|integrations|ai|mutations|jobs)\//.test(from))).toEqual([]);
     expect(control).not.toMatch(/dangerouslySetInnerHTML|<script|javascript:|fetch\(|\bt\(|@\/server\/i18n|process\.env|localStorage|sessionStorage|indexedDB|cookie|history\.|location\.|globalThis|useEffect|setTimeout/);
     // Three forms (Mark done, Reopen, Undo), each posting only the page's identifiers, the shown version and the target state.
-    expect([...control.matchAll(/<form action=\{(formAction|undoAction)\}/g)].map((m) => m[1])).toEqual(["formAction", "formAction", "undoAction"]);
+    // WORKFLOW-WF-2E (B-1): one action state for all three, so the outcome shown is always the last submission's own; and
+    // (B-3) every form goes through the same one-at-a-time submit guard.
+    expect([...control.matchAll(/<form action=\{(\w+)\} onSubmit=\{(\w+)\}/g)].map((m) => `${m[1] ?? ""}/${m[2] ?? ""}`)).toEqual(["formAction/onSubmit", "formAction/onSubmit", "formAction/onSubmit"]);
+    expect([...control.matchAll(/<form /g)]).toHaveLength(3);
+    expect(control.match(/useActionState\(/g)).toHaveLength(1);
+    expect(control).toMatch(/if \(sentFrom\.current === settled\.answered\) \{\s+event\.preventDefault\(\);\s+return;\s+\}\s+sentFrom\.current = settled\.answered;/);
+    // B-2: the only focus it moves is its own state button's, after an answer, and only when the focus was in the control.
+    expect([...control.matchAll(/\.focus\(/g)]).toHaveLength(1);
+    expect(control).toMatch(/if \(form === null \|\| settled\.answered === 0 \|\| !focusBack\.current\) return;\s+focusBack\.current = false;\s+form\.querySelector\("button"\)\?\.focus\(\{ preventScroll: true \}\);/);
+    expect(control).toMatch(/focusBack\.current = control !== null && control\.contains\(control\.ownerDocument\.activeElement\);/);
     const names = new Set([...control.matchAll(/name="([^"]+)"/g)].map((m) => m[1]));
     expect([...names].sort()).toEqual(["conversationId", "expectedVersion", "resolution", "to", "undo", "workspaceId"]);
   });
@@ -322,6 +331,54 @@ describe("UI reference pages (development only)", () => {
     expect(action).toMatch(/if \(!IS_DEVELOPMENT\) return \{ kind: "unavailable" \};/);
     expect([...action.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])).toEqual(["@/server/inbox/reply-state"]);
     expect(action).not.toMatch(/pipeline|requestPublicReplyCommand|mutations\/|platform\/db|fetch\(|requestAuth/);
+  });
+});
+
+describe("Comments Workflow harness (WORKFLOW-WF-2D, development only)", () => {
+  const DIR = "app/dev/ui-reference/comments-workflow";
+
+  it("is a 404 outside next dev, indexes nothing, and reads only pure builders, the catalog and its own in-memory store", () => {
+    const page = codeOf(`${DIR}/page.tsx`);
+    expect(page).toMatch(/const IS_DEVELOPMENT = process\.env\.NODE_ENV === "development";/);
+    expect(page).toMatch(/if \(!IS_DEVELOPMENT\) notFound\(\);/);
+    expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+    expect((page.match(/process\.env/g) ?? []).length).toBe(1);
+    // The 404 comes before anything is read or changed.
+    expect(page.indexOf("if (!IS_DEVELOPMENT) notFound();")).toBeLessThan(page.indexOf("harnessState()", page.indexOf("export default")));
+    const imports = [...page.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
+    expect(imports).toEqual([
+      "next/navigation", "next", "@/domain/access", "@/platform/permissions/catalog", "@/server/i18n", "@/server/queries/inbox", "@/server/routes", "@/ui/shell/app-shell", "@/ui/primitives/text-link",
+      "@/app/workspaces/[workspaceId]/comments/views", "@/app/workspaces/[workspaceId]/inbox/read-views", "./actions", "./store", "./harness.module.css",
+    ]);
+    expect(page).toMatch(/workflowAction=\{simulateWorkflowAction\}/);
+    expect(page).not.toMatch(/changeWorkflowStateAction|@\/server\/(auth|inbox\/workflow-actions|commands|persistence)|@\/modules\/|@\/db\/|@\/mutations\/|@\/integrations\/|fetch\(|cookies\(|headers\(|"use (client|server)"/);
+  });
+
+  it("its only action is the development-only simulation: no session, pipeline, database, provider or job", () => {
+    const action = codeOf(`${DIR}/actions.ts`);
+    expect(action).toMatch(/^"use server";/);
+    expect(action).toMatch(/const IS_DEVELOPMENT = process\.env\.NODE_ENV === "development";/);
+    // The first statement of the action is the development check: outside development nothing is read or changed.
+    expect(action).toMatch(/export async function simulateWorkflowAction\([^)]*\): Promise<WorkflowActionState> \{\n\s*if \(!IS_DEVELOPMENT\) return \{ kind: "unavailable" \};/);
+    expect([...action.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])).toEqual(["next/cache", "@/domain/workflow", "@/platform/permissions/catalog", "@/server/inbox/workflow-state", "./store"]);
+    expect(action).toMatch(/^import type \{ WorkflowActionState \} from "@\/server\/inbox\/workflow-state";$/m);
+    expect(action).not.toMatch(/pipeline|changeWorkflowStateAction|platform\/db|requestAuth|getUser|fetch\(|cookies\(|headers\(/);
+    // The store is memory only: it imports types and nothing that reads or writes outside the process.
+    const store = codeOf(`${DIR}/store.ts`);
+    expect([...store.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])).toEqual(["@/domain/access", "@/domain/workflow"]);
+    expect(store).toMatch(/^import type \{ WorkspaceRole \} from "@\/domain\/access";$/m);
+    expect(store).toMatch(/^import type \{ WorkItemResolution \} from "@\/domain\/workflow";$/m);
+    expect(store).not.toMatch(/process\.env|fetch\(|"use (client|server)"|node:/);
+  });
+
+  it("only the harness passes a workflow action to the Comments view; the real pages get the real action by default", () => {
+    const views = codeOf("app/workspaces/[workspaceId]/comments/views.tsx");
+    expect(views).toMatch(/workflowAction = changeWorkflowStateAction \}/);
+    expect(views).toMatch(/^import type \{ WorkflowAction \} from "@\/server\/inbox\/workflow-state";$/m);
+    const passers = sourceFiles(["app", "ui", "server"]).filter((file) => /workflowAction=\{/.test(codeOf(file)));
+    expect(passers).toEqual([`${DIR}/page.tsx`, "app/workspaces/[workspaceId]/comments/views.tsx"]);
+    expect(codeOf("app/workspaces/[workspaceId]/comments/views.tsx")).toMatch(/workflowAction=\{workflowAction\}/);
+    expect(codeOf("app/workspaces/[workspaceId]/comments/views.tsx")).toMatch(/action=\{workflowAction\}/);
   });
 });
 

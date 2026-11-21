@@ -1,0 +1,15 @@
+/* Comments Workflow harness (development only): the harness's own controls, set apart from the product UI. */
+.harness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wk-space-8) var(--wk-space-16);
+  align-items: baseline;
+  padding: var(--wk-space-8) var(--wk-space-16);
+  border-bottom: 1px dashed var(--wk-border-strong);
+  background: var(--wk-bg-raised);
+  color: var(--wk-text-secondary);
+}
+
+.choice {
+  margin-inline-end: var(--wk-space-8);
+}
