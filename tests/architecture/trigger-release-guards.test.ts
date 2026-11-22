@@ -15,6 +15,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectSecrets } from "@/domain/secret-patterns";
 import { RELEASE_PLANES, buildReleasePlan } from "../../tools/trigger/release-pair.ts";
+import { PLANE_TASK_DIRECTORIES } from "../../tools/trigger/recovery-plan.ts";
 import { REPOSITORY_ROOT, codeOf, sourceFiles } from "../support/source-scan";
 
 const TOOL = "tools/trigger/deploy-release-pair.ts";
@@ -57,12 +58,13 @@ const PREVIEW_EXCEPTION = "deploy --env preview --branch <name>";
 const SINGLE_PLANE_DEPLOY = [/\btrigger(?:\.dev@[\d.]+)?\s+deploy\b/, /\bdeploy\s+--(?!env preview --branch <name>)/];
 
 describe("the only supported Trigger.dev production release path is the paired tool", () => {
-  it("package.json exposes exactly ONE release script, trigger:release → the paired tool; no per-plane deploy script", () => {
+  it("package.json exposes exactly the paired release and the guarded three-plane recovery (RECOVERY-TOOLING-01); no per-plane deploy script", () => {
     const scripts = (JSON.parse(raw("package.json")) as { scripts: Record<string, string> }).scripts;
-    expect(Object.keys(scripts).filter((name) => /trigger|deploy|release/i.test(name))).toEqual(["trigger:release"]);
+    expect(Object.keys(scripts).filter((name) => /trigger|deploy|release|recover/i.test(name))).toEqual(["trigger:release", "trigger:recover"]);
     expect(scripts["trigger:release"]).toBe("node tools/trigger/deploy-release-pair.ts");
-    const touching = Object.entries(scripts).filter(([, command]) => /deploy|release-pair|trigger\.dev@/i.test(command)).map(([name]) => name);
-    expect(touching).toEqual(["trigger:release"]);
+    expect(scripts["trigger:recover"]).toBe("node tools/trigger/recover-release.ts");
+    const touching = Object.entries(scripts).filter(([, command]) => /deploy|release-pair|recover|trigger\.dev@/i.test(command)).map(([name]) => name);
+    expect(touching).toEqual(["trigger:release", "trigger:recover"]);
   });
 
   it("no operator surface teaches a single-plane deploy; the Preview deploy is the only exception and never names prod or an external id", () => {
@@ -157,5 +159,82 @@ describe("the dependency boundary exception is exactly the planner → the helpe
       from: { path: "^tools/trigger/release-pair\\.ts$" },
       to: { path: "^jobs/", pathNot: "^jobs/aws-signing-helper\\.ts$" },
     });
+  });
+});
+
+/**
+ * RECOVERY-TOOLING-01 — the guarded three-plane forward recovery (`npm run trigger:recover`) holds the release tool's
+ * source contract and adds its own: a reviewed, separate path that redeploys an APPROVED known-good commit; never a
+ * promote, a history rewrite, a worktree it creates or removes itself, the web, Vercel or the database; provider reads
+ * only through the CLI's MCP server in --readonly mode; one deploy call site; no generic bypass flag.
+ */
+describe("the guarded recovery tool's source contract", () => {
+  const RECOVERY = "tools/trigger/recover-release.ts";
+  const RECOVERY_PLANNER = "tools/trigger/recovery-plan.ts";
+  const imports = (file: string) => [...codeOf(file).matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "");
+
+  it("imports only node built-ins and the release unit's own modules", () => {
+    for (const specifier of imports(RECOVERY)) expect(specifier, `${RECOVERY} → ${specifier}`).toMatch(/^(node:[a-z_/]+|\.\/(release-pair|recovery-plan|deploy-release-pair)\.ts)$/);
+    for (const specifier of imports(RECOVERY_PLANNER)) expect(specifier, `${RECOVERY_PLANNER} → ${specifier}`).toBe("./release-pair.ts");
+  });
+
+  it.each([RECOVERY, RECOVERY_PLANNER])("%s: no env file or loader, no variable sync/show, no force, no SDK, no project ref, no secret; no database, web or Vercel path", (file) => {
+    const source = codeOf(file);
+    expect(source).not.toMatch(/\.env\.local|["'`]\.env["'`]|dotenv|parseEnv|loadEnvironment|tools\/db\/environment/);
+    expect(source).not.toMatch(/--show-values|show-values|env\s+pull|env-pull|syncEnvVars|--sync-env-vars["']/);
+    expect(source).not.toMatch(/["'`]--force["'`]/);
+    // The SDK's package name appears only as data (the known-good pin is read from package.json), never as an import.
+    expect(source).not.toMatch(/from\s+["']@trigger\.dev|proj_[a-z0-9]{8,}/);
+    expect(source).not.toMatch(/TRIGGER_SECRET_KEY|TRIGGER_ACCESS_TOKEN|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|DATABASE_[A-Z_]*URL/);
+    expect(source).not.toMatch(/from\s+["'](?:pg|drizzle-orm|@supabase\/[a-z-]+|@vercel\/[a-z-]+)["']|platform\/db|db:migrate/);
+    // .vercelignore is READ (the evidence must stay out of uploads); nothing deploys, promotes or rolls back a web.
+    expect(source).not.toMatch(/\bvercel\s+(deploy|promote|rollback|--prod)|api\.vercel\.com|["']vercel["']/i);
+    expect(detectSecrets(raw(file))).toEqual([]);
+  });
+
+  it("git is read-only (plus the release tool's fetch of origin/main): no push, reset, checkout, commit, rebase, worktree, branch or tag", () => {
+    const source = codeOf(RECOVERY);
+    const subcommands = new Set([...source.matchAll(/(?:deps\.git|gitValue)\((?:deps, )?[^,()]+, \["([a-z-]+)"/g)].map((match) => match[1]));
+    expect([...subcommands].sort()).toEqual(["cat-file", "diff", "fetch", "ls-tree", "merge-base", "rev-parse", "status", "symbolic-ref"]);
+    expect(source).not.toMatch(/["'](push|reset|checkout|commit|rebase|worktree|branch|tag|switch|stash|clean|cherry-pick)["']/);
+  });
+
+  it("never promotes: no argv anywhere contains promote (the planner's invariant refuses it)", () => {
+    expect(codeOf(RECOVERY)).not.toMatch(/promote/);
+    expect([...codeOf(RECOVERY_PLANNER).matchAll(/promote/g)]).toHaveLength(2); // the invariant check and its message
+  });
+
+  it("the CLI children get the sterile environment and no shell; provider reads use the MCP server in --readonly mode only", () => {
+    const source = codeOf(RECOVERY);
+    expect([...source.matchAll(/\bspawn\(/g)]).toHaveLength(2);
+    expect(source).toMatch(/spawn\(cli, \["mcp", "--project-ref", projectRef, "--readonly", "--skip-telemetry", "--log-level", "error"\], \{ cwd: directory, env, stdio: \["pipe", "pipe", "ignore"\], shell: false \}\)/);
+    expect(source).toMatch(/spawn\(cli, \[\.\.\.argv\], \{ cwd, env, stdio: \["ignore", "pipe", "pipe"\], shell: false \}\)/);
+    expect([...source.matchAll(/const env = sterileEnvironment\(process\.env\) as NodeJS\.ProcessEnv;/g)]).toHaveLength(2);
+    expect([...source.matchAll(/process\.env\b(?!\))/g)]).toEqual([]);
+    expect(source).not.toMatch(/\.\.\.process\.env/);
+    // Only read-only MCP tools are ever named; the write tools (deploy, trigger_task, cancel_run) never are.
+    expect(source).not.toMatch(/trigger_task|cancel_run|["']deploy["']\s*\}/);
+    expect([...source.matchAll(/tool: "([a-z_]+)"/g)].map((match) => match[1]).every((tool) => ["get_current_worker", "list_deploys", "list_runs"].includes(tool ?? ""))).toBe(true);
+  });
+
+  it("one deploy call site, no retry, no generic bypass flag; plan only unless the bound confirmation is given", () => {
+    const source = codeOf(RECOVERY);
+    expect([...source.matchAll(/deps\.spawnDeploy\(/g)]).toHaveLength(1);
+    expect(source).not.toMatch(/--only|--resume-sha|--skip-verification|--skip-checks|--no-verify|--yes|--force|retry\(/);
+    expect(source).toMatch(/if \(apply && confirmation !== recoveryConfirmation\(knownGood\)\) return \{ error:/);
+    expect(source).toMatch(/if \(!options\.apply\) \{[\s\S]{0,300}return \{ kind: "plan_only", plan, blockers \};/);
+  });
+
+  it("evidence is create-exclusive under its own operator-local directory, which stays out of git and Vercel", () => {
+    expect(codeOf(RECOVERY_PLANNER)).toMatch(/export const RECOVERY_EVIDENCE_DIRECTORY = "\.wrenkind-local\/evidence\/trigger-recovery";/);
+    expect(codeOf(RECOVERY)).toMatch(/writeFileSync\(file, contents, \{ mode: 0o600, flag: "wx" \}\)/);
+    expect(raw(".vercelignore").split("\n")).toContain("/.wrenkind-local/");
+  });
+
+  it("each plane's task directory is its trigger config's `dirs` (the inventory check names the right code)", () => {
+    for (const definition of RELEASE_PLANES) {
+      const dirs = /dirs: \["\.\/([^"]+)"\]/.exec(raw(definition.config))?.[1];
+      expect(`${dirs ?? ""}/`, definition.config).toBe(PLANE_TASK_DIRECTORIES[definition.plane]);
+    }
   });
 });

@@ -244,11 +244,20 @@ describe("execute: INTEGRATION, then INTELLIGENCE, then MAIN, one SHA", () => {
     const order = h.state.calls.filter((call) => call.startsWith("spawn") || call === "git fetch origin main");
     expect(order).toEqual(["git fetch origin main", "git fetch origin main", "spawn trigger.integration.config.ts", "git fetch origin main", "spawn trigger.intelligence.config.ts", "git fetch origin main", "spawn trigger.config.ts", "git fetch origin main"]);
     const evidence = evidenceOf(h);
-    expect(evidence).toMatchObject({ schema: "wrenkind.trigger-release-pair.v2", releaseSha: SHA, environment: "prod", planeOrder: ["integration", "intelligence", "main"], sameReleaseShaInEveryArgv: true, finalState: "ALIGNED", planesNotStarted: [] });
+    expect(evidence).toMatchObject({ schema: "wrenkind.trigger-release-pair.v3", releaseSha: SHA, environment: "prod", planeOrder: ["integration", "intelligence", "main"], sameReleaseShaInEveryArgv: true, finalState: "ALIGNED", planesNotStarted: [] });
     expect(evidence.planes.map((plane) => plane.outcome.state)).toEqual(["PASS", "PASS", "PASS"]);
     expect(String(evidence["limitation"])).toMatch(/not re-readable/);
     expect([...h.state.evidence.keys()][0]).toMatch(new RegExp(`-${SHA.slice(0, 12)}\\.json$`));
     expect(h.state.envFiles.every((entry) => entry.cleaned)).toBe(true);
+  });
+
+  it("RECOVERY-TOOLING-01: records each plane's worker content fingerprint (v3) from the build log; null when the line is absent", async () => {
+    const created = (version: string, hash: string) => `#19 1.107 {"message":"Background worker created","buildPlatform":"linux/amd64","createResponse":{"id":"worker_x","version":"${version}","contentHash":"${hash}","warnings":[]}}\n`;
+    const h = ready({ results: [deployed("20261022.1", 10, created("20261022.1", "a".repeat(32))), deployed("20261022.1", 1), deployed("20261022.1", 11, created("20261021.9", "b".repeat(32)))] });
+    expect(await run(h)).toMatchObject({ kind: "released", finalState: "ALIGNED" });
+    const planes = evidenceOf(h).planes as unknown as { plane: string; contentHash: string | null }[];
+    // A fingerprint for another version (main) is never attributed to this one; fingerprints never decide ALIGNED.
+    expect(planes.map((plane) => [plane.plane, plane.contentHash])).toEqual([["integration", "a".repeat(32)], ["intelligence", null], ["main", null]]);
   });
 
   it("refuses to execute when the evidence location is not git- and Vercel-excluded (nothing deployed)", async () => {

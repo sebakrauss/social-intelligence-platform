@@ -187,6 +187,22 @@ export function parseDeployOutput(output: string): ParsedDeployOutput | undefine
   return { version: first.version, taskCount: first.taskCount };
 }
 
+const WORKER_CREATED = /"message":"Background worker created"[^\n]*?"createResponse":\{[^{}]*?"version":"(\d{8}\.\d+)"[^{}]*?"contentHash":"([0-9a-f]{32,64})"/g;
+
+/**
+ * RECOVERY-TOOLING-01 — the worker content fingerprint Trigger.dev computed for `version`, read from the deploy output's
+ * build log line `{"message":"Background worker created", …, "createResponse":{"id":…,"version":…,"contentHash":…}}`
+ * (verified in TRIGGER-RECOVERY-REHEARSAL-02: redeploying identical source yields the identical contentHash). Undefined
+ * when the line is absent, names another version, or is ambiguous (several different hashes for the version).
+ */
+export function parseWorkerContentHash(output: string, version: string): string | undefined {
+  const text = output.replace(ANSI, "");
+  const hashes = new Set([...text.matchAll(WORKER_CREATED)].filter((match) => match[1] === version).map((match) => match[2] ?? ""));
+  if (hashes.size !== 1) return undefined;
+  const [hash] = hashes;
+  return hash === undefined || hash === "" ? undefined : hash;
+}
+
 export type PlaneOutcome =
   | { readonly state: "PASS"; readonly version: string; readonly taskCount: number }
   | { readonly state: "FAILED"; readonly reason: "exit_code" }

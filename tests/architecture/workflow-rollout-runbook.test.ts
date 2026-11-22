@@ -10,6 +10,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MIGRATION_LOCK_TIMEOUT_MS, MIGRATION_LOCK_TIMEOUT_RANGE_MS } from "@/tools/db/migrations";
 import { DEV_RECONCILE_CONFIRMATION, RECONCILE_TARGETS } from "@/tools/ops/workflow-reconcile-command";
+import { SWITCHES } from "@/platform/flags/registry";
+import { parseRecoveryArguments } from "@/tools/trigger/recover-release";
+import { KNOWN_WORKER_WEB_INCOMPATIBILITIES, RECOVERY_EVIDENCE_DIRECTORY, RECOVERY_ORDER, recoveryConfirmation } from "@/tools/trigger/recovery-plan";
 import { REPOSITORY_ROOT } from "../support/source-scan";
 
 const RUNBOOK = "design/workflow/runbooks/0034-comments-workflow-rollout.md";
@@ -84,6 +87,35 @@ describe("0034 rollout runbook ↔ release tooling", () => {
     expect(stepRow(text, 4)).toMatch(/from the clean release worktree/);
     // The upload boundary the web step relies on.
     expect(readFileSync(path.join(REPOSITORY_ROOT, ".vercelignore"), "utf8")).toMatch(/^\/tools\/perf\/$/m);
+  });
+
+  it("RECOVERY-TOOLING-01: worker recovery is the guarded forward recovery tool, and deployment stays blocked until its isolated rehearsal", () => {
+    const text = runbook();
+    expect(text).toMatch(/The block stays until \*\*`RECOVERY-REHEARSAL-03`\*\*/);
+    expect(text).toMatch(/\| Worker \| \*\*Forward recovery:\*\* `npm run trigger:recover`/);
+    expect(text).toMatch(/\*\*not yet rehearsed end to end\*\* → deployment stays blocked until `RECOVERY-REHEARSAL-03`/);
+    expect(text).toMatch(/\| Schema \| \*\*Never rolled back\.\*\*/);
+    const scripts = (JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> }).scripts;
+    expect(scripts["trigger:recover"]).toBe("node tools/trigger/recover-release.ts");
+    // The order, the worktree model, the evidence location and the confirmation are the tool's own.
+    expect(RECOVERY_ORDER).toEqual(["main", "intelligence", "integration"]);
+    expect(text).toContain("**Order: MAIN → INTELLIGENCE → INTEGRATION**");
+    expect(text).toMatch(/git worktree add --detach \.\.\/wrenkind-recovery-<sha8> <known-good sha>/);
+    expect(text).toMatch(/git worktree remove \.\.\/wrenkind-recovery-<sha8>/);
+    expect(text).toContain(`${RECOVERY_EVIDENCE_DIRECTORY}/<timestamp>-<sha12>.json`);
+    expect(text).toContain(`--confirm-recovery ${recoveryConfirmation("<sha12>")}`);
+    // Every recovery flag the plan and apply checkpoints name is one the tool accepts.
+    const rows = text.split("\n").filter((line) => /^\| R[34] \|/.test(line)).join(" ");
+    const flags = [...new Set([...rows.matchAll(/--[a-z][a-z-]+/g)].map((match) => match[0]))];
+    expect(flags.length).toBeGreaterThan(10);
+    for (const flag of flags) expect(parseRecoveryArguments([flag, "x"]), flag).not.toEqual({ error: `unknown argument: ${flag}` });
+    // Containment uses the real switch; the web goes first when the pairing is known to break; partial is never success.
+    expect(SWITCHES["ingestion.provider_pause"].key).toBe("ingestion.provider_pause");
+    expect(text).toContain("--key ingestion.provider_pause --qualifier <platform> --scope global --value '{\"paused\":true}'");
+    expect(KNOWN_WORKER_WEB_INCOMPATIBILITIES.map((rule) => rule.id)).toEqual(["workflow-0034"]);
+    expect(text).toMatch(/\(`workflow-0034`\) whatever is attested: \*\*roll the web back first\*\*/);
+    expect(text).toMatch(/A partial recovery is \*\*never\*\* reported as successful/);
+    expect(text).toMatch(/There is no automatic retry, reorder or restore/);
   });
 
   it("the audit exception's expiry is documented and never bypassed", () => {

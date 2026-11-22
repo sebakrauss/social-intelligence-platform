@@ -33,6 +33,7 @@ import {
   buildReleasePlan,
   checkHelperBuilds,
   evaluatePlaneResult,
+  parseWorkerContentHash,
   redactReleaseOutput,
   redactedTail,
   sanitizeArgv,
@@ -182,6 +183,8 @@ interface PlaneRecord {
   readonly timedOut: boolean;
   readonly interrupted: boolean;
   readonly outcome: PlaneOutcome;
+  /** The worker content fingerprint the build log reported for the deployed version (v3), or null when unreadable. */
+  readonly contentHash: string | null;
   readonly outputTail: readonly string[];
 }
 
@@ -251,7 +254,7 @@ async function deployPlan(plan: ReleasePlan, options: ReleaseOptions, deps: Rele
   }
 
   const evidence = {
-    schema: "wrenkind.trigger-release-pair.v2",
+    schema: "wrenkind.trigger-release-pair.v3",
     tool: TOOL,
     startedAt: started.toISOString(),
     finishedAt: deps.now().toISOString(),
@@ -285,6 +288,7 @@ function record(step: PlannedDeploy, startedAt: string, finishedAt: string, resu
     timedOut: result.timedOut,
     interrupted: result.interrupted,
     outcome,
+    contentHash: outcome.state === "PASS" ? (parseWorkerContentHash(result.output, outcome.version) ?? null) : null,
     outputTail: redactedTail(result.output),
   };
 }

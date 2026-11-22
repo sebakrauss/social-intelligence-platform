@@ -27,6 +27,7 @@
     "ops:workflow-reconcile": "node tools/ops/workflow-reconcile.ts",
     "secret-scan": "node tools/secret-scan/cli.ts",
     "trigger:release": "node tools/trigger/deploy-release-pair.ts",
+    "trigger:recover": "node tools/trigger/recover-release.ts",
     "audit": "npm audit",
     "verify": "npm run secret-scan && npm run audit && npm run lint && npm run typecheck && npm run boundaries && npm run test && npm run test:db && npm run build"
   },
