@@ -9,6 +9,23 @@ export const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "../..");
 
 const SOURCE = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/;
 
+/**
+ * RECOVERY-REHEARSAL-03A — the one place where a directory is a SEPARATE package rather than this repository's code.
+ * Provider rehearsals keep their synthetic Trigger.dev projects as untracked local evidence under tools/perf/, each with
+ * its own package.json, SDK pin and trigger config (e.g. tools/perf/workflow-wf1/TRIGGER-ROLLBACK-REHEARSAL-01/
+ * synthetic-project/). The repository is one package (CLAUDE.md §3), so those projects are not its application or
+ * release code and source guards skip them — exactly like spikes/, which no guard root includes. The rule is anchored to
+ * tools/perf/ only: a package.json anywhere else hides nothing, and tools/perf/ files that are not inside such a package
+ * (the WF-1 benchmark harness) are still scanned.
+ */
+export const SEPARATE_PACKAGE_EVIDENCE_ROOT = "tools/perf/";
+
+/** Whether a repository-relative directory is a separate package inside the local evidence root (skipped by guards). */
+export function isSeparateEvidencePackage(relativeDirectory: string, hasOwnPackageJson: boolean): boolean {
+  const normalized = relativeDirectory.split(path.sep).join("/");
+  return hasOwnPackageJson && normalized.startsWith(SEPARATE_PACKAGE_EVIDENCE_ROOT) && !normalized.split("/").includes("..");
+}
+
 /** Source files (repository-relative) under each root; a root may also be a single file. */
 export function sourceFiles(roots: readonly string[]): string[] {
   const out: string[] = [];
@@ -19,6 +36,7 @@ export function sourceFiles(roots: readonly string[]): string[] {
       if (SOURCE.test(relative)) out.push(relative);
       return;
     }
+    if (isSeparateEvidencePackage(relative, existsSync(path.join(absolute, "package.json")))) return;
     for (const entry of readdirSync(absolute)) {
       if (entry === "node_modules" || entry.startsWith(".")) continue;
       walk(path.join(relative, entry));
