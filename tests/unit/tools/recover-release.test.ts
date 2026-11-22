@@ -1,5 +1,5 @@
 /**
- * RECOVERY-TOOLING-01 / -02 — the recovery operator with every effect faked: git (repository and the prepared worktree),
+ * RECOVERY-TOOLING-01 / -02 / -03 — the recovery operator with every effect faked: git (repository and the prepared worktree),
  * files, the CLI version, the CLI's READ-ONLY MCP server (current worker, deployments, run counts) and the deploy spawn,
  * which simulates the provider's real external-id semantics (RECOVERY-REHEARSAL-03B): a deploy under an id the project
  * already holds builds NOTHING, exits 0 and says "Version … was already deployed for --external-id … — nothing to build".
@@ -47,7 +47,7 @@ type DeploySpec =
   | { readonly kind: "fail" }
   | { readonly kind: "timeout" }
   /** The operator's Ctrl-C during the build. `lands`: the provider finishes and activates it anyway. `hash`: the worker line seen before the interrupt (undefined = not seen). */
-  | { readonly kind: "interrupt"; readonly lands: boolean; readonly hash?: string | undefined }
+  | { readonly kind: "interrupt"; readonly lands: boolean; readonly hash?: string | undefined; readonly orphan?: string }
   /** Exit 0 and nothing the CLI normally prints: no version, no task count. */
   | { readonly kind: "silent" }
   /** Exit 0 reporting the version that was already active (nothing new). */
@@ -56,7 +56,7 @@ type DeploySpec =
 interface Provider {
   current: string;
   versions: number;
-  deploys: { version: string; status: string }[];
+  deploys: { version: string; status: string; shortCode?: string }[];
   inventory: Parameters<typeof currentWorkerText>[2];
   /** External id → version: the provider never rebuilds an id it holds (RECOVERY-REHEARSAL-03B). */
   byId: Map<string, string>;
@@ -90,6 +90,10 @@ function harness(overrides: { schema?: "v2" | "v3"; deploys?: Partial<Record<Rel
     envFiles: [] as { cleaned: boolean }[],
     /** Called after each deploy (simulate something else changing a plane). */
     afterDeploy: undefined as ((ref: string) => void) | undefined,
+    /** Called before each read-only MCP session answers (simulate a deployment appearing between reads). */
+    beforeInspect: undefined as ((ref: string, tools: readonly string[]) => void) | undefined,
+    /** A project's raw list_deploys answer, replacing the synthetic one (undefined = the call failed). */
+    deployListOverride: new Map<string, string | undefined>(),
   };
   state.files.set(`${ROOT}/.wrenkind-local/evidence/trigger-release-pair/${EVIDENCE_NAME}`, releaseRecord({ schema: overrides.schema ?? "v3" }));
   const helperFiles = new Map(AWS_SIGNING_HELPER_ARTIFACTS.map((artifact) => [`${WORKTREE}/${awsSigningHelperRelativePath(artifact)}`, new TextEncoder().encode(`synthetic ${artifact.directory}`)]));
@@ -158,12 +162,13 @@ function harness(overrides: { schema?: "v2" | "v3"; deploys?: Partial<Record<Rel
     },
     inspect: (_cli, ref, calls: readonly InspectCall[]) => {
       state.inspected.push({ ref, tools: calls.map((call) => call.tool) });
+      state.beforeInspect?.(ref, calls.map((call) => call.tool));
       const provider = state.providers[ref];
       return Promise.resolve(calls.map((call) => {
         if (provider === undefined) return undefined;
         const plane = PLANES.find((entry) => REFS[entry] === ref) ?? "main";
         if (call.tool === "get_current_worker") return currentWorkerText(provider.current, plane, provider.inventory);
-        if (call.tool === "list_deploys") return deployListText(provider.deploys);
+        if (call.tool === "list_deploys") return state.deployListOverride.has(ref) ? state.deployListOverride.get(ref) : deployListText(provider.deploys);
         return runListText(0);
       }));
     },
@@ -196,7 +201,13 @@ function harness(overrides: { schema?: "v2" | "v3"; deploys?: Partial<Record<Rel
       else if (spec.kind === "same_version") result = { exitCode: 0, output: deployOutput(provider.current, TASKS[plane], BASELINE[plane]), timedOut: false, interrupted: false };
       else if (spec.kind === "interrupt") {
         state.interruptAfterSpawns = state.spawns.length;
-        const version = spec.lands ? create(true) : `20261122.${String(provider.versions + 1)}`;
+        let version = spec.lands ? create(true) : `20261122.${String(provider.versions + 1)}`;
+        if (!spec.lands && spec.orphan !== undefined) {
+          // RECOVERY-REHEARSAL-03C: the server keeps the interrupted deployment (it consumed the version number), never active.
+          provider.versions += 1;
+          version = `20261122.${String(provider.versions)}`;
+          provider.deploys.unshift({ version, status: spec.orphan, shortCode: "k8hqb03l" });
+        }
         const seen = "hash" in spec ? spec.hash : BASELINE[plane];
         const line = seen === undefined ? "" : `#19 1.1 {"message":"Background worker created","buildPlatform":"linux/amd64","targetPlatform":"linux/amd64","createResponse":{"id":"worker_synthetic","version":"${version}","contentHash":"${seen}","warnings":[]}}\n`;
         result = { exitCode: null, output: `◇  Successfully built code\n${line}`, timedOut: false, interrupted: true };
@@ -777,5 +788,203 @@ describe("RECOVERY-TOOLING-02: the recovery id", () => {
     // The development environment is never pinned; an unidentified deployed run is refused.
     expect(crossPlanePin(jobRelease({ environmentType: "DEVELOPMENT", externalDeploymentId: undefined }))).toEqual({ allowed: true, externalDeploymentId: undefined });
     expect(crossPlanePin(jobRelease({ environmentType: "PRODUCTION", externalDeploymentId: undefined }))).toEqual({ allowed: false });
+  });
+});
+
+/**
+ * RECOVERY-TOOLING-03 — RECOVERY-REHEARSAL-03C finding G1: an interrupted CLI does not cancel its server-side deployment.
+ * The provider kept the interrupted INTELLIGENCE build BUILDING (~15 min, then TIMED_OUT) while every current worker looked
+ * healthy, and PLAN ONLY --continue said "Every apply prerequisite is met". No plan or apply may proceed while any
+ * deployment of an approved destination project is not terminal, unreadable or listed incompletely.
+ */
+describe("RECOVERY-TOOLING-03: remote deployments in progress", () => {
+  const PREREQUISITES_MET = "Every apply prerequisite is met";
+  const building = (h: ReturnType<typeof harness>, plane: ReleasePlane, status = "BUILDING", shortCode = "k8hqb03l") => {
+    const provider = providerOf(h, plane);
+    provider.versions += 1;
+    provider.deploys.unshift({ version: `20261122.${String(provider.versions)}`, status, shortCode });
+    return `20261122.${String(provider.versions)}`;
+  };
+  const setStatus = (h: ReturnType<typeof harness>, plane: ReleasePlane, shortCode: string, status: string) => {
+    const entry = providerOf(h, plane).deploys.find((deploy) => deploy.shortCode === shortCode);
+    if (entry === undefined) throw new Error(`no deployment ${shortCode}`);
+    entry.status = status;
+  };
+  const planWith = { ...PLAN_ONLY, recoveryId: RID, expectations: APPLY.expectations };
+
+  it.each(PLANES)("a BUILDING deployment on %s blocks PLAN ONLY and APPLY (the plane, deployment, version, status and required action are named)", async (plane) => {
+    const h = harness();
+    const version = building(h, plane);
+    const planned = await runRecovery(planWith, h.deps);
+    expect(planned.kind).toBe("plan_only");
+    if (planned.kind !== "plan_only") return;
+    expect(planned.blockers).toHaveLength(1);
+    const [blocker] = planned.blockers;
+    for (const phrase of [`${plane}: project ${REFS[plane]}`, `deployment k8hqb03l v${version} BUILDING is NOT terminal`, "recovery cannot proceed while a remote deployment is unresolved", "wait for a terminal outcome (DEPLOYED, FAILED, CANCELED or TIMED_OUT)", "plan again with fresh metadata", "never cancel or force it"]) expect(blocker, phrase).toContain(phrase);
+    const log = h.state.logs.join("\n");
+    expect(log).not.toContain(PREREQUISITES_MET);
+    expect(log).toContain(`UNRESOLVED — k8hqb03l v${version} BUILDING: not terminal (blocks)`);
+    const applied = await runRecovery(APPLY, h.deps);
+    expect(applied).toMatchObject({ kind: "refused", reason: "apply prerequisites are not met; nothing was deployed" });
+    expect(h.state.spawns).toEqual([]);
+    expect(h.state.evidence.size).toBe(0);
+  });
+
+  it.each(["PENDING", "INSTALLING", "DEPLOYING"])("every current worker is healthy and on the expected version, but another deployment is %s: blocked (a healthy worker never proves no build is in progress)", async (status) => {
+    const h = harness();
+    building(h, "main", status, "zz9abcde");
+    for (const plane of PLANES) expect(providerOf(h, plane).current).toBe(BAD_VERSION);
+    const planned = await runRecovery(planWith, h.deps);
+    expect(planned).toMatchObject({ kind: "plan_only", blockers: [expect.stringContaining(`deployment zz9abcde v20261122.2 ${status} is NOT terminal`) as unknown] });
+    expect(h.state.logs.join("\n")).not.toContain(PREREQUISITES_MET);
+  });
+
+  it("03C regression: interrupted during INTELLIGENCE, the provider keeps BUILDING → the continuation plan and apply block; once TIMED_OUT a fresh plan proceeds, INTEGRATION is not redeployed, INTELLIGENCE gets a NEW build", async () => {
+    const h = harness({ deploys: { intelligence: [{ kind: "interrupt", lands: false, orphan: "BUILDING" }, { kind: "ok" }] } });
+    expect(await runRecovery(APPLY, h.deps)).toMatchObject({ finalState: "STOPPED_PARTIAL" });
+    const first = firstRecord(h);
+    expect(lastEvidence(h).planes.map((plane) => plane.state)).toEqual(["RECOVERED", "DEPLOY_UNKNOWN", "NOT_STARTED"]);
+    expect(providerOf(h, "intelligence").current).toBe(BAD_VERSION);
+    h.state.interruptAfterSpawns = Infinity;
+    h.state.spawns.length = 0;
+    h.state.logs.length = 0;
+    const continuation = { continueFrom: first, expectations: { intelligence: BAD_VERSION, main: BAD_VERSION } };
+    // Exactly the 03C state: INTELLIGENCE's current worker is healthy and unchanged; its interrupted deployment is still BUILDING.
+    const planned = await runRecovery({ ...PLAN_ONLY, ...continuation }, h.deps);
+    expect(planned).toMatchObject({ kind: "plan_only", blockers: [expect.stringMatching(/^intelligence: project .*deployment k8hqb03l v20261122\.2 BUILDING is NOT terminal/) as unknown] });
+    expect(h.state.logs.join("\n")).not.toContain(PREREQUISITES_MET);
+    expect(await runRecovery({ ...APPLY, ...continuation }, h.deps)).toMatchObject({ kind: "refused" });
+    expect(h.state.spawns).toEqual([]);
+    expect(h.state.evidence.size).toBe(1);
+    // The provider times it out: terminal, never a worker. A NEW read-only assessment (fresh metadata) may proceed.
+    setStatus(h, "intelligence", "k8hqb03l", "TIMED_OUT");
+    h.state.logs.length = 0;
+    expect(await runRecovery({ ...PLAN_ONLY, ...continuation }, h.deps)).toMatchObject({ kind: "plan_only", blockers: [] });
+    const log = h.state.logs.join("\n");
+    expect(log).toContain(PREREQUISITES_MET);
+    expect(log).toContain("terminal and never a worker (not a recovery): k8hqb03l v20261122.2 TIMED_OUT");
+    expect(await runRecovery({ ...APPLY, ...continuation }, h.deps)).toMatchObject({ kind: "recovery", finalState: "RECOVERED" });
+    expect(deployedPlanes(h)).toEqual(["trigger.intelligence.config.ts", "trigger.config.ts"]);
+    expect(lastEvidence(h).planes.map((plane) => [plane.plane, plane.state, plane.resultingVersion, plane.provenance])).toEqual([["integration", "ALREADY_RECOVERED", "20261122.2", null], ["intelligence", "RECOVERED", "20261122.3", "created"], ["main", "RECOVERED", "20261122.2", "created"]]);
+  });
+
+  it("a FAILED (or CANCELED) terminal deployment never masquerades as recovered: it does not block, the plan says so, and the plane is deployed and verified", async () => {
+    for (const status of ["FAILED", "CANCELED"]) {
+      const h = harness({ deploys: { intelligence: [{ kind: "interrupt", lands: false, orphan: "BUILDING" }, { kind: "ok" }] } });
+      await runRecovery(APPLY, h.deps);
+      const first = firstRecord(h);
+      setStatus(h, "intelligence", "k8hqb03l", status);
+      h.state.interruptAfterSpawns = Infinity;
+      h.state.spawns.length = 0;
+      h.state.logs.length = 0;
+      const continuation = { continueFrom: first, expectations: { intelligence: BAD_VERSION, main: BAD_VERSION } };
+      expect(await runRecovery({ ...PLAN_ONLY, ...continuation }, h.deps)).toMatchObject({ blockers: [] });
+      expect(h.state.logs.join("\n")).toContain(`terminal and never a worker (not a recovery): k8hqb03l v20261122.2 ${status}`);
+      expect(await runRecovery({ ...APPLY, ...continuation }, h.deps)).toMatchObject({ finalState: "RECOVERED" });
+      expect(lastEvidence(h).planes[1]).toMatchObject({ state: "RECOVERED", resultingVersion: "20261122.3", provenance: "created" });
+    }
+  });
+
+  it("unreadable, unknown-status, malformed or truncated deployment metadata: refuse (absence of an active build is never assumed)", async () => {
+    const cases: [string, (h: ReturnType<typeof harness>) => void, RegExp][] = [
+      ["the call failed", (h) => h.state.deployListOverride.set(REFS.intelligence, undefined), /intelligence: project .*: the deployment list could not be read; the absence of an in-progress deployment is not established/],
+      ["a status this tool does not know", (h) => building(h, "main", "SUSPENDED", "q1w2e3r4"), /main: project .*: deployment q1w2e3r4 v20261122\.2 SUSPENDED has a status this tool does not recognize \(treated as in progress\)/],
+      ["the header and entries disagree", (h) => h.state.deployListOverride.set(REFS.integration, "Found 3 deployments\n\n- code0 | v20261122.1 | DEPLOYED | x"), /integration: project .*: the deployment list could not be read/],
+      ["an unparseable status line", (h) => h.state.deployListOverride.set(REFS.integration, "Found 1 deployment\n\n- code0 | v20261122.1 | building | x"), /integration: project .*: the deployment list could not be read/],
+      ["more pages than were read", (h) => h.state.deployListOverride.set(REFS.main, deployListText(providerOf(h, "main").deploys, { morePages: true })), /main: project .*: the deployment list is truncated \(2 listed, more pages exist\); the absence of an in-progress deployment is not established/],
+    ];
+    for (const [label, mutate, message] of cases) {
+      const h = harness();
+      mutate(h);
+      const planned = await runRecovery(planWith, h.deps);
+      expect(planned.kind, label).toBe("plan_only");
+      expect(JSON.stringify(planned), label).toMatch(message);
+      expect(h.state.logs.join("\n"), label).not.toContain(PREREQUISITES_MET);
+      expect(await runRecovery(APPLY, h.deps), label).toMatchObject({ kind: "refused" });
+      expect(h.state.spawns, label).toEqual([]);
+    }
+  });
+
+  it("an active build on the listing is reported even when the list is also truncated", async () => {
+    const h = harness();
+    building(h, "integration");
+    h.state.deployListOverride.set(REFS.integration, deployListText(providerOf(h, "integration").deploys, { morePages: true }));
+    expect(await runRecovery(planWith, h.deps)).toMatchObject({ blockers: [expect.stringContaining("deployment k8hqb03l v20261122.2 BUILDING is NOT terminal") as unknown] });
+  });
+
+  it("a deployment that appears after PLAN ONLY is caught by the apply: refused by its own fresh read, or stopped before the first deploy", async () => {
+    const after = harness();
+    expect(await runRecovery(planWith, after.deps)).toMatchObject({ blockers: [] });
+    building(after, "main");
+    expect(await runRecovery(APPLY, after.deps)).toMatchObject({ kind: "refused" });
+    expect(after.state.spawns).toEqual([]);
+    // Appears after the apply's own plan read, before the first plane: the fresh check before INTEGRATION stops it.
+    const race = harness();
+    let deployLists = 0;
+    race.state.beforeInspect = (_ref, tools) => {
+      if (tools.includes("list_deploys")) deployLists += 1;
+      if (deployLists === 3 && tools.includes("list_deploys") && _ref === REFS.main) building(race, "intelligence");
+    };
+    expect(await runRecovery(APPLY, race.deps)).toMatchObject({ kind: "recovery", finalState: "STOPPED_NOTHING_RECOVERED" });
+    expect(race.state.spawns).toEqual([]);
+    const evidence = lastEvidence(race);
+    expect(evidence.planes.map((plane) => plane.state)).toEqual(["NOT_STARTED", "NOT_STARTED", "NOT_STARTED"]);
+    expect(evidence.planes[0]?.problems.join()).toMatch(/intelligence: project .*deployment k8hqb03l v20261122\.2 BUILDING is NOT terminal/);
+    expect(evidence["stopReason"]).toMatch(/^integration: NOT_STARTED — intelligence: project /);
+  });
+
+  it("a deployment that appears between planes stops before the next deploy; the recovered plane stays recovered (partial, honestly)", async () => {
+    const h = harness();
+    h.state.afterDeploy = (ref) => {
+      if (ref === REFS.integration) building(h, "main", "PENDING", "p0p0p0p0");
+    };
+    expect(await runRecovery(APPLY, h.deps)).toMatchObject({ finalState: "STOPPED_PARTIAL" });
+    expect(deployedPlanes(h)).toEqual(["trigger.integration.config.ts"]);
+    const evidence = lastEvidence(h);
+    expect(evidence.planes.map((plane) => plane.state)).toEqual(["RECOVERED", "NOT_STARTED", "NOT_STARTED"]);
+    expect(evidence.planes[1]?.problems.join()).toMatch(/main: project .*deployment p0p0p0p0 v20261122\.2 PENDING is NOT terminal/);
+    expect(h.state.logs.join("\n")).toMatch(/STOP before INTELLIGENCE: main: project /);
+    // The fresh checks ran on all three projects before every plane that started.
+    expect(h.state.logs.filter((line) => line.startsWith("remote deployments: none in progress on any approved project"))).toEqual(["remote deployments: none in progress on any approved project (read fresh before INTEGRATION)"]);
+  });
+
+  it("a continuation stopped by the guard carries the recovered plane and the unseen deploy forward, so the next continuation neither redeploys INTEGRATION nor loses the adoption evidence", async () => {
+    const h = harness({ deploys: { intelligence: [{ kind: "interrupt", lands: false, orphan: "BUILDING" }, { kind: "ok" }] } });
+    await runRecovery(APPLY, h.deps);
+    const first = firstRecord(h);
+    setStatus(h, "intelligence", "k8hqb03l", "TIMED_OUT");
+    h.state.interruptAfterSpawns = Infinity;
+    h.state.spawns.length = 0;
+    const continuation = { expectations: { intelligence: BAD_VERSION, main: BAD_VERSION } };
+    // A build appears on MAIN after the continuation's own plan read, before its first plane.
+    let lists = 0;
+    h.state.beforeInspect = (ref, tools) => {
+      if (tools.includes("list_deploys")) lists += 1;
+      // The 4th list is the apply's first fresh check (INTEGRATION), after the plan read all three projects.
+      if (lists === 4 && ref === REFS.integration && tools.includes("list_deploys")) building(h, "main", "BUILDING", "m4m4m4m4");
+    };
+    expect(await runRecovery({ ...APPLY, ...continuation, continueFrom: first }, h.deps)).toMatchObject({ finalState: "STOPPED_PARTIAL" });
+    expect(h.state.spawns).toEqual([]);
+    const second = [...h.state.evidence.keys()][1] ?? "";
+    const stopped = lastEvidence(h);
+    expect(stopped.planes.map((plane) => [plane.state, plane.resultingVersion])).toEqual([["RECOVERED", "20261122.2"], ["DEPLOY_UNKNOWN", null], ["NOT_STARTED", null]]);
+    expect(stopped.planes[0]?.problems.join()).toContain(`not attempted in this run: RECOVERED carried from ${first} (not re-verified here)`);
+    expect(stopped.planes[1]?.observedWorkers).toEqual([{ version: "20261122.2", contentHash: BASELINE.intelligence }]);
+    // MAIN's build finishes; the next continuation (from the NEW record) re-verifies INTEGRATION and deploys the rest.
+    h.state.beforeInspect = undefined;
+    setStatus(h, "main", "m4m4m4m4", "FAILED");
+    expect(await runRecovery({ ...PLAN_ONLY, ...continuation, continueFrom: second }, h.deps)).toMatchObject({ blockers: [] });
+    expect(await runRecovery({ ...APPLY, ...continuation, continueFrom: second }, h.deps)).toMatchObject({ finalState: "RECOVERED" });
+    expect(deployedPlanes(h)).toEqual(["trigger.intelligence.config.ts", "trigger.config.ts"]);
+    expect(lastEvidence(h).planes.map((plane) => plane.state)).toEqual(["ALREADY_RECOVERED", "RECOVERED", "RECOVERED"]);
+  });
+
+  it("a zero-exit no-op is still never a recovery, and only read-only tools are used by the guard", async () => {
+    const h = harness({ deploys: { integration: [{ kind: "silent" }] } });
+    expect(await runRecovery(APPLY, h.deps)).toMatchObject({ finalState: "STOPPED_NOTHING_RECOVERED" });
+    expect(lastEvidence(h).planes[0]).toMatchObject({ state: "DEPLOY_UNKNOWN" });
+    expect(h.state.inspected.flatMap((entry) => entry.tools).every((tool) => READ_ONLY_TOOLS.has(tool))).toBe(true);
+    // Plan (3 projects) + the fresh check before INTEGRATION (3 projects).
+    expect(h.state.inspected.filter((entry) => entry.tools.includes("list_deploys")).map((entry) => entry.ref)).toEqual([...PLANES.map((plane) => REFS[plane]), ...PLANES.map((plane) => REFS[plane])]);
   });
 });

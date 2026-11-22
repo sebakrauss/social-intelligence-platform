@@ -1,5 +1,5 @@
 /**
- * RECOVERY-TOOLING-01 / -02 — the guarded three-plane Trigger.dev FORWARD RECOVERY operator. Pure planning and
+ * RECOVERY-TOOLING-01 / -02 / -03 — the guarded three-plane Trigger.dev FORWARD RECOVERY operator. Pure planning and
  * verification: tools/trigger/recovery-plan.ts. It redeploys the source of a previously ALIGNED release (the approved
  * known-good commit) to INTEGRATION, INTELLIGENCE and MAIN as NEW versions under ONE recovery id per attempt (never the
  * known-good SHA, which the provider never rebuilds) — never a promote of an older version, never --force, never a
@@ -25,7 +25,10 @@
  * fingerprint. A deploy that the provider answers with "already deployed … nothing to build" created nothing: it is
  * RECOVERY_ID_IN_USE, never a recovery (except, in an explicit continuation, for a plane whose earlier deploy under the
  * SAME id had no known outcome, when the provider confirms the CURRENT deployment holds it). The FIRST unexpected
- * result stops the run: no automatic retry, no automatic restore of a changed plane. One create-exclusive record is
+ * result stops the run: no automatic retry, no automatic restore of a changed plane. No plan is ready and no plane starts while
+ * any deployment of the three approved projects is not terminal, or their deployment lists are unreadable or truncated
+ * (RECOVERY-TOOLING-03: an interrupted CLI does not cancel its server-side build — RECOVERY-REHEARSAL-03C); the apply
+ * re-reads them before every plane. One create-exclusive record is
  * written under .wrenkind-local/evidence/trigger-recovery/; a stopped run is continued only explicitly (--continue),
  * with the SAME recovery id (never a new one) and every plane's state read fresh.
  *
@@ -48,11 +51,14 @@ import {
   RecoveryPlanError,
   WORKER_CONTRACT_PATHS,
   assertRecoveryPlanInvariants,
+  assessDeploymentActivity,
   assessRecoveryIdentity,
   assessWebCompatibility,
   buildRecoveryPlan,
+  carriesForward,
   classifyRecoveryDeploy,
   deployListPeriod,
+  deploymentActivityBlocker,
   inventoryProblems,
   isEvidenceFileName,
   isRecoveryIdFormat,
@@ -72,6 +78,7 @@ import {
   verifyConfirmedDeployment,
   verifyRecoveredPlane,
   type CommitRelation,
+  type DeploymentActivity,
   type FingerprintStatus,
   type KnownGoodRelease,
   type ObservedWorker,
@@ -147,6 +154,8 @@ export interface PlaneState {
   /** The record (release or recovery) that created the active version, when local evidence names it. */
   readonly recordedAs: string | undefined;
   readonly knownGoodDeployment: "DEPLOYED" | "MISSING" | "UNREADABLE";
+  /** Every listed deployment of the project, terminal or not (RECOVERY-TOOLING-03): never inferred from the current worker. */
+  readonly deployments: DeploymentActivity;
   readonly queue: Readonly<Record<string, string>>;
 }
 
@@ -359,8 +368,23 @@ async function readPlane(deps: RecoveryDependencies, cli: string, step: Recovery
     worker,
     recordedAs: recorded.get(`${step.projectRef}/${worker.version}`),
     knownGoodDeployment: deploys === undefined ? "UNREADABLE" : knownGood?.status === "DEPLOYED" ? "DEPLOYED" : "MISSING",
+    deployments: assessDeploymentActivity(deploys, worker.version),
     queue,
   };
+}
+
+/**
+ * Fresh and read-only, on EVERY approved destination project: why no deploy may start now (empty = no deployment is in
+ * progress anywhere). Runs before every plane of an apply; a plan approved earlier never overrides it.
+ */
+async function remoteDeploymentBlockers(deps: RecoveryDependencies, cli: string, plan: RecoveryPlan, period: string): Promise<string[]> {
+  const blockers: string[] = [];
+  for (const step of plan.steps) {
+    const [text] = await deps.inspect(cli, step.projectRef, [{ tool: "list_deploys", period }]);
+    const blocker = deploymentActivityBlocker(step.plane, step.projectRef, assessDeploymentActivity(parseDeployList(text ?? ""), undefined));
+    if (blocker !== undefined) blockers.push(blocker);
+  }
+  return blockers;
 }
 
 async function readCurrentWorker(deps: RecoveryDependencies, cli: string, projectRef: string): Promise<WorkerInventory | undefined> {
@@ -381,6 +405,8 @@ interface Context {
   readonly web: WebVerdict;
   readonly migrationsAfterKnownGood: readonly string[];
   readonly prior: PriorRecovery | undefined;
+  /** The deploy-list window (back to the known-good release) for every deployment read. */
+  readonly period: string;
   readonly states: readonly PlaneState[];
   readonly blockers: readonly string[];
   readonly intents: readonly PlaneIntent[] | undefined;
@@ -490,6 +516,11 @@ export async function runRecovery(options: RecoveryOptions, deps: RecoveryDepend
     if (identity.kind === "NEW" && identity.proposed) blockers.push(`--recovery-id ${identity.recoveryId} is required (the new recovery id this plan proposes; copy it exactly)`);
     if (web.kind === "REFUSED") blockers.push(`web: ${web.reason}`);
     if (web.kind === "REQUIRES_WEB_ROLLBACK") blockers.push(...web.reasons.map((reason) => `web rollback required first — ${reason}`));
+    // A remote deployment that is not terminal blocks everything (RECOVERY-REHEARSAL-03C G1), whatever the current worker shows.
+    for (const state of states) {
+      const blocker = deploymentActivityBlocker(state.plane, plan.steps.find((step) => step.plane === state.plane)?.projectRef ?? "?", state.deployments);
+      if (blocker !== undefined) blockers.push(blocker);
+    }
     for (const state of states) {
       if (state.knownGoodDeployment !== "DEPLOYED") blockers.push(`${state.plane}: the known-good deployment ${plan.steps.find((step) => step.plane === state.plane)?.knownGoodVersion ?? "?"} is ${state.knownGoodDeployment === "MISSING" ? "not listed as DEPLOYED" : "unreadable"}; the approved release no longer matches the provider, and triggers pinned to the known-good id (a web pinned to it, draining runs) would find no deployment`);
     }
@@ -510,7 +541,7 @@ export async function runRecovery(options: RecoveryOptions, deps: RecoveryDepend
     }
 
     const context: Context = {
-      plan, identity, release, releaseEvidenceSha256: createHash("sha256").update(evidenceBytes).digest("hex"), toolCommit, originMain, worktree, web, migrationsAfterKnownGood, prior, states, blockers,
+      plan, identity, release, releaseEvidenceSha256: createHash("sha256").update(evidenceBytes).digest("hex"), toolCommit, originMain, worktree, web, migrationsAfterKnownGood, prior, period, states, blockers,
       intents: resolved.ok ? resolved.intents : undefined,
     };
     for (const line of planLines(options, context)) deps.log(line);
@@ -543,6 +574,7 @@ function planLines(options: RecoveryOptions, context: Context): string[] {
     const state = states.find((entry) => entry.plane === step.plane);
     lines.push(`  ${step.plane.toUpperCase()}: project ${step.projectRef} · active ${state?.worker.version ?? "?"}${state?.recordedAs === undefined ? " (no local record)" : ` = ${state.recordedAs}`} · known-good ${step.knownGoodVersion} (${state?.knownGoodDeployment ?? "?"})`);
     lines.push(`      expects ${String(step.expectedTasks)} tasks under ${step.taskDirectory} · fingerprint baseline ${step.baselineContentHash ?? "NOT RECORDED"} · runs ${Object.entries(state?.queue ?? {}).map(([status, count]) => `${status} ${count}`).join(", ")}`);
+    lines.push(`      remote deployments (${context.period}): ${deploymentsLine(state?.deployments)}`);
     lines.push(`      under the recovery id: ${planeIdentityLine(context, step.plane, state)}`);
     lines.push(`      trigger ${sanitizeArgv(step.argv).join(" ")}`);
   }
@@ -552,8 +584,21 @@ function planLines(options: RecoveryOptions, context: Context): string[] {
   lines.push(`  database:           never rolled back. Migrations newer than the known-good commit: ${context.migrationsAfterKnownGood.length === 0 ? "none" : context.migrationsAfterKnownGood.map((name) => path.basename(name)).join(", ")} — they must stay additive for the older worker (verify with the runbook)`);
   lines.push(`  approvals:          PO approval of this plan · ingestion paused and read back (--attest-ingestion-paused) · web rolled back first when required · the web's relay-nudge pin TRIGGER_EXTERNAL_DEPLOYMENT_ID absent, the known-good SHA or the recovery id — never the release recovered from (--attest-web-relay-pin) · --recovery-id ${plan.recoveryId} · --expect-<plane>-version for every plane deployed · --apply --confirm-recovery ${recoveryConfirmation(plan.knownGoodSha)}`);
   lines.push("  verification:       per plane, before the next: exit 0, a NEW version (an \"already deployed … nothing to build\" answer created nothing), known-good task count; provider current worker = that version; inventory in the plane's own directory; fingerprint = baseline (when recorded)");
+  lines.push("  remote deployments: re-read on all three projects before every plane; any deployment not terminal (or unreadable, or a truncated list) stops the apply before the next deploy — never cancelled, forced or retried by this tool");
   lines.push("  afterwards:         runs on the previous versions drain (EXECUTING/QUEUED/DELAYED watched; runs pinned to the release recovered from still execute it), ingestion resumed, Workflow: reconcile before any re-forward of the web");
   return lines.map((line) => redactReleaseOutput(line));
+}
+
+function deploymentsLine(activity: DeploymentActivity | undefined): string {
+  if (activity === undefined) return "?";
+  if (activity.kind === "UNREADABLE") return "UNREADABLE — the absence of an in-progress deployment is not established (blocks)";
+  if (activity.kind === "INCOMPLETE") return `INCOMPLETE — ${String(activity.listed)} listed and more pages exist; the absence of an in-progress deployment is not established (blocks)`;
+  if (activity.kind === "UNRESOLVED") {
+    const entries = [...activity.inProgress.map((entry) => `${entry.shortCode} v${entry.version} ${entry.status}`), ...activity.unrecognized.map((entry) => `${entry.shortCode} v${entry.version} ${entry.status} (unrecognized status)`)];
+    return `UNRESOLVED — ${entries.join(", ")}: not terminal (blocks); inspect and wait for a terminal outcome, then plan again`;
+  }
+  const unsuccessful = activity.unsuccessful.map((entry) => `${entry.shortCode} v${entry.version} ${entry.status}`);
+  return `${String(activity.listed)} listed, none in progress${unsuccessful.length > 0 ? `; terminal and never a worker (not a recovery): ${unsuccessful.join(", ")}` : ""}`;
 }
 
 function identityLine(identity: RecoveryIdentity): string {
@@ -612,6 +657,23 @@ async function applyRecovery(options: RecoveryOptions, deps: RecoveryDependencie
     expectedTasks: step.expectedTasks, baselineContentHash: step.baselineContentHash, intent: intent?.mode ?? ("none" as const),
   });
 
+  /**
+   * A plane this run does not attempt: NOT_STARTED, unless the continued record holds what a later continuation needs —
+   * a recovered plane (re-verified then, never redeployed) or a deploy whose outcome was not seen (adoption stays possible).
+   * Those are carried forward unchanged and marked as not re-verified here.
+   */
+  const notAttempted = (step: RecoveryStep, intent: PlaneIntent | undefined, problems: readonly string[]): PlaneRecord => {
+    const prior = context.prior;
+    const before = prior?.planes[step.plane];
+    if (prior !== undefined && before !== undefined && carriesForward(before.state)) {
+      return {
+        ...base(step, intent), versionBefore: before.versionBefore, state: before.state, resultingVersion: before.resultingVersion, contentHash: null, fingerprint: before.fingerprint, provenance: null,
+        observedWorkers: before.observedWorkers, problems: [...problems, `not attempted in this run: ${before.state} carried from ${prior.fileName} (not re-verified here)`], deploy: null,
+      };
+    }
+    return { ...base(step, intent), versionBefore: null, state: "NOT_STARTED", resultingVersion: null, contentHash: null, fingerprint: null, provenance: null, observedWorkers: [], problems, deploy: null };
+  };
+
   for (const step of plan.steps) {
     const intent = intents.find((entry) => entry.plane === step.plane);
     const stop = (state: PlaneRecoveryState, versionBefore: string | null, problems: readonly string[], extra: Partial<PlaneRecord> = {}): void => {
@@ -619,19 +681,33 @@ async function applyRecovery(options: RecoveryOptions, deps: RecoveryDependencie
       run.stopReason = `${step.plane}: ${state}${problems.length > 0 ? ` — ${problems.join("; ")}` : ""}`;
       deps.log(`STOP at ${step.plane.toUpperCase()}: ${state}. Nothing further is deployed; no plane is restored automatically.`);
     };
+    /** Stop BEFORE this plane (nothing of it was attempted). */
+    const halt = (problems: readonly string[]): void => {
+      const record = notAttempted(step, intent, problems);
+      records.push(record);
+      run.stopReason = `${step.plane}: ${record.state} — ${problems.join("; ")}`;
+      deps.log(`STOP before ${step.plane.toUpperCase()}: ${problems.join("; ")}. Nothing further is deployed; no plane is restored automatically.`);
+    };
     if (run.stopReason !== null || intent === undefined) {
-      records.push({ ...base(step, intent), versionBefore: null, state: "NOT_STARTED", resultingVersion: null, contentHash: null, fingerprint: null, provenance: null, observedWorkers: [], problems: [], deploy: null });
+      records.push(notAttempted(step, intent, []));
       continue;
     }
     if (deps.interrupted()) {
-      stop("NOT_STARTED", null, ["operator interrupt"]);
+      halt(["operator interrupt"]);
       continue;
     }
     const identity = worktreeIdentityProblems(deps, context.worktree, plan.knownGoodSha);
     if (identity.length > 0) {
-      stop("NOT_STARTED", null, identity);
+      halt(identity);
       continue;
     }
+    // Fresh provider metadata before EVERY plane: a deployment that appeared after the plan, or between planes, stops here.
+    const remote = await remoteDeploymentBlockers(deps, options.cli, plan, context.period);
+    if (remote.length > 0) {
+      halt(remote);
+      continue;
+    }
+    deps.log(`remote deployments: none in progress on any approved project (read fresh before ${step.plane.toUpperCase()})`);
     const before = await readCurrentWorker(deps, options.cli, step.projectRef);
     if (before === undefined) {
       stop("UNEXPECTED_ACTIVE_VERSION", null, ["the current worker could not be read before this plane"]);

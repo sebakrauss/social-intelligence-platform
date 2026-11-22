@@ -69,8 +69,13 @@ export function currentWorkerText(version: string, plane: ReleasePlane, options:
   ].join("\n");
 }
 
-export function deployListText(entries: readonly { readonly version: string; readonly status: string }[]): string {
-  return [`Found ${String(entries.length)} deployment${entries.length === 1 ? "" : "s"}`, "", ...entries.map((entry, index) => `- code${String(index)} | v${entry.version} | ${entry.status} | 2026-11-13 00:02:00 UTC`)].join("\n");
+export function deployListText(entries: readonly { readonly version: string; readonly status: string; readonly shortCode?: string }[], options: { readonly morePages?: boolean } = {}): string {
+  return [
+    `Found ${String(entries.length)} deployment${entries.length === 1 ? "" : "s"}`,
+    "",
+    ...entries.map((entry, index) => `- ${entry.shortCode ?? `code${String(index)}`} | v${entry.version} | ${entry.status} | ${entry.status === "DEPLOYED" ? "2026-11-13 00:02:00 UTC" : "1970-01-01 00:00:00 UTC"}`),
+    ...(options.morePages === true ? ["", "Next page available →"] : []),
+  ].join("\n");
 }
 
 export const runListText = (count: number): string => (count === 0 ? "Found 0 runs\n\nNo runs found." : [`Found ${String(count)} runs`, "", ...Array.from({ length: count }, (_, index) => `${String(index + 1)}. run_x${String(index)} | task | EXECUTING`)].join("\n"));

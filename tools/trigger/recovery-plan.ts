@@ -447,6 +447,76 @@ export function deployListPeriod(releaseFinishedAt: string, now: Date): string {
   return `${String(Math.min(Math.max(days, 2), 365))}d`;
 }
 
+// ── Remote deployments in progress (RECOVERY-TOOLING-03, after RECOVERY-REHEARSAL-03C finding G1) ──────────────
+/*
+ * An interrupted CLI does not cancel its server-side deployment: in 03C the provider kept the interrupted INTELLIGENCE
+ * build BUILDING for ~15 minutes (then TIMED_OUT) while the plane's current worker looked healthy and unchanged. A
+ * recovery must never start or continue a deploy while ANY deployment of an approved destination project is unresolved:
+ * it could still build, become current or race a second deployment, and the read-only interface does not reliably say
+ * which external id it holds. So every listed deployment counts, current worker or not.
+ */
+
+/** Statuses of a deployment that may still build, deploy or become the current deployment (trigger.dev 4.7.2 deployment schemas). */
+export const IN_PROGRESS_DEPLOYMENT_STATUSES = ["PENDING", "INSTALLING", "BUILDING", "DEPLOYING"] as const;
+/** Terminal statuses: the provider changes them no further. Only DEPLOYED ever became a worker. */
+export const TERMINAL_DEPLOYMENT_STATUSES = ["DEPLOYED", "FAILED", "CANCELED", "TIMED_OUT"] as const;
+
+export type DeploymentActivity =
+  /** Every listed deployment is terminal and the listing is complete for the window. `unsuccessful`: terminal, never a worker, newer than the active version. */
+  | { readonly kind: "CLEAR"; readonly listed: number; readonly unsuccessful: readonly DeploymentEntry[] }
+  /** At least one deployment is in progress, or in a status this tool does not know (treated as in progress). */
+  | { readonly kind: "UNRESOLVED"; readonly inProgress: readonly DeploymentEntry[]; readonly unrecognized: readonly DeploymentEntry[] }
+  /** The listing could not be read or parsed: the absence of an in-progress deployment is not established. */
+  | { readonly kind: "UNREADABLE" }
+  /** The listing has more pages than were read: the absence of an in-progress deployment is not established. */
+  | { readonly kind: "INCOMPLETE"; readonly listed: number };
+
+const versionKey = (version: string): readonly [number, number] => {
+  const [day, build] = version.split(".");
+  return [Number(day), Number(build)];
+};
+/** True when worker version `a` is newer than `b` (both YYYYMMDD.N). */
+export const isNewerVersion = (a: string, b: string): boolean => {
+  const [dayA, buildA] = versionKey(a);
+  const [dayB, buildB] = versionKey(b);
+  return dayA > dayB || (dayA === dayB && buildA > buildB);
+};
+
+/**
+ * One project's deployment activity from its `list_deploys` result (undefined = unreadable). Fails closed: an unknown
+ * status is unresolved, an unreadable or truncated listing never means "no deployment in progress", and a healthy
+ * current worker proves nothing about other deployments.
+ */
+export function assessDeploymentActivity(list: { readonly entries: readonly DeploymentEntry[]; readonly morePages: boolean } | undefined, activeVersion: string | undefined): DeploymentActivity {
+  if (list === undefined) return { kind: "UNREADABLE" };
+  const inProgress = list.entries.filter((entry) => (IN_PROGRESS_DEPLOYMENT_STATUSES as readonly string[]).includes(entry.status));
+  const known = [...IN_PROGRESS_DEPLOYMENT_STATUSES, ...TERMINAL_DEPLOYMENT_STATUSES] as readonly string[];
+  const unrecognized = list.entries.filter((entry) => !known.includes(entry.status));
+  if (inProgress.length > 0 || unrecognized.length > 0) return { kind: "UNRESOLVED", inProgress, unrecognized };
+  if (list.morePages) return { kind: "INCOMPLETE", listed: list.entries.length };
+  const unsuccessful = list.entries.filter((entry) => entry.status !== "DEPLOYED" && (activeVersion === undefined || !isWorkerVersion(entry.version) || !isWorkerVersion(activeVersion) || isNewerVersion(entry.version, activeVersion)));
+  return { kind: "CLEAR", listed: list.entries.length, unsuccessful };
+}
+
+const describeDeployment = (entry: DeploymentEntry): string => `${entry.shortCode} v${entry.version} ${entry.status}`;
+
+/** Why a recovery cannot proceed on this project now, or undefined when its deployment activity is CLEAR. */
+export function deploymentActivityBlocker(plane: ReleasePlane, projectRef: string, activity: DeploymentActivity): string | undefined {
+  const where = `${plane}: project ${projectRef}`;
+  const action = "recovery cannot proceed while a remote deployment is unresolved (an interrupted CLI does not cancel it; it may still build, become the current deployment or race a new deploy). Inspect it and wait for a terminal outcome (DEPLOYED, FAILED, CANCELED or TIMED_OUT), then plan again with fresh metadata; never cancel or force it from this tool";
+  if (activity.kind === "UNRESOLVED") {
+    const parts = [
+      ...activity.inProgress.map((entry) => `deployment ${describeDeployment(entry)} is NOT terminal`),
+      ...activity.unrecognized.map((entry) => `deployment ${describeDeployment(entry)} has a status this tool does not recognize (treated as in progress)`),
+    ];
+    return `${where}: ${parts.join("; ")} — ${action}`;
+  }
+  const unestablished = "recovery cannot proceed until the provider's deployments can be read completely and none is in progress; inspect the project's deployments (read-only), wait for every one to be terminal, then plan again with fresh metadata";
+  if (activity.kind === "UNREADABLE") return `${where}: the deployment list could not be read; the absence of an in-progress deployment is not established — ${unestablished}`;
+  if (activity.kind === "INCOMPLETE") return `${where}: the deployment list is truncated (${String(activity.listed)} listed, more pages exist); the absence of an in-progress deployment is not established — ${unestablished}`;
+  return undefined;
+}
+
 // ── Verification ────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Inventory problems of a plane's current worker (empty = it is a worker of THIS plane with the known-good count). */
@@ -654,6 +724,11 @@ const DONE: readonly PlaneRecoveryState[] = ["RECOVERED", "ALREADY_RECOVERED"];
 const OUTCOME_UNSEEN: readonly PlaneRecoveryState[] = ["DEPLOY_FAILED", "DEPLOY_UNKNOWN"];
 /** The attempt ends here: investigate, then start a NEW attempt (a new recovery id) — never continue this one. */
 const ATTEMPT_ENDING: readonly PlaneRecoveryState[] = ["RECOVERY_ID_IN_USE", "VERIFICATION_FAILED"];
+/**
+ * A continued plane's state that must survive a run which stops BEFORE that plane (RECOVERY-TOOLING-03): recovered
+ * (re-verified by the next continuation, never redeployed) or a deploy without a seen outcome (adoption stays possible).
+ */
+export const carriesForward = (state: PlaneRecoveryState): boolean => DONE.includes(state) || OUTCOME_UNSEEN.includes(state);
 
 export const RECOVERY_FINAL_STATES = ["RECOVERED", "RECOVERED_FINGERPRINT_UNVERIFIED", "STOPPED_PARTIAL", "STOPPED_NOTHING_RECOVERED"] as const;
 export type RecoveryFinalState = (typeof RECOVERY_FINAL_STATES)[number];

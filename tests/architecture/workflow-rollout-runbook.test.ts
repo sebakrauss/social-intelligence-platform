@@ -12,7 +12,7 @@ import { DEFAULT_MIGRATION_LOCK_TIMEOUT_MS, MIGRATION_LOCK_TIMEOUT_RANGE_MS } fr
 import { DEV_RECONCILE_CONFIRMATION, RECONCILE_TARGETS } from "@/tools/ops/workflow-reconcile-command";
 import { SWITCHES } from "@/platform/flags/registry";
 import { parseRecoveryArguments } from "@/tools/trigger/recover-release";
-import { KNOWN_WORKER_WEB_INCOMPATIBILITIES, RECOVERY_EVIDENCE_DIRECTORY, RECOVERY_ORDER, recoveryConfirmation } from "@/tools/trigger/recovery-plan";
+import { IN_PROGRESS_DEPLOYMENT_STATUSES, KNOWN_WORKER_WEB_INCOMPATIBILITIES, RECOVERY_EVIDENCE_DIRECTORY, RECOVERY_ORDER, TERMINAL_DEPLOYMENT_STATUSES, recoveryConfirmation } from "@/tools/trigger/recovery-plan";
 import { REPOSITORY_ROOT } from "../support/source-scan";
 
 const RUNBOOK = "design/workflow/runbooks/0034-comments-workflow-rollout.md";
@@ -89,12 +89,26 @@ describe("0034 rollout runbook ↔ release tooling", () => {
     expect(readFileSync(path.join(REPOSITORY_ROOT, ".vercelignore"), "utf8")).toMatch(/^\/tools\/perf\/$/m);
   });
 
-  it("RECOVERY-TOOLING-01/-02: worker recovery is the guarded forward recovery tool, and deployment stays blocked until its isolated rehearsal 03C", () => {
+  it("RECOVERY-TOOLING-01/-02/-03: worker recovery is the guarded forward recovery tool; deployment stays blocked until X-3 is approved (03C PASS is synthetic only)", () => {
     const text = runbook();
-    expect(text).toMatch(/The block stays until\s+(?:> )?\*\*`RECOVERY-REHEARSAL-03C`\*\*/);
+    expect(text).toMatch(/The block stays until\s+(?:> )?\*\*X-3 is approved by the Product Owner\*\*/);
     expect(text).toMatch(/\| Worker \| \*\*Forward recovery:\*\* `npm run trigger:recover`/);
-    expect(text).toMatch(/\*\*not yet rehearsed end to end\*\* → deployment stays blocked until `RECOVERY-REHEARSAL-03C`/);
-    expect(text).toMatch(/X-3 stays \*\*BLOCKED\*\* until it passes/);
+    expect(text).toMatch(/Rehearsed end to end on three isolated synthetic projects only \(`RECOVERY-REHEARSAL-03C`: PASS\)/);
+    expect(text).toMatch(/deployment stays blocked until X-3 is approved/);
+    // The three concepts stay separate; operational recovery never ran.
+    expect(text).toContain("1. **Verified synthetic recovery**");
+    expect(text).toContain("2. **Operational recovery readiness** — X-3 is **CONDITIONAL**, not approved.");
+    expect(text).toContain("3. **Authorization to deploy DEV** — a separate Product Owner gate (steps 3 onward). Neither of the above grants it.");
+    expect(text.match(/\*\*Operational DEV recovery has not been executed\.\*\*/g)).toHaveLength(2);
+    // RECOVERY-TOOLING-03 (03C G1): never continue while a remote deployment is not terminal.
+    expect(text).toContain("**Remote deployments in progress**");
+    expect(text).toMatch(/Interrupting the local CLI does \*\*not\*\* cancel its deployment/);
+    expect(text).toMatch(/Recovery must not continue while the provider reports a deployment that is not terminal/);
+    for (const status of [...IN_PROGRESS_DEPLOYMENT_STATUSES, ...TERMINAL_DEPLOYMENT_STATUSES]) expect(text, status).toContain(`\`${status}\``);
+    expect(text).toMatch(/The tool never cancels, forces or retries a provider build, and there is no override/);
+    expect(text).toMatch(/Queued and delayed runs were observed executing on the version active \*\*when they started\*\*/);
+    expect(text).toMatch(/Runs explicitly pinned to an earlier deployment keep using it even after the recovery/);
+    expect(text).toMatch(/The old operational release `ff5269c` still lacks a recorded worker content fingerprint/);
     expect(text).toMatch(/\| Schema \| \*\*Never rolled back\.\*\*/);
     const scripts = (JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> }).scripts;
     expect(scripts["trigger:recover"]).toBe("node tools/trigger/recover-release.ts");

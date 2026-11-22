@@ -1,5 +1,5 @@
 /**
- * RECOVERY-TOOLING-01 / -02 — the pure recovery planner: approved-source evidence parsing, the recovery id (one per
+ * RECOVERY-TOOLING-01 / -02 / -03 — the pure recovery planner: approved-source evidence parsing, the recovery id (one per
  * approved attempt, never the known-good SHA), the INTEGRATION → INTELLIGENCE → MAIN plan and its invariants, strict
  * parsing of the CLI's read-only MCP output, classification of the deploy's answer, per-plane verification (version,
  * inventory, fingerprint), runtime / web / database compatibility, continuation and the final state.
@@ -7,15 +7,22 @@
 import { describe, expect, it } from "vitest";
 import {
   KNOWN_WORKER_WEB_INCOMPATIBILITIES,
+  PLANE_RECOVERY_STATES,
   PLANE_TASK_DIRECTORIES,
   RECOVERY_ORDER,
   RecoveryPlanError,
+  IN_PROGRESS_DEPLOYMENT_STATUSES,
+  TERMINAL_DEPLOYMENT_STATUSES,
   assertRecoveryPlanInvariants,
+  assessDeploymentActivity,
   assessRecoveryIdentity,
   assessWebCompatibility,
   buildRecoveryPlan,
+  carriesForward,
   classifyRecoveryDeploy,
   deployListPeriod,
+  deploymentActivityBlocker,
+  isNewerVersion,
   inventoryProblems,
   migrationsAfter,
   parseCurrentWorker,
@@ -458,5 +465,55 @@ describe("RECOVERY-TOOLING-02: the recovery id and the deploy's answer", () => {
     expect(verifyConfirmedDeployment(main, { existingVersion: "20261122.4", current: true, worker, observedWorkers: [{ version: "20261122.3", contentHash: BASELINE.main }] }).problems.join()).toMatch(/was not observed/);
     expect(verifyConfirmedDeployment(main, { existingVersion: "20261122.4", current: true, worker, observedWorkers: [{ version: "20261122.4", contentHash: "d".repeat(32) }] }).problems.join()).toMatch(/differs from the known-good/);
     expect(verifyConfirmedDeployment(at(plan("v2").steps, 2), { existingVersion: "20261122.4", current: true, worker, observedWorkers: [] })).toMatchObject({ problems: [], fingerprint: "NO_BASELINE" });
+  });
+});
+
+/** RECOVERY-TOOLING-03 — RECOVERY-REHEARSAL-03C G1: the deployment-activity guard, from the provider's own deployment list. */
+describe("RECOVERY-TOOLING-03: remote deployment activity", () => {
+  const list = (entries: { version: string; status: string; shortCode?: string }[], morePages = false) => parseDeployList(deployListText(entries, { morePages }));
+
+  it("parses the provider's real list_deploys line for an interrupted build (03C, sanitized), BUILDING then TIMED_OUT", () => {
+    const at = (status: string) => parseDeployList(["Found 2 deployments", "", `- k8hqb03l | v20261122.3 | ${status} | 1970-01-01 00:00:00 UTC | rehearsal: synthetic version A (lockfile)`, "- cuxkh5i2 | v20261122.2 | DEPLOYED | 2026-11-22 14:44:02 UTC | rehearsal: synthetic version B"].join("\n"));
+    expect(assessDeploymentActivity(at("BUILDING"), "20261122.2")).toEqual({ kind: "UNRESOLVED", inProgress: [{ shortCode: "k8hqb03l", version: "20261122.3", status: "BUILDING" }], unrecognized: [] });
+    expect(assessDeploymentActivity(at("TIMED_OUT"), "20261122.2")).toEqual({ kind: "CLEAR", listed: 2, unsuccessful: [{ shortCode: "k8hqb03l", version: "20261122.3", status: "TIMED_OUT" }] });
+  });
+
+  it("the provider's statuses: PENDING, INSTALLING, BUILDING and DEPLOYING are in progress; DEPLOYED, FAILED, CANCELED and TIMED_OUT are terminal; nothing else is known", () => {
+    expect([...IN_PROGRESS_DEPLOYMENT_STATUSES]).toEqual(["PENDING", "INSTALLING", "BUILDING", "DEPLOYING"]);
+    expect([...TERMINAL_DEPLOYMENT_STATUSES]).toEqual(["DEPLOYED", "FAILED", "CANCELED", "TIMED_OUT"]);
+    for (const status of IN_PROGRESS_DEPLOYMENT_STATUSES) expect(assessDeploymentActivity(list([{ version: "20261122.1", status: "DEPLOYED" }, { version: "20261101.9", status }]), "20261122.1").kind, status).toBe("UNRESOLVED");
+    for (const status of TERMINAL_DEPLOYMENT_STATUSES) expect(assessDeploymentActivity(list([{ version: "20261122.1", status: "DEPLOYED" }, { version: "20261122.2", status }]), "20261122.1").kind, status).toBe("CLEAR");
+    expect(assessDeploymentActivity(list([{ version: "20261122.1", status: "QUEUED" }]), "20261122.1")).toMatchObject({ kind: "UNRESOLVED", inProgress: [], unrecognized: [{ status: "QUEUED" }] });
+  });
+
+  it("fails closed: unreadable is never 'no build'; a truncated list is INCOMPLETE; an active build wins over truncation; a healthy current worker proves nothing", () => {
+    expect(assessDeploymentActivity(undefined, "20261122.1")).toEqual({ kind: "UNREADABLE" });
+    expect(assessDeploymentActivity(parseDeployList("Found 2 deployments\n\n- a | v20261122.1 | DEPLOYED | x"), "20261122.1")).toEqual({ kind: "UNREADABLE" });
+    expect(assessDeploymentActivity(list([{ version: "20261122.1", status: "DEPLOYED" }], true), "20261122.1")).toEqual({ kind: "INCOMPLETE", listed: 1 });
+    expect(assessDeploymentActivity(list([{ version: "20261122.2", status: "BUILDING" }], true), "20261122.1").kind).toBe("UNRESOLVED");
+    // The current worker is the newest DEPLOYED version; an OLDER-numbered deployment is still building: unresolved.
+    expect(assessDeploymentActivity(list([{ version: "20261122.5", status: "DEPLOYED" }, { version: "20261122.4", status: "DEPLOYING" }]), "20261122.5").kind).toBe("UNRESOLVED");
+    expect(assessDeploymentActivity(list([]), "20261122.1")).toEqual({ kind: "CLEAR", listed: 0, unsuccessful: [] });
+  });
+
+  it("terminal unsuccessful deployments newer than the active version are reported, never as a worker; older ones are history", () => {
+    const activity = assessDeploymentActivity(list([{ version: "20261122.4", status: "FAILED" }, { version: "20261122.3", status: "DEPLOYED" }, { version: "20261122.2", status: "CANCELED" }]), "20261122.3");
+    expect(activity).toEqual({ kind: "CLEAR", listed: 3, unsuccessful: [{ shortCode: "code0", version: "20261122.4", status: "FAILED" }] });
+    expect(isNewerVersion("20261122.10", "20261122.9")).toBe(true);
+    expect(isNewerVersion("20261123.1", "20261122.9")).toBe(true);
+    expect(isNewerVersion("20261122.2", "20261122.2")).toBe(false);
+  });
+
+  it("the blocker names the plane, project, deployment, version and status, and the required action; CLEAR blocks nothing", () => {
+    const blocker = deploymentActivityBlocker("intelligence", REFS.intelligence, { kind: "UNRESOLVED", inProgress: [{ shortCode: "k8hqb03l", version: "20261122.3", status: "BUILDING" }], unrecognized: [] });
+    expect(blocker).toMatch(new RegExp(`^intelligence: project ${REFS.intelligence}: deployment k8hqb03l v20261122\\.3 BUILDING is NOT terminal — recovery cannot proceed`));
+    expect(blocker).toContain("wait for a terminal outcome (DEPLOYED, FAILED, CANCELED or TIMED_OUT), then plan again with fresh metadata");
+    expect(deploymentActivityBlocker("main", REFS.main, { kind: "UNREADABLE" })).toMatch(/could not be read; the absence of an in-progress deployment is not established/);
+    expect(deploymentActivityBlocker("main", REFS.main, { kind: "INCOMPLETE", listed: 100 })).toMatch(/truncated \(100 listed, more pages exist\)/);
+    expect(deploymentActivityBlocker("main", REFS.main, { kind: "CLEAR", listed: 4, unsuccessful: [{ shortCode: "x", version: "20261122.4", status: "TIMED_OUT" }] })).toBeUndefined();
+  });
+
+  it("only recovered planes and deploys without a seen outcome carry forward over a run that stops before them", () => {
+    expect(PLANE_RECOVERY_STATES.filter(carriesForward)).toEqual(["RECOVERED", "ALREADY_RECOVERED", "DEPLOY_FAILED", "DEPLOY_UNKNOWN"]);
   });
 });
