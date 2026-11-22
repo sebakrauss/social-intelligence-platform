@@ -144,10 +144,16 @@ describe("identity is the exact GHSA — never package, severity or range alone"
 describe("the repository's exception record and CI wiring", () => {
   const code = (file: string): string => readFileSync(path.join(REPOSITORY_ROOT, file), "utf8");
 
-  it("exactly one exception: GHSA-g3hv-75wg-m249 on minimatch, moderate, dev-only, authorized 2026-10-31, expires 2026-11-30", () => {
-    expect(AUDIT_EXCEPTIONS.map(({ advisory: id, package: name, maxSeverity, scope, authorizedOn, expiresOn }) => ({ id, name, maxSeverity, scope, authorizedOn, expiresOn })))
-      .toEqual([{ id: APPROVED, name: "minimatch", maxSeverity: "moderate", scope: "dev", authorizedOn: "2026-10-31", expiresOn: "2026-11-30" }]);
-    for (const e of AUDIT_EXCEPTIONS) expect(e.reason.length > 0 && e.remediation.length > 0).toBe(true);
+  it("DEPS-01: no active exception — GHSA-g3hv-75wg-m249 was remediated and its entry removed", () => {
+    expect(AUDIT_EXCEPTIONS).toEqual([]);
+    expect(code("tools/audit-policy/exceptions.ts")).not.toMatch(/advisory: "GHSA-/);
+  });
+
+  it("DEPS-01: with the repository's real (empty) exception list, the minimatch advisory reintroduced on a dev-only tree FAILS", () => {
+    const result = run({ exceptions: AUDIT_EXCEPTIONS });
+    expect(result.verdict).toBe("FAIL");
+    expect(result.reasons).toEqual([`unapproved_advisory:${APPROVED}:moderate:minimatch`]);
+    expect(run({ full: EMPTY, exceptions: AUDIT_EXCEPTIONS }).verdict).toBe("PASS");
   });
 
   it("CI runs the policy wrapper (full audit) with no swallowed exit code, no --omit=dev primary check, no lowered level", () => {
@@ -161,9 +167,13 @@ describe("the repository's exception record and CI wiring", () => {
     expect(cli).toMatch(/process\.exitCode = result\.verdict === "FAIL" \? 1 : 0;/);
   });
 
-  it("no minimatch override or audit configuration was added to package.json / .npmrc", () => {
-    const pkg = JSON.parse(code("package.json")) as { overrides?: Record<string, string>; scripts: Record<string, string> };
-    expect(Object.keys(pkg.overrides ?? {}).sort()).toEqual(["ws", "zod"]);
+  it("no global minimatch override and no audit configuration; only the DEPS-01 override scoped to typescript-estree", () => {
+    const pkg = JSON.parse(code("package.json")) as { overrides?: Record<string, unknown>; scripts: Record<string, string> };
+    // A top-level "minimatch" override would also force eslint / eslint-plugin-react onto minimatch 11, which crashes ESLint (H7-D1b-sec0).
+    expect(pkg.overrides).toEqual({ ws: "8.21.0", zod: "4.6.7", "@typescript-eslint/typescript-estree": { minimatch: "11.0.9" } });
+    const lock = JSON.parse(code("package-lock.json")) as { packages: Record<string, { version?: string }> };
+    expect(lock.packages["node_modules/minimatch"]?.version).toBe("3.1.5");
+    expect(lock.packages["node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch"]?.version).toBe("11.0.9");
     expect(pkg.scripts["audit"]).toBe("npm audit");
     expect(() => code(".npmrc")).toThrow();
   });

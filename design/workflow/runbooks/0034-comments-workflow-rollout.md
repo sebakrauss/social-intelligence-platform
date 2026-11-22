@@ -59,7 +59,7 @@ With the order below (worker before web), no Done can be recorded while the prev
 | Vercel (Hobby) | Production = `dpl_HT6ETxMo…` @ `97dcaee`. **No Git integration: a push deploys nothing.** `COMMENTS_REDESIGN_WORKSPACES` absent (Comments offered to nobody). |
 | Trigger.dev | INTEGRATION / INTELLIGENCE / MAIN deployed 2026-11-13T00:02–00:03Z = release `20261113.1` @ `ff5269c` (all three planes) |
 | dev-v2 | PostgreSQL 17.11; 33 migrations applied (checksums match); pending = `0034_workflow_core.sql` only |
-| CI dependency audit | `PASS_WITH_TEMPORARY_EXCEPTION`; the minimatch exception (GHSA-g3hv-75wg-m249) **expires 2026-11-30 (inclusive)**. CI fails from 2026-12-01 UTC unless the advisory leaves the audit or the TL renews the exception in its own gate. **Never bypassed.** |
+| CI dependency audit | `PASS` with **no exception** (DEPS-01: GHSA-g3hv-75wg-m249 remediated; the temporary exception was removed, not renewed). Any reported advisory fails CI. **Never bypassed.** |
 
 ## Steps
 

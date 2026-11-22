@@ -142,8 +142,8 @@ describe("0034 rollout runbook ↔ release tooling", () => {
     expect(text).toMatch(/There is no automatic retry, reorder or restore/);
   });
 
-  it("the audit exception's expiry is documented and never bypassed", () => {
-    expect(runbook()).toMatch(/\*\*expires 2026-11-30 \(inclusive\)\*\*.*\*\*Never bypassed\.\*\*/);
-    expect(readFileSync(path.join(REPOSITORY_ROOT, "tools/audit-policy/exceptions.ts"), "utf8")).toMatch(/expiresOn: "2026-11-30"/);
+  it("the dependency audit passes with no exception (DEPS-01) and is never bypassed", () => {
+    expect(runbook()).toMatch(/\| CI dependency audit \| `PASS` with \*\*no exception\*\*.*\*\*Never bypassed\.\*\*/);
+    expect(readFileSync(path.join(REPOSITORY_ROOT, "tools/audit-policy/exceptions.ts"), "utf8")).not.toMatch(/expiresOn: "\d{4}-\d{2}-\d{2}"/);
   });
 });
