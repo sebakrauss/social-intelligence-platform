@@ -5,15 +5,18 @@ DEV only. **NOT executed.** Every step is a separate, explicitly authorized Prod
 > **DEPLOYMENT IS BLOCKED** until a supported, executable worker recovery path has been verified and approved
 > (§Rollback). `TRIGGER-ROLLBACK-REHEARSAL-01` showed that promoting an older version is refused;
 > `TRIGGER-RECOVERY-REHEARSAL-02` proved forward recovery on one isolated project; `RECOVERY-TOOLING-01` built the guarded
-> three-plane tool (`npm run trigger:recover`, unit-tested only). The block stays until **`RECOVERY-REHEARSAL-03`** — a real
-> end-to-end run of that tool on isolated projects — has succeeded and been approved. Until then, no step from 3
-> (migration) onward may start.
+> three-plane tool (`npm run trigger:recover`). `RECOVERY-REHEARSAL-03B` ran it on three isolated projects and found that
+> it could not recover anything: it redeployed under the known-good SHA, which the provider never rebuilds (X-3 BLOCKED).
+> `RECOVERY-TOOLING-02` corrected it (a unique recovery id per attempt; unit-tested only). The block stays until
+> **`RECOVERY-REHEARSAL-03C`** — a real end-to-end run of the corrected tool on the isolated projects — has succeeded and
+> been approved. Until then, no step from 3 (migration) onward may start.
 
 Sources:
 - WORKFLOW-WF-2C, whose transition window was simulated end to end on disposable local clusters (`tests/db/local/workflow-transition-window.test.ts`);
 - DEV-PREFLIGHT-01 and DEV-PREFLIGHT-02 (read-only release reviews);
 - RELEASE-TOOLING-01 (reconcile-before-web order, development reconciliation target, bounded migration lock wait, clean release worktree);
-- RECOVERY-TOOLING-01 (this revision: worker forward recovery with `npm run trigger:recover`, §Rollback).
+- RECOVERY-TOOLING-01 (worker forward recovery with `npm run trigger:recover`, §Rollback);
+- RECOVERY-REHEARSAL-03B and RECOVERY-TOOLING-02 (this revision: the recovery id, the INTEGRATION → INTELLIGENCE → MAIN order, continuation under the same id).
 
 "Abort" means: stop, keep the current state, report. Nothing is undone automatically.
 
@@ -60,7 +63,7 @@ With the order below (worker before web), no Done can be recorded while the prev
 | Step | Action | Approval | Abort when |
 |---|---|---|---|
 | **1. Preflight and database metadata** | Read-only.<br>**Re-verify the baseline above.**<br>`npm run db:migrate -- --target development` (plan only): 33 applied, only 0034 pending.<br>The aggregate metadata gate (DB-METADATA-01, one READ ONLY transaction, aggregates only):<br>• sizes of `audit.audit_events`, `conversations.conversations` and `interactions.interactions`;<br>• **`count(*) where workflow_state <> 'OPEN'` = 0** (0034 refuses with 55000 otherwise);<br>• no long-running transaction.<br>Record the in-service web (deployment id **and commit SHA**) and Trigger versions as rollback targets, and the **ALIGNED release evidence file** of the in-service worker release (`.wrenkind-local/evidence/trigger-release-pair/…`, today `ff5269c` / `20261113.1`): it is the only acceptable worker recovery source. Managed T-26 is green. The Comments allowlist is empty. | PO | any mismatch |
-| **2. Backups and verified recovery** | Record a restorable point (PITR position, or a logical dump of `conversations`, `interactions`, `audit`) with its timestamp.<br>**The worker recovery path is rehearsed and approved** (`trigger:recover`, end to end in `RECOVERY-REHEARSAL-03`).<br>A **recovery plan** (`npm run trigger:recover`, PLAN ONLY) for the recorded known-good release has been run and reviewed: no structural refusal; the remaining apply prerequisites are the expected ones.<br>The web rollback target is confirmed to be the immediately previous production deployment (Hobby Instant Rollback reaches only that one). | PO | no confirmed restorable point, or no approved worker recovery |
+| **2. Backups and verified recovery** | Record a restorable point (PITR position, or a logical dump of `conversations`, `interactions`, `audit`) with its timestamp.<br>**The worker recovery path is rehearsed and approved** (`trigger:recover`, end to end in `RECOVERY-REHEARSAL-03C`).<br>A **recovery plan** (`npm run trigger:recover`, PLAN ONLY) for the recorded known-good release has been run and reviewed: no structural refusal; the remaining apply prerequisites are the expected ones.<br>The web rollback target is confirmed to be the immediately previous production deployment (Hobby Instant Rollback reaches only that one). | PO | no confirmed restorable point, or no approved worker recovery |
 | **3. Migration 0034** | In a quiet window. Check first that no session holds or awaits a lock on `audit.audit_events`.<br>`npm run db:migrate -- --target development --apply --lock-timeout-ms <n>` (default 5000), with the migration role, never from a runtime.<br>Verify: introspection reports 0 problems; work items = conversations. | PO | 0034 refuses (55000), a lock wait times out (see below), or the counts differ |
 | **4. Coordinated worker release** | `npm run trigger:release` (all three planes, one commit), **from the clean release worktree** (below), at the pushed, CI-green commit.<br>Keep the window between 3 and 4 short. **The web is NOT released in this step.** | PO | any plane fails → STOP; worker forward recovery (§Rollback) only by a separate PO decision |
 | **5. Reconcile every workspace** | While the **previous** web is still live (it ignores `workflow`, so this is safe), for every workspace that has conversations:<br>(1) dry run: `npm run ops:workflow-reconcile -- --target development --database-url-env DATABASE_WORKER_URL --workspace <id>`, then read the counts;<br>(2) apply: the same plus `--apply --confirm-dev-reconcile reconcile-workflow-work-items-in-dev-v2` (resume an interrupted run with `--after <next> --run <runCorrelationId>`). | PO | `failed > 0` (inspect `failedIds`; a rerun is safe) |
@@ -122,7 +125,7 @@ Without `--target`, the CLI still accepts only a loopback cluster.
 | Component | Mechanism | Status |
 |---|---|---|
 | Web | Vercel Instant Rollback to the immediately previous production deployment (Hobby plan), or `vercel promote <id>`. After a rollback, auto-assignment of production domains is off until a promote. | Documented provider capability; the target (the previous deployment) is recorded in step 1 |
-| Worker | **Forward recovery:** `npm run trigger:recover` redeploys the source of the recorded known-good ALIGNED release to MAIN, INTELLIGENCE and INTEGRATION as **new** versions (below). `trigger.dev promote <version>` of an **older** version is refused by the server (`TRIGGER-ROLLBACK-REHEARSAL-01`). **Do not assume it works.** Never use it. **Never** use force push or any history rewrite as a rollback. | Tool built and unit-tested (`RECOVERY-TOOLING-01`); **not yet rehearsed end to end** → deployment stays blocked until `RECOVERY-REHEARSAL-03` |
+| Worker | **Forward recovery:** `npm run trigger:recover` redeploys the source of the recorded known-good ALIGNED release to INTEGRATION, INTELLIGENCE and MAIN as **new** versions under one new **recovery id** (below). `trigger.dev promote <version>` of an **older** version is refused by the server (`TRIGGER-ROLLBACK-REHEARSAL-01`). **Do not assume it works.** Never use it. **Never** use force push or any history rewrite as a rollback, and never the CLI's deploy force flag (`--force`). | Tool corrected and unit-tested (`RECOVERY-TOOLING-02`, after `RECOVERY-REHEARSAL-03B` found the external-id defect); **not yet rehearsed end to end** → deployment stays blocked until `RECOVERY-REHEARSAL-03C` |
 | Schema | **Never rolled back.** 0034 stays: it is additive, and the previous code neither reads nor writes `workflow`. | — |
 
 ### Worker forward recovery (`trigger:recover`)
@@ -142,12 +145,26 @@ Without `--target`, the CLI still accepts only a loopback cluster.
    - the trigger CLI is not the known-good commit's `@trigger.dev/sdk` version.
 4. Remove it afterwards: `git worktree remove ../wrenkind-recovery-<sha8>`.
 
-**Order: MAIN → INTELLIGENCE → INTEGRATION** (the reverse of a release), from the job dependencies:
-- every cross-plane trigger is pinned to the running release's external id, not to a plane's current version;
-- schedules exist only in MAIN, and INTEGRATION and INTELLIGENCE receive work only through pinned triggers;
-- the known-good external id already has a deployment on every plane (the tool checks it is still `DEPLOYED`).
+**Source SHA versus recovery id** (`RECOVERY-TOOLING-02`).
+- **Source:** the known-good commit SHA. It is immutable: the ALIGNED record, `origin/main` ancestry and the detached worktree are all checked against it, and it never changes.
+- **Deployment identity:** a **recovery id** `recovery-<sha12>-<UTC yyyymmddThhmmssZ>`, the one `--external-id` of all three recovered deployments.
+  - It is **never** the known-good SHA. Every plane already holds the known-good release's own deployment under that SHA, and Trigger.dev never rebuilds an external id it holds: the CLI answers `Version … was already deployed for --external-id … — nothing to build`, exits 0 and changes nothing (`RECOVERY-REHEARSAL-03B`). `--force` is never used.
+  - A fresh **plan proposes** a new id. The **apply needs it back** (`--recovery-id`).
+  - No local release or recovery record may already use it. An id used by a completed recovery is spent; an id of an unfinished attempt is only continued.
+  - The provider's external ids are not readable with the read-only tooling. A deploy the provider answers with "already deployed … nothing to build" is therefore classified as `RECOVERY_ID_IN_USE`: nothing was built, the plane is unchanged, and the attempt ends (a new attempt needs a new id).
+  - A zero exit that created nothing is **never** a recovery.
 
-So recovering MAIN first routes all new MAIN-originated work to known-good code in every plane immediately.
+**Order: INTEGRATION → INTELLIGENCE → MAIN** (the release order), from the job dependencies:
+- **How pins resolve.** A running worker pins every trigger into another plane to **its own** deployment's external id (`ctx.deployment.externalId` → `crossPlanePin`), never to a plane's current version.
+  - MAIN triggers INTEGRATION and INTELLIGENCE.
+  - INTEGRATION wakes MAIN's relay.
+  - INTELLIGENCE triggers nothing.
+  - Schedules exist only in MAIN.
+  - The web nudges only MAIN: unpinned, or pinned by `TRIGGER_EXTERNAL_DEPLOYMENT_ID`.
+- **While INTEGRATION and INTELLIGENCE are recovered first,** they receive no work under the recovery id: MAIN still runs the release being recovered from, and its triggers stay pinned to that release, which still exists in every plane. **A partial recovery therefore changes no behaviour.**
+- **When MAIN is recovered last,** its pins name the recovery id, which already exists in both other planes. Nothing waits for a missing deployment, and from then on all new MAIN-originated work (schedules, relay, sweepers) runs known-good code in every plane.
+- **Runs pinned to the release recovered from** keep executing it while they drain: runs already executing there, their retries, and their cross-plane triggers. This is why R6 watches them.
+- **Runs pinned to the known-good SHA** reach the original known-good deployments (the same source and fingerprint); the tool checks they are still `DEPLOYED`. This is safe.
 
 **Web before worker when they are incompatible.** A Workflow web (it lists only conversations with a work item, in **every** workspace's Inbox) beside a pre-Workflow worker hides every newly ingested conversation. The tool refuses that pairing (`workflow-0034`) whatever is attested: **roll the web back first** (Vercel Instant Rollback), then recover the worker.
 - A newer web whose worker-contract paths differ (migrations, `jobs/`, outbox) needs a web rollback too, or `--proven-web-pairing <web sha>:<known-good sha>` when that exact pairing was in service before.
@@ -158,11 +175,11 @@ So recovering MAIN first routes all new MAIN-originated work to known-good code 
 | # | Checkpoint | Command / evidence |
 |---|---|---|
 | R1 | Contain | Pause ingestion for every platform and read it back: `npm run ops:switch -- set --target development --key ingestion.provider_pause --qualifier <platform> --scope global --value '{"paused":true}' --operator <id> --reason worker-recovery --apply` |
-| R2 | Web first when required | Vercel Instant Rollback; record the web commit now in service. Confirm that web's relay-nudge pin `TRIGGER_EXTERNAL_DEPLOYMENT_ID` is absent or the known-good SHA: a web pinned to the bad release keeps waking the bad MAIN relay, whose triggers stay pinned to the bad release in every plane |
-| R3 | Plan | `npm run trigger:recover -- --cli <pinned CLI> --known-good <sha> --release-evidence <file> --worktree <abs path> --main-project-ref … --intelligence-project-ref … --integration-project-ref … --web-release <web sha>`: **PLAN ONLY**, deploys nothing; prints every plane's active version, run counts, the order, the compatibility verdicts and what an apply still needs |
-| R4 | Apply | The same, plus `--expect-main-version <v> --expect-intelligence-version <v> --expect-integration-version <v>` (copied from the plan) `--attest-ingestion-paused --attest-web-relay-pin --apply --confirm-recovery recover-trigger-planes-to-<sha12>` (and `--accept-unrecorded-fingerprint` when the approved record predates fingerprints: the final state then says `RECOVERED_FINGERPRINT_UNVERIFIED`) |
-| R5 | Verify | Per plane, before the next: exit 0, a new version, the known-good task count; the provider's current worker is that version, with every task in the plane's own directory; the content fingerprint equals the recorded one. Evidence: `.wrenkind-local/evidence/trigger-recovery/<timestamp>-<sha12>.json` |
-| R6 | Drain | Runs started on the previous versions finish there; delayed and queued runs start on the recovered versions. Watch `EXECUTING / QUEUED / DELAYED` until the previous versions hold none. Cancel only a specific harmful run, by explicit decision |
+| R2 | Web first when required | Vercel Instant Rollback; record the web commit now in service. Confirm that web's relay-nudge pin `TRIGGER_EXTERNAL_DEPLOYMENT_ID` is absent (it then reaches the current MAIN, recovered last), the known-good SHA (the original known-good MAIN, same source) or the recovery id — **never** the release being recovered from: such a web keeps waking that release's MAIN relay, whose triggers stay pinned to it in every plane, so new work would silently keep running the faulty code |
+| R3 | Plan | `npm run trigger:recover -- --cli <pinned CLI> --known-good <sha> --release-evidence <file> --worktree <abs path> --main-project-ref … --intelligence-project-ref … --integration-project-ref … --web-release <web sha>`: **PLAN ONLY**, deploys nothing; proposes a new recovery id and prints every plane's active version, run counts, the order, what the recovery id means on each plane, the compatibility verdicts and what an apply still needs |
+| R4 | Apply | The same, plus `--recovery-id <the id the plan proposed>` `--expect-integration-version <v> --expect-intelligence-version <v> --expect-main-version <v>` (copied from the plan) `--attest-ingestion-paused --attest-web-relay-pin --apply --confirm-recovery recover-trigger-planes-to-<sha12>` (and `--accept-unrecorded-fingerprint` when the approved record predates fingerprints: the final state then says `RECOVERED_FINGERPRINT_UNVERIFIED`) |
+| R5 | Verify | Per plane, before the next: exit 0, a **new** version, the known-good task count; the provider's current worker is that version, with every task in the plane's own directory; the content fingerprint equals the recorded one. Evidence: `.wrenkind-local/evidence/trigger-recovery/<timestamp>-<sha12>.json` (with the recovery id) |
+| R6 | Drain | Runs started on the previous versions finish there (with their retries and their cross-plane triggers, pinned to the release recovered from); delayed runs start on the recovered versions. Watch `EXECUTING / QUEUED / DELAYED / WAITING` until the previous versions hold none. Cancel only a specific harmful run, by explicit decision |
 | R7 | Resume | Clear `ingestion.provider_pause` per platform; watch the ingestion and outbox error rates |
 
 **Partial failure.**
@@ -171,10 +188,23 @@ So recovering MAIN first routes all new MAIN-originated work to known-good code 
   - Planes recovered before the stop stay recovered.
   - The failed plane keeps its previous version (verified provider behaviour).
   - The record lists recovered and unrecovered planes. A partial recovery is **never** reported as successful.
-- Continue only after a fresh plan, with `--continue <that record>`:
-  - recorded-recovered planes are re-verified, not redeployed;
-  - a plane that changed since is refused (investigate);
-  - every other plane needs a fresh `--expect-…-version`.
+- Continue only after a fresh plan, with `--continue <that record>`. A continuation never mints a new id: it uses the **same recovery id** (`--recovery-id` must repeat it), and only the attempt's latest record can be continued.
+  - Recorded-recovered planes are re-verified, not redeployed.
+  - A plane that changed since is refused (investigate).
+  - Every other plane needs a fresh `--expect-…-version`.
+  - A plane whose earlier deploy has **no known outcome** (interrupted, timed out, failed) is shown as **UNCERTAIN**, and as **AMBIGUOUS** when its active version changed since. Its deploy under the same id either builds normally, or the provider answers that the **current** deployment already holds the id. That deployment is then adopted (never rebuilt) only when the current worker, the inventory and the fingerprint seen in the interrupted build log all match; any other answer stops.
+- **These states end the attempt** (investigate, then a new attempt with a new id):
+  - `RECOVERY_ID_IN_USE`;
+  - `VERIFICATION_FAILED`;
+  - a v1 record (RECOVERY-TOOLING-01, deployed under the known-good SHA).
+
+**Legacy v2 release evidence.**
+- The operational known-good `ff5269c` has a v2 record without content fingerprints.
+- **What a recovery to it verifies:** version, inventory and source (worktree at the SHA). The fingerprint is recorded but not compared: `--accept-unrecorded-fingerprint`, final state `RECOVERED_FINGERPRINT_UNVERIFIED`.
+- **What stays unattested:** that the rebuilt worker equals the one that ran.
+- v3 fingerprints are recorded under `--depot-build` (`RECOVERY-REHEARSAL-03B`).
+
+**Still required:** `RECOVERY-REHEARSAL-03C`, a live run of the corrected tool on the three isolated synthetic projects, including an interruption and its continuation. X-3 stays **BLOCKED** until it passes.
 
 **After a recovery (Workflow):**
 - conversations ingested by the pre-Workflow worker get no work item;

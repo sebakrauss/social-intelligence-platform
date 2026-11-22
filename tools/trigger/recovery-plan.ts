@@ -1,32 +1,41 @@
 /**
- * RECOVERY-TOOLING-01 — the guarded three-plane Trigger.dev FORWARD RECOVERY: PURE planning, parsing and verification for
- * tools/trigger/recover-release.ts. No I/O, no process, no network, no Trigger.dev SDK.
+ * RECOVERY-TOOLING-01 / RECOVERY-TOOLING-02 — the guarded three-plane Trigger.dev FORWARD RECOVERY: PURE planning,
+ * parsing and verification for tools/trigger/recover-release.ts. No I/O, no process, no network, no Trigger.dev SDK.
  *
  * Mechanism (proven in TRIGGER-RECOVERY-REHEARSAL-02): an older version is never promoted (the server refuses it).
  * Recovery redeploys the source of a previously ALIGNED release — the approved known-good commit — to every plane as a
- * NEW version, with the same deploy argv the release unit uses (tools/trigger/release-pair.ts `deployArgv`: prod, the
- * known-good SHA as the ONE external id, the tool's empty env file, the safety flags). A failed deploy leaves that plane on
- * its previous version (verified).
+ * NEW version, with the release unit's deploy argv (tools/trigger/release-pair.ts `deployArgv`: prod, ONE external id, the
+ * tool's empty env file, the safety flags). A failed deploy leaves that plane on its previous version (verified).
+ *
+ * Two identities (RECOVERY-TOOLING-02, after RECOVERY-REHEARSAL-03B):
+ *   - the SOURCE is the known-good commit SHA: immutable, checked against the ALIGNED release record, the detached
+ *     worktree and origin/main — never replaced;
+ *   - the DEPLOYMENT identity is a RECOVERY ID `recovery-<sha12>-<UTC yyyymmddThhmmssZ>`, unique to one explicitly
+ *     approved recovery attempt and shared by its three planes. It can never be the known-good SHA: Trigger.dev never
+ *     rebuilds an external id that is already deployed — the CLI answers "Version … was already deployed for
+ *     --external-id … — nothing to build", exits 0 and leaves the plane as it was (RECOVERY-REHEARSAL-03B), and every
+ *     plane already holds the known-good release's own deployment under that SHA. `--force` is never used.
  *
  * Approved source and destinations — never operator free text:
  *   the known-good SHA must be the releaseSha of an ALIGNED record written by the release tool
  *   (.wrenkind-local/evidence/trigger-release-pair/), and the three destination projects must be EXACTLY that record's.
  *
- * Order MAIN → INTELLIGENCE → INTEGRATION (the reverse of a release), from the real job dependencies:
- *   - every cross-plane trigger is pinned to the RUNNING release's external id (platform/jobs/release.ts), never to a
- *     plane's "current" version; schedules exist only in MAIN; INTEGRATION and INTELLIGENCE receive work only through
- *     pinned triggers (MAIN's relay and sweepers), and the web nudges only MAIN;
- *   - a release deploys MAIN last because MAIN's NEW external id must already exist in the other planes. A recovery
- *     reuses the known-good external id, under which every plane already holds a deployment (the original ALIGNED one —
- *     checked to still be DEPLOYED before anything starts), so MAIN's recovered runs resolve their pins at once;
- *   - recovering MAIN first therefore routes ALL new MAIN-originated work (schedules, relay, sweepers) to known-good
- *     code in every plane from the first step; INTELLIGENCE (one task, fed only by MAIN) follows; INTEGRATION, the
- *     longest build with the signing-helper image, comes last.
+ * Order INTEGRATION → INTELLIGENCE → MAIN (the release order), from the real job dependencies:
+ *   - a running worker pins every trigger into another plane to ITS OWN deployment's external id
+ *     (ctx.deployment.externalId → platform/jobs/release.ts `crossPlanePin`), never to a plane's current version;
+ *   - MAIN triggers INTEGRATION and INTELLIGENCE; INTEGRATION wakes MAIN's relay; INTELLIGENCE triggers nothing; schedules
+ *     exist only in MAIN; the web nudges only MAIN (unpinned, or pinned by TRIGGER_EXTERNAL_DEPLOYMENT_ID);
+ *   - so INTEGRATION and INTELLIGENCE receive work only through pins. Recovered under the recovery id, they get none
+ *     until MAIN runs it: while MAIN is still on the release being recovered from, its triggers stay pinned to that
+ *     release (a partial recovery changes no behaviour); once MAIN is recovered LAST, its pins name the recovery id, which
+ *     already exists in both other planes, so nothing waits for a missing deployment.
  *
- * A plane is RECOVERED only when: the deploy exited 0 with a new version and exactly the known-good task count; the
- * provider's current worker is that version; its task inventory has the known-good count, no duplicate, and every task
- * in that plane's own task directory; and its content fingerprint equals the recorded known-good one (when recorded —
- * release evidence before schema v3 has none: the operator must accept that explicitly and the final state says so).
+ * A plane is RECOVERED only when: the deploy created a new version with exactly the known-good task count (or, in an
+ * explicit continuation, the provider confirms that the plane's CURRENT deployment already holds this attempt's recovery
+ * id after an interrupted deploy); the provider's current worker is that version; its task inventory has the known-good
+ * count, no duplicate, and every task in that plane's own task directory; and its content fingerprint equals the
+ * recorded known-good one (when recorded — release evidence before schema v3 has none: the operator must accept that
+ * explicitly and the final state says so). A zero exit that created nothing is never a recovery.
  */
 import {
   COMMON_SAFETY_FLAGS,
@@ -34,14 +43,17 @@ import {
   RELEASE_ENVIRONMENT,
   RELEASE_PLANES,
   deployArgv,
+  evaluatePlaneResult,
   isProjectRef,
   isReleaseSha,
+  parseDeployOutput,
   parseWorkerContentHash,
   type PlaneDefinition,
+  type PlaneOutcome,
   type ReleasePlane,
 } from "./release-pair.ts";
 
-export const RECOVERY_ORDER: readonly ReleasePlane[] = Object.freeze(["main", "intelligence", "integration"] as const);
+export const RECOVERY_ORDER: readonly ReleasePlane[] = Object.freeze(["integration", "intelligence", "main"] as const);
 
 /** Where each plane's tasks live (the `dirs` of its trigger config); a task reported elsewhere is a wrong deployment. */
 export const PLANE_TASK_DIRECTORIES: Readonly<Record<ReleasePlane, string>> = Object.freeze({
@@ -51,7 +63,9 @@ export const PLANE_TASK_DIRECTORIES: Readonly<Record<ReleasePlane, string>> = Ob
 });
 
 export const RECOVERY_EVIDENCE_DIRECTORY = ".wrenkind-local/evidence/trigger-recovery";
-export const RECOVERY_SCHEMA = "wrenkind.trigger-recovery.v1";
+export const RECOVERY_SCHEMA = "wrenkind.trigger-recovery.v2";
+/** RECOVERY-TOOLING-01 records: deployed under the known-good SHA (never rebuilt by the provider); readable, never continued. */
+export const LEGACY_RECOVERY_SCHEMA = "wrenkind.trigger-recovery.v1";
 export const RELEASE_TOOL = "tools/trigger/deploy-release-pair.ts";
 export const RELEASE_EVIDENCE_SCHEMAS = ["wrenkind.trigger-release-pair.v2", "wrenkind.trigger-release-pair.v3"] as const;
 
@@ -60,6 +74,89 @@ export const recoveryConfirmation = (knownGoodSha: string): string => `recover-t
 
 export class RecoveryPlanError extends Error {
   override readonly name = "RecoveryPlanError";
+}
+
+// ── The recovery deployment identity (RECOVERY-TOOLING-02) ──────────────────────────────────────────────────
+
+/** `recovery-<first 12 of the known-good SHA>-<UTC yyyymmddThhmmssZ>`: never a commit SHA, always bound to its source. */
+const RECOVERY_ID = /^recovery-([0-9a-f]{12})-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
+/** How far a recovery id's time may lie ahead of the operator's clock (clock skew only; a future id is never valid). */
+export const RECOVERY_ID_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+export const isRecoveryIdFormat = (value: unknown): value is string => typeof value === "string" && RECOVERY_ID.test(value);
+
+/** A NEW recovery id for one attempt, minted only by a fresh plan (never by a continuation). */
+export function proposeRecoveryId(knownGoodSha: string, now: Date): string {
+  const stamp = now.toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[-:]/g, "");
+  return `recovery-${knownGoodSha.slice(0, 12)}-${stamp}`;
+}
+
+/** Why `id` cannot name a recovery attempt of `knownGoodSha` at `now` (empty = well-formed, bound and not in the future). */
+export function recoveryIdProblems(id: unknown, knownGoodSha: string, now: Date): string[] {
+  if (typeof id !== "string") return ["the recovery id is missing"];
+  const match = RECOVERY_ID.exec(id);
+  if (match === null) return ["the recovery id must be recovery-<first 12 of the known-good SHA>-<UTC yyyymmddThhmmssZ> (as the plan proposes it)"];
+  const problems: string[] = [];
+  if (id === knownGoodSha || isReleaseSha(id)) problems.push("the recovery id can never be a commit SHA");
+  if (match[1] !== knownGoodSha.slice(0, 12)) problems.push("the recovery id names another known-good commit");
+  const [, , year, month, day, hour, minute, second] = match;
+  const at = Date.parse(`${year ?? ""}-${month ?? ""}-${day ?? ""}T${hour ?? ""}:${minute ?? ""}:${second ?? ""}Z`);
+  if (Number.isNaN(at) || new Date(at).toISOString().slice(0, 19) !== `${year ?? ""}-${month ?? ""}-${day ?? ""}T${hour ?? ""}:${minute ?? ""}:${second ?? ""}`) problems.push("the recovery id's time is not a valid UTC time");
+  else if (at > now.getTime() + RECOVERY_ID_CLOCK_SKEW_MS) problems.push("the recovery id's time lies in the future");
+  return problems;
+}
+
+/** Where a recovery id already appears in local evidence (release or recovery records). */
+export interface RecoveryIdUse {
+  readonly fileName: string;
+  readonly kind: "release" | "recovery";
+  readonly finalState: string | null;
+}
+
+export type RecoveryIdentity =
+  | { readonly kind: "NEW"; readonly recoveryId: string; readonly proposed: boolean }
+  | { readonly kind: "CONTINUES"; readonly recoveryId: string; readonly fileName: string }
+  | { readonly kind: "REFUSED"; readonly recoveryId: string; readonly reason: string };
+
+/**
+ * The deployment identity of this run. A continuation uses the continued record's recovery id — never a new one, never
+ * another — and only from the LATEST record of that attempt. A fresh run uses the operator's id (or, PLAN ONLY, a new
+ * proposed one), which no local release or recovery record may already use: an id used by a completed recovery is
+ * spent, and one used by an unfinished attempt is continued explicitly or replaced by a new attempt, never re-entered
+ * fresh. (The provider's own external ids are not readable with the read-only tooling; a deploy under an id the provider
+ * already holds builds nothing and is classified as RECOVERY_ID_IN_USE — the plane is left as it was.)
+ */
+export function assessRecoveryIdentity(input: {
+  readonly knownGoodSha: string;
+  readonly given: string | undefined;
+  readonly proposed: string;
+  readonly prior: Pick<PriorRecovery, "fileName" | "recoveryId"> | undefined;
+  readonly uses: (recoveryId: string) => readonly RecoveryIdUse[];
+  readonly now: Date;
+}): RecoveryIdentity {
+  const prior = input.prior;
+  if (prior !== undefined) {
+    const recoveryId = prior.recoveryId;
+    if (input.given !== undefined && input.given !== recoveryId) return { kind: "REFUSED", recoveryId, reason: `--recovery-id ${input.given} is not the recovery id of the continued attempt (${recoveryId}); a continuation never changes it` };
+    const uses = input.uses(recoveryId);
+    const completed = uses.find((use) => use.kind === "recovery" && (use.finalState === "RECOVERED" || use.finalState === "RECOVERED_FINGERPRINT_UNVERIFIED"));
+    if (completed !== undefined) return { kind: "REFUSED", recoveryId, reason: `recovery id ${recoveryId} was already used by a completed recovery (${completed.fileName})` };
+    if (uses.some((use) => use.kind === "release")) return { kind: "REFUSED", recoveryId, reason: `recovery id ${recoveryId} appears in a release record` };
+    const later = uses.filter((use) => use.fileName > prior.fileName).map((use) => use.fileName).sort();
+    if (later.length > 0) return { kind: "REFUSED", recoveryId, reason: `a later record of this recovery attempt exists: continue ${later.at(-1) ?? ""} instead` };
+    return { kind: "CONTINUES", recoveryId, fileName: prior.fileName };
+  }
+  const recoveryId = input.given ?? input.proposed;
+  const problems = recoveryIdProblems(recoveryId, input.knownGoodSha, input.now);
+  if (problems.length > 0) return { kind: "REFUSED", recoveryId, reason: problems.join("; ") };
+  const uses = input.uses(recoveryId);
+  const completed = uses.find((use) => use.kind === "recovery" && (use.finalState === "RECOVERED" || use.finalState === "RECOVERED_FINGERPRINT_UNVERIFIED"));
+  if (completed !== undefined) return { kind: "REFUSED", recoveryId, reason: `recovery id ${recoveryId} was already used by a completed recovery (${completed.fileName}); a new attempt needs a new id` };
+  if (uses.length > 0) {
+    const latest = uses.map((use) => use.fileName).sort().at(-1) ?? "";
+    return { kind: "REFUSED", recoveryId, reason: `recovery id ${recoveryId} belongs to an earlier, unfinished attempt (${latest}): continue it with --continue ${latest}, or start a new attempt with a new id` };
+  }
+  return { kind: "NEW", recoveryId, proposed: input.given === undefined };
 }
 
 const VERSION = /^\d{8}\.\d+$/;
@@ -199,18 +296,22 @@ export interface RecoveryStep {
 }
 
 export interface RecoveryPlan {
+  /** The immutable source: the known-good commit (worktree HEAD, release record, origin/main ancestry). */
   readonly knownGoodSha: string;
+  /** The deployment identity: the ONE external id of every recovered plane (never the known-good SHA). */
+  readonly recoveryId: string;
   readonly releaseEvidence: string;
   readonly environment: typeof RELEASE_ENVIRONMENT;
   readonly steps: readonly RecoveryStep[];
 }
 
 /**
- * The plan: the three planes in recovery order, each redeploying the known-good commit under its own external id to
- * EXACTLY the project the approved release used. The operator's project refs are a cross-check, never a source.
+ * The plan: the three planes in recovery order, each redeploying the known-good commit under the attempt's recovery id
+ * to EXACTLY the project the approved release used. The operator's project refs are a cross-check, never a source.
  */
 export function buildRecoveryPlan(input: {
   readonly knownGoodSha: unknown;
+  readonly recoveryId: unknown;
   readonly release: KnownGoodRelease;
   readonly projectRefs: Readonly<Record<ReleasePlane, unknown>>;
   readonly emptyEnvFile: string;
@@ -224,6 +325,10 @@ export function buildRecoveryPlan(input: {
   }
   if (input.emptyEnvFile.trim() === "") throw new RecoveryPlanError("an empty env file controlled by the tool is required");
   const knownGoodSha = input.knownGoodSha;
+  if (!isRecoveryIdFormat(input.recoveryId) || input.recoveryId.slice("recovery-".length, "recovery-".length + 12) !== knownGoodSha.slice(0, 12)) {
+    throw new RecoveryPlanError("the recovery id must be recovery-<first 12 of the known-good SHA>-<UTC time>");
+  }
+  const recoveryId = input.recoveryId;
   const steps = RECOVERY_ORDER.map((plane): RecoveryStep => {
     const definition = definitionOf(plane);
     const known = input.release.planes[plane];
@@ -235,30 +340,33 @@ export function buildRecoveryPlan(input: {
       knownGoodVersion: known.version,
       expectedTasks: known.taskCount,
       baselineContentHash: known.contentHash,
-      argv: deployArgv(definition, { projectRef: known.projectRef, releaseSha: knownGoodSha, emptyEnvFile: input.emptyEnvFile }),
+      // The release unit's argv, with the recovery id as its ONE external id (the source is the worktree at the known-good SHA).
+      argv: deployArgv(definition, { projectRef: known.projectRef, releaseSha: recoveryId, emptyEnvFile: input.emptyEnvFile }),
     });
   });
-  const plan: RecoveryPlan = Object.freeze({ knownGoodSha, releaseEvidence: input.release.fileName, environment: RELEASE_ENVIRONMENT, steps: Object.freeze(steps) });
+  const plan: RecoveryPlan = Object.freeze({ knownGoodSha, recoveryId, releaseEvidence: input.release.fileName, environment: RELEASE_ENVIRONMENT, steps: Object.freeze(steps) });
   assertRecoveryPlanInvariants(plan);
   return plan;
 }
 
-/** Re-checked before execution: the recovery order, one known-good external id per argv, prod only, the safety flags. */
+/** Re-checked before execution: the recovery order, the recovery id as the one external id (never a SHA), prod only, the safety flags. */
 export function assertRecoveryPlanInvariants(plan: RecoveryPlan): void {
   const fail = (reason: string): never => {
     throw new RecoveryPlanError(`recovery plan invariant violated: ${reason}`);
   };
   if (!isReleaseSha(plan.knownGoodSha)) fail("known-good SHA");
+  if (!isRecoveryIdFormat(plan.recoveryId) || isReleaseSha(plan.recoveryId) || plan.recoveryId === plan.knownGoodSha) fail("the recovery id must be a recovery id, never a commit SHA");
+  if (plan.recoveryId.slice("recovery-".length, "recovery-".length + 12) !== plan.knownGoodSha.slice(0, 12)) fail("the recovery id must name the known-good commit");
   if (plan.steps.length !== RECOVERY_ORDER.length) fail("exactly three planes");
   plan.steps.forEach((step, index) => {
-    if (step.plane !== RECOVERY_ORDER[index]) fail("plane order is MAIN, INTELLIGENCE, then INTEGRATION");
+    if (step.plane !== RECOVERY_ORDER[index]) fail("plane order is INTEGRATION, INTELLIGENCE, then MAIN");
     const definition = definitionOf(step.plane);
     const value = (flag: string): unknown => argValue(step.argv, flag);
     if (step.argv[0] !== "deploy") fail("argv must start with deploy");
     if (step.config !== definition.config || value("--config") !== definition.config) fail(`${step.plane} config`);
     if (value("--project-ref") !== step.projectRef) fail(`${step.plane} project ref`);
     if (value("--env") !== RELEASE_ENVIRONMENT) fail(`${step.plane} environment`);
-    if (value("--external-id") !== plan.knownGoodSha) fail(`${step.plane} external id must be the known-good SHA`);
+    if (value("--external-id") !== plan.recoveryId) fail(`${step.plane} external id must be the recovery id (never the known-good SHA, which the provider never rebuilds)`);
     if (step.argv.filter((token) => token === "--external-id").length !== 1) fail(`${step.plane} exactly one external id`);
     if (typeof value("--env-file") !== "string" || value("--env-file") === "") fail(`${step.plane} empty env file`);
     for (const flag of COMMON_SAFETY_FLAGS) if (!step.argv.includes(flag)) fail(`${step.plane} missing ${flag}`);
@@ -384,6 +492,75 @@ export function verifyRecoveredPlane(
   return { problems, contentHash, fingerprint: problems.length === 0 ? fingerprint : null };
 }
 
+// ── The deploy's answer, classified (RECOVERY-TOOLING-02) ──────────────────────────────────────────────────
+
+const ANSI_CODES = /\x1b\[[0-9;?]*[A-Za-z]/g;
+const EXISTING_DEPLOYMENT = /Version (\d{8}\.\d+) was already deployed for --external-id (\S+) [—–-]+ nothing to build/g;
+const NOT_CURRENT = /This version is not the current deployment/;
+const WORKER_CREATED_ANY = /"message":"Background worker created"[^\n]*?"createResponse":\{[^{}]*?"version":"(\d{8}\.\d+)"[^{}]*?"contentHash":"([0-9a-f]{32,64})"/g;
+
+export type RecoveryDeployOutcome =
+  | PlaneOutcome
+  /** The provider already holds a deployment under this external id: NOTHING was built (exit 0). `current`: it is the active one. */
+  | { readonly state: "EXISTING"; readonly version: string; readonly externalId: string; readonly current: boolean };
+
+/**
+ * A recovery deploy's outcome. Interrupt and timeout are UNKNOWN; a non-zero exit is FAILED; the provider's "already
+ * deployed … nothing to build" answer (exit 0) is EXISTING — never a PASS; otherwise the release unit's own verdict (PASS
+ * only with a parseable new version and exactly the expected task count). An answer that is both is UNKNOWN.
+ */
+export function classifyRecoveryDeploy(step: Pick<RecoveryStep, "expectedTasks">, result: { readonly exitCode: number | null; readonly output: string; readonly timedOut: boolean; readonly interrupted: boolean }): RecoveryDeployOutcome {
+  if (result.interrupted) return { state: "UNKNOWN", reason: "interrupted" };
+  if (result.timedOut) return { state: "UNKNOWN", reason: "timeout" };
+  if (result.exitCode !== 0) return { state: "FAILED", reason: "exit_code" };
+  const text = result.output.replace(ANSI_CODES, "");
+  const existing = [...text.matchAll(EXISTING_DEPLOYMENT)].map((match) => ({ version: match[1] ?? "", externalId: match[2] ?? "" }));
+  if (existing.length > 0) {
+    const distinct = new Set(existing.map((entry) => `${entry.version}/${entry.externalId}`));
+    const [first] = existing;
+    if (distinct.size !== 1 || first === undefined || parseDeployOutput(text) !== undefined) return { state: "UNKNOWN", reason: "unreadable_output" };
+    return { state: "EXISTING", version: first.version, externalId: first.externalId, current: !NOT_CURRENT.test(text) };
+  }
+  return evaluatePlaneResult(step, result);
+}
+
+/** Every (version, fingerprint) a deploy's build log reported — kept for a deploy whose own outcome is not known. */
+export function parseWorkerCreations(output: string): readonly { readonly version: string; readonly contentHash: string }[] {
+  const seen = new Map<string, { version: string; contentHash: string }>();
+  for (const match of output.replace(ANSI_CODES, "").matchAll(WORKER_CREATED_ANY)) {
+    const entry = { version: match[1] ?? "", contentHash: match[2] ?? "" };
+    seen.set(`${entry.version}/${entry.contentHash}`, entry);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * A continuation's deploy under the SAME recovery id answered EXISTING for a plane whose previous deploy (this attempt's,
+ * recorded) had no known outcome: the provider itself states which version holds the recovery id. It is adopted only
+ * when that version is the CURRENT one, the provider's current worker is it with the known-good inventory, and its
+ * fingerprint — observed in the interrupted deploy's own build log — equals the baseline (when one is recorded).
+ */
+export function verifyConfirmedDeployment(
+  step: Pick<RecoveryStep, "plane" | "expectedTasks" | "taskDirectory" | "baselineContentHash">,
+  observed: { readonly existingVersion: string; readonly current: boolean; readonly worker: WorkerInventory | undefined; readonly observedWorkers: readonly { readonly version: string; readonly contentHash: string }[] },
+): PlaneVerification {
+  const problems: string[] = [];
+  if (!observed.current) problems.push(`${step.plane}: the deployment holding the recovery id (${observed.existingVersion}) is not the current one`);
+  if (observed.worker === undefined) problems.push(`${step.plane}: the current worker could not be read`);
+  else {
+    if (observed.worker.version !== observed.existingVersion) problems.push(`${step.plane}: the active version is ${observed.worker.version}, not ${observed.existingVersion} that holds the recovery id`);
+    problems.push(...inventoryProblems(step, observed.worker));
+  }
+  const hashes = new Set(observed.observedWorkers.filter((entry) => entry.version === observed.existingVersion).map((entry) => entry.contentHash));
+  const contentHash = hashes.size === 1 ? ([...hashes][0] ?? null) : null;
+  let fingerprint: FingerprintStatus | null = null;
+  if (step.baselineContentHash === null) fingerprint = "NO_BASELINE";
+  else if (contentHash === null) problems.push(`${step.plane}: the fingerprint of ${observed.existingVersion} was not observed by the interrupted deploy; it cannot be adopted (start a new recovery attempt)`);
+  else if (contentHash !== step.baselineContentHash) problems.push(`${step.plane}: content fingerprint ${contentHash} differs from the known-good ${step.baselineContentHash}`);
+  else fingerprint = "MATCH";
+  return { problems, contentHash, fingerprint: problems.length === 0 ? fingerprint : null };
+}
+
 // ── Runtime, web and database compatibility ─────────────────────────────────────────────────────────────────
 
 /** The deploying CLI must be exactly the Trigger.dev SDK version the known-good commit pins (the release convention). */
@@ -470,30 +647,50 @@ export function migrationsAfter(knownGood: readonly string[], newer: readonly st
 
 // ── Continuation of an interrupted or stopped recovery ──────────────────────────────────────────────────────
 
-export const PLANE_RECOVERY_STATES = ["RECOVERED", "ALREADY_RECOVERED", "DEPLOY_FAILED", "DEPLOY_UNKNOWN", "VERIFICATION_FAILED", "UNEXPECTED_ACTIVE_VERSION", "NOT_STARTED"] as const;
+export const PLANE_RECOVERY_STATES = ["RECOVERED", "ALREADY_RECOVERED", "DEPLOY_FAILED", "DEPLOY_UNKNOWN", "RECOVERY_ID_IN_USE", "VERIFICATION_FAILED", "UNEXPECTED_ACTIVE_VERSION", "NOT_STARTED"] as const;
 export type PlaneRecoveryState = (typeof PLANE_RECOVERY_STATES)[number];
 const DONE: readonly PlaneRecoveryState[] = ["RECOVERED", "ALREADY_RECOVERED"];
+/** A deploy ran under the recovery id but its outcome was not seen: the plane MAY hold the recovery id now. */
+const OUTCOME_UNSEEN: readonly PlaneRecoveryState[] = ["DEPLOY_FAILED", "DEPLOY_UNKNOWN"];
+/** The attempt ends here: investigate, then start a NEW attempt (a new recovery id) — never continue this one. */
+const ATTEMPT_ENDING: readonly PlaneRecoveryState[] = ["RECOVERY_ID_IN_USE", "VERIFICATION_FAILED"];
 
 export const RECOVERY_FINAL_STATES = ["RECOVERED", "RECOVERED_FINGERPRINT_UNVERIFIED", "STOPPED_PARTIAL", "STOPPED_NOTHING_RECOVERED"] as const;
 export type RecoveryFinalState = (typeof RECOVERY_FINAL_STATES)[number];
 
+export interface ObservedWorker {
+  readonly version: string;
+  readonly contentHash: string;
+}
+
 export interface PriorPlane {
   readonly plane: ReleasePlane;
   readonly state: PlaneRecoveryState;
+  readonly versionBefore: string | null;
   readonly resultingVersion: string | null;
   readonly fingerprint: FingerprintStatus | null;
+  /** The (version, fingerprint) pairs the plane's deploy reported before its outcome was lost (DEPLOY_FAILED/UNKNOWN). */
+  readonly observedWorkers: readonly ObservedWorker[];
 }
 
 export interface PriorRecovery {
   readonly fileName: string;
   readonly knownGoodSha: string;
+  readonly recoveryId: string;
   readonly releaseEvidence: string;
   readonly projectRefs: Readonly<Record<ReleasePlane, string>>;
   readonly finalState: RecoveryFinalState;
   readonly planes: Readonly<Record<ReleasePlane, PriorPlane>>;
 }
 
-/** A previous recovery record this run may continue, or why not. Only an unfinished recovery of the SAME source and projects. */
+const isObservedWorker = (value: unknown): value is ObservedWorker => isObject(value) && isWorkerVersion(value["version"]) && typeof value["contentHash"] === "string" && CONTENT_HASH.test(value["contentHash"]);
+
+/**
+ * A previous recovery record this run may continue, or why not. Only an unfinished v2 attempt of the SAME source, release
+ * evidence and projects, whose recovery id is well-formed, bound to that source and in every plane's argv; never an
+ * attempt that ended on an id already in use or a failed verification (those need a new attempt), and never a v1 record
+ * (RECOVERY-TOOLING-01 deployed under the known-good SHA, which the provider never rebuilds — RECOVERY-REHEARSAL-03B).
+ */
 export function parseRecoveryEvidence(fileName: string, raw: string, plan: RecoveryPlan): { readonly ok: true; readonly prior: PriorRecovery } | { readonly ok: false; readonly problems: readonly string[] } {
   if (!isEvidenceFileName(fileName)) return { ok: false, problems: ["--continue must name a recovery record by its bare file name"] };
   let record: unknown;
@@ -502,10 +699,15 @@ export function parseRecoveryEvidence(fileName: string, raw: string, plan: Recov
   } catch {
     return { ok: false, problems: ["the recovery record is not JSON"] };
   }
+  if (isObject(record) && record["schema"] === LEGACY_RECOVERY_SCHEMA) {
+    return { ok: false, problems: ["a v1 recovery record deployed under the known-good SHA, which the provider never rebuilds (RECOVERY-REHEARSAL-03B); it cannot be continued: start a new recovery attempt"] };
+  }
   if (!isObject(record) || record["schema"] !== RECOVERY_SCHEMA) return { ok: false, problems: ["not a recovery record"] };
   const problems: string[] = [];
   if (record["knownGoodSha"] !== plan.knownGoodSha) problems.push("the recovery record is for another known-good commit");
   if (record["releaseEvidence"] !== plan.releaseEvidence) problems.push("the recovery record names other release evidence");
+  const recoveryId = record["recoveryId"];
+  if (!isRecoveryIdFormat(recoveryId) || recoveryId.slice("recovery-".length, "recovery-".length + 12) !== plan.knownGoodSha.slice(0, 12)) problems.push("the recovery record has no valid recovery id for this known-good commit");
   const finalState = record["finalState"];
   if (finalState === "RECOVERED" || finalState === "RECOVERED_FINGERPRINT_UNVERIFIED") problems.push("that recovery already completed; there is nothing to continue");
   else if (finalState !== "STOPPED_PARTIAL" && finalState !== "STOPPED_NOTHING_RECOVERED") problems.push("the recovery record has no valid final state");
@@ -523,31 +725,40 @@ export function parseRecoveryEvidence(fileName: string, raw: string, plan: Recov
       }
       if (entry["projectRef"] !== step.projectRef) problems.push(`${plane}: the record names another project`);
       else refs[plane] = step.projectRef;
+      const argv = entry["argv"];
+      if (!Array.isArray(argv) || argValue(argv, "--external-id") !== recoveryId) problems.push(`${plane}: the recorded deploy is not under the record's recovery id`);
       const state = entry["state"];
       const resulting = entry["resultingVersion"];
       const fingerprint = entry["fingerprint"];
+      const before = entry["versionBefore"];
+      const observed = entry["observedWorkers"];
       if (typeof state !== "string" || !(PLANE_RECOVERY_STATES as readonly string[]).includes(state)) {
         problems.push(`${plane}: unknown state`);
         return;
       }
+      if (ATTEMPT_ENDING.includes(state as PlaneRecoveryState)) problems.push(`${plane}: ${state} — this recovery attempt cannot be continued; investigate, then start a new attempt with a new recovery id`);
       const done = DONE.includes(state as PlaneRecoveryState);
       if (done && !isWorkerVersion(resulting)) problems.push(`${plane}: a recovered plane must record its resulting version`);
       if (done && fingerprint !== "MATCH" && fingerprint !== "NO_BASELINE") problems.push(`${plane}: a recovered plane must record its fingerprint status`);
+      if (observed !== undefined && !(Array.isArray(observed) && observed.every(isObservedWorker))) problems.push(`${plane}: malformed observed workers`);
       parsed[plane] = {
         plane,
         state: state as PlaneRecoveryState,
+        versionBefore: isWorkerVersion(before) ? before : null,
         resultingVersion: done && isWorkerVersion(resulting) ? resulting : null,
         fingerprint: done && (fingerprint === "MATCH" || fingerprint === "NO_BASELINE") ? fingerprint : null,
+        observedWorkers: Array.isArray(observed) ? observed.filter(isObservedWorker) : [],
       };
     });
   }
   const complete = RECOVERY_ORDER.every((plane) => parsed[plane] !== undefined && refs[plane] !== undefined);
-  if (problems.length > 0 || !complete) return { ok: false, problems: problems.length > 0 ? problems : ["the recovery record is incomplete"] };
+  if (problems.length > 0 || !complete || !isRecoveryIdFormat(recoveryId)) return { ok: false, problems: problems.length > 0 ? problems : ["the recovery record is incomplete"] };
   return {
     ok: true,
     prior: {
       fileName,
       knownGoodSha: plan.knownGoodSha,
+      recoveryId,
       releaseEvidence: plan.releaseEvidence,
       projectRefs: refs as Record<ReleasePlane, string>,
       finalState: finalState as RecoveryFinalState,
@@ -557,7 +768,17 @@ export function parseRecoveryEvidence(fileName: string, raw: string, plan: Recov
 }
 
 export type PlaneIntent =
-  | { readonly plane: ReleasePlane; readonly mode: "deploy"; readonly expectedBefore: string }
+  | {
+      readonly plane: ReleasePlane;
+      readonly mode: "deploy";
+      readonly expectedBefore: string;
+      /**
+       * This attempt already deployed here without seeing the outcome: if the provider answers that the CURRENT deployment
+       * holds the recovery id, it is verified and adopted (never rebuilt); otherwise it is deployed normally.
+       */
+      readonly outcomeUnseen: boolean;
+      readonly observedWorkers: readonly ObservedWorker[];
+    }
   | { readonly plane: ReleasePlane; readonly mode: "verify_recovered"; readonly recoveredVersion: string; readonly fingerprint: FingerprintStatus };
 
 /**
@@ -573,6 +794,7 @@ export function resolvePlaneIntents(
 ): { readonly ok: true; readonly intents: readonly PlaneIntent[] } | { readonly ok: false; readonly problems: readonly string[] } {
   const problems: string[] = [];
   const intents: PlaneIntent[] = [];
+  if (prior !== undefined && prior.recoveryId !== plan.recoveryId) problems.push("the plan's recovery id is not the continued attempt's");
   for (const step of plan.steps) {
     const expected = expectations[step.plane];
     const before = prior?.planes[step.plane];
@@ -583,7 +805,10 @@ export function resolvePlaneIntents(
     }
     if (expected === undefined) problems.push(`--expect-${step.plane}-version is required (the active version shown by the plan)`);
     else if (!isWorkerVersion(expected)) problems.push(`--expect-${step.plane}-version must be a worker version (YYYYMMDD.N)`);
-    else intents.push({ plane: step.plane, mode: "deploy", expectedBefore: expected });
+    else {
+      const outcomeUnseen = before !== undefined && OUTCOME_UNSEEN.includes(before.state);
+      intents.push({ plane: step.plane, mode: "deploy", expectedBefore: expected, outcomeUnseen, observedWorkers: outcomeUnseen ? before.observedWorkers : [] });
+    }
   }
   return problems.length > 0 ? { ok: false, problems } : { ok: true, intents };
 }

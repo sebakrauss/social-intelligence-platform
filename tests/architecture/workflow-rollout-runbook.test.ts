@@ -89,17 +89,27 @@ describe("0034 rollout runbook ↔ release tooling", () => {
     expect(readFileSync(path.join(REPOSITORY_ROOT, ".vercelignore"), "utf8")).toMatch(/^\/tools\/perf\/$/m);
   });
 
-  it("RECOVERY-TOOLING-01: worker recovery is the guarded forward recovery tool, and deployment stays blocked until its isolated rehearsal", () => {
+  it("RECOVERY-TOOLING-01/-02: worker recovery is the guarded forward recovery tool, and deployment stays blocked until its isolated rehearsal 03C", () => {
     const text = runbook();
-    expect(text).toMatch(/The block stays until \*\*`RECOVERY-REHEARSAL-03`\*\*/);
+    expect(text).toMatch(/The block stays until\s+(?:> )?\*\*`RECOVERY-REHEARSAL-03C`\*\*/);
     expect(text).toMatch(/\| Worker \| \*\*Forward recovery:\*\* `npm run trigger:recover`/);
-    expect(text).toMatch(/\*\*not yet rehearsed end to end\*\* → deployment stays blocked until `RECOVERY-REHEARSAL-03`/);
+    expect(text).toMatch(/\*\*not yet rehearsed end to end\*\* → deployment stays blocked until `RECOVERY-REHEARSAL-03C`/);
+    expect(text).toMatch(/X-3 stays \*\*BLOCKED\*\* until it passes/);
     expect(text).toMatch(/\| Schema \| \*\*Never rolled back\.\*\*/);
     const scripts = (JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> }).scripts;
     expect(scripts["trigger:recover"]).toBe("node tools/trigger/recover-release.ts");
     // The order, the worktree model, the evidence location and the confirmation are the tool's own.
-    expect(RECOVERY_ORDER).toEqual(["main", "intelligence", "integration"]);
-    expect(text).toContain("**Order: MAIN → INTELLIGENCE → INTEGRATION**");
+    expect(RECOVERY_ORDER).toEqual(["integration", "intelligence", "main"]);
+    expect(text).toContain("**Order: INTEGRATION → INTELLIGENCE → MAIN**");
+    // RECOVERY-TOOLING-02: the source SHA and the recovery id are distinct; the id is never the SHA; never --force.
+    expect(text).toContain("**Source SHA versus recovery id**");
+    expect(text).toContain("`recovery-<sha12>-<UTC yyyymmddThhmmssZ>`");
+    expect(text).toMatch(/It is \*\*never\*\* the known-good SHA/);
+    expect(text).toMatch(/A zero exit that created nothing is \*\*never\*\* a recovery/);
+    expect(text).toMatch(/and never the CLI's deploy force flag \(`--force`\)/);
+    expect(text).toMatch(/A continuation never mints a new id: it uses the \*\*same recovery id\*\*/);
+    expect(text).toMatch(/\*\*never\*\* the release being recovered from/);
+    expect(text).toContain("**Legacy v2 release evidence.**");
     expect(text).toMatch(/git worktree add --detach \.\.\/wrenkind-recovery-<sha8> <known-good sha>/);
     expect(text).toMatch(/git worktree remove \.\.\/wrenkind-recovery-<sha8>/);
     expect(text).toContain(`${RECOVERY_EVIDENCE_DIRECTORY}/<timestamp>-<sha12>.json`);
