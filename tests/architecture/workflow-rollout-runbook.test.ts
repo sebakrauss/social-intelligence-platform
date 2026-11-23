@@ -11,6 +11,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MIGRATION_LOCK_TIMEOUT_MS, MIGRATION_LOCK_TIMEOUT_RANGE_MS } from "@/tools/db/migrations";
 import { DEV_RECONCILE_CONFIRMATION, RECONCILE_TARGETS } from "@/tools/ops/workflow-reconcile-command";
+import { parseSwitchCommand } from "@/tools/ops/switch-command";
+import { REASON_CODES } from "@/tools/ops/switches";
 import { PLATFORMS, SWITCHES } from "@/platform/flags/registry";
 import { COMMENTS_WORKSPACES_ENV, parseCommentsAllowlist } from "@/server/inbox/comments-access";
 import { webJobRuntime } from "@/server/jobs/outbox-notifier";
@@ -389,5 +391,61 @@ describe("0034 rollout runbook — RUNBOOK-CLOSE-01 decisions", () => {
     expect(release).toContain("The worker (W8) and the web (W11) always release from the same verified commit.");
     // The post-migration T-26 successor rule still excludes its database and test contracts.
     expect(section(text, "### Managed T-26 (W3 and W7)")).toContain("touches nothing under `db/`, `platform/`, `tools/db/`, `tests/db/` or `vitest.db-managed.config.ts`");
+  });
+});
+
+/**
+ * D-6 (WINDOW-PREP-01) — every operational switch command the runbook prints runs as written: the runbook's W4, W13 and
+ * R1 once used `--reason` values (`release-0034`, `worker-recovery`) that `ops:switch` and the database refuse. Each
+ * `npm run ops:switch -- …` command is parsed by the tool's own parser for every platform, with and without `--apply`
+ * where that applies; every `--reason` in the runbook is one of the tool's reason codes; no bare `ops:switch`
+ * reference stands in for a command.
+ */
+describe("0034 rollout runbook — ops:switch commands match the real parser (D-6)", () => {
+  const OPERATOR = "operator-check";
+  const commands = (text: string): string[] => [...text.matchAll(/`npm run ops:switch -- ([^`]+)`/g)].map((match) => match[1] ?? "");
+  const tokens = (command: string): string[] => [...command.matchAll(/'([^']*)'|"([^"]*)"|(\S+)/g)].map((match) => match[1] ?? match[2] ?? match[3] ?? "");
+  const instantiate = (command: string, platform: string): string[] => tokens(command.replaceAll("<platform>", platform).replaceAll("<id>", OPERATOR));
+
+  it("every --reason in the runbook is a reason code the tool and the database accept", () => {
+    const text = runbook();
+    const reasons = [...text.matchAll(/--reason ([A-Za-z0-9_-]+)/g)].map((match) => match[1] ?? "");
+    expect(reasons.length).toBeGreaterThanOrEqual(4);
+    for (const reason of reasons) expect(REASON_CODES as readonly string[], reason).toContain(reason);
+    // The database enforces the same set (0005 switch history), so the tool's list is the authority.
+    expect(source("db/migrations/0005_job_foundation.sql")).toContain(`reason_code     text not null check (reason_code in (${REASON_CODES.map((code) => `'${code}'`).join(", ")}))`);
+    const scripts = (JSON.parse(source("package.json")) as { scripts: Record<string, string> }).scripts;
+    expect(scripts["ops:switch"]).toBe("node tools/ops/switch.ts");
+  });
+
+  it("every ops:switch command the runbook prints parses for every platform, with and without --apply", () => {
+    const text = runbook();
+    // No bare reference: every `…ops:switch…` code span is a complete npm command.
+    for (const span of text.match(/`[^`]*ops:switch[^`]*`/g) ?? []) expect(span, span).toMatch(/^`npm run ops:switch -- (set|clear|show) --target development /);
+    const found = commands(text);
+    expect(found.length).toBeGreaterThanOrEqual(5);
+    for (const command of found) {
+      for (const platform of PLATFORMS) {
+        const argv = instantiate(command, platform);
+        const parsed = parseSwitchCommand(argv);
+        expect(parsed.ok ? "ok" : parsed.problem, `${platform}: ${command}`).toBe("ok");
+        if (argv[0] !== "show" && !argv.includes("--apply")) {
+          const applied = parseSwitchCommand([...argv, "--apply"]);
+          expect(applied.ok ? "ok" : applied.problem, `${platform} --apply: ${command}`).toBe("ok");
+        }
+      }
+    }
+  });
+
+  it("the pause, resume, abort and containment commands carry the reviewed reasons", () => {
+    const text = runbook();
+    expect(windowRow(text, 4)).toContain("--value '{\"paused\":true}' --operator <id> --reason release`");
+    expect(windowRow(text, 4)).toContain("ops:switch -- show --target development --key ingestion.provider_pause --qualifier <platform>`");
+    expect(windowRow(text, 4)).toContain("--scope global --operator <id> --reason rollback` per platform (reverts this step's pause)");
+    expect(windowRow(text, 13)).toContain("ops:switch -- clear --target development --key ingestion.provider_pause --qualifier <platform> --scope global --operator <id> --reason release`");
+    const r1 = text.split("\n").find((line) => line.startsWith("| R1 |")) ?? "";
+    expect(r1).toContain("--operator <id> --reason incident --apply`");
+    expect(r1).toContain("The reason is `incident`: R1 contains a faulty release while it is recovered");
+    expect(text).not.toMatch(/release-0034|worker-recovery/);
   });
 });
