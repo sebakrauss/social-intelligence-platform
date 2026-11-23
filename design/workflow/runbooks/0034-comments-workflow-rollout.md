@@ -10,8 +10,12 @@ DEV only. **NOT executed.** Every step is a separate, explicitly authorized Prod
 > `RECOVERY-TOOLING-02` corrected it (a unique recovery id per attempt). **`RECOVERY-REHEARSAL-03C`** ran the corrected
 > tool end to end on the three isolated synthetic projects, with an interruption and its continuation: **PASS**, accepted.
 > It found one safety defect (G1: a plan said every prerequisite was met while an interrupted build was still running at
-> the provider), corrected in `RECOVERY-TOOLING-03` (unit-tested only). The block stays until
-> **X-3 is approved by the Product Owner** (§Recovery status). Until then, no step from 3 (migration) onward may start.
+> the provider), corrected in `RECOVERY-TOOLING-03` (unit-tested only). The block stayed until
+> **X-3 is approved by the Product Owner** (§Recovery status).
+>
+> **Status (RUNBOOK-CLOSE-01, 2026-11-23):** X-3 is **APPROVED for DEV recovery readiness only** (§Product Owner
+> decisions). That approval lifts the recovery-path block for DEV. It authorizes **no** release step: every mutating step
+> from W3 onward still needs its own, explicit Product Owner authorization. Production is unaffected.
 
 Sources:
 - WORKFLOW-WF-2C, whose transition window was simulated end to end on disposable local clusters (`tests/db/local/workflow-transition-window.test.ts`);
@@ -19,9 +23,43 @@ Sources:
 - RELEASE-TOOLING-01 (reconcile-before-web order, development reconciliation target, bounded migration lock wait, clean release worktree);
 - RECOVERY-TOOLING-01 (worker forward recovery with `npm run trigger:recover`, §Rollback);
 - RECOVERY-REHEARSAL-03B and RECOVERY-TOOLING-02 (the recovery id, the INTEGRATION → INTELLIGENCE → MAIN order, continuation under the same id);
-- RECOVERY-REHEARSAL-03C and RECOVERY-TOOLING-03 (this revision: what the isolated rehearsal observed, and the block on remote deployments in progress).
+- RECOVERY-REHEARSAL-03C and RECOVERY-TOOLING-03 (what the isolated rehearsal observed, and the block on remote deployments in progress);
+- DB-METADATA-01, BACKUP-VERIFY-01, RECOVERY-READINESS-01 and DEV-RELEASE-PREP-01 (read-only DEV database, backup and recovery readiness; the managed T-26 write scope; a live recovery PLAN ONLY);
+- RUNBOOK-ALIGN-01 (the five corrections of DEV-RELEASE-PREP-01 §2 and the release window sequence W1–W13);
+- RUNBOOK-CLOSE-01 (this revision: the Product Owner's DEV-only decisions G2, G3, C-1 and X-3; step 1 is read-only and never runs T-26; the release commit rule).
 
 "Abort" means: stop, keep the current state, report. Nothing is undone automatically.
+
+## Product Owner decisions (RUNBOOK-CLOSE-01, 2026-11-23) — DEV only
+
+These are risk acceptances and one readiness approval, recorded for **DEV only**. They never apply to production.
+
+| Item | Decision | Scope and conditions |
+|---|---|---|
+| **G2** (legacy worker fingerprint) | **ACCEPTED — DEV ONLY** | `ff5269c` has no recorded historical contentHash. A worker recovery to it may be verified by source, versions and task inventory, with the explicit outcome `RECOVERED_FINGERPRINT_UNVERIFIED` (§Legacy v2 release evidence). |
+| **G3** (web relay pin) | **ACCEPTED — DEV ONLY** | `TRIGGER_EXTERNAL_DEPLOYMENT_ID` and `TRIGGER_SECRET_KEY` are absent by configuration. The effective runtime configuration has not been directly observed. The acceptance is subject to the read-only configuration checks of step 1 and R2 (§Web relay pin and Trigger credentials). |
+| **C-1** (recovery point) | **ACCEPTED WITH CONDITIONS — DEV ONLY** | A Completed Supabase **PHYSICAL** backup **no older than 24 hours** at the migration window. The PO acknowledges that **restoration has never been tested** and that **changes after the backup could be lost**. **If no eligible backup is available: STOP.** This acceptance never authorizes proceeding without a recovery point (§Backups and the recovery point). |
+| **X-3** (worker recovery readiness) | **APPROVED for DEV recovery readiness only** | The guarded forward recovery (`trigger:recover`) is the approved DEV worker recovery path. Its live residuals stay listed in §Recovery status. |
+
+**These decisions are not execution authorization.** No authorization is granted by them for:
+- managed T-26;
+- the ingestion pause;
+- migration 0034;
+- the worker deployment;
+- reconciliation;
+- the web deployment.
+
+Each of these needs its own explicit Product Owner authorization (W3–W13).
+
+**What the approvals keep required, unchanged:**
+- **The backup:** its freshness is verified **immediately before the migration** (W2): Completed, PHYSICAL, at most 24 hours old.
+- **Vercel:** its configuration is verified again, read-only, by name (step 1, and before any R2 attestation).
+- **The web/worker pairing:** the historical pairing is confirmed from deployment evidence (§What a recovery PLAN ONLY shows).
+- **The workers:** the active workers and the provider deployment status are re-checked (step 1, W9).
+- **Supabase:** billing is confirmed paid, and the service is confirmed healthy (W1).
+- **Authorization:** every mutating release step is independently authorized.
+
+**The approvals do not weaken any STOP condition.** Every abort and STOP in this runbook applies as written.
 
 ## What changes
 
@@ -51,29 +89,157 @@ The new worker repairs a conversation on its next activity. Reconciliation repai
 
 With the order below (worker before web), no Done can be recorded while the previous worker still runs: the previous web has no Mark done. So no reopen can be missed. Reconciliation still **reports** that case (`review`) in case the order is ever broken.
 
-## Verified baseline (DEV-PREFLIGHT-02, 2026-11-21; re-verify in step 1)
+## Verified baseline (DEV-RELEASE-PREP-01, 2026-11-23; re-verify in step 1)
 
 | Component | State |
 |---|---|
-| GitHub | `main` = `97dcaee`; no branch protection or required checks (CI runs after a push, it does not gate it) |
-| Vercel (Hobby) | Production = `dpl_HT6ETxMo…` @ `97dcaee`. **No Git integration: a push deploys nothing.** `COMMENTS_REDESIGN_WORKSPACES` absent (Comments offered to nobody). |
-| Trigger.dev | INTEGRATION / INTELLIGENCE / MAIN deployed 2026-11-13T00:02–00:03Z = release `20261113.1` @ `ff5269c` (all three planes) |
-| dev-v2 | PostgreSQL 17.11; 33 migrations applied (checksums match); pending = `0034_workflow_core.sql` only |
+| GitHub | Code baseline `24dcacc` (CI green). The release commit is the verified `origin/main` at the window: `24dcacc` or its documentation-only successor (§Release commit). No branch protection or required checks (CI runs after a push, it does not gate it) |
+| Vercel (Hobby) | Production = `dpl_HT6ETxMo…` @ `97dcaee` (since 2026-11-16). **No Git integration: a push deploys nothing.** 14 environment variable names, all production. Absent: `COMMENTS_REDESIGN_WORKSPACES` (Comments offered to nobody), `TRIGGER_EXTERNAL_DEPLOYMENT_ID` and `TRIGGER_SECRET_KEY` (§Web relay pin and Trigger credentials). |
+| Trigger.dev | INTEGRATION / INTELLIGENCE / MAIN deployed 2026-11-13T00:02–00:03Z = release `20261113.1` @ `ff5269c` (all three planes; 10 / 1 / 11 tasks); the ALIGNED record is v2, without content fingerprints (§Legacy v2 release evidence) |
+| dev-v2 | PostgreSQL 17.11; 33 migrations applied (checksums match); pending = `0034_workflow_core.sql` only; non-OPEN conversations 0 (DB-METADATA-01) |
+| Supabase plan and backups | Pro (seen by the PO in the dashboard, 2026-11-23); daily **PHYSICAL** backups listed. **Restoration has never been tested.** PITR not reported. (§Backups and the recovery point) |
 | CI dependency audit | `PASS` with **no exception** (DEPS-01: GHSA-g3hv-75wg-m249 remediated; the temporary exception was removed, not renewed). Any reported advisory fails CI. **Never bypassed.** |
 
 ## Steps
 
 | Step | Action | Approval | Abort when |
 |---|---|---|---|
-| **1. Preflight and database metadata** | Read-only.<br>**Re-verify the baseline above.**<br>`npm run db:migrate -- --target development` (plan only): 33 applied, only 0034 pending.<br>The aggregate metadata gate (DB-METADATA-01, one READ ONLY transaction, aggregates only):<br>• sizes of `audit.audit_events`, `conversations.conversations` and `interactions.interactions`;<br>• **`count(*) where workflow_state <> 'OPEN'` = 0** (0034 refuses with 55000 otherwise);<br>• no long-running transaction.<br>Record the in-service web (deployment id **and commit SHA**) and Trigger versions as rollback targets, and the **ALIGNED release evidence file** of the in-service worker release (`.wrenkind-local/evidence/trigger-release-pair/…`, today `ff5269c` / `20261113.1`): it is the only acceptable worker recovery source. Managed T-26 is green. The Comments allowlist is empty. | PO | any mismatch |
-| **2. Backups and verified recovery** | Record a restorable point (PITR position, or a logical dump of `conversations`, `interactions`, `audit`) with its timestamp.<br>**The worker recovery path is rehearsed and approved** (`trigger:recover`, end to end in `RECOVERY-REHEARSAL-03C`), and X-3 is approved (§Recovery status).<br>A **recovery plan** (`npm run trigger:recover`, PLAN ONLY) for the recorded known-good release has been run and reviewed: no structural refusal; the remaining apply prerequisites are the expected ones.<br>The web rollback target is confirmed to be the immediately previous production deployment (Hobby Instant Rollback reaches only that one). | PO | no confirmed restorable point, or no approved worker recovery |
-| **3. Migration 0034** | In a quiet window. Check first that no session holds or awaits a lock on `audit.audit_events`.<br>`npm run db:migrate -- --target development --apply --lock-timeout-ms <n>` (default 5000), with the migration role, never from a runtime.<br>Verify: introspection reports 0 problems; work items = conversations. | PO | 0034 refuses (55000), a lock wait times out (see below), or the counts differ |
-| **4. Coordinated worker release** | `npm run trigger:release` (all three planes, one commit), **from the clean release worktree** (below), at the pushed, CI-green commit.<br>Keep the window between 3 and 4 short. **The web is NOT released in this step.** | PO | any plane fails → STOP; worker forward recovery (§Rollback) only by a separate PO decision |
+| **1. Preflight and database metadata** | Read-only. A **read-only preflight**: it re-verifies the baseline and the existing evidence, and writes nothing.<br>**Re-verify the baseline above.**<br>`npm run db:migrate -- --target development` (plan only): 33 applied, only 0034 pending.<br>The aggregate metadata gate (DB-METADATA-01, one READ ONLY transaction, aggregates only):<br>• sizes of `audit.audit_events`, `conversations.conversations` and `interactions.interactions`;<br>• **`count(*) where workflow_state <> 'OPEN'` = 0** (0034 refuses with 55000 otherwise);<br>• no long-running transaction.<br>Record the in-service web (deployment id **and commit SHA**) and Trigger versions as rollback targets, and the **ALIGNED release evidence file** of the in-service worker release (`.wrenkind-local/evidence/trigger-release-pair/…`, today `ff5269c` / `20261113.1`): it is the only acceptable worker recovery source.<br>Billing and provider health verified (W1). Vercel configuration re-read by name (G3). The historical web/worker pairing confirmed from deployment evidence. The active workers and the provider deployment status re-checked. The Comments allowlist is empty.<br>Step 1 does **not** run or authorize managed T-26: **a completed preflight is not permission to write synthetic fixtures.** The pre-migration managed T-26 and introspection are **W3**, a managed write under its own authorization, after step 2 and before step 3, and must be green before step 3 (§Managed T-26). | PO | any mismatch |
+| **2. Backups and verified recovery** | The **recovery point** meets §Backups and the recovery point: Supabase Pro; a visible **Completed PHYSICAL backup** whose timestamp is verified **immediately before the migration** (W2) and is no older than the **PO-approved maximum backup age**; the PO has acknowledged that **restoration has never been tested** and that changes after the recovery point can be lost.<br>**The worker recovery path is rehearsed and approved** (`trigger:recover`, end to end in `RECOVERY-REHEARSAL-03C`), and X-3 is approved (§Recovery status), including the DEV-only acceptances of the legacy fingerprint (G2) and the relay pin (G3).<br>A **recovery plan** (`npm run trigger:recover`, PLAN ONLY) for the recorded known-good release has been run and reviewed per §What a recovery PLAN ONLY shows. Before step 4 it **legitimately reports "nothing to recover"** and the expected blockers; it is never an authorization to recover.<br>The web rollback target is confirmed to be the immediately previous production deployment (Hobby Instant Rollback reaches only that one). | PO | no recovery point within the approved age, no PO acknowledgment of the untested restore, or no approved worker recovery |
+| **3. Migration 0034** | In a quiet window, after W4 (ingestion paused for every platform and read back) and W5 (no unintended local or remote writer). Check first that no session holds or awaits a lock on `audit.audit_events`.<br>`npm run db:migrate -- --target development --apply --lock-timeout-ms <n>` (default 5000), with the migration role, never from a runtime. **Its own authorization.**<br>Verify: work items = conversations; then the **post-migration managed T-26 and introspection** are green (W7: source `24dcacc`, targeted entrypoints only, introspection reports 0 problems) **before step 4**. | PO | 0034 refuses (55000), a lock wait times out (see below), the counts differ, or the post-migration T-26 fails or leaves residue |
+| **4. Coordinated worker release** | `npm run trigger:release` (all three planes, one commit), **from the clean release worktree** (below), at the pushed, CI-green commit.<br>Keep the window between 3 and 4 short. **The web is NOT released in this step.**<br>Then W9: the new versions are current on all three planes, a **new recovery PLAN ONLY** is run with the current provider versions and queues, and the runs of the previous versions are drained. | PO | any plane fails → STOP; worker forward recovery (§Rollback) only by a separate PO decision. Old-version runs not drained, or a deployment not terminal → STOP |
 | **5. Reconcile every workspace** | While the **previous** web is still live (it ignores `workflow`, so this is safe), for every workspace that has conversations:<br>(1) dry run: `npm run ops:workflow-reconcile -- --target development --database-url-env DATABASE_WORKER_URL --workspace <id>`, then read the counts;<br>(2) apply: the same plus `--apply --confirm-dev-reconcile reconcile-workflow-work-items-in-dev-v2` (resume an interrupted run with `--after <next> --run <runCorrelationId>`). | PO | `failed > 0` (inspect `failedIds`; a rerun is safe) |
 | **6. Reconciliation verification and exceptions** | Per workspace, a second dry run must report `created 0 · repaired 0 · failed 0`. Conversations without a work item = 0. Work items = conversations.<br>**F'. Items flagged for review:** `review > 0` lists Done conversations with an audience comment first observed after the Done. Expected 0 with this order. A person opens each one and decides to Reopen or leave it Done; reconciliation never reopens. | PO / workspace owner | a second dry run that is not clean |
 | **7. Web deployment from the clean release worktree** | **Only after step 6 is clean for every workspace.**<br>Production deploy of the same commit from the clean release worktree (benchmark evidence excluded by `.vercelignore` and by the worktree itself).<br>Smoke: health 200, unauthenticated Inbox redirects, every Inbox lists the same conversations as before.<br>Then a final dry run per workspace (clean). | PO | deploy fails or smoke fails → web Instant Rollback |
-| **8. Authenticated DEV acceptance** | The acceptance matrix of DEV-PREFLIGHT-01 §8, with synthetic fixtures. Allowlist changes only as authorized in step 9. | PO | any failure |
+| **8. Authenticated DEV acceptance** | The acceptance matrix of DEV-PREFLIGHT-01 §8, with synthetic fixtures. Allowlist changes only as authorized in step 9.<br>Then W13: ingestion is resumed per platform under its own authorization, read back and monitored. | PO | any failure (ingestion stays paused until the PO decides) |
 | **9. Comments allowlist** | **Explicit, separate authorization** before `COMMENTS_REDESIGN_WORKSPACES` changes in any deployment. For acceptance: exactly the synthetic test workspaces. A pilot workspace only after steps 5–8. The change needs a new web deployment, which is its own gate. | PO | — |
+
+### Release window sequence (W1–W13)
+
+The order in which steps 1–8 are executed in the DEV release window (RUNBOOK-ALIGN-01).
+
+- **It is not a script and not one authorization.** Each mutating W step needs its **own authorization**, and none authorizes the next.
+- The first unexpected result stops the window ("Abort", above), and every recovery action needs its own PO approval.
+- The Comments allowlist (step 9) is **outside** the window: `COMMENTS_REDESIGN_WORKSPACES` stays absent through W13.
+
+| W | Step | Preconditions | Operation | Authorization | Evidence | STOP when | Recovery (separate approval) |
+|---|---|---|---|---|---|---|---|
+| **W1. Billing and provider health** | 1 | The PO decisions are recorded (§Product Owner decisions: G2, G3, C-1, X-3); this step is authorized | PO: Organization → Billing shows the Pro invoice paid and the project unrestricted; dashboard notices read. Operator: the Supabase, Vercel and Trigger.dev status pages | read-only | notes with UTC time | unpaid invoice, restricted project, or a **provider health problem** affecting the database, pooler, Vercel or Trigger.dev | postpone the window |
+| **W2. Backup freshness and DEV identity** | 1–2 | W1 | PO: Database → Backups, the latest **Completed PHYSICAL backup** and its timestamp, read **immediately before W6** (read again if the window is delayed). Operator: `npm run db:migrate -- --target development` (plan only) and the DB-METADATA-01 read-only check | read-only | backup timestamp **at most 24 hours** old (C-1); ledger 33/33, only 0034 pending; non-OPEN 0; no long transaction or lock on the four relations | **stale backup** (older than 24 hours, not Completed, not PHYSICAL, or none: no eligible backup); any identity or ledger mismatch; non-OPEN > 0 | postpone; or a separately authorized full logical backup |
+| **W3. Pre-migration managed T-26** | between 2 and 3 | W2. Not part of step 1's read-only preflight. | §Managed T-26, source **`97dcaee`** | **own authorization** (managed write) | both entrypoints pass; `t26_fixture` presence recorded before; 0 residue after; worktree removed | any failure or refusal; **incomplete fixture cleanup** (residue) | stop; residue removal only under its own authorization |
+| **W4. Ingestion pause** | 3 | W3 | For `facebook`, `instagram` and `tiktok`: `npm run ops:switch -- set --target development --key ingestion.provider_pause --qualifier <platform> --scope global --value '{"paused":true}' --operator <id> --reason release-0034`, first without `--apply`, then with it; then `npm run ops:switch -- show --target development --key ingestion.provider_pause --qualifier <platform>` | **own authorization** | each write verified by the tool; `show` = paused for every platform | any platform not paused or not read back | `ops:switch -- clear` per platform |
+| **W5. No unintended writers** | 3 | W4 | The local `next dev` (a dev-v2 client) stopped or idle; no local `trigger dev`, `ops:*`, `db:*` or test process; a read-only activity snapshot shows only the deployed runtimes' own clients | PO decision for local processes | process list; activity snapshot | an unknown local or remote writer | wait, or the PO stops it |
+| **W6. Migration 0034** | 3 | W1–W5; the W2 recovery point still within the approved age | step 3 command | **own authorization** | 0034 applied; ledger 34; work items = conversations | 55000; lock timeout; count mismatch | lock timeout → rerun later (nothing applied). Applied but wrong → no schema rollback; the previous runtimes stay. Restore only for data corruption (§Backups and the recovery point). |
+| **W7. Post-migration managed T-26** | 3 | W6 | §Managed T-26, source **`24dcacc`** | **own authorization** (managed write) | both entrypoints pass, `workflow` tables included; 0 residue | any failure; **incomplete fixture cleanup** | do not release the worker; the previous runtimes stay (they are compatible with 0034) |
+| **W8. Coordinated three-plane worker release** | 4 | W7; clean release worktree at the release commit (below) | `npm run trigger:release -- --cli <pinned CLI> --integration-project-ref … --intelligence-project-ref … --main-project-ref …` (dry run), then `--execute --confirm-paired-release` | **own authorization** | ALIGNED record with fingerprints (v3); a new version on every plane; 10 / 1 / 11 tasks | **a failed worker release** (any plane) | worker forward recovery (§Rollback, R1–R7) by a separate PO decision |
+| **W9. New workers and old runs** | 4 | W8 | Read-only: current worker and deployments of each plane (none in progress); a **new recovery PLAN ONLY** with the current provider versions and queues (§What a recovery PLAN ONLY shows); runs on the previous version (`EXECUTING / QUEUED / DELAYED / WAITING`) watched until none | read-only; cancelling a run needs an explicit decision | the new versions current; the new plan; the previous versions hold no runs | a deployment not terminal; **undrained incompatible jobs** of the previous version | cancel only a specific harmful run, by explicit decision (R6) |
+| **W10. Reconciliation** | 5–6 | W9 | Steps 5 and 6 for **every workspace that has conversations** | **own authorization** (apply) | second dry run `created 0 · repaired 0 · failed 0`; work items = conversations; `review` handled | **unsuccessful reconciliation**: `failed > 0` or a second dry run that is not clean | rerun (safe); inspect `failedIds` |
+| **W11. Web release** | 7 | W10 clean everywhere; Vercel names re-read (no new name; `COMMENTS_REDESIGN_WORKSPACES` still absent) | step 7 | **own authorization** | READY at the release commit; smoke passes | deploy or smoke fails | Instant Rollback to the recorded previous deployment |
+| **W12. Functional validation** | 8 | W11 | step 8 (synthetic fixtures; the allowlist stays absent) | PO | the acceptance matrix passes | any failure | web rollback and/or worker recovery, each a separate decision; ingestion stays paused |
+| **W13. Controlled ingestion resumption and monitoring** | 8 | W12 | Per platform: `npm run ops:switch -- clear --target development --key ingestion.provider_pause --qualifier <platform> --scope global --operator <id> --reason release-0034`, first without `--apply`, then with it; `show` read-back; §Monitoring | **own authorization** | every platform unpaused and read back; ingestion and outbox error rates at baseline; the daily dry run clean | elevated error rates; a dry run that is not clean | pause again; investigate |
+
+**Release commit (W7, W8, W11).**
+- `trigger:release` releases only `HEAD == origin/main`. The code baseline verified for this release is `24dcacc`.
+- **The release commit must equal the current verified `origin/main` at the window.** A documentation-only successor of `24dcacc` (such as the RUNBOOK-CLOSE-01 commit) may be that commit only after both of these are verified:
+  - its diff from `24dcacc` touches nothing outside the approved documentation (`design/`, `docs/`) and architecture-test files (`tests/architecture/`);
+  - its CI is green.
+
+  A successor that changes database migrations, product code, worker code, release operators, dependencies or environment configuration is **not** a documentation-only successor. It needs its own review and preflight.
+- The release operators are never changed to accommodate a successor.
+- The worker (W8) and the web (W11) always release from the same verified commit.
+- The post-migration T-26 (W7) additionally requires that the diff touch none of its database and test contracts (§Managed T-26).
+
+**While ingestion is paused (W4–W13):**
+- Signals are deferred, not dropped, and coverage reports the gap honestly. Raw provider receipts are kept 7 days, so the window stays well under that.
+- No conversation is created without a work item between W6 and W8.
+
+### Managed T-26 (W3 and W7)
+
+**What runs:**
+- **ONLY** these two entrypoints: `tests/db/managed/t26.test.ts` and `tests/db/managed/introspection.test.ts`.
+- **Exact command:** `npx vitest run --config vitest.db-managed.config.ts tests/db/managed/t26.test.ts tests/db/managed/introspection.test.ts`.
+- **Never execute the full `test:db:managed` suite as part of this release window.** `npm run test:db:managed`, or that config without file selection, runs every file under `tests/db/managed/`. That includes suites for connections, credentials, Meta fixtures, moves and T-27, which this release does not authorize.
+
+**Source version, and why:**
+- **Before migration 0034 (W3): clean source `97dcaee`.** Its 33 migrations equal the applied ledger.
+  - The managed global setup refuses while any repository migration is pending ("managed suite refused: migrations pending").
+  - So `24dcacc`, which contains 0034, cannot run it before the migration.
+- **After migration 0034 (W7): clean source `24dcacc`, or a verified code-identical successor.** A successor qualifies only if its diff from `24dcacc` touches nothing under `db/`, `platform/`, `tools/db/`, `tests/db/` or `vitest.db-managed.config.ts`, verified before the run.
+  - Its classification registry adds the `workflow` schema.
+  - T-26 case 23 and the introspection suite then verify forced RLS, exact grants and exact policies on the new tables.
+
+**Clean source procedure:**
+1. `git worktree add --detach ../wrenkind-t26-<sha8> <sha>` (W3), or the working checkout at `24dcacc` with no tracked change (W7).
+2. `npm ci`.
+3. **Copy nothing into the worktree.**
+4. Give the six variables to **that one test process only**: `DATABASE_MIGRATION_URL`, `SUPABASE_PROJECT_REF`, `DATABASE_SSL_ROOT_CERT` (an absolute path), `DATABASE_WEB_URL`, `DATABASE_WORKER_URL`, `DATABASE_SYSTEM_URL`. Never write them into a file in the worktree, and never print them.
+5. Afterwards: `git worktree remove ../wrenkind-t26-<sha8>`.
+
+**Identity:** the global setup proves the target before writing anything:
+- the pinned dev-v2 project reference digest, region sa-east-1, the migration role, the runtime logins through the transaction pooler and a CA;
+- the frozen validation project is refused;
+- migrations are fully applied;
+- the runtime logins are validated.
+
+Roles are never created, dropped or recreated on the managed project (R8).
+
+**T-26 writes synthetic fixtures to the managed DEV database and requires separate authorization:**
+- the `t26_fixture` schema and its three tables, **only if absent** (long-lived by design, R8, classified);
+- a synthetic world with fresh random ids: 2 organizations named "Organization A" and "Organization B", 3 workspaces, 15 memberships and 21 fixture rows;
+- one audit event in that world;
+- writes the policies must deny;
+- session-level settings planted on pooled worker backends (case 26, fail-closed by design);
+- a probe transaction that is always rolled back (case 30).
+
+**What it never does:**
+- it calls no provider, Trigger.dev, AI or KMS, and enqueues no job;
+- it updates or deletes no existing row.
+
+**Before execution** (read-only, same fence):
+- **verify whether `t26_fixture` already exists**, and record it (if absent, the run creates it);
+- verify that no residue of an earlier run exists.
+
+**Cleanup and residual artifacts:**
+- After the tests, even failed ones, the suite deletes this run's audit events, outbox rows and organizations (the cascade removes workspaces, memberships and fixture rows).
+- A read-only residue check after the run must find 0.
+- A killed run leaves bounded, synthetic residue that no real member can reach. **Incomplete fixture cleanup is a STOP condition.** The residue is removed only under its own authorization, and the window does not continue (W3, W7).
+
+**Concurrency:**
+- never during 0034 (case 29 writes `audit.audit_events`), nor during reconciliation;
+- safe beside live ingestion otherwise.
+
+**Not covered on managed:** the Workflow adversarial suite (`tests/db/suites/workflow-security.ts`) runs on local clusters only (CI).
+
+### Backups and the recovery point (W2)
+
+**Required, all of them, before migration 0034:**
+1. A Supabase **Pro** entitlement, seen in the dashboard.
+2. A visible **Completed PHYSICAL backup**.
+3. Its actual timestamp, **verified immediately before the migration** and recorded in the window log.
+4. A **PO-approved maximum backup age**: **24 hours** (C-1, RUNBOOK-CLOSE-01). An older backup is a **stale backup**: STOP. **If no eligible backup is available, STOP**; the acceptance never authorizes proceeding without a recovery point.
+5. The PO's explicit acknowledgment that **restoration has never been tested**.
+6. The PO's explicit acknowledgment that **changes after the recovery point can be lost**: ingestion, audit, switch changes and Workflow states recorded after it.
+
+**The existence of a backup is never evidence of a successful restoration.** Only an executed restore test is, and none has been executed.
+
+**What a restore does** (Supabase documentation, BACKUP-VERIFY-01):
+- An in-place restore replaces the **whole** project, Auth included, and causes downtime. Storage objects are not included.
+- Custom role passwords must be reset afterwards: the runtime logins and the operator login. That means runtime configuration changes in Vercel and Trigger.dev, each its own gate.
+- It is a last resort for data corruption. It is **never** the rollback of a release: the schema stays, the web uses Instant Rollback, and the worker uses forward recovery.
+
+**What is not a recovery point:**
+- A partial logical dump, for example of three tables. It cannot be restored consistently.
+- A full logical backup (every Wrenkind schema, `app_migrations` and roles) can be one, but needs its own authorization.
+
+### Web relay pin and Trigger credentials (G3)
+
+- **`TRIGGER_EXTERNAL_DEPLOYMENT_ID` is absent by configuration**, in every Vercel scope. It is re-read by name in step 1 and before any R2 attestation.
+- **`TRIGGER_SECRET_KEY` is also absent.** Without it the web builds no job runtime (`server/jobs/outbox-notifier.ts`), never reads the pin and never nudges MAIN.
+- **The effective runtime configuration of the in-service deployment has not been directly inspected.** R2 is attested **by configuration**, DEV only: **G3 ACCEPTED — DEV ONLY** (RUNBOOK-CLOSE-01), subject to the read-only configuration checks of step 1 and before any R2 attestation.
+- **The current Comments operations were assessed as not requiring the secret for their essential paths:**
+  - the views and Mark done / Reopen are synchronous database operations;
+  - outbox delivery and webhook routing fall back to MAIN's per-minute schedules, which only adds latency.
+- **This does not prove that every future web feature works without Trigger credentials.** A feature that needs them, or adding `TRIGGER_SECRET_KEY`, requires its own review and an explicit relay-pin policy (R2) before deployment.
 
 ### Migration lock wait (step 3)
 
@@ -101,7 +267,7 @@ Release from a **dedicated, disposable worktree of the same repository**:
 4. **Copy nothing else, except Vercel's link:** `.vercel/project.json` holds the non-secret project and team ids. Never copy `.env*`, credentials, `.next/`, `tools/perf/` or any generated artifact.
    - The Trigger release reads no `.env` file.
    - The Vercel production build uses Vercel's own environment.
-   - Database steps (1, 3, 5, 6) run from the working checkout at the same commit, not from the worktree.
+   - Database steps (1, 3, 5, 6) run from the working checkout at the same commit, not from the worktree. The exception is the pre-migration T-26 (W3), which runs from its own `97dcaee` worktree (§Managed T-26).
 5. **Check:** `git status --porcelain` is empty and `git rev-parse HEAD` = the approved commit.
 6. **Run** step 4 (`trigger:release`, dry run first) and, after step 6, step 7 (the web deploy) from it.
 7. **Remove it afterwards:** `git worktree remove ../wrenkind-release-<sha8>`. The original working directory is untouched throughout.
@@ -128,7 +294,7 @@ Without `--target`, the CLI still accepts only a loopback cluster.
 | Component | Mechanism | Status |
 |---|---|---|
 | Web | Vercel Instant Rollback to the immediately previous production deployment (Hobby plan), or `vercel promote <id>`. After a rollback, auto-assignment of production domains is off until a promote. | Documented provider capability; the target (the previous deployment) is recorded in step 1 |
-| Worker | **Forward recovery:** `npm run trigger:recover` redeploys the source of the recorded known-good ALIGNED release to INTEGRATION, INTELLIGENCE and MAIN as **new** versions under one new **recovery id** (below). `trigger.dev promote <version>` of an **older** version is refused by the server (`TRIGGER-ROLLBACK-REHEARSAL-01`). **Do not assume it works.** Never use it. **Never** use force push or any history rewrite as a rollback, and never the CLI's deploy force flag (`--force`). | Rehearsed end to end on three isolated synthetic projects only (`RECOVERY-REHEARSAL-03C`: PASS); its finding G1 corrected in `RECOVERY-TOOLING-03` (unit-tested only). **Operational DEV recovery has not been executed.** → deployment stays blocked until X-3 is approved (§Recovery status) |
+| Worker | **Forward recovery:** `npm run trigger:recover` redeploys the source of the recorded known-good ALIGNED release to INTEGRATION, INTELLIGENCE and MAIN as **new** versions under one new **recovery id** (below). `trigger.dev promote <version>` of an **older** version is refused by the server (`TRIGGER-ROLLBACK-REHEARSAL-01`). **Do not assume it works.** Never use it. **Never** use force push or any history rewrite as a rollback, and never the CLI's deploy force flag (`--force`). | Rehearsed end to end on three isolated synthetic projects only (`RECOVERY-REHEARSAL-03C`: PASS); its finding G1 corrected in `RECOVERY-TOOLING-03` (unit-tested only). **Operational DEV recovery has not been executed.** → X-3 **APPROVED for DEV recovery readiness only** (§Recovery status). Deployment still needs each step's own authorization. |
 | Schema | **Never rolled back.** 0034 stays: it is additive, and the previous code neither reads nor writes `workflow`. | — |
 
 ### Worker forward recovery (`trigger:recover`)
@@ -163,7 +329,7 @@ Without `--target`, the CLI still accepts only a loopback cluster.
   - INTEGRATION wakes MAIN's relay.
   - INTELLIGENCE triggers nothing.
   - Schedules exist only in MAIN.
-  - The web nudges only MAIN: unpinned, or pinned by `TRIGGER_EXTERNAL_DEPLOYMENT_ID`.
+  - The web nudges only MAIN: unpinned, or pinned by `TRIGGER_EXTERNAL_DEPLOYMENT_ID`. It can nudge only when `TRIGGER_SECRET_KEY` is configured; today neither is (§Web relay pin and Trigger credentials).
 - **While INTEGRATION and INTELLIGENCE are recovered first,** they receive no work under the recovery id: MAIN still runs the release being recovered from, and its triggers stay pinned to that release, which still exists in every plane. **A partial recovery therefore changes no behaviour.**
 - **When MAIN is recovered last,** its pins name the recovery id, which already exists in both other planes. Nothing waits for a missing deployment, and from then on all new MAIN-originated work (schedules, relay, sweepers) runs known-good code in every plane.
 - **Runs pinned to the release recovered from** keep executing it while they drain: runs already executing there, their retries, and their cross-plane triggers. This is why R6 watches them.
@@ -178,14 +344,42 @@ Without `--target`, the CLI still accepts only a loopback cluster.
 
 **Web before worker when they are incompatible.** A Workflow web (it lists only conversations with a work item, in **every** workspace's Inbox) beside a pre-Workflow worker hides every newly ingested conversation. The tool refuses that pairing (`workflow-0034`) whatever is attested: **roll the web back first** (Vercel Instant Rollback), then recover the worker.
 - A newer web whose worker-contract paths differ (migrations, `jobs/`, outbox) needs a web rollback too, or `--proven-web-pairing <web sha>:<known-good sha>` when that exact pairing was in service before.
-- Today's web `97dcaee` beside worker `ff5269c` is such a proven pairing (DEV-PREFLIGHT-02).
+- **The flag only records an attestation; it proves nothing.** Pass it only when **historical deployment evidence** shows that exact pairing in service, re-read in step 1, and only after the PO attests it.
+- For web `97dcaee` beside worker `ff5269c`, the evidence is:
+  - production deployment `dpl_HT6ETxMo…` @ `97dcaee`, in service since 2026-11-16T23:06Z (Vercel deployment list);
+  - beside Trigger.dev `20261113.1` @ `ff5269c` on all three planes since 2026-11-13 (the provider deployment lists and the ALIGNED record).
+
+**What a recovery PLAN ONLY shows** (DEV-RELEASE-PREP-01, run live on 2026-11-23).
+- **PLAN ONLY deploys nothing and writes no record. PLAN ONLY is not an authorization to recover.** An apply needs its own PO decision (R1–R7), the confirmation phrase and both attestations.
+- **An exit code of 0 does not mean the plan is ready for APPLY.** Read the blocker line.
+  - "Every apply prerequisite is met" appears only when nothing blocks.
+  - Even then, only the PO authorizes an apply.
+- **Before the worker release (step 4),** while every plane runs the known-good release, an initial plan **legitimately reports "nothing to recover"** ("every plane already runs the known-good release's own deployment; there is nothing to recover"). It also shows the expected blockers:
+  - the missing apply inputs: `--recovery-id` and `--expect-<plane>-version`;
+  - the fingerprint acceptance: "the approved release recorded no content fingerprint", cleared by `--accept-unrecorded-fingerprint` only under the PO's G2 acceptance;
+  - the web/worker pairing: "web rollback required first", cleared by `--proven-web-pairing` only for a pairing proven as above.
+
+  Otherwise it must show:
+  - the source, record, worktree and CLI accepted;
+  - `none in progress` for all three projects;
+  - the known-good `DEPLOYED` on every plane.
+
+  Any other blocker is a finding. This plan checks structure; it does not invalidate the 03C rehearsal.
+- **After the worker release (W9),** a **new** PLAN ONLY is required, with the current provider versions and queues:
+  - the new versions active and the known-good still `DEPLOYED`;
+  - none in progress;
+  - the run counts per plane;
+  - a new proposed recovery id;
+  - once the Workflow web is live, `REQUIRES_WEB_ROLLBACK` (`workflow-0034`).
+
+  An earlier plan is never reused for an apply.
 
 **Operator checkpoints (each a PO approval):**
 
 | # | Checkpoint | Command / evidence |
 |---|---|---|
 | R1 | Contain | Pause ingestion for every platform and read it back: `npm run ops:switch -- set --target development --key ingestion.provider_pause --qualifier <platform> --scope global --value '{"paused":true}' --operator <id> --reason worker-recovery --apply` |
-| R2 | Web first when required | Vercel Instant Rollback; record the web commit now in service. Confirm that web's relay-nudge pin `TRIGGER_EXTERNAL_DEPLOYMENT_ID` is absent (it then reaches the current MAIN, recovered last), the known-good SHA (the original known-good MAIN, same source) or the recovery id — **never** the release being recovered from: such a web keeps waking that release's MAIN relay, whose triggers stay pinned to it in every plane, so new work would silently keep running the faulty code |
+| R2 | Web first when required | Vercel Instant Rollback; record the web commit now in service. Confirm that web's relay-nudge pin `TRIGGER_EXTERNAL_DEPLOYMENT_ID` is absent (it then reaches the current MAIN, recovered last), the known-good SHA (the original known-good MAIN, same source) or the recovery id — **never** the release being recovered from: such a web keeps waking that release's MAIN relay, whose triggers stay pinned to it in every plane, so new work would silently keep running the faulty code. Today the pin is absent **by configuration** only; the effective runtime configuration is not directly inspected (§Web relay pin and Trigger credentials) |
 | R3 | Plan | `npm run trigger:recover -- --cli <pinned CLI> --known-good <sha> --release-evidence <file> --worktree <abs path> --main-project-ref … --intelligence-project-ref … --integration-project-ref … --web-release <web sha>`: **PLAN ONLY**, deploys nothing; proposes a new recovery id and prints every plane's active version, run counts, remote deployments (any not terminal blocks), the order, what the recovery id means on each plane, the compatibility verdicts and what an apply still needs |
 | R4 | Apply | The same, plus `--recovery-id <the id the plan proposed>` `--expect-integration-version <v> --expect-intelligence-version <v> --expect-main-version <v>` (copied from the plan) `--attest-ingestion-paused --attest-web-relay-pin --apply --confirm-recovery recover-trigger-planes-to-<sha12>` (and `--accept-unrecorded-fingerprint` when the approved record predates fingerprints: the final state then says `RECOVERED_FINGERPRINT_UNVERIFIED`) |
 | R5 | Verify | Per plane, before the next: exit 0, a **new** version, the known-good task count; the provider's current worker is that version, with every task in the plane's own directory; the content fingerprint equals the recorded one. Evidence: `.wrenkind-local/evidence/trigger-recovery/<timestamp>-<sha12>.json` (with the recovery id) |
@@ -209,25 +403,40 @@ Without `--target`, the CLI still accepts only a loopback cluster.
   - `VERIFICATION_FAILED`;
   - a v1 record (RECOVERY-TOOLING-01, deployed under the known-good SHA).
 
-**Legacy v2 release evidence.**
-- The operational known-good `ff5269c` has a v2 record without content fingerprints.
-- **What a recovery to it verifies:** version, inventory and source (worktree at the SHA). The fingerprint is recorded but not compared: `--accept-unrecorded-fingerprint`, final state `RECOVERED_FINGERPRINT_UNVERIFIED`.
+**Legacy v2 release evidence.** (G2)
+- **The known-good release:** the current operational known-good worker source is `ff5269c`, and the current operational version is `20261113.1` on all three planes.
+- **Its record:** a v2 ALIGNED record that holds **no contentHash** (no content fingerprints).
+- **What a recovery to it verifies:**
+  - the source (worktree at the SHA, `origin/main` ancestry, the record and the exact projects);
+  - the versions;
+  - the task inventory (10 / 1 / 11, each in its plane's directory).
+
+  The fingerprint is recorded but not compared: `--accept-unrecorded-fingerprint`, final state `RECOVERED_FINGERPRINT_UNVERIFIED`.
 - **What stays unattested:** that the rebuilt worker equals the one that ran.
 - v3 fingerprints are recorded under `--depot-build` (`RECOVERY-REHEARSAL-03B`).
-- The old operational release `ff5269c` still lacks a recorded worker content fingerprint: an operational recovery to it needs the PO's explicit acceptance of inventory-only verification, or a new fingerprinted (v3) baseline release under its own gate.
+- **No new worker baseline may be deployed before migration 0034 merely to obtain a fingerprint.**
+  - The `24dcacc` worker writes the Workflow projection in every ingestion transaction and needs 0034.
+  - `trigger:release` releases only `origin/main`.
+  - `trigger:recover` reports nothing to recover while the planes run `ff5269c`.
+- The old operational release `ff5269c` still lacks a recorded worker content fingerprint. **This limitation requires explicit DEV-only risk acceptance** by the PO (inventory-only verification) before an operational recovery to it. **G2 ACCEPTED — DEV ONLY** (RUNBOOK-CLOSE-01, 2026-11-23).
+  - The acceptance ends when the step-4 release is recorded as ALIGNED with fingerprints (v3), the first fingerprinted known-good.
+  - It never extends to production.
 
 ### Recovery status
 
 Three different things, never presented as equivalent:
 1. **Verified synthetic recovery** — `RECOVERY-REHEARSAL-03C`: **PASS**, on three isolated synthetic projects only. One recovery id; INTEGRATION → INTELLIGENCE → MAIN; fingerprints and inventories matched; a controlled interruption, then a continuation under the same id (INTEGRATION not redeployed); the operational projects were unchanged.
-2. **Operational recovery readiness** — X-3 is **CONDITIONAL**, not approved. Open:
-   - the review of `RECOVERY-TOOLING-03` (G1), which has not run live;
-   - the v2 fingerprint decision for `ff5269c` (above);
-   - the in-service web's `TRIGGER_EXTERNAL_DEPLOYMENT_ID` (R2), which is not yet known;
-   - cross-project pinning, proven in code and by the deploy order but not observed live (the synthetic tasks cannot trigger across projects).
+2. **Operational recovery readiness** — X-3 is **APPROVED for DEV recovery readiness only** (RUNBOOK-CLOSE-01, 2026-11-23); it was CONDITIONAL until then. It rests on these DEV-only decisions (§Product Owner decisions):
+   - G2 ACCEPTED — DEV ONLY: a recovery to `ff5269c` ends in `RECOVERED_FINGERPRINT_UNVERIFIED` (§Legacy v2 release evidence).
+   - G3 ACCEPTED — DEV ONLY: the relay pin and the Trigger secret are absent by configuration; the effective runtime configuration has not been directly observed (§Web relay pin and Trigger credentials).
+   - C-1 ACCEPTED WITH CONDITIONS — DEV ONLY: a Completed PHYSICAL backup at most 24 hours old; restore never tested; possible loss after it (§Backups and the recovery point).
+
+   Residuals that stay true after the approval:
+   - `RECOVERY-TOOLING-03` (G1): CI-verified. Its read path ran live in a PLAN ONLY on 2026-11-23 (no deployment in progress on any plane), but its blocking path has not run live.
+   - Cross-project pinning: proven in code and by the deploy order, but not observed live (the synthetic tasks cannot trigger across projects).
 
    **Operational DEV recovery has not been executed.**
-3. **Authorization to deploy DEV** — a separate Product Owner gate (steps 3 onward). Neither of the above grants it.
+3. **Authorization to deploy DEV** — a separate Product Owner gate (steps 3 onward). Neither of the above grants it. **It has not been granted**: each mutating step (W3–W13) needs its own authorization.
 
 **After a recovery (Workflow):**
 - conversations ingested by the pre-Workflow worker get no work item;
