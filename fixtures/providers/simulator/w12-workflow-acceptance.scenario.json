@@ -1,0 +1,88 @@
+{
+  "scenarioId": "w12_workflow_acceptance",
+  "description": "W12-PREP-01: the synthetic pages, posts, audience comments and the two C2 replies of the shared-dev Comments Workflow acceptance fixture (tests/db/dev-fixtures/workflow-acceptance.ts; DEV-PREFLIGHT-01 section 8). Synthetic data only; never evidence about Meta. No links, no real names.",
+  "simulated": true,
+  "apiVersion": "simulator-v1",
+  "clockStart": "2026-11-22T12:00:00.000Z",
+  "pageSize": 10,
+  "rateBudget": { "mode": "not_reported" },
+  "webhookToleranceSeconds": 300,
+  "credentials": [
+    {
+      "id": "wrenkind_fixture_w12_credential",
+      "secret": "synthetic-w12-fixture-credential-not-a-secret",
+      "status": "active",
+      "expiresAt": null,
+      "refresh": "not_supported",
+      "assets": ["wrenkind_fixture_w12_page_a", "wrenkind_fixture_w12_page_b", "wrenkind_fixture_w12_page_m"]
+    }
+  ],
+  "assets": [
+    {
+      "id": "wrenkind_fixture_w12_page_a",
+      "platform": "facebook",
+      "assetClass": "content_bearing",
+      "displayName": "W12 Acceptance A (synthetic page)",
+      "identity": "wrenkind_fixture_w12_brand_a",
+      "permissions": ["sim.read_account", "sim.read_content", "sim.read_interactions"],
+      "linkedAdAccounts": [],
+      "webhooks": "not_supported",
+      "subscribed": false
+    },
+    {
+      "id": "wrenkind_fixture_w12_page_b",
+      "platform": "facebook",
+      "assetClass": "content_bearing",
+      "displayName": "W12 Acceptance B (synthetic page)",
+      "identity": "wrenkind_fixture_w12_brand_b",
+      "permissions": ["sim.read_account", "sim.read_content", "sim.read_interactions"],
+      "linkedAdAccounts": [],
+      "webhooks": "not_supported",
+      "subscribed": false
+    },
+    {
+      "id": "wrenkind_fixture_w12_page_m",
+      "platform": "facebook",
+      "assetClass": "content_bearing",
+      "displayName": "W12 Acceptance M (synthetic page)",
+      "identity": "wrenkind_fixture_w12_brand_m",
+      "permissions": ["sim.read_account", "sim.read_content", "sim.read_interactions"],
+      "linkedAdAccounts": [],
+      "webhooks": "not_supported",
+      "subscribed": false
+    }
+  ],
+  "authors": [
+    { "id": "wrenkind_fixture_w12_brand_a", "platform": "facebook", "role": "account_identity", "displayName": "W12 Acceptance A", "handle": "wrenkind_fixture_w12_brand_a" },
+    { "id": "wrenkind_fixture_w12_brand_b", "platform": "facebook", "role": "account_identity", "displayName": "W12 Acceptance B", "handle": "wrenkind_fixture_w12_brand_b" },
+    { "id": "wrenkind_fixture_w12_brand_m", "platform": "facebook", "role": "account_identity", "displayName": "W12 Acceptance M", "handle": "wrenkind_fixture_w12_brand_m" },
+    { "id": "wrenkind_fixture_w12_user_a1", "platform": "facebook", "role": "user", "displayName": "Synthetic Person A1", "handle": "wrenkind_fixture_w12_user_a1" },
+    { "id": "wrenkind_fixture_w12_user_a2", "platform": "facebook", "role": "user", "displayName": "Synthetic Person A2", "handle": "wrenkind_fixture_w12_user_a2" },
+    { "id": "wrenkind_fixture_w12_user_a3", "platform": "facebook", "role": "user", "displayName": "Synthetic Person A3", "handle": "wrenkind_fixture_w12_user_a3" },
+    { "id": "wrenkind_fixture_w12_user_a4", "platform": "facebook", "role": "user", "displayName": "Synthetic Person A4", "handle": "wrenkind_fixture_w12_user_a4" },
+    { "id": "wrenkind_fixture_w12_user_a5", "platform": "facebook", "role": "user", "displayName": "Synthetic Person A5", "handle": "wrenkind_fixture_w12_user_a5" },
+    { "id": "wrenkind_fixture_w12_user_a6", "platform": "facebook", "role": "user", "displayName": "Synthetic Person A6", "handle": "wrenkind_fixture_w12_user_a6" },
+    { "id": "wrenkind_fixture_w12_user_b1", "platform": "facebook", "role": "user", "displayName": "Synthetic Person B1", "handle": "wrenkind_fixture_w12_user_b1" },
+    { "id": "wrenkind_fixture_w12_user_m1", "platform": "facebook", "role": "user", "displayName": "Synthetic Person M1", "handle": "wrenkind_fixture_w12_user_m1" }
+  ],
+  "contents": [
+    { "id": "wrenkind_fixture_w12_post_a", "account": "wrenkind_fixture_w12_page_a", "kind": "post", "reportedSource": "organic", "caption": "Synthetic W12 acceptance post A (Wrenkind fixture)", "publishedAt": "2026-11-20T09:00:00.000Z", "availability": "available" },
+    { "id": "wrenkind_fixture_w12_post_b", "account": "wrenkind_fixture_w12_page_b", "kind": "post", "reportedSource": "organic", "caption": "Synthetic W12 acceptance post B (Wrenkind fixture)", "publishedAt": "2026-11-20T09:00:00.000Z", "availability": "available" },
+    { "id": "wrenkind_fixture_w12_post_m", "account": "wrenkind_fixture_w12_page_m", "kind": "post", "reportedSource": "organic", "caption": "Synthetic W12 acceptance post M (Wrenkind fixture)", "publishedAt": "2026-11-20T09:00:00.000Z", "availability": "available" }
+  ],
+  "interactions": [
+    { "id": "wrenkind_fixture_w12_a_c1", "content": "wrenkind_fixture_w12_post_a", "parent": null, "author": "wrenkind_fixture_w12_user_a1", "text": "Synthetic W12 acceptance comment C1 in workspace A", "createdAt": "2026-11-20T10:01:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "wrenkind_fixture_w12_a_c2", "content": "wrenkind_fixture_w12_post_a", "parent": null, "author": "wrenkind_fixture_w12_user_a2", "text": "Synthetic W12 acceptance comment C2 in workspace A", "createdAt": "2026-11-20T10:02:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "wrenkind_fixture_w12_a_c3", "content": "wrenkind_fixture_w12_post_a", "parent": null, "author": "wrenkind_fixture_w12_user_a3", "text": "Synthetic W12 acceptance comment C3 in workspace A", "createdAt": "2026-11-20T10:03:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "wrenkind_fixture_w12_a_c4", "content": "wrenkind_fixture_w12_post_a", "parent": null, "author": "wrenkind_fixture_w12_user_a4", "text": "Synthetic W12 acceptance comment C4 in workspace A", "createdAt": "2026-11-20T10:04:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "wrenkind_fixture_w12_a_c5", "content": "wrenkind_fixture_w12_post_a", "parent": null, "author": "wrenkind_fixture_w12_user_a5", "text": "Synthetic W12 acceptance comment C5 in workspace A", "createdAt": "2026-11-20T10:05:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "wrenkind_fixture_w12_a_c2_audience_reply", "content": "wrenkind_fixture_w12_post_a", "parent": "wrenkind_fixture_w12_a_c2", "author": "wrenkind_fixture_w12_user_a6", "text": "Synthetic W12 audience reply in C2 (auto-reopen check)", "createdAt": "2026-11-20T11:00:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "wrenkind_fixture_w12_a_c2_account_reply", "content": "wrenkind_fixture_w12_post_a", "parent": "wrenkind_fixture_w12_a_c2", "author": "wrenkind_fixture_w12_brand_a", "text": "Synthetic W12 account reply in C2 (no-reopen check)", "createdAt": "2026-11-20T11:30:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "wrenkind_fixture_w12_b_c1", "content": "wrenkind_fixture_w12_post_b", "parent": null, "author": "wrenkind_fixture_w12_user_b1", "text": "Synthetic W12 acceptance comment in workspace B", "createdAt": "2026-11-20T10:06:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] },
+    { "id": "wrenkind_fixture_w12_m_c1", "content": "wrenkind_fixture_w12_post_m", "parent": null, "author": "wrenkind_fixture_w12_user_m1", "text": "Synthetic W12 acceptance comment in workspace M", "createdAt": "2026-11-20T10:07:00.000Z", "editedAt": null, "revision": "r1", "visibility": "visible", "presence": "present", "restrictions": [] }
+  ],
+  "campaigns": [],
+  "adGroups": [],
+  "ads": [],
+  "faultPresets": {}
+}

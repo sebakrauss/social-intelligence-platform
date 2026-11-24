@@ -319,7 +319,8 @@ describe("0034 rollout runbook — RUNBOOK-ALIGN-01 corrections", () => {
     const text = runbook();
     expect(COMMENTS_WORKSPACES_ENV).toBe("COMMENTS_REDESIGN_WORKSPACES");
     expect(parseCommentsAllowlist(undefined).size).toBe(0);
-    expect(text).toContain("The Comments allowlist (step 9) is **outside** the window: `COMMENTS_REDESIGN_WORKSPACES` stays absent through W13.");
+    expect(text).toContain("The Comments allowlist (step 9) is **outside** the window for the production aliases: `COMMENTS_REDESIGN_WORKSPACES` stays absent on every production-aliased deployment through W13. The only exception is W12's **isolated acceptance deployment** (§W12 acceptance): exactly the synthetic workspaces A and M, never aliased, removed after the matrix.");
+    expect(windowRow(text, 12)).toContain("the allowlist stays absent **on the production aliases**");
     expect(windowRow(text, 11)).toContain("`COMMENTS_REDESIGN_WORKSPACES` still absent");
     expect(windowRow(text, 12)).toContain("the allowlist stays absent");
     for (let step = 1; step <= 13; step += 1) {
@@ -447,5 +448,66 @@ describe("0034 rollout runbook — ops:switch commands match the real parser (D-
     expect(r1).toContain("--operator <id> --reason incident --apply`");
     expect(r1).toContain("The reason is `incident`: R1 contains a faulty release while it is recovered");
     expect(text).not.toMatch(/release-0034|worker-recovery/);
+  });
+});
+
+/**
+ * W12-PREP-01 — the W12 contradiction is resolved without weakening anything: the production aliases keep the allowlist
+ * absent; only a separate, never-aliased, SSO-protected acceptance deployment of the exact release source offers
+ * Comments to exactly the synthetic workspaces A and M, and it is removed afterwards. The fixture is permanent, the
+ * sub-gates are separately authorized, U-1 / U-2 stay unverified until proven, and the matrix is executed in full.
+ */
+describe("W12-PREP-01: W12 acceptance on an isolated deployment", () => {
+  const w12 = (): string => section(runbook(), "### W12 acceptance (W12-PREP-01)");
+
+  it("distinguishes the primary web (allowlist absent, aliases unchanged) from the isolated acceptance deployment (A and M only, no alias, removed)", () => {
+    const text = w12();
+    expect(text).toContain("`vercel --prod --skip-domain --env COMMENTS_REDESIGN_WORKSPACES=<A>,<M> --yes`");
+    expect(text).toContain("| Aliases | unchanged | **none**: reached only by its own deployment URL |");
+    expect(text).toContain("| Comments allowlist | **absent** (fail-closed) | exactly the synthetic workspaces **A and M**; B, every existing workspace and every other workspace stay excluded |");
+    expect(text).toContain("Vercel SSO (team members only), then sign-in");
+    expect(text).toContain("`vercel remove <acceptance deployment id> --safe --confirm-name <the same id>`. Use that id only, **never the project name**, which deletes every deployment of the project.");
+    expect(stepRow(runbook(), 9)).toContain("**only** on the isolated acceptance deployment (`--prod --skip-domain`, never aliased, removed afterwards; §W12 acceptance); the production aliases keep it absent");
+  });
+
+  it("U-1 and U-2 are unverified until the deployment exists, and either being false is a STOP", () => {
+    const text = w12();
+    expect(text).toContain("**Unverified until the acceptance deployment exists (STOP if either is false):**");
+    expect(text).toMatch(/\*\*U-1:\*\* a deployment-scoped `--env` value supplements the project's Production variables/);
+    expect(text).toMatch(/\*\*U-2:\*\* a deployment never aliased to production does not displace the recorded Instant Rollback target/);
+  });
+
+  it("sub-gates are separately authorized; the fixture is permanent and enumerated; the tooling plans by default and has no delete path", () => {
+    const text = w12();
+    expect(text).toContain("**W12-FIX** — fixture and memberships (managed, **permanent** writes)");
+    for (const gate of ["W12-FIX", "W12-ACT", "W12-EXEC", "W12-DEACT"]) expect(windowRow(runbook(), 12), gate).toContain(gate);
+    expect(windowRow(runbook(), 12)).toContain("**own authorization**");
+    expect(text).toContain("**Mode:** PLAN by default. APPLY needs `--apply --confirm <phrase of that command>`.");
+    expect(text).toContain("**No delete, reset or repair path exists.**");
+    expect(text).toContain("7 work items (OPEN, v1) and 7 `created` events");
+    expect(text).toContain("M (`MONITOR_ONLY`)");
+    expect(text).toContain("a user with **any** membership outside the synthetic organization is refused");
+    expect(text).toContain("**only** RESPONDER → ANALYST_VIEWER → CLIENT_GUEST");
+  });
+
+  it("the whole matrix A-01…A-17 and N1–N6 are sequenced; nothing is dropped", () => {
+    const text = w12();
+    for (let n = 1; n <= 17; n += 1) expect(text, `A-${String(n).padStart(2, "0")}`).toContain(`A-${String(n).padStart(2, "0")}`);
+    expect(text).toContain("**N1–N6**");
+    // A-02 (DEV-PREFLIGHT-01 §8): U2 is a legitimate member of A; "sees nothing of A" is proven in B's bound context, never by
+    // treating that membership as unauthorized.
+    expect(text).toContain("**U2, acting as MANAGER of B, while still a legitimate RESPONDER of A:** B's queue lists only B, and an A conversation id under B's address → not found.");
+    expect(text).not.toMatch(/As CLIENT_GUEST of A, U2 sees nothing of A/);
+    expect(windowRow(runbook(), 12)).toContain("the acceptance matrix A-01…A-17 and the negative checks N1–N6 pass");
+  });
+
+  it("STOP conditions cover existing data, aliases, rollback target, side effects and allowlist over- or under-exposure", () => {
+    const text = w12();
+    for (const condition of ["any change to the existing DEV data (outside digest), the production aliases, the rollback target, the switches or the environment names",
+      "an outbox topic other than `interactions.observed`", "an AI request", "the allowlist not effective (A or M not offered) or over-effective (B or any existing workspace offered)",
+      "any matrix row failing"]) {
+      expect(text, condition).toContain(condition);
+    }
+    expect(section(runbook(), "## Monitoring (during the pilot)")).toContain("**Never** add A, B or M to a real (production-aliased) allowlist");
   });
 });

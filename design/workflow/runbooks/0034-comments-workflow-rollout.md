@@ -111,8 +111,8 @@ With the order below (worker before web), no Done can be recorded while the prev
 | **5. Reconcile every workspace** | While the **previous** web is still live (it ignores `workflow`, so this is safe), for every workspace that has conversations:<br>(1) dry run: `npm run ops:workflow-reconcile -- --target development --database-url-env DATABASE_WORKER_URL --workspace <id>`, then read the counts;<br>(2) apply: the same plus `--apply --confirm-dev-reconcile reconcile-workflow-work-items-in-dev-v2` (resume an interrupted run with `--after <next> --run <runCorrelationId>`). | PO | `failed > 0` (inspect `failedIds`; a rerun is safe) |
 | **6. Reconciliation verification and exceptions** | Per workspace, a second dry run must report `created 0 · repaired 0 · failed 0`. Conversations without a work item = 0. Work items = conversations.<br>**F'. Items flagged for review:** `review > 0` lists Done conversations with an audience comment first observed after the Done. Expected 0 with this order. A person opens each one and decides to Reopen or leave it Done; reconciliation never reopens. | PO / workspace owner | a second dry run that is not clean |
 | **7. Web deployment from the clean release worktree** | **Only after step 6 is clean for every workspace.**<br>Production deploy of the same commit from the clean release worktree (benchmark evidence excluded by `.vercelignore` and by the worktree itself).<br>Smoke: health 200, unauthenticated Inbox redirects, every Inbox lists the same conversations as before.<br>Then a final dry run per workspace (clean). | PO | deploy fails or smoke fails → web Instant Rollback |
-| **8. Authenticated DEV acceptance** | The acceptance matrix of DEV-PREFLIGHT-01 §8, with synthetic fixtures. Allowlist changes only as authorized in step 9.<br>Then W13: ingestion is resumed per platform under its own authorization, read back and monitored. | PO | any failure (ingestion stays paused until the PO decides) |
-| **9. Comments allowlist** | **Explicit, separate authorization** before `COMMENTS_REDESIGN_WORKSPACES` changes in any deployment. For acceptance: exactly the synthetic test workspaces. A pilot workspace only after steps 5–8. The change needs a new web deployment, which is its own gate. | PO | — |
+| **8. Authenticated DEV acceptance** | The acceptance matrix of DEV-PREFLIGHT-01 §8, with synthetic fixtures (§W12 acceptance: `npm run db:workflow-acceptance`, the test users U1 and U2, the isolated acceptance deployment). Allowlist changes only as authorized in step 9.<br>Then W13: ingestion is resumed per platform under its own authorization, read back and monitored. | PO | any failure (ingestion stays paused until the PO decides) |
+| **9. Comments allowlist** | **Explicit, separate authorization** before `COMMENTS_REDESIGN_WORKSPACES` changes in any deployment. For acceptance: exactly the synthetic test workspaces A and M, and **only** on the isolated acceptance deployment (`--prod --skip-domain`, never aliased, removed afterwards; §W12 acceptance); the production aliases keep it absent. A pilot workspace only after steps 5–8. The change needs a new web deployment, which is its own gate. | PO | — |
 
 ### Release window sequence (W1–W13)
 
@@ -120,7 +120,7 @@ The order in which steps 1–8 are executed in the DEV release window (RUNBOOK-A
 
 - **It is not a script and not one authorization.** Each mutating W step needs its **own authorization**, and none authorizes the next.
 - The first unexpected result stops the window ("Abort", above), and every recovery action needs its own PO approval.
-- The Comments allowlist (step 9) is **outside** the window: `COMMENTS_REDESIGN_WORKSPACES` stays absent through W13.
+- The Comments allowlist (step 9) is **outside** the window for the production aliases: `COMMENTS_REDESIGN_WORKSPACES` stays absent on every production-aliased deployment through W13. The only exception is W12's **isolated acceptance deployment** (§W12 acceptance): exactly the synthetic workspaces A and M, never aliased, removed after the matrix.
 
 | W | Step | Preconditions | Operation | Authorization | Evidence | STOP when | Recovery (separate approval) |
 |---|---|---|---|---|---|---|---|
@@ -135,7 +135,7 @@ The order in which steps 1–8 are executed in the DEV release window (RUNBOOK-A
 | **W9. New workers and old runs** | 4 | W8 | Read-only: current worker and deployments of each plane (none in progress); a **new recovery PLAN ONLY** with the current provider versions and queues (§What a recovery PLAN ONLY shows); runs on the previous version (`EXECUTING / QUEUED / DELAYED / WAITING`) watched until none | read-only; cancelling a run needs an explicit decision | the new versions current; the new plan; the previous versions hold no runs | a deployment not terminal; **undrained incompatible jobs** of the previous version | cancel only a specific harmful run, by explicit decision (R6) |
 | **W10. Reconciliation** | 5–6 | W9 | Steps 5 and 6 for **every workspace that has conversations** | **own authorization** (apply) | second dry run `created 0 · repaired 0 · failed 0`; work items = conversations; `review` handled | **unsuccessful reconciliation**: `failed > 0` or a second dry run that is not clean | rerun (safe); inspect `failedIds` |
 | **W11. Web release** | 7 | W10 clean everywhere; Vercel names re-read (no new name; `COMMENTS_REDESIGN_WORKSPACES` still absent) | step 7 | **own authorization** | READY at the release commit; smoke passes | deploy or smoke fails | Instant Rollback to the recorded previous deployment |
-| **W12. Functional validation** | 8 | W11 | step 8 (synthetic fixtures; the allowlist stays absent) | PO | the acceptance matrix passes | any failure | web rollback and/or worker recovery, each a separate decision; ingestion stays paused |
+| **W12. Functional validation** | 8 | W11 | step 8 with synthetic fixtures (§W12 acceptance): the allowlist stays absent **on the production aliases**; exactly the synthetic workspaces A and M on the isolated, non-aliased acceptance deployment, removed afterwards | PO; W12-FIX, W12-ACT, W12-EXEC and W12-DEACT each **own authorization** | the acceptance matrix A-01…A-17 and the negative checks N1–N6 pass | any failure | remove the acceptance deployment; web rollback and/or worker recovery, each a separate decision; ingestion stays paused |
 | **W13. Controlled ingestion resumption and monitoring** | 8 | W12 | Per platform: `npm run ops:switch -- clear --target development --key ingestion.provider_pause --qualifier <platform> --scope global --operator <id> --reason release`, first without `--apply`, then with it; `show` read-back; §Monitoring | **own authorization** | every platform unpaused and read back; ingestion and outbox error rates at baseline; the daily dry run clean | elevated error rates; a dry run that is not clean | pause again; investigate |
 
 **Release commit (W7, W8, W11).**
@@ -152,6 +152,101 @@ The order in which steps 1–8 are executed in the DEV release window (RUNBOOK-A
 **While ingestion is paused (W4–W13):**
 - Signals are deferred, not dropped, and coverage reports the gap honestly. Raw provider receipts are kept 7 days, so the window stays well under that.
 - No conversation is created without a work item between W6 and W8.
+
+### W12 acceptance (W12-PREP-01)
+
+DEV-PREFLIGHT-01 §8's matrix needs the Comments route and real Workflow writes on synthetic workspaces. That never touches the production aliases.
+
+**Two web deployments, never confused:**
+
+| | Primary DEV web | Isolated acceptance deployment |
+|---|---|---|
+| Deployment | the production-aliased one (`-blond`, `-social-intelligence`) | one deployment of the **exact release source** from the clean release worktree: `vercel --prod --skip-domain --env COMMENTS_REDESIGN_WORKSPACES=<A>,<M> --yes` (the CLI's default command is deploy) |
+| Aliases | unchanged | **none**: reached only by its own deployment URL |
+| Comments allowlist | **absent** (fail-closed) | exactly the synthetic workspaces **A and M**; B, every existing workspace and every other workspace stay excluded |
+| Access | public alias; sign-in | Vercel SSO (team members only), then sign-in |
+| Ingestion | paused (W4–W13) | the same database and workers: **provider** ingestion paused. The only exception is the operator's synthetic conversations and C2 replies: `ingestInteractionFact` is called directly with simulator data, not through the provider signal path the pause governs. |
+| Lifetime | in service | **removed** after the matrix (W12-DEACT) |
+
+**Unverified until the acceptance deployment exists (STOP if either is false):**
+- **U-1:** a deployment-scoped `--env` value supplements the project's Production variables. A health 200 proves the database configuration; A offered and B not offered proves the allowlist.
+- **U-2:** a deployment never aliased to production does not displace the recorded Instant Rollback target. Read the project's rollback information right after creation; `vercel promote <recorded target>` stays available.
+
+**Sub-gates, each with its own authorization:**
+1. **W12-FIX** — fixture and memberships (managed, **permanent** writes).
+2. **W12-ACT** — the acceptance deployment.
+3. **W12-EXEC** — the matrix.
+4. **W12-DEACT** — removal of the acceptance deployment.
+
+**Tooling.** `npm run db:workflow-acceptance -- <command>`:
+- **Fence:** dev-v2 only (the `db:dev-fixture` fence: pinned digest, sa-east-1, managed endpoints). The vitest setup re-proves it, and refuses pending migrations and an invalid worker login.
+- **Mode:** PLAN by default. APPLY needs `--apply --confirm <phrase of that command>`.
+- **No delete, reset or repair path exists.**
+
+| Command | Writes (APPLY) | Notes |
+|---|---|---|
+| `fixture` | organization "W12 Workflow Acceptance — SYNTHETIC"; workspaces A (STANDARD), B (STANDARD), M (`MONITOR_ONLY`); per workspace an inert `simulator` connection without credential, its asset and account; then 7 audience-rooted conversations (A: C1…C5, B: 1, M: 1) through `ingestInteractionFact` in worker scope | fixed ids in the `12acce00-` namespace; resumable; identity conflicts stop with nothing written |
+| `members --u1 <uuid> --u2 <uuid>` | organization MEMBER for both; U1 OWNER of A and M; U2 RESPONDER of A, MANAGER of B; grants empty. **Attaching writes no audit row**: no audit action exists for a direct attach, and the application path is `invitation.accepted`. The operator output and the W12-FIX evidence are the record. | both users must already exist in `auth.users` with a confirmed email, created by the PO through the app's own sign-up; a user with **any** membership outside the synthetic organization is refused |
+| `role --u2 <uuid> --from <R> --to <R>` | one compare-and-set change of U2 in A, **only** RESPONDER → ANALYST_VIEWER → CLIENT_GUEST, with its `workspace_membership.role_changed` audit event (actor `system`) | the commands that would do this run in no runtime |
+| `reply --kind audience\|account` | one synthetic reply into C2 through the same ingestion path | requires C2 **DONE**; audience must reopen (version + 1, `system_auto_reopen`, exactly one audit row with the reply's correlation id); account must change nothing. **One shot:** the reply is permanent, so nobody touches A in the web between the U1 Done and the operator's reply. A failed postcondition is a STOP, never a retry. |
+| `verify --u1 <uuid> --u2 <uuid>` | none (read-only) | identity, memberships, negative access, containment |
+
+**Permanent footprint** (dev-v2; `workflow.*`, audit and source facts have no DELETE):
+- **Stage 1:**
+  - 1 organization, 3 workspaces, 3 connections, 3 assets, 3 accounts;
+  - 3 content items, 7 authors, 7 interactions, 7 source text versions, 7 state observations;
+  - 7 conversations, 7 ingestion events, 7 `interactions.observed` outbox rows;
+  - 7 work items (OPEN, v1) and 7 `created` events.
+- **Memberships:** 2 organization and 4 workspace memberships.
+- **The A-10 replies:** 2 interactions with their chains, plus 1 `state_changed` event and 1 system audit row.
+- **The acceptance session:** its `state_changed` events and `work_item.state_changed` audit rows, and 2 role-change audit rows.
+- **The deployed `interactions.observed` consumer:** deterministic classification rows (requests, signals). AI dispatch is denied by the compiled route policy.
+- **Identification:** everything is identified by the organization id and the `w12-acceptance.*` correlation ids.
+
+**Roles:**
+- **U1** — OWNER of A and M; it performs A-01, A-04…A-13 and the U1 half of A-02.
+- **U2** — performs the U2 half of A-02 (acting in B) and A-03.
+- **U2** — MANAGER of B and RESPONDER of A; A-03 moves it to ANALYST_VIEWER, then CLIENT_GUEST.
+
+Both are test users only, created and owned by the PO and used in separate browser profiles. The PO's own account is never attached.
+
+**W12-EXEC sequence** (acceptance deployment unless stated; the operator correlates every step read-only):
+
+| Order | Check | How |
+|---|---|---|
+| 1 | **A-01** | Signed out → sign-in. U1 reaches `/comments` of A and M. U2, a member of B, gets "not found" on B's `/comments`. |
+| 2 | **A-02** | **U1:** B's conversation id under A's address → not found. **U2, acting as MANAGER of B, while still a legitimate RESPONDER of A:** B's queue lists only B, and an A conversation id under B's address → not found. Membership in A never leaks into B's bound context. U2 opening A itself is legitimate and is **not** part of A-02. |
+| 3 | **A-13** | Open / Done / All and the classic Inbox equal the database definition for A. |
+| 4 | **A-04, A-05, A-06, A-07, A-08, A-09** | As U1: **A-04** Mark done with a resolution on C1; **A-05** Undo → Mark done → Undo on C1; **A-06** Reopen from the Done view (C3); **A-07** keyboard focus after each save; **A-08** double click / same-tick submit on C4; **A-09** two tabs on C5. |
+| 5 | **A-10** | U1 marks C2 done → `reply --kind audience` → C2 Open; a Done from the stale page → conflict. U1 marks C2 done again → `reply --kind account` → nothing changes. |
+| 6 | **A-11** | Audit read. |
+| 7 | **A-12** | U1 in M: Mark done and Reopen work; 0 mutation intents. |
+| 8 | **A-03** | U2 as RESPONDER sees the control → `role` RESPONDER → ANALYST_VIEWER → the stale RESPONDER page is refused, a reload shows no control → `role` ANALYST_VIEWER → CLIENT_GUEST → closed state. |
+| 9 | **A-14, A-15, A-16, A-17** | A-16 is a dry run per workspace with conversations, A, B and M included. |
+| 10 | **N1–N6** | As the PO's own user, on the **production alias** and on the acceptance URL (W12-EXEC-01 §10): own `/comments` → not found; a foreign workspace's Inbox and conversations → not found; a foreign conversation id under the own workspace → not found; a foreign `/comments` → the Inbox's own answer. |
+
+**Read-only verification:** before and after every sub-gate:
+- `verify`;
+- the existing work items' and events' digests;
+- the switches;
+- the worker versions;
+- `vercel ls` and the project snapshot (aliases, rollback target, environment names).
+
+**STOP (no retry, no automatic rollback):**
+- any change to the existing DEV data (outside digest), the production aliases, the rollback target, the switches or the environment names;
+- a fixture identity conflict;
+- an outbox topic other than `interactions.observed`;
+- an AI request;
+- a credential, mutation intent or outbound reply in a fixture workspace;
+- the allowlist not effective (A or M not offered) or over-effective (B or any existing workspace offered);
+- any matrix row failing.
+
+**Removal (W12-DEACT):**
+- `vercel remove <acceptance deployment id> --safe --confirm-name <the same id>`. Use that id only, **never the project name**, which deletes every deployment of the project. `--safe` skips anything holding an alias;
+- then `vercel ls` and the project snapshot: aliases and rollback target unchanged;
+- the anonymous smoke on the production alias unchanged.
+
+The synthetic data stays (permanent).
 
 ### Managed T-26 (W3 and W7)
 
@@ -464,7 +559,8 @@ The previous web, which is in service again, ignores `workflow`.
 
 ## Monitoring (during the pilot)
 
-- **Daily:** a dry run per workspace (`--target development`), expecting `created 0 · repaired 0 · failed 0 · review 0`.
+- **Daily:** a dry run per workspace (`--target development`), expecting `created 0 · repaired 0 · failed 0 · review 0`. The synthetic acceptance workspaces A, B and M are included like any other.
+- **Never** add A, B or M to a real (production-aliased) allowlist: they exist for the acceptance deployment only.
 - **Gap check:** conversations without a work item = 0.
 - **Error rates:** `inbox.conversations.list`, `workflow.conversation.mark_done` / `.reopen` and ingestion (redacted logs).
 
