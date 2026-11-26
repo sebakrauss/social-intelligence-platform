@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OrganizationId, WorkspaceId } from "@/domain/ids";
 import type { AuditEvent } from "@/modules/audit";
 import { createHarness, errorCode, expectOk } from "../../support/harness";
+import { expectSanitizedRejection } from "../../support/sanitized-error";
 import { emailOf, userId } from "../../support/in-memory";
 
 const OWNER = userId(1);
@@ -126,14 +127,18 @@ describe("organization member removal cascades and audits every removed membersh
   });
 
   it.each([
-    ["a workspace membership removal", { failWorkspaceMembershipRemovalAt: 2 }],
-    ["an audit append", { failAuditAppendAt: 3 }],
-  ])("rolls everything back when %s fails", async (_label, faults) => {
+    ["a workspace membership removal", { failWorkspaceMembershipRemovalAt: 2 }, "execute"],
+    ["an audit append", { failAuditAppendAt: 3 }, "audit"],
+  ])("rolls everything back when %s fails", async (_label, faults, failingStep) => {
     const h = await setup();
     const snapshot = structuredClone(h.unitOfWork.state);
     h.unitOfWork.faults = faults;
+    const from = h.steps.length;
 
-    await expect(removeMember(h, h.organizationId)).rejects.toThrow("simulated failure");
+    // Sanitized to its kind only (W12-SEC-01 L-1); the injected fault is what failed, in the expected step.
+    await expectSanitizedRejection(removeMember(h, h.organizationId), "unexpected_error:unknown", ["simulated failure"]);
+    expect(h.steps.slice(from).at(-1)).toBe(failingStep);
+    expect(h.steps.slice(from)).not.toContain("after_commit");
 
     expect(h.unitOfWork.state).toEqual(snapshot);
     expect(hasOrganizationMembership(h, h.organizationId)).toBe(true);

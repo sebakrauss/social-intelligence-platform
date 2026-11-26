@@ -149,6 +149,28 @@ describe("structured logger", () => {
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0] ?? "")).toMatchObject({ event: "kept.event", module: "jobs.outbox", workspaceId: "ws_1", operation: "dispatch" });
   });
+
+  it("W12-SEC-01: accepts errorKind and sqlState only in their validated shapes; anything else is redacted by name", () => {
+    const { lines, sink } = capture();
+    const logger = createLogger({ sink, now: fixedNow });
+    logger.error("pipeline.command.failed", { outcome: "error", errorKind: "database", sqlState: "23505" });
+    expect(JSON.parse(lines[0] ?? "")).toMatchObject({ errorKind: "database", sqlState: "23505" });
+    expect(JSON.parse(lines[0] ?? "")).not.toHaveProperty("redactedFields");
+
+    const invalid = [
+      { errorKind: "Duplicate key for María", sqlState: "2350" },
+      { errorKind: "unexpected", sqlState: "EPIPE" },
+      { errorKind: PROHIBITED_CONTENT.commentText, sqlState: PROHIBITED_CONTENT.connectionString },
+      { errorKind: 42, sqlState: { code: "23505" } },
+    ];
+    for (const fields of invalid) {
+      logger.error("pipeline.command.failed", fields as unknown as LogFields);
+      const line = lines.at(-1) ?? "";
+      const record = JSON.parse(line) as { redactedFields: string[] };
+      expect(record.redactedFields.sort()).toEqual(["errorKind", "sqlState"]);
+      expect(line).not.toMatch(/María|Duplicate|EPIPE|2350"|Cuánto|Sup3r|unexpected"/);
+    }
+  });
 });
 
 describe("correlation IDs", () => {

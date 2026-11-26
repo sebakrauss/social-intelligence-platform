@@ -20,7 +20,7 @@
 import { parseCorrelationId } from "@/domain/correlation";
 import { isAppError } from "@/domain/errors";
 import { claimEffect, withWorkspaceJobScope, type DatabaseTransaction, type EffectClaim, type RuntimeDatabase } from "@/platform/db";
-import type { Logger } from "@/platform/observability";
+import { describeUnexpectedError, type ErrorKind, type Logger } from "@/platform/observability";
 import type { OutboxNotice } from "@/platform/outbox/message";
 import { laneLabel } from "./lanes";
 import { InvalidJobPayloadError, parseSystemJobPayload, parseTenantJobPayload, type SystemJobPayload, type TenantJobPayload } from "./payload";
@@ -96,6 +96,21 @@ function classify(error: unknown): unknown {
   return error;
 }
 
+/**
+ * W12-SEC-01 L-2: the diagnostic kind (closed vocabulary, plus a validated SQLSTATE) of an error that is neither a
+ * normalized AppError nor a job-foundation error, for the `job.failed` line. Never its message or stack. Diagnostic
+ * only: the retry decision stays with classify().
+ */
+function unexpectedKind(error: unknown): { readonly errorKind?: ErrorKind; readonly sqlState?: string } {
+  try {
+    if (isAppError(error) || error instanceof NonRetryableJobError || error instanceof InvalidJobPayloadError) return {};
+    return describeUnexpectedError(error);
+  } catch {
+    // W12-LOG-HARDEN-03 F-2: a hostile value (proxy, throwing getter) gets a fixed kind; this never throws.
+    return { errorKind: "unknown" };
+  }
+}
+
 /** Validates a tenant run before anything else happens (fail closed, no connection taken). */
 function admitTenantRun(deps: TenantJobDependencies, taskName: string, rawPayload: unknown, run: RunInfo) {
   const log = deps.logger.child({ module: "platform.jobs", task: taskName, runId: run.runId, attempt: run.attempt });
@@ -137,6 +152,7 @@ async function observe<T>(scoped: Logger, work: () => Promise<T>): Promise<T> {
       outcome: "error",
       durationMs: Date.now() - startedAt,
       failureClass: classified instanceof NonRetryableJobError ? "non_retryable" : "retryable",
+      ...unexpectedKind(error),
     });
     throw classified;
   }
@@ -231,7 +247,12 @@ export async function runSystemJob<T>(
     return result;
   } catch (error) {
     const classified = classify(error);
-    log.warn("job.failed", { outcome: "error", durationMs: Date.now() - startedAt, failureClass: classified instanceof NonRetryableJobError ? "non_retryable" : "retryable" });
+    log.warn("job.failed", {
+      outcome: "error",
+      durationMs: Date.now() - startedAt,
+      failureClass: classified instanceof NonRetryableJobError ? "non_retryable" : "retryable",
+      ...unexpectedKind(error),
+    });
     throw classified;
   }
 }

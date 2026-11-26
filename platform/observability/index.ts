@@ -17,3 +17,13 @@ export {
 } from "./log-record";
 export { createLogger, serializeLogRecord, type Logger, type LoggerOptions, type LogSink } from "./logger";
 export { stdoutSink } from "./sinks";
+export {
+  ERROR_KINDS,
+  UnexpectedJobError,
+  UnexpectedServerError,
+  describeUnexpectedError,
+  isSqlState,
+  isTrustedAppError,
+  type ErrorKind,
+  type UnexpectedErrorDescription,
+} from "./unexpected-error";

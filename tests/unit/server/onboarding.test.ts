@@ -7,6 +7,7 @@ import { tenancyOnboardingCommands } from "@/server/commands/tenancy";
 import type { ActionPipeline } from "@/server/pipeline";
 import { ONBOARDING_STATUSES, parseOnboardingStatus, resolveOnboarding, submitOrganization, submitWorkspace } from "@/server/tenancy/onboarding";
 import { createHarness, expectOk } from "../../support/harness";
+import { expectSanitizedRejection } from "../../support/sanitized-error";
 import { emailOf, userId } from "../../support/in-memory";
 
 const form = (fields: Readonly<Record<string, string>>): FormData => {
@@ -238,8 +239,11 @@ describe("closed outcomes", () => {
     const h = createHarness();
     h.as(ALICE);
     h.unitOfWork.faults = { failAuditAppendAt: 1 };
-    // A non-AppError escapes the pipeline (as a database failure would); the action layer turns it into `unavailable`.
-    await expect(submitOrganization(h.pipeline, form({ name: "Acme" }))).rejects.toThrow("simulated failure");
+    const from = h.steps.length;
+    // A non-AppError escapes the pipeline (as a database failure would), sanitized to its kind only (W12-SEC-01 L-1);
+    // the action layer turns it into `unavailable`. The injected audit-append fault is what failed: the audit step.
+    await expectSanitizedRejection(submitOrganization(h.pipeline, form({ name: "Acme" })), "unexpected_error:unknown", ["simulated failure", "Acme"]);
+    expect(h.steps.slice(from)).toEqual(["authenticate", "validate", "execute", "audit"]);
     expect(h.unitOfWork.state.organizations.size).toBe(0);
   });
 });

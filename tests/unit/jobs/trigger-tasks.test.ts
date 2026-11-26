@@ -5,6 +5,7 @@
 import { AbortTaskRunError } from "@trigger.dev/sdk";
 import { describe, expect, it } from "vitest";
 import { LANES, LANE_DEFINITIONS, NonRetryableJobError, RETRY_POLICIES, SYSTEM_QUEUE } from "@/platform/jobs";
+import { UnexpectedJobError } from "@/platform/observability";
 import { toVendorError, triggerRetry } from "@/jobs/trigger/define";
 import { LANE_QUEUES, SYSTEM_DELIVERY_QUEUE } from "@/jobs/trigger/queues";
 
@@ -21,11 +22,14 @@ describe("Trigger.dev task mapping", () => {
     expect(triggerRetry(RETRY_POLICIES.singleAttempt).maxAttempts).toBe(1);
   });
 
-  it("turns a permanent failure into the vendor's abort (no retry) and leaves other errors retryable", () => {
+  it("turns a permanent failure into the vendor's abort (no retry) and leaves other errors retryable, sanitized (W12-SEC-01 L-2)", () => {
     const aborted = toVendorError(new NonRetryableJobError("invalid_payload"));
     expect(aborted).toBeInstanceOf(AbortTaskRunError);
     expect((aborted as Error).message).toBe("invalid_payload");
     const transient = new Error("transient");
-    expect(toVendorError(transient)).toBe(transient);
+    const handed = toVendorError(transient);
+    expect(handed).toBeInstanceOf(UnexpectedJobError);
+    expect(handed).not.toBeInstanceOf(AbortTaskRunError);
+    expect((handed as Error).message).toBe("unexpected_error:unknown");
   });
 });

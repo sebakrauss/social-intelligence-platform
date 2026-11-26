@@ -29,6 +29,7 @@ import { REMOVE_ACKNOWLEDGEMENT, removeMeta, resolveConnectionSettings, saveMana
 import { createPostgresUnitOfWork } from "@/server/persistence/postgres-unit-of-work";
 import { createActionPipeline, type ActionPipeline, type UnitOfWork } from "@/server/pipeline";
 import { FakeIdentity, verifiedUser } from "../../support/in-memory";
+import { expectSanitizedRejection } from "../../support/sanitized-error";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld } from "../support/world";
 
@@ -599,10 +600,17 @@ export function defineManagedAccountsSuite(getTarget: () => DbTarget): void {
     it("a failure AFTER the requests were appended (the audit step) rolls back activations and requests together", async () => {
       const { t, connection, facebook, instagram } = await fixture();
       const base = createPostgresUnitOfWork(web);
-      const auditDown: UnitOfWork = { run: (scope, work) => base.run(scope, (tx) => work({ ...tx, audit: { append: () => Promise.reject(new Error("synthetic audit outage")) } })) };
+      let auditFailures = 0;
+      const failAudit = (): Promise<never> => {
+        auditFailures += 1;
+        return Promise.reject(new Error("synthetic audit outage"));
+      };
+      const auditDown: UnitOfWork = { run: (scope, work) => base.run(scope, (tx) => work({ ...tx, audit: { append: failAudit } })) };
       const pipeline = createActionPipeline({ identity: new FakeIdentity(verifiedUser(user(t.owner))), unitOfWork: auditDown, clock, newId: randomUUID, logger });
-      // An unexpected failure propagates (the Server Action turns it into `unavailable`), after the unit rolled back.
-      await expect(save(t.owner, t.workspaceId, connection, [facebook, instagram], pipeline)).rejects.toThrow("synthetic audit outage");
+      // An unexpected failure propagates, sanitized to its kind only (W12-SEC-01 L-1; the Server Action turns it into
+      // `unavailable`), after the unit rolled back.
+      await expectSanitizedRejection(save(t.owner, t.workspaceId, connection, [facebook, instagram], pipeline), "unexpected_error:unknown", ["synthetic audit outage"]);
+      expect(auditFailures).toBeGreaterThanOrEqual(1);
       expect(await accounts(t.workspaceId)).toEqual([]);
       expect(await requests(t.workspaceId)).toEqual([]);
       expect(await events(t.workspaceId, "LINKED")).toBe(0);

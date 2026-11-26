@@ -34,6 +34,7 @@ import { createActionPipeline, type ActionPipeline, type UnitOfWork } from "@/se
 import { FakeJobRuntime, type FakeHandler } from "../../support/fake-job-runtime";
 import { errorCode } from "../../support/harness";
 import { FakeIdentity, verifiedUser } from "../../support/in-memory";
+import { expectSanitizedRejection } from "../../support/sanitized-error";
 import { privilegedPool, runtimeDatabase, type DbTarget } from "../support/target";
 import { cleanupWorld } from "../support/world";
 import { sqlState } from "./helpers";
@@ -499,8 +500,14 @@ export function defineCapabilityReevaluationSuite(getTarget: () => DbTarget): vo
       const t = await tenant();
       const { id } = await seedAccount(t);
       const base = createPostgresUnitOfWork(web);
-      const auditDown: UnitOfWork = { run: (scope, work) => base.run(scope, (tx) => work({ ...tx, audit: { append: () => Promise.reject(new Error("synthetic audit outage")) } })) };
-      await expect(request(t, t.members.OWNER, id, { pipeline: pipelineFor(t.members.OWNER, auditDown) })).rejects.toThrow("synthetic audit outage");
+      let auditFailures = 0;
+      const failAudit = (): Promise<never> => {
+        auditFailures += 1;
+        return Promise.reject(new Error("synthetic audit outage"));
+      };
+      const auditDown: UnitOfWork = { run: (scope, work) => base.run(scope, (tx) => work({ ...tx, audit: { append: failAudit } })) };
+      await expectSanitizedRejection(request(t, t.members.OWNER, id, { pipeline: pipelineFor(t.members.OWNER, auditDown) }), "unexpected_error:unknown", ["synthetic audit outage"]);
+      expect(auditFailures).toBeGreaterThanOrEqual(1);
       await nothingWritten(t.workspaceId);
       expect(await outboxCount(t.workspaceId)).toBe(0);
     });
@@ -509,10 +516,16 @@ export function defineCapabilityReevaluationSuite(getTarget: () => DbTarget): vo
       const t = await tenant();
       const { id } = await seedAccount(t);
       const base = createPostgresUnitOfWork(web);
-      const outboxDown: UnitOfWork = {
-        run: (scope, work) => base.run(scope, (tx) => work({ ...tx, outbox: { append: () => Promise.reject(new Error("synthetic outbox outage")), routed: () => undefined } })),
+      let outboxFailures = 0;
+      const failOutbox = (): Promise<never> => {
+        outboxFailures += 1;
+        return Promise.reject(new Error("synthetic outbox outage"));
       };
-      await expect(request(t, t.members.OWNER, id, { pipeline: pipelineFor(t.members.OWNER, outboxDown) })).rejects.toThrow("synthetic outbox outage");
+      const outboxDown: UnitOfWork = {
+        run: (scope, work) => base.run(scope, (tx) => work({ ...tx, outbox: { append: failOutbox, routed: () => undefined } })),
+      };
+      await expectSanitizedRejection(request(t, t.members.OWNER, id, { pipeline: pipelineFor(t.members.OWNER, outboxDown) }), "unexpected_error:unknown", ["synthetic outbox outage"]);
+      expect(outboxFailures).toBeGreaterThanOrEqual(1);
       await nothingWritten(t.workspaceId);
       // Afterwards the account is still eligible: nothing of the failed attempt counts toward the cooldown.
       expect(await request(t, t.members.OWNER, id)).toMatchObject({ status: "ok", value: { requested: true } });

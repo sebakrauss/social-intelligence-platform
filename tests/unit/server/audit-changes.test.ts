@@ -3,6 +3,7 @@ import type { OrganizationId, UserId } from "@/domain/ids";
 import { object } from "@/domain/validation";
 import type { AuditDraft, WorkspaceCommand } from "@/server/pipeline";
 import { createHarness, expectOk } from "../../support/harness";
+import { expectSanitizedRejection } from "../../support/sanitized-error";
 import { emailOf, userId } from "../../support/in-memory";
 
 const OWNER = userId(1);
@@ -130,7 +131,10 @@ describe("audit change summaries accept closed vocabularies only", () => {
     const h = await setup();
     h.as(OWNER);
     const before = h.unitOfWork.state.audit.length;
-    await expect(h.pipeline.run(commandWithChange(change), { workspaceId: h.workspaceId, input: {} })).rejects.toThrow(TypeError);
+    const from = h.steps.length;
+    // The audit change validator's TypeError, sanitized to its kind (W12-SEC-01 L-1), raised in the audit step.
+    await expectSanitizedRejection(h.pipeline.run(commandWithChange(change), { workspaceId: h.workspaceId, input: {} }), "unexpected_error:type_error", ["person@", "Café", "Chief", "Zm9vYmFy"]);
+    expect(h.steps.slice(from)).toEqual(["authenticate", "resolve_tenant", "authorize", "validate", "mode_guard", "execute", "audit"]);
     expect(h.unitOfWork.state.audit.length).toBe(before);
     expect(JSON.stringify(h.unitOfWork.state.audit)).not.toMatch(/person@|Café|Chief/);
   });

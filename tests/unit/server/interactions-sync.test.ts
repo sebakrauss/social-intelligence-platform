@@ -14,6 +14,7 @@ import { RECONCILIATION_REQUEST_AUDIT, requestInteractionsSyncCommand } from "@/
 import { requestInteractionsSync } from "@/server/connections/settings";
 import type { WorkspaceCommand } from "@/server/pipeline";
 import { createHarness, errorCode, expectOk } from "../../support/harness";
+import { expectSanitizedRejection } from "../../support/sanitized-error";
 import { userId } from "../../support/in-memory";
 
 const OWNER = userId(1);
@@ -109,9 +110,21 @@ describe("the command through the pipeline", () => {
   it("an incoherent boundary answer fails closed: the unit of work rolls back (the server action maps the throw to plain unavailable)", async () => {
     const h = await setup();
     h.as("OWNER");
-    h.unitOfWork.reconciliation = () => Promise.reject(new Error("reconciliation_request_incoherent"));
+    let incoherentAnswers = 0;
+    h.unitOfWork.reconciliation = () => {
+      incoherentAnswers += 1;
+      return Promise.reject(new Error("reconciliation_request_incoherent"));
+    };
     const rollbacks = h.unitOfWork.rollbacks;
-    await expect(h.pipeline.run(requestInteractionsSyncCommand, { workspaceId: h.workspaceId, input: { connectedAccountId: ACCOUNT } })).rejects.toThrow("reconciliation_request_incoherent");
+    const from = h.steps.length;
+    // The caller gets only the sanitized error (W12-SEC-01 L-1); the injected boundary answer is what failed, in execute.
+    await expectSanitizedRejection(
+      h.pipeline.run(requestInteractionsSyncCommand, { workspaceId: h.workspaceId, input: { connectedAccountId: ACCOUNT } }),
+      "unexpected_error:unknown",
+      ["reconciliation_request_incoherent"],
+    );
+    expect(incoherentAnswers).toBe(1);
+    expect(h.steps.slice(from)).toEqual(["authenticate", "resolve_tenant", "authorize", "validate", "mode_guard", "execute"]);
     expect(h.unitOfWork.rollbacks).toBe(rollbacks + 1);
     expect(h.notices).toEqual([]);
   });
@@ -148,6 +161,7 @@ describe("audit ownership in the pipeline (DatabaseBoundaryAudit)", () => {
   it("a boundary-audited command that returns a draft fails closed: rolled back, nothing appended", async () => {
     const h = await setup();
     h.as("OWNER");
+    let draftsReturned = 0;
     const confused: WorkspaceCommand<Record<string, never>, string, string> = {
       scope: "workspace",
       name: "test.boundary_audited_with_draft",
@@ -155,12 +169,19 @@ describe("audit ownership in the pipeline (DatabaseBoundaryAudit)", () => {
       requiresStandardMode: false,
       validate: object({}),
       execute: () => Promise.resolve(ACCOUNT),
-      audit: (id) => ({ action: "connected_account.reconciliation_requested", targetType: "connected_account", targetId: id }),
+      audit: (id) => {
+        draftsReturned += 1;
+        return { action: "connected_account.reconciliation_requested", targetType: "connected_account", targetId: id };
+      },
       auditedBy: RECONCILIATION_REQUEST_AUDIT,
       respond: (id) => id,
     };
     const rollbacks = h.unitOfWork.rollbacks;
-    await expect(h.pipeline.run(confused, { workspaceId: h.workspaceId, input: {} })).rejects.toThrow("boundary_audited_command_returned_a_draft");
+    const from = h.steps.length;
+    // The ownership guard fires right after the draft is returned and before any audit step: nothing else can throw there.
+    await expectSanitizedRejection(h.pipeline.run(confused, { workspaceId: h.workspaceId, input: {} }), "unexpected_error:unknown", ["boundary_audited_command_returned_a_draft"]);
+    expect(draftsReturned).toBe(1);
+    expect(h.steps.slice(from)).toEqual(["authenticate", "resolve_tenant", "authorize", "validate", "mode_guard", "execute"]);
     expect(h.unitOfWork.rollbacks).toBe(rollbacks + 1);
     expect(h.unitOfWork.state.audit.slice(h.auditBefore)).toEqual([]);
   });

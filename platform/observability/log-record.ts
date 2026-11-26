@@ -21,6 +21,7 @@ import {
 import { isErrorCode, type ErrorCode } from "@/domain/errors";
 import { looksLikeSecret } from "@/domain/secret-patterns";
 import { EXECUTION_PLANES, type ExecutionPlane } from "@/platform/jobs/planes";
+import { ERROR_KINDS, isSqlState, type ErrorKind } from "./unexpected-error";
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -60,6 +61,10 @@ export interface LogFields {
   readonly durationMs?: number;
   readonly outcome?: LogOutcome;
   readonly errorCode?: ErrorCode;
+  /** Kind of an UNEXPECTED (non-AppError) failure, from a closed vocabulary (unexpected-error.ts). Never its text. */
+  readonly errorKind?: ErrorKind;
+  /** A validated PostgreSQL SQLSTATE of an unexpected database failure (5 characters, known class). Never its text. */
+  readonly sqlState?: string;
   // Job foundation (TA §42.1 worker/job logs).
   readonly task?: string;
   readonly lane?: LogLane;
@@ -137,6 +142,8 @@ const FIELD_VALIDATORS: FieldValidators = {
   durationMs: duration,
   outcome: oneOf(LOG_OUTCOMES),
   errorCode: (value) => (isErrorCode(value) ? value : undefined),
+  errorKind: oneOf(ERROR_KINDS),
+  sqlState: (value) => (typeof value === "string" && isSqlState(value) ? value : undefined),
   task: identifier,
   lane: oneOf(LOG_LANES),
   outboxId: opaqueId,
